@@ -1,0 +1,80 @@
+<h2>副区域文档过多时，空间如何分配？</h2>
+<p class="subtitle">示例为左右主副布局：主区在左，副区在右并纵向平铺 4 篇文档。请选择最符合预期的溢出规则。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a-compress" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#f6f7f9">
+      <div style="display:flex;height:300px;border:1px solid #aeb4bd;border-radius:8px;overflow:hidden;background:white">
+        <div style="width:62%;padding:12px;border-right:4px solid #c8cdd4">
+          <div style="height:22px;border-bottom:1px solid #ddd;margin-bottom:10px">主区标签：design.md</div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:82%"></div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:94%"></div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:68%"></div>
+        </div>
+        <div style="width:38%;display:flex;flex-direction:column">
+          <div style="flex:1;padding:6px;border-bottom:3px solid #c8cdd4"><b>A.md</b><div style="height:6px;background:#e8ebef;margin-top:6px"></div></div>
+          <div style="flex:1;padding:6px;border-bottom:3px solid #c8cdd4"><b>B.md</b><div style="height:6px;background:#e8ebef;margin-top:6px"></div></div>
+          <div style="flex:1;padding:6px;border-bottom:3px solid #c8cdd4"><b>C.md</b><div style="height:6px;background:#e8ebef;margin-top:6px"></div></div>
+          <div style="flex:1;padding:6px"><b>D.md</b><div style="height:6px;background:#e8ebef;margin-top:6px"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · 始终压缩进一屏</h3>
+      <p>所有文档永远同时完整出现在副区域视口内；新增文档会按比例压缩现有文档。</p>
+      <p><strong>问题：</strong>文档多时每块会小到无法阅读，拖动分隔线也难操作。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b-scroll-minsize" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#f6f7f9">
+      <div style="display:flex;height:300px;border:1px solid #aeb4bd;border-radius:8px;overflow:hidden;background:white">
+        <div style="width:62%;padding:12px;border-right:4px solid #c8cdd4">
+          <div style="height:22px;border-bottom:1px solid #ddd;margin-bottom:10px">主区标签：design.md</div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:82%"></div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:94%"></div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:68%"></div>
+        </div>
+        <div style="width:38%;position:relative;overflow:hidden">
+          <div style="height:128px;padding:8px;border-bottom:3px solid #69717d"><b>A.md</b><div style="height:7px;background:#e8ebef;margin-top:8px"></div><div style="height:7px;background:#e8ebef;margin-top:6px;width:75%"></div></div>
+          <div style="height:128px;padding:8px;border-bottom:3px solid #69717d"><b>B.md</b><div style="height:7px;background:#e8ebef;margin-top:8px"></div><div style="height:7px;background:#e8ebef;margin-top:6px;width:82%"></div></div>
+          <div style="height:72px;padding:8px;background:linear-gradient(#fff,#e9edf2)"><b>C.md</b><span style="float:right;color:#69717d">↓</span></div>
+          <div style="position:absolute;right:3px;top:4px;width:5px;height:290px;background:#e0e3e7;border-radius:4px"><div style="height:110px;background:#8c949f;border-radius:4px"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · 最小尺寸 + 副区滚动（推荐）</h3>
+      <p>每篇文档有最低可用尺寸；空间不足时副区域整体滚动，所有文档仍保持平铺顺序，分隔线继续调整相邻比例。</p>
+      <p><strong>特点：</strong>不会压缩到不可读；滚动到的文档才挂载重型预览。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c-focus-stack" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:14px;background:#f6f7f9">
+      <div style="display:flex;height:300px;border:1px solid #aeb4bd;border-radius:8px;overflow:hidden;background:white">
+        <div style="width:62%;padding:12px;border-right:4px solid #c8cdd4">
+          <div style="height:22px;border-bottom:1px solid #ddd;margin-bottom:10px">主区标签：design.md</div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:82%"></div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:94%"></div>
+          <div style="height:12px;background:#e8ebef;margin:8px 0;width:68%"></div>
+        </div>
+        <div style="width:38%;display:flex;flex-direction:column">
+          <div style="height:28px;padding:6px 9px;border-bottom:1px solid #bbb;background:#eef1f4"><b>A.md</b></div>
+          <div style="flex:1;padding:9px;border-bottom:1px solid #bbb"><b>B.md · 展开</b><div style="height:8px;background:#e8ebef;margin-top:10px"></div><div style="height:8px;background:#e8ebef;margin-top:7px"></div><div style="height:8px;background:#e8ebef;margin-top:7px;width:78%"></div></div>
+          <div style="height:28px;padding:6px 9px;border-bottom:1px solid #bbb;background:#eef1f4"><b>C.md</b></div>
+          <div style="height:28px;padding:6px 9px;background:#eef1f4"><b>D.md</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · 单篇展开 + 折叠条</h3>
+      <p>副区域只让当前文档占据主要空间，其他文档缩成标题条；点击标题条切换展开文档。</p>
+      <p><strong>问题：</strong>空间利用稳定，但不再满足“所有副区文档同时平铺可读”。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <p><strong>我的建议是 B。</strong>它最忠实保留主副布局的“全部文档平铺”语义，同时给阅读性和性能留下明确下限。</p>
+</div>

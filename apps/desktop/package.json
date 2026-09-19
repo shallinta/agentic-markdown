@@ -1,0 +1,40 @@
+{
+  "name": "@agentic-markdown/desktop",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "vite build && electrobun dev",
+    "dev:watch": "electrobun dev --watch",
+    "dev:hmr": "concurrently \"bun run hmr\" \"bun run start\"",
+    "dev:cef": "AGENTIC_MARKDOWN_DESKTOP_RENDERER=cef AGENTIC_MARKDOWN_CDP_PORT=9222 bun run dev:hmr",
+    "hmr": "vite --port 5173",
+    "build:view": "NODE_OPTIONS=--max-old-space-size=4096 vite build",
+    "build:canary": "bun run build:view && AGENTIC_MARKDOWN_DESKTOP_RENDERER=system AGENTIC_MARKDOWN_CDP_PORT= electrobun build --env=canary",
+    "build:stable": "bun run build:view && AGENTIC_MARKDOWN_DESKTOP_RENDERER=system AGENTIC_MARKDOWN_CDP_PORT= electrobun build --env=stable"
+  },
+  "dependencies": {
+    "@dayflow/blossom-color-picker-react": "^1.2.1",
+    "@fontsource-variable/geist": "^5.2.9",
+    "@fontsource-variable/geist-mono": "^5.2.8",
+    "@agentic-markdown/shared": "workspace:*",
+    "@agentic-markdown/ui": "workspace:*",
+    "electrobun": "1.18.1",
+    "i18next": "^26.3.6",
+    "lucide-react": "^1.22.0",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-i18next": "^17.0.11",
+    "react-resizable-panels": "^4.12.0",
+    "sonner": "^2.0.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.15",
+    "@types/three": "^0.165.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.0.15",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
+}

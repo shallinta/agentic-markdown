@@ -2,11 +2,11 @@
 
 [中文](./README.md)
 
-A high-performance, local-first desktop app for viewing and editing multiple Markdown documents, currently in design.
+A high-performance, local-first desktop app for viewing and editing multiple Markdown documents, currently in development.
 
 ## Current Status
 
-The project is currently consolidating its product specification and preparing for M0 technical validation. Product research, capability-by-capability decisions, and the first consistency audit are complete, but the repository does not yet contain a runnable app or usable installation, build, or test commands.
+The MVP product specification is confirmed. F-001, the runnable macOS shell, passed manual acceptance on 2026-09-19, including offline restart and basic window interaction. Features inherited from the starter are drafts, not implemented Markdown product capabilities.
 
 ## Product Direction
 
@@ -27,13 +27,29 @@ The project is currently consolidating its product specification and preparing f
 
 ## Current Technical Direction
 
-The desktop framework is fixed on Electrobun and `electrobun-app-starter`. CodeMirror 6, Lezer, and an independent Canonical Markdown reading pipeline are the current technical direction; the concrete implementations of the editing hot path, reading renderer, document service, indexing, and file watching must be reevaluated through M0 performance and feasibility proofs of concept. They must not be described as implemented or permanently locked in.
+The desktop framework is based on Electrobun and `electrobun-app-starter`. CodeMirror 6, Lezer, and an independent Canonical Markdown reading pipeline are the current technical direction. Implementations will be reevaluated in their feature iterations, with proofs of concept when needed; there is no separate M0 phase.
 
 ## Project Documents
 
 - [Product capability register](./docs/product-capability-register.md): complete capability list, stages, boundaries, and decision history;
 - [Domain language](./CONTEXT.md): shared terminology for document identity, paths, save states, and parsing semantics.
+- [MVP product specification](./docs/mvp-product-spec.md): dependency layers, dynamic ordering, and implementation status;
+- [F-001 iteration record](./docs/iterations/F-001-app-shell.md): scope, approach, and validation results for this iteration.
 
 ## Next Step
 
-Extract a standalone MVP product specification from the capability register, then begin M0 technical proofs of concept focused on editing performance, the Canonical reading pipeline, atomic save and recovery, multi-root scanning, and large-document behavior.
+The user chooses the next feature, and development starts after its minimal iteration document is confirmed. Currently, 1 of 8 L1 features has passed acceptance.
+
+## Local Development
+
+Use the locked Bun version `1.3.14`. Run development, build, and application commands outside the tool sandbox.
+
+```sh
+bun install --frozen-lockfile
+bun run dev
+AGENTIC_MARKDOWN_SKIP_SIGNING=1 bun run build:canary
+```
+
+The unsigned build is in `apps/desktop/build/canary-macos-arm64/` (Apple Silicon is the currently verified platform). Application data defaults to `~/.agentic-markdown`, overridable with `AGENTIC_MARKDOWN_HOME`. Installation normally configures Git hooks; this iteration used `HUSKY=0` to skip that step.
+
+Inherited release, update, and other starter features have not passed product acceptance. See the [starter provenance record](./docs/starter/SOURCE.md).

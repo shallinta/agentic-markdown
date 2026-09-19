@@ -2,11 +2,11 @@
 
 [English](./README_EN.md)
 
-一款正在设计中的高性能、本地优先、多文档 Markdown 桌面 App。
+一款开发中的高性能、本地优先、多文档 Markdown 桌面 App。
 
 ## 当前状态
 
-项目目前处于产品规格整理与 M0 技术验证准备阶段。产品能力调研、逐项决策和首轮一致性审计已经完成，但仓库中还没有可运行的 App，也没有可用的安装、构建或测试命令。
+MVP 产品规格已确认，F-001「macOS 可运行外壳」已于 2026-09-19 通过人工验收，包括离线重启和基本窗口交互。starter 附带能力属于“继承草稿”，不代表 Markdown 产品功能已实现。
 
 ## 产品方向
 
@@ -27,13 +27,29 @@
 
 ## 当前技术方向
 
-桌面框架已经确定基于 Electrobun 与 `electrobun-app-starter`。CodeMirror 6、Lezer 和独立的 Canonical Markdown 阅读管线是当前技术方向；编辑热路径、阅读渲染、文档服务、索引和文件监听的具体实现仍需在 M0 的性能与可行性 PoC（Proof of Concept，概念验证）中重新评估，不应视为已经实现或永久锁定。
+桌面框架基于 Electrobun 与 `electrobun-app-starter`。CodeMirror 6、Lezer 和独立的 Canonical Markdown 阅读管线是当前技术方向；具体实现随对应功能迭代重新评估，必要时进行 PoC（Proof of Concept，概念验证），不设置独立 M0 阶段。
 
 ## 项目文档
 
 - [产品能力总账](./docs/product-capability-register.md)：完整能力清单、阶段、边界和决策历史；
 - [领域术语](./CONTEXT.md)：文档身份、路径、保存状态和解析语义等统一语言。
+- [MVP 产品规格](./docs/mvp-product-spec.md)：依赖层、动态排序和实施状态；
+- [F-001 迭代记录](./docs/iterations/F-001-app-shell.md)：本轮范围、方案及验证结果。
 
 ## 下一步
 
-从能力总账提取独立的 MVP 产品规格基线，然后进入 M0 技术 PoC，优先验证编辑性能、Canonical 阅读管线、原子保存与恢复、多根目录扫描和大型文档表现。
+由用户选择下一轮功能，确认最小迭代文档后开发。L1 当前已验收 1/8 项。
+
+## 本地运行
+
+使用锁定的 Bun `1.3.14`。项目开发、构建和运行在工具沙箱外执行。
+
+```sh
+bun install --frozen-lockfile
+bun run dev
+AGENTIC_MARKDOWN_SKIP_SIGNING=1 bun run build:canary
+```
+
+未签名构建位于 `apps/desktop/build/canary-macos-arm64/`（当前验证平台为 Apple Silicon）。默认数据目录为 `~/.agentic-markdown`，可通过 `AGENTIC_MARKDOWN_HOME` 覆盖。安装过程默认设置 Git hooks；本轮验证使用 `HUSKY=0` 跳过了该设置。
+
+附带的发布、更新及其他 starter 功能尚未验收；完整来源见 [starter 记录](./docs/starter/SOURCE.md)。

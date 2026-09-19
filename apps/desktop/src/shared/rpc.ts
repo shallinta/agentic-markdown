@@ -1,12 +1,26 @@
 import type { RPCSchema } from "electrobun";
 
 import type { Command } from "./commands";
+import type {
+  DocumentHandleRequest,
+  DocumentRequest,
+  DocumentResponse,
+} from "./documents";
 import type { SupportedLocale } from "./i18n";
 import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      selectDocument: { params: DocumentRequest; response: DocumentResponse };
+      readDocument: {
+        params: DocumentHandleRequest;
+        response: DocumentResponse;
+      };
+      releaseDocument: {
+        params: DocumentHandleRequest;
+        response: DocumentResponse;
+      };
       updateMode: { params: Record<string, never>; response: UpdateMode };
       setUpdateMode: { params: { mode: UpdateMode }; response: null };
       getLocale: {

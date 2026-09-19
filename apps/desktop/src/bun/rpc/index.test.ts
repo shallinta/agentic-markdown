@@ -1,5 +1,6 @@
 import { expect, mock, test } from "bun:test";
 
+import type { DocumentService } from "../../shared/documents";
 import { electrobunBunMock } from "../test-electrobun-mock";
 
 await mock.module("electrobun/bun", () => electrobunBunMock);
@@ -65,4 +66,48 @@ test("gets and persists the application locale through typed RPC", async () => {
     await rpc.handlers.requests.setLocale?.({ locale: "zh-CN" })
   ).toBeNull();
   expect(rpc.handlers.requests.getLocale?.()).toBe("zh-CN");
+});
+
+test("document RPC delegates each request to the validated service boundary", async () => {
+  const calls: string[] = [];
+  const response = {
+    protocolVersion: 1 as const,
+    requestId: "request",
+    ok: true as const,
+    snapshot: null,
+  };
+  const documents: DocumentService = {
+    select: (request) => {
+      calls.push(`select:${JSON.stringify(request)}`);
+      return Promise.resolve(response);
+    },
+    read: (request) => {
+      calls.push(`read:${JSON.stringify(request)}`);
+      return Promise.resolve(response);
+    },
+    release: (request) => {
+      calls.push(`release:${JSON.stringify(request)}`);
+      return Promise.resolve(response);
+    },
+    dispose: () => Promise.resolve(),
+  };
+  const dependencies = createDependencies() as unknown as {
+    documents: DocumentService;
+  };
+  dependencies.documents = documents;
+  const rpc = createMainWindowRPC(dependencies as never) as unknown as {
+    handlers: {
+      requests: Record<string, (request: unknown) => Promise<unknown>>;
+    };
+  };
+  for (const method of ["selectDocument", "readDocument", "releaseDocument"]) {
+    expect(
+      await rpc.handlers.requests[method]({ protocolVersion: 99 })
+    ).toEqual(response);
+  }
+  expect(calls).toEqual([
+    'select:{"protocolVersion":99}',
+    'read:{"protocolVersion":99}',
+    'release:{"protocolVersion":99}',
+  ]);
 });

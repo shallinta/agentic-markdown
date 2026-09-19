@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { usePanelRef } from "react-resizable-panels";
 
 import { CommandProvider, useCommands, useRegisterCommands } from "@/commands";
+import { DocumentServicePanel } from "@/components/document-service-panel";
 import { UpdateIndicator } from "@/components/update-indicator";
 import { UpdateStatusProvider } from "@/components/update-status-provider";
 import { electrobun } from "@/lib/electrobun";
@@ -115,12 +116,7 @@ function PageInner() {
             <div className="electrobun-webkit-app-region-no-drag absolute top-4 right-4 z-20">
               <UpdateIndicator />
             </div>
-            <div className="text-center">
-              <h1 className="text-2xl font-semibold">{t("appName")}</h1>
-              <p className="text-muted-foreground mt-2 text-sm">
-                {t("shell.contentPlaceholder")}
-              </p>
-            </div>
+            <DocumentServicePanel />
           </ResizablePanel>
         </ResizablePanelGroup>
       </main>

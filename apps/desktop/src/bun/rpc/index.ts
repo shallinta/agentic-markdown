@@ -1,6 +1,7 @@
 import { BrowserView, type BrowserWindow } from "electrobun/bun";
 
 import type { Command } from "../../shared/commands";
+import type { DocumentService } from "../../shared/documents";
 import type { DesktopRPCType } from "../../shared/rpc";
 import type { LocaleController } from "../i18n/controller";
 import type { UpdaterService } from "../updates";
@@ -10,6 +11,7 @@ export type MainWindowRPC = ReturnType<
 >;
 
 export interface MainWindowRPCDependencies {
+  documents: DocumentService;
   executeCommand: (command: Command) => void;
   getMainWindow: () => BrowserWindow;
   locale: LocaleController;
@@ -19,6 +21,7 @@ export interface MainWindowRPCDependencies {
 const MAX_REQUEST_TIME_MS = 5 * 60_000 + 10_000;
 
 export function createMainWindowRPC({
+  documents,
   executeCommand,
   getMainWindow,
   locale,
@@ -28,6 +31,9 @@ export function createMainWindowRPC({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        selectDocument: (request) => documents.select(request),
+        readDocument: (request) => documents.read(request),
+        releaseDocument: (request) => documents.release(request),
         updateMode: () => updater.getUpdateModeSetting(),
         setUpdateMode: async ({ mode }) => {
           await updater.setUpdateModeSetting(mode);

@@ -36,13 +36,8 @@ export interface NativeFileSpawnOptions {
 }
 
 export interface NativeFileDependencies {
-  openFileDialog(
-    options: NativeFileDialogOptions
-  ): Promise<readonly string[]>;
-  spawn(
-    command: string[],
-    options: NativeFileSpawnOptions
-  ): NativeFileProcess;
+  openFileDialog(options: NativeFileDialogOptions): Promise<readonly string[]>;
+  spawn(command: string[], options: NativeFileSpawnOptions): NativeFileProcess;
   lstat(path: string): Promise<NativeFileStat>;
   stat(path: string): Promise<NativeFileStat>;
 }
@@ -106,6 +101,15 @@ export function createNativeFileCapabilities(
     options: NativeFileDialogOptions
   ): Promise<string | null> {
     const paths = await dependencies.openFileDialog(options);
+    // Electrobun 1.18.1 splits the native result on commas. Never interpret
+    // fragments of one selected filename as authority to read another file.
+    if (
+      !options.allowsMultipleSelection &&
+      paths.length > 1 &&
+      paths.some((path) => path.trim().length > 0)
+    ) {
+      throw new Error("Ambiguous file selection result.");
+    }
     const selectedPath = paths.find((path) => path.trim().length > 0);
 
     if (selectedPath === undefined) {
@@ -133,10 +137,7 @@ export function createNativeFileCapabilities(
       }),
     async openPath(path) {
       assertAbsolutePath(path, process.platform);
-      _runDetached(
-        dependencies,
-        buildOpenPathCommand(process.platform, path)
-      );
+      _runDetached(dependencies, buildOpenPathCommand(process.platform, path));
       await Promise.resolve();
     },
     async revealPath(path) {

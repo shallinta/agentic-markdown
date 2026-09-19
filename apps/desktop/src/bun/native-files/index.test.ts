@@ -18,10 +18,7 @@ interface TestProcess extends NativeFileProcess {
   unrefCalls: number;
 }
 
-function createProcess(
-  exitCode = 0,
-  stderrText = ""
-): TestProcess {
+function createProcess(exitCode = 0, stderrText = ""): TestProcess {
   return {
     exited: Promise.resolve(exitCode),
     stderr: {
@@ -34,9 +31,7 @@ function createProcess(
   };
 }
 
-function createDependencies(
-  overrides: Partial<NativeFileDependencies> = {}
-): {
+function createDependencies(overrides: Partial<NativeFileDependencies> = {}): {
   dependencies: NativeFileDependencies;
   dialogs: NativeFileDialogOptions[];
   spawns: RecordedSpawn[];
@@ -67,8 +62,7 @@ function createDependencies(
 describe("native file pickers", () => {
   test("uses single-selection file and directory picker options", async () => {
     const setup = createDependencies({
-      openFileDialog: () =>
-        Promise.resolve(["  ", "/tmp/selected-file.txt ", "/tmp/ignored.txt"]),
+      openFileDialog: () => Promise.resolve(["/tmp/selected-file.txt "]),
     });
     const capabilities = createNativeFileCapabilities(setup.dependencies);
 
@@ -103,6 +97,17 @@ describe("native file pickers", () => {
         allowsMultipleSelection: false,
       },
     ]);
+  });
+
+  test("rejects ambiguous comma-split selections instead of authorizing a fragment", async () => {
+    const setup = createDependencies({
+      openFileDialog: () => Promise.resolve(["/tmp/selected.md", "other.md"]),
+    });
+    const result = await createNativeFileCapabilities(setup.dependencies)
+      .pickFile()
+      .catch((error: unknown) => error);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error).message).toBe("Ambiguous file selection result.");
   });
 
   test("rejects an unexpected relative selection without exposing it", async () => {
@@ -160,7 +165,9 @@ describe("native path actions", () => {
     }
 
     expect((openError as Error).message).toBe("An absolute path is required.");
-    expect((revealError as Error).message).toBe("An absolute path is required.");
+    expect((revealError as Error).message).toBe(
+      "An absolute path is required."
+    );
     expect(setup.spawns).toHaveLength(0);
   });
 });

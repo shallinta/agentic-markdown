@@ -8,8 +8,10 @@ import Electrobun, {
 
 import type { Command } from "../../shared/commands";
 import { executeCommandInBun } from "../commands";
+import { createDocumentService } from "../documents";
 import { createLocaleController } from "../i18n/controller";
 import { createLocaleStateStore } from "../i18n/state";
+import { createNativeFileCapabilities } from "../native-files";
 import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { UpdaterService } from "../updates";
 
@@ -25,6 +27,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   let mainWindow: ManagedMainWindow | null = null;
   let browserWindow: BrowserWindow | null = null;
   let rpc: MainWindowRPC | null = null;
+  const nativeFiles = createNativeFileCapabilities();
+  const documents = createDocumentService({
+    pickFile: () => nativeFiles.pickFile(),
+  });
 
   const getRpc = (): MainWindowRPC => {
     if (!rpc) throw new Error("Main window RPC is not ready.");
@@ -51,6 +57,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const runtime: DesktopAppRuntime = {
     stop() {
       stopPromise ??= stopDesktopApp([
+        ["documents", () => documents.dispose()],
         ["window state", () => mainWindow?.flushState()],
         ["updater", () => updater.stop()],
       ]);
@@ -70,6 +77,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     });
     await locale.initialize();
     rpc = createMainWindowRPC({
+      documents,
       executeCommand: (command) => executeCommand(command, getMainWindow()),
       getMainWindow,
       locale,

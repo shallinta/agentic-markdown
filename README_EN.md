@@ -8,6 +8,8 @@ A high-performance, local-first desktop app for viewing and editing multiple Mar
 
 The MVP product specification is confirmed. F-001, the runnable macOS shell, passed manual acceptance on 2026-09-19, including offline restart and basic window interaction. Features inherited from the starter are drafts, not implemented Markdown product capabilities.
 
+F-003a, the read-only document service, passed manual acceptance on 2026-09-20; the full F-003 feature remains partially complete. The content area provides a raw-text verification panel, not a finished reader or editor.
+
 ## Product Direction
 
 - Provide an elegant way to view and edit multiple Markdown documents;
@@ -34,11 +36,12 @@ The desktop framework is based on Electrobun and `electrobun-app-starter`. CodeM
 - [Product capability register](./docs/product-capability-register.md): complete capability list, stages, boundaries, and decision history;
 - [Domain language](./CONTEXT.md): shared terminology for document identity, paths, save states, and parsing semantics.
 - [MVP product specification](./docs/mvp-product-spec.md): dependency layers, dynamic ordering, and implementation status;
+- [Product feature manual](./docs/product-feature-manual.md): current feature usage, limitations, and changes maintained with each iteration (in Chinese);
 - [F-001 iteration record](./docs/iterations/F-001-app-shell.md): scope, approach, and validation results for this iteration.
 
 ## Next Step
 
-The user chooses the next feature, and development starts after its minimal iteration document is confirmed. Currently, 1 of 8 L1 features has passed acceptance.
+The user chooses the next feature. L1 retains 8 entries: 1 of 7 independent features has passed full acceptance, and F-003's first slice, F-003a, has passed acceptance. F-002 is an ongoing constraint implemented alongside related features, not a completion prerequisite.
 
 ## Local Development
 

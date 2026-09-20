@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import { basename } from "node:path";
 
 import {
   DOCUMENT_PROTOCOL_VERSION,
@@ -12,24 +10,24 @@ import {
   type DocumentSnapshot,
 } from "../../shared/documents";
 
+import {
+  authorizeSingleFile,
+  DocumentPathError,
+  fileFingerprint,
+  verifySingleFileAuthorization,
+  type SingleFileAuthorization,
+} from "./path-authorization";
+
 interface Identity {
   documentId: string;
   hash: string;
   revision: number;
 }
-interface Grant {
+interface Grant extends SingleFileAuthorization {
   handle: string;
   path: string;
   identityKey: string;
-  file: FileHandle;
 }
-interface FileIdentity {
-  dev: number;
-  ino: number;
-  birthtimeMs: number;
-}
-const fingerprint = (stat: FileIdentity) =>
-  `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -109,19 +107,11 @@ export function createDocumentService({
     generation: number
   ): Promise<DocumentSnapshot> {
     checkLive(generation);
-    const before = await grant.file.stat();
-    const current = await lstat(grant.path).catch(() => null);
-    if (
-      !current?.isFile() ||
-      fingerprint(current) !== fingerprint(before) ||
-      `${grant.path}:${fingerprint(before)}` !== grant.identityKey
-    ) {
-      throw new DocumentFailure("FILE_CHANGED");
-    }
-    if (before.size > MAX_DOCUMENT_BYTES)
+    const before = await verifySingleFileAuthorization(grant);
+    if (before.size > BigInt(MAX_DOCUMENT_BYTES))
       throw new DocumentFailure("TOO_LARGE");
     const bytes = Buffer.alloc(
-      Math.min(before.size + 1, MAX_DOCUMENT_BYTES + 1)
+      Math.min(Number(before.size) + 1, MAX_DOCUMENT_BYTES + 1)
     );
     let length = 0;
     while (length < bytes.length) {
@@ -134,18 +124,15 @@ export function createDocumentService({
       if (!read.bytesRead) break;
       length += read.bytesRead;
     }
-    const after = await grant.file.stat();
-    const pathAfter = await lstat(grant.path).catch(() => null);
+    const after = await verifySingleFileAuthorization(grant);
     checkLive(generation);
     if (
-      !pathAfter?.isFile() ||
-      fingerprint(pathAfter) !== fingerprint(after) ||
-      fingerprint(before) !== fingerprint(after) ||
+      fileFingerprint(before) !== fileFingerprint(after) ||
       before.size !== after.size ||
-      length !== before.size ||
-      length !== after.size ||
-      before.mtimeMs !== after.mtimeMs ||
-      before.ctimeMs !== after.ctimeMs
+      BigInt(length) !== before.size ||
+      BigInt(length) !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
     ) {
       throw new DocumentFailure("FILE_CHANGED");
     }
@@ -193,19 +180,12 @@ export function createDocumentService({
           let candidate: Grant | null = null;
           try {
             checkLive(generation);
-            if (![".md", ".markdown"].includes(extname(selected).toLowerCase()))
-              throw new DocumentFailure("UNSUPPORTED_FILE");
-            const path = await realpath(selected);
-            if (![".md", ".markdown"].includes(extname(path).toLowerCase()))
-              throw new DocumentFailure("UNSUPPORTED_FILE");
-            const file = await open(
-              path,
-              constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-            );
-            candidate = { file, path, handle: randomUUID(), identityKey: "" };
-            const stat = await file.stat();
-            if (!stat.isFile()) throw new DocumentFailure("UNSUPPORTED_FILE");
-            candidate.identityKey = `${path}:${fingerprint(stat)}`;
+            const authorization = await authorizeSingleFile(selected);
+            candidate = {
+              ...authorization,
+              handle: randomUUID(),
+              identityKey: `${authorization.path}:${authorization.fingerprint}`,
+            };
             const next = await snapshot(candidate, generation);
             checkLive(generation);
             const previous = active;
@@ -221,7 +201,9 @@ export function createDocumentService({
       } catch (error) {
         return failure(
           request.requestId,
-          error instanceof DocumentFailure ? error.code : "READ_FAILED"
+          error instanceof DocumentFailure || error instanceof DocumentPathError
+            ? error.code
+            : "READ_FAILED"
         );
       } finally {
         selecting = false;
@@ -243,7 +225,10 @@ export function createDocumentService({
           return result(request.requestId, await snapshot(grant, generation));
         } catch (error) {
           const code =
-            error instanceof DocumentFailure ? error.code : "READ_FAILED";
+            error instanceof DocumentFailure ||
+            error instanceof DocumentPathError
+              ? error.code
+              : "READ_FAILED";
           if (code === "FILE_CHANGED" && active === grant) {
             active = null;
             await close(grant);

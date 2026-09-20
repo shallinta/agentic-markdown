@@ -26,20 +26,20 @@ function collectLeafKeys(
 describe("desktop locales", () => {
   test("only supports en-US and zh-CN", () => {
     expect(SUPPORTED_LOCALES).toEqual(["en-US", "zh-CN"]);
-    expect(DEFAULT_LOCALE).toBe("en-US");
+    expect(DEFAULT_LOCALE).toBe("zh-CN");
     expect(isSupportedLocale("en-US")).toBe(true);
     expect(isSupportedLocale("zh-CN")).toBe(true);
     expect(isSupportedLocale("en")).toBe(false);
     expect(isSupportedLocale("fr-FR")).toBe(false);
   });
 
-  test("maps system Chinese variants to zh-CN and everything else to en-US", () => {
+  test("uses Chinese regardless of system language", () => {
     expect(resolveSupportedLocale("zh")).toBe("zh-CN");
     expect(resolveSupportedLocale("zh-Hant-TW")).toBe("zh-CN");
     expect(resolveSupportedLocale("ZH_cn")).toBe("zh-CN");
-    expect(resolveSupportedLocale("en-GB")).toBe("en-US");
-    expect(resolveSupportedLocale("fr-FR")).toBe("en-US");
-    expect(resolveSupportedLocale(undefined)).toBe("en-US");
+    expect(resolveSupportedLocale("en-GB")).toBe("zh-CN");
+    expect(resolveSupportedLocale("fr-FR")).toBe("zh-CN");
+    expect(resolveSupportedLocale(undefined)).toBe("zh-CN");
   });
 
   test("keeps every namespace and translation key synchronized", () => {

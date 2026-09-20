@@ -46,7 +46,7 @@ test("disables the native check-for-updates item in off mode", () => {
   expect(checkItem?.enabled).toBe(false);
 });
 
-test("adds disabled File menu placeholders before Edit", () => {
+test("adds document commands disabled until availability sync before Edit", () => {
   menuModule.registerMenuActions({} as never, () => undefined);
 
   const latestMenu = menus[menus.length - 1] as {
@@ -55,16 +55,24 @@ test("adds disabled File menu placeholders before Edit", () => {
       label?: string;
       enabled?: boolean;
       action?: string;
+      accelerator?: string;
     }[];
   }[];
 
   expect(latestMenu.slice(1, 3).map(({ label }) => label)).toEqual([
-    "File",
-    "Edit",
+    "文件",
+    "编辑",
   ]);
   expect(latestMenu[1]?.submenu).toEqual([
-    { label: "New...", enabled: false },
-    { label: "Open...", enabled: false },
+    { label: "新建…", enabled: false },
+    {
+      label: "选择 Markdown 文件",
+      action: "selectDocument",
+      enabled: false,
+      accelerator: "CommandOrControl+O",
+    },
+    { label: "重新读取", action: "reloadDocument", enabled: false },
+    { label: "清空", action: "clearDocument", enabled: false },
   ]);
 });
 
@@ -80,16 +88,101 @@ test("adds Toggle Sidebar first in the View menu", () => {
       type?: string;
     }[];
   }[];
-  const viewMenu = latestMenu.find(({ label }) => label === "View");
+  const viewMenu = latestMenu.find(({ label }) => label === "视图");
 
   expect(viewMenu?.submenu?.slice(0, 2)).toEqual([
     {
-      label: "Toggle Sidebar",
+      label: "切换侧栏",
       action: "toggleSidebar",
       accelerator: "CommandOrControl+B",
     },
     { type: "divider" },
   ]);
+});
+
+test("synchronizes command availability once and rejects malformed state", () => {
+  menuModule.registerMenuActions({} as never, () => undefined);
+  const count = menus.length;
+  for (const value of [
+    null,
+    {},
+    { protocolVersion: 2, availability: {} },
+    {
+      protocolVersion: 1,
+      availability: {
+        selectDocument: true,
+        reloadDocument: false,
+        clearDocument: false,
+        unknown: true,
+      },
+    },
+    {
+      protocolVersion: 1,
+      availability: {
+        selectDocument: true,
+        reloadDocument: false,
+        clearDocument: "yes",
+      },
+    },
+  ]) {
+    menuModule.setCommandAvailabilityInMenu(value);
+  }
+  expect(menus).toHaveLength(count);
+  const value = {
+    protocolVersion: 1,
+    availability: {
+      selectDocument: true,
+      reloadDocument: false,
+      clearDocument: true,
+    },
+  };
+  menuModule.setCommandAvailabilityInMenu(value);
+  menuModule.setCommandAvailabilityInMenu(value);
+  expect(menus).toHaveLength(count + 1);
+  const latest = menus[menus.length - 1] as {
+    submenu: { action?: string; enabled?: boolean }[];
+  }[];
+  expect(
+    latest[1].submenu
+      .filter((item) => item.action)
+      .map((item) => [item.action, item.enabled])
+  ).toEqual([
+    ["selectDocument", true],
+    ["reloadDocument", false],
+    ["clearDocument", true],
+  ]);
+});
+
+test("guards disabled document menu dispatch and resets on registration", () => {
+  const execute = mock(() => undefined);
+  const window = {} as never;
+  menuModule.registerMenuActions(window, execute);
+  applicationMenuListener?.({ data: { action: "selectDocument" } });
+  expect(execute).not.toHaveBeenCalled();
+  menuModule.setCommandAvailabilityInMenu({
+    protocolVersion: 1,
+    availability: {
+      selectDocument: true,
+      reloadDocument: false,
+      clearDocument: true,
+    },
+  });
+  applicationMenuListener?.({ data: { action: "selectDocument" } });
+  applicationMenuListener?.({ data: { action: "reloadDocument" } });
+  applicationMenuListener?.({ data: { action: "clearDocument" } });
+  expect(execute).toHaveBeenNthCalledWith(
+    1,
+    { type: "selectDocument", args: {} },
+    window
+  );
+  expect(execute).toHaveBeenNthCalledWith(
+    2,
+    { type: "clearDocument", args: {} },
+    window
+  );
+  menuModule.registerMenuActions(window, execute);
+  applicationMenuListener?.({ data: { action: "selectDocument" } });
+  expect(execute).toHaveBeenCalledTimes(2);
 });
 
 test("dispatches the Toggle Sidebar menu action", () => {

@@ -12,6 +12,7 @@ import {
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
+      containerAriaLabel="通知"
       theme="dark"
       className="toaster group"
       icons={{

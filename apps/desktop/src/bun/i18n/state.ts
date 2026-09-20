@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { SupportedLocale } from "../../shared/i18n";
-import { isSupportedLocale, resolveSupportedLocale } from "../../shared/i18n";
+import { DEFAULT_LOCALE } from "../../shared/i18n";
 
 export interface LocaleStateStore {
   getLocale(): Promise<SupportedLocale>;
@@ -12,21 +12,20 @@ export interface LocaleStateStore {
 
 export function createLocaleStateStore(
   settingsDir: string,
-  getSystemLocale: () => string | undefined
+  _getSystemLocale: () => string | undefined
 ): LocaleStateStore {
+  void _getSystemLocale;
   const statePath = join(settingsDir, "locale.json");
   let mutationQueue: Promise<void> = Promise.resolve();
 
-  const fallback = (): SupportedLocale =>
-    resolveSupportedLocale(getSystemLocale());
-
-  const write = async (locale: SupportedLocale): Promise<void> => {
+  const write = async (_locale: SupportedLocale): Promise<void> => {
+    void _locale;
     const temporaryPath = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
     await mkdir(settingsDir, { recursive: true });
     try {
       await writeFile(
         temporaryPath,
-        `${JSON.stringify({ locale }, null, 2)}\n`,
+        `${JSON.stringify({ locale: DEFAULT_LOCALE }, null, 2)}\n`,
         "utf8"
       );
       await rename(temporaryPath, statePath);
@@ -62,8 +61,8 @@ export function createLocaleStateStore(
           throw error;
         }
       }
-      if (isSupportedLocale(locale)) return locale;
-      const initialLocale = fallback();
+      if (locale === DEFAULT_LOCALE) return DEFAULT_LOCALE;
+      const initialLocale = DEFAULT_LOCALE;
       await write(initialLocale);
       return initialLocale;
     });

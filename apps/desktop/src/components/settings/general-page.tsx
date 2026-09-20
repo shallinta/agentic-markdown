@@ -18,9 +18,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useCommands } from "@/commands";
-import { useLocale } from "@/hooks/use-locale";
 import { useUpdateMode } from "@/hooks/use-update-mode";
-import type { SupportedLocale } from "@/shared/i18n";
 import type { UpdateMode } from "@/shared/updates";
 
 import { PrimaryColorPicker } from "./primary-color-picker";
@@ -76,7 +74,6 @@ export function GeneralPage() {
   const { t: tCommon } = useTranslation("common");
   const { theme, setTheme } = useTheme();
   const { executeCommand } = useCommands();
-  const { locale, isSaving: isLocaleSaving, change: setLocale } = useLocale();
   const {
     mode: updateMode,
     isSaving: isUpdateModeSaving,
@@ -93,31 +90,6 @@ export function GeneralPage() {
     <SettingsPage title={t("general")} className="overflow-y-auto">
       <div className="flex flex-col gap-7 pb-2">
         <SettingsSection title={t("appearance")}>
-          <SettingsRow
-            label={
-              <RowLabel title={t("language.title")} hint={t("language.hint")} />
-            }
-          >
-            <Select
-              value={locale}
-              disabled={isLocaleSaving}
-              onValueChange={(value) =>
-                void setLocale(value as SupportedLocale)
-              }
-            >
-              <SelectTrigger className="w-32" aria-label={t("language.title")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="en-US">
-                  {t("language.options.en-US")}
-                </SelectItem>
-                <SelectItem value="zh-CN">
-                  {t("language.options.zh-CN")}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </SettingsRow>
           <SettingsRow
             label={<RowLabel title={t("theme.title")} hint={t("theme.hint")} />}
           >

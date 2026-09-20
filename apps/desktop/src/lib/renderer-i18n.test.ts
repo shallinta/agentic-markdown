@@ -16,7 +16,7 @@ function createDocumentRoot() {
   };
 }
 
-test("loads the Bun locale before the renderer runtime becomes ready", async () => {
+test("initializes Chinese without locale RPC and ignores English events", async () => {
   const events: string[] = [];
   let localeListener: (message: { locale: "en-US" | "zh-CN" }) => void = () =>
     undefined;
@@ -38,7 +38,7 @@ test("loads the Bun locale before the renderer runtime becomes ready", async () 
 
   await runtime.initialize();
 
-  expect(events).toEqual(["listen", "request"]);
+  expect(events).toEqual(["listen"]);
   expect(runtime.getLocale()).toBe("zh-CN");
   expect(runtime.t("settings:language.title")).toBe("语言");
   expect(attributes.get("lang")).toBe("zh-CN");
@@ -46,11 +46,12 @@ test("loads the Bun locale before the renderer runtime becomes ready", async () 
 
   localeListener({ locale: "en-US" });
   await Bun.sleep(0);
-  expect(runtime.getLocale()).toBe("en-US");
-  expect(attributes.get("lang")).toBe("en-US");
+  expect(runtime.getLocale()).toBe("zh-CN");
+  expect(attributes.get("lang")).toBe("zh-CN");
+  expect(runtime.t("settings:general")).toBe("通用");
 });
 
-test("asks Bun to persist language changes instead of mutating local state", async () => {
+test("legacy language requests cannot switch to English or require RPC", async () => {
   const setLocale = mock(() => Promise.resolve(null));
   const rpc: LocaleRPC = {
     addMessageListener: () => undefined,
@@ -65,10 +66,11 @@ test("asks Bun to persist language changes instead of mutating local state", asy
   });
   await runtime.initialize();
 
-  await runtime.setLocale("zh-CN");
+  await runtime.setLocale("en-US");
 
-  expect(setLocale).toHaveBeenCalledWith({ locale: "zh-CN" });
-  expect(runtime.getLocale()).toBe("en-US");
+  expect(setLocale).not.toHaveBeenCalled();
+  expect(runtime.getLocale()).toBe("zh-CN");
+  expect(runtime.t("settings:general")).toBe("通用");
 });
 
 test("applies a newer Bun locale received while i18next is initializing", async () => {

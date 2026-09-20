@@ -10,7 +10,10 @@ let updateMode: UpdateMode = "automatic";
 let locale: "en-US" | "zh-CN" = "en-US";
 
 await mock.module("@/commands", () => ({
-  useCommands: () => ({ executeCommand: () => undefined }),
+  useCommands: () => ({
+    executeCommand: () => undefined,
+    isCommandEnabled: () => true,
+  }),
 }));
 
 await mock.module("@/components/update-status-provider", () => ({
@@ -65,6 +68,7 @@ await mock.module("@agentic-markdown/ui/ui/command", () => {
       onSelect?: () => void;
     }) => <div>{children}</div>,
     CommandList: Wrapper,
+    CommandShortcut: Wrapper,
   };
 });
 
@@ -100,8 +104,11 @@ test("hides check command while update mode is off", () => {
   expect(renderPalette()).not.toContain("Check for Updates");
 });
 
-test("shows the Toggle Sidebar command", () => {
-  expect(renderPalette()).toContain("Toggle Sidebar");
+test("shows fixed Chinese product labels and shortcuts independently of locale", () => {
+  expect(renderPalette()).toContain("切换侧栏");
+  expect(renderPalette()).toContain("选择 Markdown 文件");
+  expect(renderPalette()).toContain("⌘O");
+  expect(renderPalette()).toContain("⌘B");
 });
 
 test("renders command labels and search copy in Chinese", () => {

@@ -58,12 +58,20 @@ describe("locale state persistence", () => {
     }
   );
 
-  test("persists an explicit supported locale atomically", async () => {
+  test("normalizes legacy English requests to Chinese", async () => {
     await store.setLocale("en-US");
 
-    expect(await store.getLocale()).toBe("en-US");
+    expect(await store.getLocale()).toBe("zh-CN");
     expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
-      locale: "en-US",
+      locale: "zh-CN",
+    });
+  });
+  test("migrates English preferences even on an English system", async () => {
+    await Bun.write(statePath, JSON.stringify({ locale: "en-US" }));
+    const englishSystem = createLocaleStateStore(settingsDir, () => "en-US");
+    expect(await englishSystem.getLocale()).toBe("zh-CN");
+    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
+      locale: "zh-CN",
     });
   });
 });

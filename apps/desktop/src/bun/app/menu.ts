@@ -4,7 +4,14 @@ import {
   type BrowserWindow,
 } from "electrobun/bun";
 
-import type { Command } from "../../shared/commands";
+import {
+  DOCUMENT_COMMAND_TYPES,
+  PRODUCT_COMMANDS,
+  isCommandAvailabilityMessage,
+  type Command,
+  type CommandAvailability,
+  type DocumentCommandType,
+} from "../../shared/commands";
 import type { SupportedLocale } from "../../shared/i18n";
 import type { UpdateMode } from "../../shared/updates";
 import { activateBunLocale, translate as t } from "../i18n";
@@ -15,6 +22,25 @@ const REPOSITORY_URL = "https://github.com/shallinta/agentic-markdown";
 
 let currentUpdateMode: UpdateMode = "automatic";
 let currentUpdateReady = false;
+let commandAvailability: CommandAvailability = {
+  selectDocument: false,
+  reloadDocument: false,
+  clearDocument: false,
+};
+
+export function setCommandAvailabilityInMenu(value: unknown): void {
+  if (!isCommandAvailabilityMessage(value)) return;
+  if (
+    DOCUMENT_COMMAND_TYPES.every(
+      (type) => commandAvailability[type] === value.availability[type]
+    )
+  )
+    return;
+  commandAvailability = { ...value.availability };
+  ApplicationMenu.setApplicationMenu(
+    buildMenu(currentUpdateReady, currentUpdateMode)
+  );
+}
 
 function appSubmenu(
   updateReady: boolean,
@@ -72,7 +98,14 @@ function buildMenu(
       label: t("menu:file.title"),
       submenu: [
         { label: t("menu:file.new"), enabled: false },
-        { label: t("menu:file.open"), enabled: false },
+        ...DOCUMENT_COMMAND_TYPES.map((type) => ({
+          label: PRODUCT_COMMANDS[type]!.label,
+          action: type,
+          enabled: commandAvailability[type],
+          ...(PRODUCT_COMMANDS[type]!.accelerator
+            ? { accelerator: PRODUCT_COMMANDS[type]!.accelerator }
+            : {}),
+        })),
       ],
     },
     {
@@ -96,15 +129,15 @@ function buildMenu(
       label: t("menu:view.title"),
       submenu: [
         {
-          label: t("menu:view.toggleSidebar"),
+          label: PRODUCT_COMMANDS.toggleSidebar!.label,
           action: "toggleSidebar",
-          accelerator: "CommandOrControl+B",
+          accelerator: PRODUCT_COMMANDS.toggleSidebar!.accelerator,
         },
         { type: "divider" },
         {
-          label: t("menu:view.commandPalette"),
+          label: PRODUCT_COMMANDS.openCommandPalette!.label,
           action: "commandPalette",
-          accelerator: "CommandOrControl+Shift+P",
+          accelerator: PRODUCT_COMMANDS.openCommandPalette!.accelerator,
         },
         { type: "divider" },
         {
@@ -183,6 +216,9 @@ export function setUpdateModeInMenu(mode: UpdateMode) {
 }
 
 const MENU_ACTION_COMMANDS: Record<string, Command> = {
+  selectDocument: { type: "selectDocument", args: {} },
+  reloadDocument: { type: "reloadDocument", args: {} },
+  clearDocument: { type: "clearDocument", args: {} },
   settings: { type: "openSettings", args: {} },
   commandPalette: { type: "openCommandPalette", args: {} },
   toggleSidebar: { type: "toggleSidebar", args: {} },
@@ -202,12 +238,22 @@ export function registerMenuActions(
   executeCommand: (command: Command, window: BrowserWindow) => void
 ) {
   currentUpdateReady = false;
+  commandAvailability = {
+    selectDocument: false,
+    reloadDocument: false,
+    clearDocument: false,
+  };
   ApplicationMenu.setApplicationMenu(
     buildMenu(currentUpdateReady, currentUpdateMode)
   );
   ApplicationMenu.on("application-menu-clicked", (event) => {
     const { action } = (event as { data: { action: string } }).data;
     const command = MENU_ACTION_COMMANDS[action];
+    if (
+      DOCUMENT_COMMAND_TYPES.includes(action as DocumentCommandType) &&
+      !commandAvailability[action as DocumentCommandType]
+    )
+      return;
     if (command) executeCommand(command, window);
   });
 }

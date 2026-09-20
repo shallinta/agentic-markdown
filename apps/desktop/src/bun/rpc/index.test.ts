@@ -1,11 +1,12 @@
 import { expect, mock, test } from "bun:test";
 
 import type { DocumentService } from "../../shared/documents";
-import { electrobunBunMock } from "../test-electrobun-mock";
+import { applicationMenus, electrobunBunMock } from "../test-electrobun-mock";
 
 await mock.module("electrobun/bun", () => electrobunBunMock);
 
 const { createMainWindowRPC } = await import(".");
+const { registerMenuActions } = await import("../app/menu");
 
 function createDependencies() {
   return {
@@ -22,6 +23,30 @@ function createDependencies() {
     },
   } as never;
 }
+
+test("command availability RPC validates state before updating native menu", () => {
+  registerMenuActions({} as never, () => undefined);
+  const rpc = createMainWindowRPC(createDependencies()) as unknown as {
+    handlers: {
+      messages: { commandAvailabilityChanged: (value: unknown) => void };
+    };
+  };
+  const count = applicationMenus.length;
+  rpc.handlers.messages.commandAvailabilityChanged({
+    protocolVersion: 1,
+    availability: { selectDocument: true },
+  });
+  expect(applicationMenus).toHaveLength(count);
+  rpc.handlers.messages.commandAvailabilityChanged({
+    protocolVersion: 1,
+    availability: {
+      selectDocument: true,
+      reloadDocument: false,
+      clearDocument: false,
+    },
+  });
+  expect(applicationMenus).toHaveLength(count + 1);
+});
 
 test("reports whether the main window is full screen", () => {
   const rpc = createMainWindowRPC(createDependencies()) as unknown as {

@@ -30,11 +30,9 @@ function renderStartupFailure(error: unknown): void {
     >
       <div className="flex max-w-md flex-col items-center gap-4">
         <h1 className="text-lg font-semibold">
-          {startupCopy["en-US"].common.startupFailure.title} /{" "}
           {startupCopy["zh-CN"].common.startupFailure.title}
         </h1>
         <p className="text-muted-foreground text-sm">
-          {startupCopy["en-US"].common.startupFailure.description} /{" "}
           {startupCopy["zh-CN"].common.startupFailure.description}
         </p>
         <button
@@ -42,7 +40,6 @@ function renderStartupFailure(error: unknown): void {
           type="button"
           onClick={() => window.location.reload()}
         >
-          {startupCopy["en-US"].common.startupFailure.retry} /{" "}
           {startupCopy["zh-CN"].common.startupFailure.retry}
         </button>
       </div>

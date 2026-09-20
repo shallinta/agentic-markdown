@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-US" class="h-screen w-screen" suppressHydrationWarning>
+<html lang="zh-CN" class="h-screen w-screen" suppressHydrationWarning>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,16 +11,30 @@
       // LOCAL_STORAGE_KEYS in packages/ui/src/lib/local-storage.ts:
       // ("agentic-markdown-theme", "agentic-markdown-primary")
       (function () {
+        var root = document.documentElement;
+        var theme = "system";
         try {
-          var root = document.documentElement;
-          var theme =
-            localStorage.getItem("agentic-markdown-theme") || "dark";
-          var dark =
-            theme === "dark" ||
-            (theme === "system" &&
-              window.matchMedia("(prefers-color-scheme: dark)").matches);
-          root.classList.toggle("dark", dark);
-
+          var stored = localStorage.getItem("agentic-markdown-theme");
+          if (stored === "dark" || stored === "light") theme = stored;
+        } catch (e) {
+          // Storage failure must not prevent following the system.
+        }
+        var resolved = root.classList.contains("dark") ? "dark" : "light";
+        if (theme !== "system") resolved = theme;
+        else {
+          try {
+            var matches = window.matchMedia(
+              "(prefers-color-scheme: dark)"
+            ).matches;
+            if (typeof matches === "boolean")
+              resolved = matches ? "dark" : "light";
+          } catch (e) {
+            // Keep the last applied appearance if system lookup fails.
+          }
+        }
+        root.classList.toggle("dark", resolved === "dark");
+        root.style.colorScheme = resolved;
+        try {
           var primary = localStorage.getItem("agentic-markdown-primary");
           if (primary && /^#[0-9a-fA-F]{6}$/.test(primary)) {
             var n = parseInt(primary.slice(1), 16);
@@ -42,7 +56,7 @@
             );
           }
         } catch (e) {
-          // localStorage unavailable — fall back to the default appearance.
+          // Accent storage is independent from the appearance decision.
         }
       })();
     </script>

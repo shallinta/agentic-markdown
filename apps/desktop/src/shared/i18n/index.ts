@@ -11,16 +11,17 @@ import zhCNUpdates from "./resources/zh-CN/updates.json";
 
 export const SUPPORTED_LOCALES = ["en-US", "zh-CN"] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
-export const DEFAULT_LOCALE: SupportedLocale = "en-US";
+export const DEFAULT_LOCALE: SupportedLocale = "zh-CN";
 
 export function isSupportedLocale(value: unknown): value is SupportedLocale {
   return value === "en-US" || value === "zh-CN";
 }
 
 export function resolveSupportedLocale(
-  locale: string | undefined
+  _locale: string | undefined
 ): SupportedLocale {
-  return locale && /^zh(?:[-_]|$)/i.test(locale) ? "zh-CN" : DEFAULT_LOCALE;
+  void _locale;
+  return DEFAULT_LOCALE;
 }
 
 const resources = {

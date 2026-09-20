@@ -4,7 +4,9 @@ import {
   createDocumentController,
   type DocumentTransport,
 } from "@/client/documents";
+import { useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
+import { PRODUCT_COMMANDS } from "@/shared/commands";
 
 export function DocumentServicePanel() {
   const [controller] = useState(() => {
@@ -24,6 +26,26 @@ export function DocumentServicePanel() {
     controller.subscribe,
     controller.getSnapshot
   );
+  const { executeCommand, isCommandEnabled } = useCommands();
+  const notifyCommands = useRegisterCommands(
+    {
+      selectDocument: controller.select,
+      reloadDocument: controller.reload,
+      clearDocument: controller.clear,
+    },
+    true,
+    {
+      selectDocument: () => !controller.getSnapshot().busy,
+      reloadDocument: () =>
+        !controller.getSnapshot().busy && !!controller.getSnapshot().snapshot,
+      clearDocument: () =>
+        controller.getSnapshot().busy || !!controller.getSnapshot().snapshot,
+    }
+  );
+  useEffect(
+    () => controller.subscribe(notifyCommands),
+    [controller, notifyCommands]
+  );
   useEffect(() => () => controller.clear(), [controller]);
   const snapshot = state.snapshot;
   const buttonClass =
@@ -37,30 +59,30 @@ export function DocumentServicePanel() {
       <div>
         <h1 className="text-xl font-semibold">文档服务验证</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          F-003a · 仅只读原文，不是正式阅读或编辑模式 · 本轮限 1 MiB
+          F-004a · 单文件路径与只读授权验证 · 本轮限 1 MiB
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
         <button
           className={buttonClass}
-          disabled={state.busy}
-          onClick={() => void controller.select()}
+          disabled={!isCommandEnabled("selectDocument")}
+          onClick={() => executeCommand({ type: "selectDocument", args: {} })}
         >
-          选择 Markdown 文件
+          {PRODUCT_COMMANDS.selectDocument?.label}
         </button>
         <button
           className={buttonClass}
-          disabled={state.busy || !snapshot}
-          onClick={() => void controller.reload()}
+          disabled={!isCommandEnabled("reloadDocument")}
+          onClick={() => executeCommand({ type: "reloadDocument", args: {} })}
         >
-          重新读取
+          {PRODUCT_COMMANDS.reloadDocument?.label}
         </button>
         <button
           className={buttonClass}
-          disabled={!snapshot && !state.busy}
-          onClick={controller.clear}
+          disabled={!isCommandEnabled("clearDocument")}
+          onClick={() => executeCommand({ type: "clearDocument", args: {} })}
         >
-          清空
+          {PRODUCT_COMMANDS.clearDocument?.label}
         </button>
       </div>
       <div
@@ -93,6 +115,8 @@ export function DocumentServicePanel() {
             <dd className="font-mono">{snapshot.documentId}</dd>
             <dt>revision</dt>
             <dd>{snapshot.revision}</dd>
+            <dt>权限</dt>
+            <dd>仅当前文件只读，不授权父目录或相邻文件</dd>
           </dl>
           <pre
             aria-label="Markdown 原文（只读）"

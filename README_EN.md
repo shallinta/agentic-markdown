@@ -10,6 +10,12 @@ The MVP product specification is confirmed. F-001, the runnable macOS shell, pas
 
 F-003a, the read-only document service, passed manual acceptance on 2026-09-20; the full F-003 feature remains partially complete. The content area provides a raw-text verification panel, not a finished reader or editor.
 
+F-004a, single-file path identification and read-only authorization, passed manual acceptance on 2026-09-20. The full F-004 feature remains partially complete.
+
+F-006a, unified command and keyboard entrypoints for existing operations, passed manual acceptance on 2026-09-20. It unifies five commands: open, reload, clear, toggle sidebar, and open the command palette. This does not complete the full F-006 feature or app-wide Chinese localization.
+
+F-007a, Simplified Chinese and app appearance for the current interface, passed manual acceptance on 2026-09-21. The current app-owned interface is fixed to Chinese, with light, dark, and system appearance and saved preferences. The full F-007 feature remains partially complete.
+
 ## Product Direction
 
 - Provide an elegant way to view and edit multiple Markdown documents;
@@ -41,7 +47,7 @@ The desktop framework is based on Electrobun and `electrobun-app-starter`. CodeM
 
 ## Next Step
 
-The user chooses the next feature. L1 retains 8 entries: 1 of 7 independent features has passed full acceptance, and F-003's first slice, F-003a, has passed acceptance. F-002 is an ongoing constraint implemented alongside related features, not a completion prerequisite.
+The user chooses the next feature. L1 retains 8 entries: 1 of 7 independent features has passed full acceptance; F-003a, F-004a, F-006a, and F-007a have passed acceptance, while their parent features F-003, F-004, F-006, and F-007 remain partially complete. F-002 is an ongoing constraint implemented alongside related features, not a completion prerequisite.
 
 ## Local Development
 

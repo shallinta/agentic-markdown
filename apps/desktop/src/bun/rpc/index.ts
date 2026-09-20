@@ -3,6 +3,7 @@ import { BrowserView, type BrowserWindow } from "electrobun/bun";
 import type { Command } from "../../shared/commands";
 import type { DocumentService } from "../../shared/documents";
 import type { DesktopRPCType } from "../../shared/rpc";
+import { setCommandAvailabilityInMenu } from "../app/menu";
 import type { LocaleController } from "../i18n/controller";
 import type { UpdaterService } from "../updates";
 
@@ -51,6 +52,7 @@ export function createMainWindowRPC({
       },
       messages: {
         executeCommand,
+        commandAvailabilityChanged: setCommandAvailabilityInMenu,
       },
     },
   });

@@ -1,6 +1,6 @@
 import type { RPCSchema } from "electrobun";
 
-import type { Command } from "./commands";
+import type { Command, CommandAvailabilityMessage } from "./commands";
 import type {
   DocumentHandleRequest,
   DocumentRequest,
@@ -42,6 +42,7 @@ export interface DesktopRPCType {
     };
     messages: {
       executeCommand: Command;
+      commandAvailabilityChanged: CommandAvailabilityMessage;
     };
   }>;
   webview: RPCSchema<{

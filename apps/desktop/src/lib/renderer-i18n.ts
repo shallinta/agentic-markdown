@@ -3,7 +3,6 @@ import { initReactI18next } from "react-i18next";
 
 import {
   DEFAULT_LOCALE,
-  SUPPORTED_LOCALES,
   getTranslationResources,
   type SupportedLocale,
 } from "@/shared/i18n";
@@ -55,12 +54,12 @@ export function createRendererI18nRuntime(_dependencies: {
   return {
     i18n: instance as I18n,
     async initialize() {
-      _dependencies.rpc.addMessageListener("localeChanged", ({ locale }) => {
+      _dependencies.rpc.addMessageListener("localeChanged", () => {
+        const locale = DEFAULT_LOCALE;
         pendingLocale = locale;
         if (initialized) void applyLocale(locale).catch(reportError);
       });
-      const persistedLocale = await _dependencies.rpc.request.getLocale({});
-      const locale = pendingLocale ?? persistedLocale;
+      const locale = DEFAULT_LOCALE;
       await instance.init({
         defaultNS: "common",
         fallbackLng: DEFAULT_LOCALE,
@@ -68,7 +67,7 @@ export function createRendererI18nRuntime(_dependencies: {
         lng: locale,
         ns: ["common", "settings", "menu", "commands", "updates"],
         resources: getTranslationResources(),
-        supportedLngs: [...SUPPORTED_LOCALES],
+        supportedLngs: [DEFAULT_LOCALE],
       });
       initialized = true;
       syncDocument(locale);
@@ -78,11 +77,12 @@ export function createRendererI18nRuntime(_dependencies: {
       activeRendererI18n = instance;
     },
     getLocale: (): SupportedLocale => {
-      const locale = instance.resolvedLanguage;
-      return locale === "zh-CN" ? "zh-CN" : "en-US";
+      return DEFAULT_LOCALE;
     },
-    setLocale: (locale: SupportedLocale) =>
-      _dependencies.rpc.request.setLocale({ locale }).then(() => undefined),
+    setLocale: (_locale: SupportedLocale) => {
+      void _locale;
+      return applyLocale(DEFAULT_LOCALE);
+    },
     t: instance.t.bind(instance),
   };
 }

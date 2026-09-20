@@ -20,9 +20,10 @@ await bunI18n.init({
 });
 
 export async function activateBunLocale(
-  locale: SupportedLocale
+  _locale: SupportedLocale
 ): Promise<void> {
-  await bunI18n.changeLanguage(locale);
+  void _locale;
+  await bunI18n.changeLanguage(DEFAULT_LOCALE);
 }
 
 export const translate = bunI18n.t.bind(bunI18n);

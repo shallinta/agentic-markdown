@@ -33,6 +33,7 @@ export function createMainWindowRPC({
     handlers: {
       requests: {
         selectDocument: (request) => documents.select(request),
+        cancelDocument: (request) => documents.cancel(request),
         readDocument: (request) => documents.read(request),
         releaseDocument: (request) => documents.release(request),
         updateMode: () => updater.getUpdateModeSetting(),

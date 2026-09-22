@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { electrobun } from "@/lib/electrobun";
 import { createUpdateModeStore } from "@/lib/update-mode-store";
+import { logRendererEvent } from "@/shared/logging";
 import type { UpdateMode } from "@/shared/updates";
 
 function getRpc() {
@@ -36,11 +37,11 @@ export function useUpdateMode(): {
   );
 
   useEffect(() => {
-    loadPromise ??= updateModeStore.load().catch((error) => {
+    loadPromise ??= updateModeStore.load().catch(() => {
       loadPromise = null;
       const message = t("errors.loadSettings");
       toast.error(message);
-      console.error(message, error);
+      logRendererEvent("updater.settings_load_failed");
     });
   }, [t]);
 
@@ -48,10 +49,10 @@ export function useUpdateMode(): {
     async (mode: UpdateMode) => {
       try {
         await updateModeStore.change(mode);
-      } catch (error) {
+      } catch {
         const message = t("errors.saveSettings");
         toast.error(message);
-        console.error(message, error);
+        logRendererEvent("updater.settings_save_failed");
       }
     },
     [t]

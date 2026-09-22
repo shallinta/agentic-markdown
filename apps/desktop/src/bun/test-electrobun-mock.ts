@@ -29,6 +29,9 @@ export const fakeBrowserWindow = {
 };
 
 export const fakeUpdater = {
+  getStatusHistory: () => [
+    { status: "launching-new-version", message: "", timestamp: 0 },
+  ],
   applyUpdate: () => Promise.resolve(),
   checkForUpdate: () =>
     Promise.resolve({ error: null, updateAvailable: false, version: "1.0.0" }),

@@ -1,3 +1,5 @@
+import { logEvent } from "../logging";
+
 export interface BeforeQuitEvent {
   response?: { allow: boolean };
 }
@@ -10,7 +12,7 @@ export interface BeforeQuitEvent {
 export function createShutdownCoordinator({
   quit,
   stop,
-  onStopError = (error) => console.error("Desktop shutdown failed:", error),
+  onStopError = () => logEvent("app.shutdown_failed"),
 }: {
   quit: () => void;
   stop: () => Promise<void>;

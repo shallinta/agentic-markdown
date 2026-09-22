@@ -12,6 +12,8 @@ export default defineConfig([
   {
     ignores: [
       "**/node_modules/**",
+      "**/.hutch/**",
+      "hutch.config.ts",
       "**/dist/**",
       "**/build/**",
       "**/.next/**",

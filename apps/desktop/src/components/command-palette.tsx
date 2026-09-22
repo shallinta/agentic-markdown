@@ -47,7 +47,8 @@ export function CommandPalette({
     if (
       type === "selectDocument" ||
       type === "reloadDocument" ||
-      type === "clearDocument"
+      type === "clearDocument" ||
+      type === "closeDocument"
     )
       return PRODUCT_COMMANDS[type]!.label;
     return PRODUCT_COMMANDS[type]?.label ?? t(type);

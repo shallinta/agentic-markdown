@@ -8,7 +8,12 @@ import {
 } from "@agentic-markdown/shared/server";
 import { BrowserWindow, Updater } from "electrobun/bun";
 
+import {
+  SHELL_PRELOAD,
+  shellNavigationRules,
+} from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
+import { logEvent } from "../logging";
 import type { MainWindowRPC } from "../rpc";
 
 import { registerMenuActions } from "./menu";
@@ -25,14 +30,13 @@ async function getMainViewUrl(): Promise<string> {
   if (channel === "dev") {
     try {
       await fetch(DEV_SERVER_URL, { method: "HEAD" });
-      console.info(`HMR enabled: Using Vite dev server at ${DEV_SERVER_URL}`);
+      logEvent("window.development_server");
       return DEV_SERVER_URL;
     } catch {
-      console.info(
-        "Vite dev server not running. Run 'bun run dev:hmr' for HMR support."
-      );
+      // Fall back to the bundled shell when the development server is absent.
     }
   }
+  logEvent("window.packaged_assets");
   return "views://mainview/index.html";
 }
 
@@ -61,6 +65,8 @@ export async function createMainWindow({
   const window = new BrowserWindow({
     title: "Agentic Markdown",
     url,
+    navigationRules: shellNavigationRules(url),
+    preload: SHELL_PRELOAD,
     titleBarStyle: "hiddenInset",
     rpc,
     trafficLightOffset: { x: 2, y: 16 },

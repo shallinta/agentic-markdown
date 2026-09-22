@@ -6,6 +6,30 @@ await mock.module("electrobun/bun", () => electrobunBunMock);
 
 const { executeCommandInBun } = await import("./commands");
 
+test("rejects malformed RPC commands before forwarding or native effects", () => {
+  const dependencies = createDependencies([]);
+  const forwarded = mock(() => undefined);
+  dependencies.sendToWebview = forwarded;
+  const corpus: unknown[] = [
+    null,
+    [],
+    {},
+    { type: "__proto__", args: {} },
+    { type: "constructor", args: {} },
+    { type: "openLink", args: { url: 1 } },
+    { type: "openLink" },
+    { type: "openSettings", args: { tab: "<script>" } },
+    { type: "reload", args: { path: "/secret" } },
+    { type: "selectDocument", args: {}, extra: true },
+    { type: "openLink", args: { url: "https://example.com", command: "sh" } },
+  ];
+  for (const input of corpus)
+    expect(() =>
+      executeCommandInBun(input, {} as never, dependencies)
+    ).not.toThrow();
+  expect(forwarded).not.toHaveBeenCalled();
+});
+
 function createDependencies(openedUrls: string[]) {
   return {
     openExternal: (url: string) => openedUrls.push(url),
@@ -17,6 +41,32 @@ function createDependencies(openedUrls: string[]) {
     },
   };
 }
+
+test("reload and update commands never bypass lifecycle approval", () => {
+  const dependencies = createDependencies([]);
+  const nativeApply = mock(() => Promise.resolve());
+  dependencies.updater.applyUpdateAndRestart = nativeApply;
+  // No installed lifecycle owner means fail closed, not raw JS reload/apply.
+  executeCommandInBun({ type: "reload", args: {} }, {} as never, dependencies);
+  executeCommandInBun(
+    { type: "applyUpdateAndRestart", args: {} },
+    {} as never,
+    dependencies
+  );
+  expect(nativeApply).not.toHaveBeenCalled();
+  const reload = mock(() => Promise.resolve(false));
+  const update = mock(() => Promise.resolve(false));
+  const guarded = { ...dependencies, lifecycle: { reload, update } };
+  executeCommandInBun({ type: "reload", args: {} }, {} as never, guarded);
+  executeCommandInBun(
+    { type: "applyUpdateAndRestart", args: {} },
+    {} as never,
+    guarded
+  );
+  expect(reload).toHaveBeenCalledTimes(1);
+  expect(update).toHaveBeenCalledTimes(1);
+  expect(nativeApply).not.toHaveBeenCalled();
+});
 
 describe("executeCommandInBun openLink", () => {
   test.each(["http://example.com/path", "https://example.com/path"])(
@@ -52,7 +102,7 @@ describe("executeCommandInBun openLink", () => {
       );
 
       expect(openedUrls).toEqual([]);
-      expect(error).toHaveBeenCalledWith("Blocked unsafe external URL.");
+      expect(error).not.toHaveBeenCalled();
       expect(error.mock.calls.flat().join(" ")).not.toContain(url);
     } finally {
       error.mockRestore();

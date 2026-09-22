@@ -2,6 +2,12 @@ import type { RPCSchema } from "electrobun";
 
 import type { Command, CommandAvailabilityMessage } from "./commands";
 import type {
+  DiscardRequest,
+  DiscardResponse,
+  ReloadCommitRequest,
+  ReloadCommitResponse,
+} from "./discard";
+import type {
   DocumentHandleRequest,
   DocumentRequest,
   DocumentResponse,
@@ -13,6 +19,7 @@ export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
       selectDocument: { params: DocumentRequest; response: DocumentResponse };
+      cancelDocument: { params: DocumentRequest; response: DocumentResponse };
       readDocument: {
         params: DocumentHandleRequest;
         response: DocumentResponse;
@@ -46,8 +53,15 @@ export interface DesktopRPCType {
     };
   }>;
   webview: RPCSchema<{
-    requests: Record<string, never>;
+    requests: {
+      prepareDiscard: { params: DiscardRequest; response: DiscardResponse };
+      commitReload: {
+        params: ReloadCommitRequest;
+        response: ReloadCommitResponse;
+      };
+    };
     messages: {
+      finishDiscard: { requestId: string };
       updateStatusChanged: UpdateStatusChangedPayload;
       executeCommand: Command;
       fullScreenChanged: { fullScreen: boolean };

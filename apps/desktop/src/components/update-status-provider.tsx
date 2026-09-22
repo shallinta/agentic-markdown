@@ -18,6 +18,7 @@ import { useCommands } from "@/commands";
 import { UpdateDialog } from "@/components/update-dialog";
 import { electrobun } from "@/lib/electrobun";
 import { getStableRendererI18n } from "@/lib/renderer-i18n";
+import { logRendererEvent } from "@/shared/logging";
 import type {
   UpdateStatus,
   UpdateStatusChangedPayload,
@@ -193,7 +194,7 @@ export function UpdateStatusProvider({ children }: { children: ReactNode }) {
         case "up-to-date":
         case "error": {
           if (status.state === "error") {
-            console.error("Update check failed:", status.message);
+            logRendererEvent("updater.check_failed");
           }
           if (status.state !== "checking") toast.dismiss(DOWNLOADING_TOAST_ID);
           if (status.state === "checking") dismissedRef.current = false;

@@ -2,6 +2,7 @@ import { Updater } from "electrobun/bun";
 
 import type { UpdateMode, UpdateStatus } from "../../shared/updates";
 import { setUpdateModeInMenu, setUpdateReadyInMenu } from "../app/menu";
+import { logEvent } from "../logging";
 
 import {
   getLastSeenHash,
@@ -20,6 +21,7 @@ export interface UpdateStatusMessage {
 }
 
 interface UpdaterDependencies {
+  logEvent?: typeof logEvent;
   updater: typeof Updater;
   getLastSeenHash: typeof getLastSeenHash;
   getUpdateMode: typeof getUpdateMode;
@@ -56,7 +58,7 @@ export class UpdaterService {
   private _backgroundTimer: ReturnType<typeof setTimeout> | null = null;
   private _backgroundInterval: ReturnType<typeof setInterval> | null = null;
   private _applyGraceTimer: ReturnType<typeof setTimeout> | null = null;
-  private _applyPromise: Promise<void> | null = null;
+  private _applyPromise: Promise<boolean> | null = null;
 
   constructor(
     private readonly _sendUpdateStatus: (message: UpdateStatusMessage) => void,
@@ -106,20 +108,38 @@ export class UpdaterService {
     }
   }
 
-  applyUpdateAndRestart(): Promise<void> {
+  applyUpdateAndRestart(): Promise<boolean> {
+    if (!this._dependencies.updater.updateInfo()?.updateReady)
+      return Promise.resolve(false);
     this._applyPromise ??= this._applyUpdateAndRestart();
     return this._applyPromise;
   }
 
-  private async _applyUpdateAndRestart(): Promise<void> {
+  private async _applyUpdateAndRestart(): Promise<boolean> {
+    const previousStatus = new Set(
+      this._dependencies.updater.getStatusHistory()
+    );
     try {
       await this._dependencies.updater.applyUpdate();
+      const statuses = this._dependencies.updater
+        .getStatusHistory()
+        .filter((entry) => !previousStatus.has(entry));
+      if (
+        !statuses.some((entry) => entry.status === "launching-new-version") ||
+        statuses.some((entry) => entry.status === "error")
+      ) {
+        // A quiet SDK return can mean a no-op or a different before-quit veto.
+        queueMicrotask(() => {
+          this._applyPromise = null;
+        });
+        return false;
+      }
     } catch (error) {
       this._isPassManual = true;
       const message = error instanceof Error ? error.message : String(error);
       this._sendStatus({ state: "error", message });
       this._applyPromise = null;
-      return;
+      return false;
     }
     this._applyGraceTimer = this._dependencies.setTimeout(() => {
       this._applyGraceTimer = null;
@@ -127,6 +147,7 @@ export class UpdaterService {
         this._applyPromise = null;
       });
     }, APPLY_GRACE_MS);
+    return true;
   }
 
   getInstalledVersion(): string | null {
@@ -157,11 +178,8 @@ export class UpdaterService {
       }
 
       this._applySchedule(await this._dependencies.getUpdateMode());
-    } catch (error) {
-      console.error(
-        "Failed to start updater:",
-        error instanceof Error ? error : new Error(String(error))
-      );
+    } catch {
+      (this._dependencies.logEvent ?? logEvent)("updater.start_failed");
     }
   }
 

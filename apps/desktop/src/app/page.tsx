@@ -11,11 +11,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useTranslation } from "react-i18next";
 import { usePanelRef } from "react-resizable-panels";
 
 import { CommandProvider, useCommands, useRegisterCommands } from "@/commands";
-import { DocumentServicePanel } from "@/components/document-service-panel";
+import {
+  DocumentServicePanel,
+  StandaloneFileList,
+  useDocumentWorkspace,
+} from "@/components/document-service-panel";
 import { UpdateIndicator } from "@/components/update-indicator";
 import { UpdateStatusProvider } from "@/components/update-status-provider";
 import { electrobun } from "@/lib/electrobun";
@@ -51,7 +54,7 @@ export function Page() {
 }
 
 function PageInner() {
-  const { t } = useTranslation("common");
+  const workspace = useDocumentWorkspace();
   const { executeCommand } = useCommands();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
@@ -100,9 +103,7 @@ function PageInner() {
               aria-hidden="true"
               className="electrobun-webkit-app-region-drag absolute inset-x-1 top-0 z-10 h-12 select-none"
             />
-            <span className="text-muted-foreground text-sm">
-              {t("shell.navigationPlaceholder")}
-            </span>
+            <StandaloneFileList workspace={workspace} />
           </ResizablePanel>
           <ResizableHandle />
           <ResizablePanel
@@ -116,7 +117,7 @@ function PageInner() {
             <div className="electrobun-webkit-app-region-no-drag absolute top-4 right-4 z-20">
               <UpdateIndicator />
             </div>
-            <DocumentServicePanel />
+            <DocumentServicePanel workspace={workspace} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </main>

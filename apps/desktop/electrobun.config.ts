@@ -30,6 +30,9 @@ export default {
     version: packageJson.version,
   },
   build: {
+    // Keep the existing privileged Bun runtime during the framework migration.
+    mainProcess: "bun",
+    bun: { entrypoint: "src/bun/index.ts" },
     // Vite builds to dist/; imported assets are copied with their hashes.
     copy: {
       "dist/index.html": "views/mainview/index.html",

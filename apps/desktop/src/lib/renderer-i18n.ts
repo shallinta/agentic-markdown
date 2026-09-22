@@ -6,6 +6,7 @@ import {
   getTranslationResources,
   type SupportedLocale,
 } from "@/shared/i18n";
+import { logRendererEvent } from "@/shared/logging";
 
 export interface LocaleRPC {
   addMessageListener(
@@ -47,9 +48,7 @@ export function createRendererI18nRuntime(_dependencies: {
     return operation;
   };
   const reportError =
-    _dependencies.onError ??
-    ((error: unknown) =>
-      console.error("Failed to apply the renderer locale:", error));
+    _dependencies.onError ?? (() => logRendererEvent("renderer.locale_failed"));
 
   return {
     i18n: instance as I18n,

@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 
+import type { LogEvent } from "../../shared/logging";
 import type { UpdateMode } from "../../shared/updates";
 import {
   electrobunBunMock,
@@ -11,6 +12,7 @@ await mock.module("electrobun/bun", () => electrobunBunMock);
 const { UpdaterService } = await import("./index");
 
 interface TestDependencies {
+  logEvent?: (event: LogEvent) => void;
   updater: typeof nativeUpdater;
   getLastSeenHash: (identifier: string) => Promise<string | undefined>;
   getUpdateMode: () => Promise<UpdateMode>;
@@ -71,6 +73,54 @@ beforeEach(() => {
 });
 
 describe("UpdaterService", () => {
+  test("not-ready update never calls native apply", async () => {
+    let calls = 0;
+    const service = createService(
+      createDependencies({
+        updater: {
+          ...nativeUpdater,
+          updateInfo: () => ({ updateReady: false }),
+          applyUpdate: () => {
+            calls++;
+            return Promise.resolve();
+          },
+        },
+      })
+    );
+    expect(await service.applyUpdateAndRestart()).toBe(false);
+    expect(calls).toBe(0);
+  });
+  test("historical launch status cannot approve current silent no-op", async () => {
+    const entry = {
+      status: "launching-new-version",
+      message: "",
+      timestamp: 1,
+    };
+    const service = createService(
+      createDependencies({
+        updater: { ...nativeUpdater, getStatusHistory: () => [entry] },
+      })
+    );
+    expect(await service.applyUpdateAndRestart()).toBe(false);
+  });
+  test("quiet apply return does not claim restart and allows retry", async () => {
+    let calls = 0;
+    const service = createService(
+      createDependencies({
+        updater: {
+          ...nativeUpdater,
+          getStatusHistory: () => [],
+          applyUpdate: () => {
+            calls++;
+            return Promise.resolve();
+          },
+        },
+      })
+    );
+    expect(await service.applyUpdateAndRestart()).toBe(false);
+    expect(await service.applyUpdateAndRestart()).toBe(false);
+    expect(calls).toBe(2);
+  });
   test("never checks for updates in off mode, including manual requests", async () => {
     let checks = 0;
     const checkForUpdate = () => {
@@ -98,11 +148,10 @@ describe("UpdaterService", () => {
   });
 
   test("records initialization failures instead of rejecting start", async () => {
-    const errorLog = spyOn(console, "error").mockImplementation(
-      () => undefined
-    );
+    const errorLog = mock(() => undefined);
     const service = createService(
       createDependencies({
+        logEvent: errorLog,
         updater: {
           ...nativeUpdater,
           getLocalInfo: () => Promise.reject(new Error("local info failed")),
@@ -110,15 +159,8 @@ describe("UpdaterService", () => {
       })
     );
 
-    try {
-      await service.start();
-      expect(errorLog).toHaveBeenCalledWith(
-        "Failed to start updater:",
-        expect.any(Error)
-      );
-    } finally {
-      errorLog.mockRestore();
-    }
+    await service.start();
+    expect(errorLog).toHaveBeenCalledWith("updater.start_failed");
   });
 
   test("reuses one in-flight apply promise", async () => {

@@ -26,6 +26,7 @@ let commandAvailability: CommandAvailability = {
   selectDocument: false,
   reloadDocument: false,
   clearDocument: false,
+  closeDocument: false,
 };
 
 export function setCommandAvailabilityInMenu(value: unknown): void {
@@ -219,6 +220,7 @@ const MENU_ACTION_COMMANDS: Record<string, Command> = {
   selectDocument: { type: "selectDocument", args: {} },
   reloadDocument: { type: "reloadDocument", args: {} },
   clearDocument: { type: "clearDocument", args: {} },
+  closeDocument: { type: "closeDocument", args: {} },
   settings: { type: "openSettings", args: {} },
   commandPalette: { type: "openCommandPalette", args: {} },
   toggleSidebar: { type: "toggleSidebar", args: {} },
@@ -242,6 +244,7 @@ export function registerMenuActions(
     selectDocument: false,
     reloadDocument: false,
     clearDocument: false,
+    closeDocument: false,
   };
   ApplicationMenu.setApplicationMenu(
     buildMenu(currentUpdateReady, currentUpdateMode)

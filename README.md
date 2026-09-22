@@ -42,12 +42,21 @@ F-007a「现有界面简体中文与 App 外观」已于 2026-09-21 通过人工
 - [产品能力总账](./docs/product-capability-register.md)：完整能力清单、阶段、边界和决策历史；
 - [领域术语](./CONTEXT.md)：文档身份、路径、保存状态和解析语义等统一语言。
 - [MVP 产品规格](./docs/mvp-product-spec.md)：依赖层、动态排序和实施状态；
+- [迁出能力承接登记](./docs/deferred-obligations.md)：剩余能力的主承接功能、状态与验收证据；
 - [产品功能手册](./docs/product-feature-manual.md)：当前功能的使用方式、限制和随迭代维护的变更记录；
 - [F-001 迭代记录](./docs/iterations/F-001-app-shell.md)：本轮范围、方案及验证结果。
 
 ## 下一步
 
-由用户选择下一轮功能。L1 保留 8 个条目：7 个独立功能中完整验收 1 个，F-003a、F-004a、F-006a 和 F-007a 已验收，父功能 F-003、F-004、F-006、F-007 仍为部分完成；另有 F-002 持续约束随相关功能落实，不作为完成前置。
+当前 [F-012a：内存编辑底座](./docs/iterations/F-012a-memory-editing-foundation.md) 的其他项目已通过用户验收；切换标签后的选区显示问题已在 `0.1.0-alpha.8` 修复并通过自动与界面验证，仅该项待用户复验，整体及 OBL-062 仍待人工验收。单文件仍限 1 MiB，没有保存、正式模式或正文恢复，不要用于需要保留修改的真实工作。父 F-012 仍未完成。
+
+[F-010：编码与换行读取保真](./docs/iterations/F-010-text-fidelity.md) 与 [F-011：单文档实例与持久标签](./docs/iterations/F-011-persistent-document-tabs.md) 已于 2026-09-22 通过人工验收，F-011 验收包为 `0.1.0-alpha.3`；该轮已验收范围仅为只读原文，不包含编辑、保存或重启恢复。下一轮等待用户选择，不自动推进、提交或推送。
+
+[F-005a：读取任务取消与有界调度](./docs/iterations/F-005a-document-task-cancellation.md)已于 2026-09-21 通过人工验收。同日按用户选择的方案 A，L1 收敛为当前外壳与只读流程的独立基础能力；上文父功能“部分完成”描述的是调整前的完整范围，后续消费者仍须按 [规格 6.1](./docs/mvp-product-spec.md)落实，不删除需求。
+
+新增 [F-008a 安全、匿名日志与设置版本基线](./docs/iterations/F-008a-shell-security-baseline.md)及 [L1 六个模块](./docs/iterations/L1-module-acceptance.md)已于 2026-09-21 通过人工验收，方案 A 的 L1 基础范围完成；F-002 继续作为持续约束。下一轮由用户选择，不自动进入 L2 或提交、推送。
+
+[F-009a 欢迎页与独立文件](./docs/iterations/F-009a-welcome-standalone-files.md)已于 2026-09-22 通过用户人工验收；此前自动检查和未签名构建通过，Agent 当时因 Mac 锁定未完成新窗口实测的记录仍保留，不追加用户具体操作证据。下一轮由用户选择，不自动推进。F-009 父功能仍部分完成，文件夹和最近项入口由 OBL-039 / OBL-040 继续追踪，当前仍非正式阅读器或编辑器。
 
 ## 本地运行
 
@@ -55,10 +64,11 @@ F-007a「现有界面简体中文与 App 外观」已于 2026-09-21 通过人工
 
 ```sh
 bun install --frozen-lockfile
+bun run sdk:sync
 bun run dev
 AGENTIC_MARKDOWN_SKIP_SIGNING=1 bun run build:canary
 ```
 
-未签名构建位于 `apps/desktop/build/canary-macos-arm64/`（当前验证平台为 Apple Silicon）。默认数据目录为 `~/.agentic-markdown`，可通过 `AGENTIC_MARKDOWN_HOME` 覆盖。安装过程默认设置 Git hooks；本轮验证使用 `HUSKY=0` 跳过了该设置。
+未签名构建位于 `apps/desktop/build/canary-macos-arm64/`（当前验证平台为 Apple Silicon）。Electrobun 2.0.1 首次准备 SDK 需要下载配对工具链，生成的 `.hutch/devkit` 不入库；产物内 Bun 为 1.4.0，不改变本地开发 Bun。默认数据目录为 `~/.agentic-markdown`，可通过 `AGENTIC_MARKDOWN_HOME` 覆盖。安装过程默认设置 Git hooks；本轮验证使用 `HUSKY=0` 跳过了该设置。
 
 附带的发布、更新及其他 starter 功能尚未验收；完整来源见 [starter 记录](./docs/starter/SOURCE.md)。

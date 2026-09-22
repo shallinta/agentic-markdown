@@ -1,77 +1,60 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createLocaleStateStore, type LocaleStateStore } from "./state";
 
-let settingsDir: string;
-let statePath: string;
+let directory: string;
+let path: string;
 let store: LocaleStateStore;
-
 beforeEach(async () => {
-  settingsDir = await mkdtemp(join(tmpdir(), "electrobun-locale-state-"));
-  statePath = join(settingsDir, "locale.json");
-  store = createLocaleStateStore(settingsDir, () => "zh-Hant-TW");
+  directory = await mkdtemp(join(tmpdir(), "locale-settings-"));
+  path = join(directory, "locale.json");
+  store = createLocaleStateStore(directory, () => "en-US");
 });
-
 afterEach(async () => {
-  await rm(settingsDir, { recursive: true, force: true });
+  await rm(directory, { recursive: true, force: true });
 });
 
-describe("locale state persistence", () => {
-  test("uses the mapped system locale on first launch", async () => {
+test("initializes versioned Chinese preferences and normalizes legacy English", async () => {
+  expect(await store.getLocale()).toBe("zh-CN");
+  await store.setLocale("en-US");
+  expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+    version: 1,
+    data: { locale: "zh-CN" },
+  });
+});
+
+test.each(["zh-CN", "en-US", "fr-FR"])(
+  "migrates legacy %s with an exact backup",
+  async (locale) => {
+    const original = JSON.stringify({ locale });
+    await writeFile(path, original);
     expect(await store.getLocale()).toBe("zh-CN");
-    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
-      locale: "zh-CN",
+    expect(await readFile(`${path}.bak`, "utf8")).toBe(original);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      version: 1,
+      data: { locale: "zh-CN" },
     });
-  });
+  }
+);
 
-  test("uses the mapped system locale when persisted JSON is malformed", async () => {
-    await mkdir(settingsDir, { recursive: true });
-    await Bun.write(statePath, "{not-json");
-
+test.each(["{broken", "null", "42", "[]"])(
+  "preserves malformed source %s while using defaults",
+  async (original) => {
+    await writeFile(path, original);
     expect(await store.getLocale()).toBe("zh-CN");
-    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
-      locale: "zh-CN",
-    });
-  });
+    expect(await readFile(path, "utf8")).toBe(original);
+  }
+);
 
-  test("ignores persisted locales outside the supported set", async () => {
-    await Bun.write(statePath, JSON.stringify({ locale: "fr-FR" }));
-
-    expect(await store.getLocale()).toBe("zh-CN");
-    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
-      locale: "zh-CN",
-    });
-  });
-
-  test.each([null, "zh-CN", 42, ["zh-CN"]])(
-    "safely ignores non-object persisted JSON: %p",
-    async (persisted) => {
-      await Bun.write(statePath, JSON.stringify(persisted));
-
-      expect(await store.getLocale()).toBe("zh-CN");
-      expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
-        locale: "zh-CN",
-      });
-    }
-  );
-
-  test("normalizes legacy English requests to Chinese", async () => {
-    await store.setLocale("en-US");
-
-    expect(await store.getLocale()).toBe("zh-CN");
-    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
-      locale: "zh-CN",
-    });
-  });
-  test("migrates English preferences even on an English system", async () => {
-    await Bun.write(statePath, JSON.stringify({ locale: "en-US" }));
-    const englishSystem = createLocaleStateStore(settingsDir, () => "en-US");
-    expect(await englishSystem.getLocale()).toBe("zh-CN");
-    expect(JSON.parse(await readFile(statePath, "utf8"))).toEqual({
-      locale: "zh-CN",
-    });
-  });
+test("refuses to overwrite a future locale version", async () => {
+  const original = '{"version":2,"data":{"locale":"en-US"}}';
+  await writeFile(path, original);
+  expect(await store.getLocale()).toBe("zh-CN");
+  expect(
+    await store.setLocale("zh-CN").catch((error: unknown) => error)
+  ).toEqual(new Error("SETTINGS_VERSION_UNSUPPORTED"));
+  expect(await readFile(path, "utf8")).toBe(original);
 });

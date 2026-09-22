@@ -72,7 +72,13 @@ test("adds document commands disabled until availability sync before Edit", () =
       accelerator: "CommandOrControl+O",
     },
     { label: "重新读取", action: "reloadDocument", enabled: false },
-    { label: "清空", action: "clearDocument", enabled: false },
+    { label: "清空窗口", action: "clearDocument", enabled: false },
+    {
+      label: "关闭当前标签",
+      action: "closeDocument",
+      enabled: false,
+      accelerator: "CommandOrControl+W",
+    },
   ]);
 });
 
@@ -134,6 +140,7 @@ test("synchronizes command availability once and rejects malformed state", () =>
       selectDocument: true,
       reloadDocument: false,
       clearDocument: true,
+      closeDocument: true,
     },
   };
   menuModule.setCommandAvailabilityInMenu(value);
@@ -150,6 +157,7 @@ test("synchronizes command availability once and rejects malformed state", () =>
     ["selectDocument", true],
     ["reloadDocument", false],
     ["clearDocument", true],
+    ["closeDocument", true],
   ]);
 });
 
@@ -165,11 +173,13 @@ test("guards disabled document menu dispatch and resets on registration", () => 
       selectDocument: true,
       reloadDocument: false,
       clearDocument: true,
+      closeDocument: true,
     },
   });
   applicationMenuListener?.({ data: { action: "selectDocument" } });
   applicationMenuListener?.({ data: { action: "reloadDocument" } });
   applicationMenuListener?.({ data: { action: "clearDocument" } });
+  applicationMenuListener?.({ data: { action: "closeDocument" } });
   expect(execute).toHaveBeenNthCalledWith(
     1,
     { type: "selectDocument", args: {} },
@@ -180,9 +190,14 @@ test("guards disabled document menu dispatch and resets on registration", () => 
     { type: "clearDocument", args: {} },
     window
   );
+  expect(execute).toHaveBeenNthCalledWith(
+    3,
+    { type: "closeDocument", args: {} },
+    window
+  );
   menuModule.registerMenuActions(window, execute);
   applicationMenuListener?.({ data: { action: "selectDocument" } });
-  expect(execute).toHaveBeenCalledTimes(2);
+  expect(execute).toHaveBeenCalledTimes(3);
 });
 
 test("dispatches the Toggle Sidebar menu action", () => {

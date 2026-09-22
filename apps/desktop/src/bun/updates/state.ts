@@ -1,8 +1,10 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { getSettingsDir } from "@agentic-markdown/shared/server";
+import {
+  createSettingsStore,
+  getSettingsDir,
+  isSettingsObject,
+} from "@agentic-markdown/shared/server";
 
 import { DEFAULT_UPDATE_MODE, type UpdateMode } from "../../shared/updates";
 
@@ -20,70 +22,43 @@ export interface UpdatesStateStore {
   setLastSeenHash(identifier: string, hash: string): Promise<void>;
 }
 
-/** Persist updater state under an explicit settings directory. */
+/** Persist existing updater preferences; this does not validate update delivery. */
 export function createUpdatesStateStore(
   settingsDir: string
 ): UpdatesStateStore {
-  const statePath = join(settingsDir, "updates.json");
-  let mutationQueue: Promise<void> = Promise.resolve();
-
-  const load = async (): Promise<UpdatesState> => {
-    try {
-      return JSON.parse(await readFile(statePath, "utf8")) as UpdatesState;
-    } catch (error) {
-      if (
-        error instanceof SyntaxError ||
-        (error as NodeJS.ErrnoException).code === "ENOENT"
-      ) {
-        return {};
+  const store = createSettingsStore<UpdatesState>(
+    join(settingsDir, "updates.json"),
+    (value) => {
+      if (!isSettingsObject(value)) return {};
+      const state: UpdatesState = {};
+      if (VALID_MODES.includes(value.mode as UpdateMode))
+        state.mode = value.mode as UpdateMode;
+      if (isSettingsObject(value.lastSeenHashes)) {
+        state.lastSeenHashes = Object.fromEntries(
+          Object.entries(value.lastSeenHashes).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string"
+          )
+        );
       }
-      throw error;
+      return state;
     }
-  };
-
-  const write = async (next: UpdatesState): Promise<void> => {
-    const temporaryPath = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
-    await mkdir(settingsDir, { recursive: true });
-    try {
-      await writeFile(
-        temporaryPath,
-        `${JSON.stringify(next, null, 2)}\n`,
-        "utf8"
-      );
-      await rename(temporaryPath, statePath);
-    } catch (error) {
-      await rm(temporaryPath, { force: true });
-      throw error;
-    }
-  };
-
-  const merge = (
-    patch: UpdatesState | ((state: UpdatesState) => UpdatesState)
-  ): Promise<void> => {
-    const operation = mutationQueue.then(async () => {
-      const state = await load();
-      await write({
-        ...state,
-        ...(typeof patch === "function" ? patch(state) : patch),
-      });
-    });
-    mutationQueue = operation.catch(() => undefined);
-    return operation;
-  };
-
+  );
   return {
     async getUpdateMode() {
-      const mode = (await load()).mode;
-      return mode && VALID_MODES.includes(mode) ? mode : DEFAULT_UPDATE_MODE;
+      return (await store.load()).mode ?? DEFAULT_UPDATE_MODE;
     },
     setUpdateMode(mode) {
-      return merge({ mode });
+      return store.update((state) => ({ ...state, mode }));
     },
     async getLastSeenHash(identifier) {
-      return (await load()).lastSeenHashes?.[identifier];
+      const hashes = (await store.load()).lastSeenHashes;
+      return hashes && Object.prototype.hasOwnProperty.call(hashes, identifier)
+        ? hashes[identifier]
+        : undefined;
     },
     setLastSeenHash(identifier, hash) {
-      return merge((state) => ({
+      return store.update((state) => ({
+        ...state,
         lastSeenHashes: { ...state.lastSeenHashes, [identifier]: hash },
       }));
     },
@@ -91,7 +66,6 @@ export function createUpdatesStateStore(
 }
 
 const defaultStore = createUpdatesStateStore(getSettingsDir());
-
 export const getUpdateMode = () => defaultStore.getUpdateMode();
 export const setUpdateMode = (mode: UpdateMode) =>
   defaultStore.setUpdateMode(mode);

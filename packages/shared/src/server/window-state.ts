@@ -1,7 +1,5 @@
-import { randomUUID } from "node:crypto";
-import * as fs from "node:fs/promises";
-
-import { getSettingsDir, getWindowStatePath } from "./paths";
+import { getWindowStatePath } from "./paths";
+import { createSettingsStore, isSettingsObject } from "./settings-store";
 
 export interface WindowFrame {
   x: number;
@@ -24,8 +22,6 @@ export const DEFAULT_WINDOW_FRAME: WindowFrame = {
   height: 800,
 };
 
-let mutationQueue: Promise<void> = Promise.resolve();
-
 function isWindowFrame(value: unknown): value is WindowFrame {
   if (typeof value !== "object" || value === null) return false;
   const frame = value as WindowFrame;
@@ -36,6 +32,8 @@ function isWindowFrame(value: unknown): value is WindowFrame {
     typeof frame.height === "number" &&
     Number.isFinite(frame.x) &&
     Number.isFinite(frame.y) &&
+    Number.isFinite(frame.width) &&
+    Number.isFinite(frame.height) &&
     frame.width > 0 &&
     frame.height > 0
   );
@@ -61,45 +59,28 @@ export function getWindowZoom(state: WindowState): number | undefined {
 }
 
 export async function loadWindowState(): Promise<WindowState> {
-  try {
-    const text = await fs.readFile(getWindowStatePath(), "utf8");
-    return JSON.parse(text) as WindowState;
-  } catch (error) {
-    if (
-      error instanceof SyntaxError ||
-      (error as NodeJS.ErrnoException).code === "ENOENT"
-    ) {
-      return {};
-    }
-    throw error;
-  }
+  return windowStore().load();
 }
 
-async function writeWindowState(next: WindowState): Promise<void> {
-  const statePath = getWindowStatePath();
-  const temporaryPath = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
-  await fs.mkdir(getSettingsDir(), { recursive: true });
-  try {
-    await fs.writeFile(
-      temporaryPath,
-      `${JSON.stringify(next, null, 2)}\n`,
-      "utf8"
-    );
-    await fs.rename(temporaryPath, statePath);
-  } catch (error) {
-    await fs.rm(temporaryPath, { force: true });
-    throw error;
-  }
+function windowStore() {
+  return createSettingsStore<WindowState>(getWindowStatePath(), (value) => {
+    if (!isSettingsObject(value)) return {};
+    const state: WindowState = {};
+    if (isWindowFrame(value.frame)) state.frame = value.frame;
+    if (typeof value.isMaximized === "boolean")
+      state.isMaximized = value.isMaximized;
+    if (typeof value.isFullScreen === "boolean")
+      state.isFullScreen = value.isFullScreen;
+    const zoom = getWindowZoom(value);
+    if (zoom !== undefined) state.zoom = zoom;
+    return state;
+  });
 }
 
 function updateWindowState(
   update: (state: WindowState) => WindowState
 ): Promise<void> {
-  const operation = mutationQueue.then(async () => {
-    await writeWindowState(update(await loadWindowState()));
-  });
-  mutationQueue = operation.catch(() => undefined);
-  return operation;
+  return windowStore().update(update);
 }
 
 export async function saveWindowFrame(frame: WindowFrame): Promise<void> {

@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
+import { logEvent } from "../logging";
+
 /**
  * Backfill `process.env` with the user's real login-shell environment.
  *
@@ -56,8 +58,8 @@ export function hydrateShellEnv(): void {
       if (_SKIP_KEYS.has(key)) continue;
       process.env[key] = value;
     }
-  } catch (error) {
-    console.error("Failed to resolve login shell environment", error);
+  } catch {
+    logEvent("env.hydration_failed");
   }
 }
 

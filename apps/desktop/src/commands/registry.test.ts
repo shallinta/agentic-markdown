@@ -73,6 +73,7 @@ test("live controller guards reject same-tick duplicates and clear fences late s
     })
   );
   const controller = createDocumentController({
+    cancelDocument: () => Promise.resolve(null),
     selectDocument: select,
     readDocument: () => Promise.resolve(null),
     releaseDocument: release,
@@ -116,6 +117,16 @@ test("live controller guards reject same-tick duplicates and clear fences late s
       hash: "a".repeat(64),
       byteLength: 1,
       text: "x",
+      fidelity: {
+        encoding: "utf-8",
+        bom: false,
+        lf: 0,
+        crlf: 0,
+        loneCr: 0,
+        newlineStyle: "none",
+        dominantNewline: "none",
+        ending: "none",
+      },
     },
   });
   await Promise.resolve();
@@ -131,6 +142,7 @@ test("availability protocol is bounded to the three boolean document states", ()
     selectDocument: true,
     reloadDocument: false,
     clearDocument: false,
+    closeDocument: false,
   };
   expect(
     isCommandAvailabilityMessage({ protocolVersion: 1, availability })

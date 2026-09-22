@@ -31,6 +31,7 @@ export type Command =
   | GenericCommand<"selectDocument">
   | GenericCommand<"reloadDocument">
   | GenericCommand<"clearDocument">
+  | GenericCommand<"closeDocument">
   | OpenSettingsCommand
   | OpenCommandPaletteCommand
   | ToggleSidebarCommand
@@ -44,6 +45,46 @@ export type Command =
   | ApplyUpdateAndRestartCommand;
 
 export type CommandType = Command["type"];
+
+/** RPC types are erased at runtime; reject malformed and surplus payloads. */
+export function isCommand(value: unknown): value is Command {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const input = value as Record<string, unknown>;
+  if (
+    Object.keys(input).length !== 2 ||
+    !Object.prototype.hasOwnProperty.call(input, "type") ||
+    !Object.prototype.hasOwnProperty.call(input, "args")
+  )
+    return false;
+  if (
+    typeof input.type !== "string" ||
+    !Object.prototype.hasOwnProperty.call(COMMAND_META, input.type)
+  )
+    return false;
+  if (
+    typeof input.args !== "object" ||
+    input.args === null ||
+    Array.isArray(input.args)
+  )
+    return false;
+  const args = input.args as Record<string, unknown>;
+  const keys = Object.keys(args);
+  if (input.type === "openLink")
+    return (
+      keys.length === 1 &&
+      Object.prototype.hasOwnProperty.call(args, "url") &&
+      typeof args.url === "string"
+    );
+  if (input.type === "openSettings")
+    return (
+      keys.length === 0 ||
+      (keys.length === 1 &&
+        Object.prototype.hasOwnProperty.call(args, "tab") &&
+        (args.tab === "general" || args.tab === "about"))
+    );
+  return keys.length === 0;
+}
 export type CommandArgs<T extends CommandType> = Extract<
   Command,
   { type: T }
@@ -54,6 +95,7 @@ export const COMMAND_META: Record<CommandType, { target: "webview" | "bun" }> =
     selectDocument: { target: "webview" },
     reloadDocument: { target: "webview" },
     clearDocument: { target: "webview" },
+    closeDocument: { target: "webview" },
     openSettings: { target: "webview" },
     openCommandPalette: { target: "webview" },
     toggleSidebar: { target: "webview" },
@@ -84,7 +126,12 @@ export const PRODUCT_COMMANDS: Partial<
     shortcut: "⌘O",
   },
   reloadDocument: { label: "重新读取" },
-  clearDocument: { label: "清空" },
+  clearDocument: { label: "清空窗口" },
+  closeDocument: {
+    label: "关闭当前标签",
+    accelerator: "CommandOrControl+W",
+    shortcut: "⌘W",
+  },
   toggleSidebar: {
     label: "切换侧栏",
     accelerator: "CommandOrControl+B",
@@ -101,6 +148,7 @@ export const DOCUMENT_COMMAND_TYPES = [
   "selectDocument",
   "reloadDocument",
   "clearDocument",
+  "closeDocument",
 ] as const;
 export type DocumentCommandType = (typeof DOCUMENT_COMMAND_TYPES)[number];
 export type CommandAvailability = Record<DocumentCommandType, boolean>;

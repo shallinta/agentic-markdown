@@ -1,7 +1,8 @@
 import type { BrowserWindow } from "electrobun/bun";
 
-import { COMMAND_META, type Command } from "../shared/commands";
+import { COMMAND_META, isCommand, type Command } from "../shared/commands";
 
+import { logEvent } from "./logging";
 import { parseExternalUrl } from "./parse-external-url";
 import type { UpdaterService } from "./updates";
 
@@ -15,14 +16,19 @@ export interface BunCommandDependencies {
   openExternal: (url: string) => void;
   saveZoom: (zoom: number) => void;
   sendToWebview: (command: Command) => void;
-  updater: Pick<UpdaterService, "applyUpdateAndRestart" | "checkForUpdates">;
+  updater: Pick<UpdaterService, "checkForUpdates">;
+  lifecycle?: {
+    reload: () => Promise<boolean>;
+    update: () => Promise<boolean>;
+  };
 }
 
 export function executeCommandInBun(
-  command: Command,
+  command: unknown,
   window: BrowserWindow,
   dependencies: BunCommandDependencies
 ) {
+  if (!isCommand(command)) return;
   if (COMMAND_META[command.type].target === "webview") {
     dependencies.sendToWebview(command);
     return;
@@ -46,7 +52,7 @@ export function executeCommandInBun(
       dependencies.saveZoom(1);
       return;
     case "reload":
-      window.webview?.executeJavascript("location.reload()");
+      void dependencies.lifecycle?.reload();
       return;
     case "toggleMaximized":
       if (window.isMaximized()) {
@@ -60,7 +66,7 @@ export function executeCommandInBun(
       try {
         url = parseExternalUrl(command.args.url);
       } catch {
-        console.error("Blocked unsafe external URL.");
+        logEvent("security.external_url_blocked");
         return;
       }
       dependencies.openExternal(url.href);
@@ -70,7 +76,7 @@ export function executeCommandInBun(
       void dependencies.updater.checkForUpdates(true);
       return;
     case "applyUpdateAndRestart":
-      void dependencies.updater.applyUpdateAndRestart();
+      void dependencies.lifecycle?.update();
       return;
     default:
       return;

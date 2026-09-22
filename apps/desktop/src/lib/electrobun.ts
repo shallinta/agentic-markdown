@@ -1,5 +1,6 @@
 import { Electroview } from "electrobun/view";
 
+import { discardGuard } from "../client/discard-guard";
 import type { DesktopRPCType } from "../shared/rpc";
 
 // Electrobun's RPC (rpc-anywhere) defaults `maxRequestTime` to 1000ms, so any
@@ -10,7 +11,16 @@ const MAX_REQUEST_TIME_MS = 5 * 60_000 + 10_000;
 
 const rpc = Electroview.defineRPC<DesktopRPCType>({
   maxRequestTime: MAX_REQUEST_TIME_MS,
-  handlers: { requests: {}, messages: {} },
+  handlers: {
+    requests: {
+      prepareDiscard: (request) => discardGuard.request(request),
+      commitReload: (request) =>
+        discardGuard.commitReload(request, () => window.location.reload()),
+    },
+    messages: {
+      finishDiscard: ({ requestId }) => discardGuard.release(requestId),
+    },
+  },
 });
 
 export const electrobun = new Electroview({ rpc });

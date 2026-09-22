@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   mkdtemp,
   mkdir,
+  link,
   readFile,
   rename,
   rm,
@@ -18,6 +19,8 @@ import {
   type DocumentResponse,
   type DocumentService,
 } from "../../shared/documents";
+
+import { authorizeSingleFile } from "./path-authorization";
 
 import { createDocumentService } from ".";
 
@@ -45,6 +48,39 @@ describe("read-only document service", () => {
     await service.dispose();
     await rm(directory, { recursive: true, force: true });
   });
+  test("selected grants keep only closed descriptors between requests", async () => {
+    await service.dispose();
+    const opened: Awaited<ReturnType<typeof authorizeSingleFile>>[] = [];
+    service = createDocumentService({
+      pickFile: () => Promise.resolve(selected),
+      authorize: async (path) => {
+        const grant = await authorizeSingleFile(path);
+        opened.push(grant);
+        return grant;
+      },
+    });
+    const first = success(await service.select(request));
+    expect(opened[0]?.file.fd).toBe(-1);
+    expect(
+      success(await service.read({ ...request, handle: first.handle }))
+        .documentId
+    ).toBe(first.documentId);
+    expect(opened[0]?.file.fd).toBe(-1);
+  });
+  test("same-name files and hard links have separate canonical locations", async () => {
+    const first = success(await service.select(request));
+    await mkdir(join(directory, "nested"));
+    selected = join(directory, "nested", "测试.md");
+    await link(path, selected);
+    const second = success(await service.select(request));
+    expect(second.fileName).toBe(first.fileName);
+    expect(second.locationId).not.toBe(first.locationId);
+    expect(second.displayPath).not.toBe(first.displayPath);
+    expect(
+      success(await service.read({ ...request, handle: first.handle }))
+        .documentId
+    ).toBe(first.documentId);
+  });
   test("preserves exact text, same identity and revision across reselection; revisions follow content", async () => {
     const original = await readFile(path);
     const first = success(await service.select(request));
@@ -52,7 +88,13 @@ describe("read-only document service", () => {
     expect(first.byteLength).toBe(original.length);
     const second = success(await service.select(request));
     expect(second.documentId).toBe(first.documentId);
+    expect(second.locationId).toBe(first.locationId);
     expect(second.revision).toBe(1);
+    expect(
+      success(await service.read({ ...request, handle: first.handle }))
+        .documentId
+    ).toBe(first.documentId);
+    await service.release({ ...request, handle: first.handle });
     expect(
       await service.read({ ...request, handle: first.handle })
     ).toMatchObject({ error: "INVALID_HANDLE" });
@@ -84,7 +126,7 @@ describe("read-only document service", () => {
         .documentId
     ).toBe(first.documentId);
   });
-  test("selecting a different file revokes old grant and revisiting keeps session identity", async () => {
+  test("selecting a different file retains old grant and revisiting keeps session identity", async () => {
     const first = success(await service.select(request));
     selected = join(directory, "other.markdown");
     await writeFile(selected, "other");
@@ -92,7 +134,7 @@ describe("read-only document service", () => {
     expect(other.documentId).not.toBe(first.documentId);
     expect(
       await service.read({ ...request, handle: first.handle })
-    ).toMatchObject({ error: "INVALID_HANDLE" });
+    ).toMatchObject({ ok: true, snapshot: { documentId: first.documentId } });
     selected = path;
     const again = success(await service.select(request));
     expect(again.documentId).toBe(first.documentId);
@@ -110,6 +152,7 @@ describe("read-only document service", () => {
     ).toMatchObject({ error: "INVALID_HANDLE" });
     const second = success(await service.select(request));
     expect(second.documentId).not.toBe(first.documentId);
+    expect(second.locationId).toBe(first.locationId);
     await unlink(path);
     expect(
       await service.read({ ...request, handle: second.handle })
@@ -166,22 +209,24 @@ describe("read-only document service", () => {
     await symlink(path, selected);
     const alias = success(await service.select(request));
     expect(alias.documentId).toBe(first.documentId);
+    expect(alias.locationId).toBe(first.locationId);
     await rename(path, join(directory, "moved.md"));
     await symlink(join(directory, "moved.md"), path);
     expect(
       await service.read({ ...request, handle: alias.handle })
     ).toMatchObject({ error: "FILE_CHANGED" });
   });
-  test("concurrent reads serialize and release invalidates pending work", async () => {
+  test("concurrent reads keep latest and release invalidates pending work", async () => {
     const first = success(await service.select(request));
     const reads = await Promise.all([
-      service.read({ ...request, handle: first.handle }),
-      service.read({ ...request, handle: first.handle }),
+      service.read({ ...request, requestId: "one", handle: first.handle }),
+      service.read({ ...request, requestId: "two", handle: first.handle }),
     ]);
-    expect(reads.map((r) => success(r).revision)).toEqual([1, 1]);
+    expect(reads[0]).toMatchObject({ error: "CANCELLED" });
+    expect(success(reads[1]).revision).toBe(1);
     const pending = service.read({ ...request, handle: first.handle });
     await service.release({ ...request, handle: first.handle });
-    expect(await pending).toMatchObject({ error: "INVALID_HANDLE" });
+    expect(await pending).toMatchObject({ error: "CANCELLED" });
   });
   test("picker is BUSY while pending and disposal prevents late authorization", async () => {
     let finish!: (value: string) => void;
@@ -196,6 +241,6 @@ describe("read-only document service", () => {
     expect(await service.select(request)).toMatchObject({ error: "BUSY" });
     await service.dispose();
     finish(path);
-    expect(await pending).toMatchObject({ error: "INVALID_HANDLE" });
+    expect(await pending).toMatchObject({ error: "CANCELLED" });
   });
 });

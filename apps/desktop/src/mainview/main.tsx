@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import { electrobun } from "@/lib/electrobun";
 import { getTranslationResources } from "@/shared/i18n";
+import { logRendererEvent } from "@/shared/logging";
 
 import { App } from "../app";
 import {
@@ -21,8 +22,8 @@ function renderApp(): void {
   );
 }
 
-function renderStartupFailure(error: unknown): void {
-  console.error("Failed to start the renderer:", error);
+function renderStartupFailure(): void {
+  logRendererEvent("renderer.start_failed");
   root.render(
     <main
       className="flex size-full items-center justify-center p-8 text-center"
@@ -38,7 +39,9 @@ function renderStartupFailure(error: unknown): void {
         <button
           className="bg-primary text-primary-foreground rounded-md px-4 py-2 text-sm font-medium"
           type="button"
-          onClick={() => window.location.reload()}
+          onClick={() =>
+            electrobun.rpc?.send.executeCommand({ type: "reload", args: {} })
+          }
         >
           {startupCopy["zh-CN"].common.startupFailure.retry}
         </button>

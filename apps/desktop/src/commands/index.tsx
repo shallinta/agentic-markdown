@@ -42,17 +42,19 @@ export function CommandProvider({ children }: { children: ReactNode }) {
   const selectDocument = registry.isCommandEnabled("selectDocument");
   const reloadDocument = registry.isCommandEnabled("reloadDocument");
   const clearDocument = registry.isCommandEnabled("clearDocument");
+  const closeDocument = registry.isCommandEnabled("closeDocument");
   useEffect(() => {
     const availability: CommandAvailability = {
       selectDocument,
       reloadDocument,
       clearDocument,
+      closeDocument,
     };
     electrobun.rpc?.send.commandAvailabilityChanged({
       protocolVersion: 1,
       availability,
     });
-  }, [selectDocument, reloadDocument, clearDocument]);
+  }, [selectDocument, reloadDocument, clearDocument, closeDocument]);
   useEffect(
     () => () => {
       electrobun.rpc?.send.commandAvailabilityChanged({
@@ -61,6 +63,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
           selectDocument: false,
           reloadDocument: false,
           clearDocument: false,
+          closeDocument: false,
         },
       });
     },

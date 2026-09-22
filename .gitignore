@@ -25,6 +25,7 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .env.local
 .eslintcache
 .cache
+.hutch/
 *.tsbuildinfo
 .idea
 .mcp.json

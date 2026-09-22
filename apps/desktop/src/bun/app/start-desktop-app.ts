@@ -1,22 +1,24 @@
 import { getSettingsDir } from "@agentic-markdown/shared/server";
 import Electrobun, {
-  app,
   type BrowserWindow,
   type ElectrobunEvent,
   Utils,
 } from "electrobun/bun";
 
 import type { Command } from "../../shared/commands";
+import { isReloadCommitResponse } from "../../shared/discard";
 import { executeCommandInBun } from "../commands";
 import { createDocumentService } from "../documents";
 import { createLocaleController } from "../i18n/controller";
 import { createLocaleStateStore } from "../i18n/state";
+import { logEvent } from "../logging";
 import { createNativeFileCapabilities } from "../native-files";
 import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { UpdaterService } from "../updates";
 
+import { createDiscardCoordinator } from "./discard-coordinator";
+import { createLifecycleGuard } from "./lifecycle-guard";
 import { setLocaleInMenu } from "./menu";
-import { createShutdownCoordinator } from "./shutdown-coordinator";
 import { createMainWindow, type ManagedMainWindow } from "./window";
 
 export interface DesktopAppRuntime {
@@ -44,11 +46,36 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const updater = new UpdaterService((message) =>
     getRpc().send.updateStatusChanged(message)
   );
+  const guard = createDiscardCoordinator({
+    prepare: (request) => getRpc().request.prepareDiscard(request),
+    release: (requestId) => getRpc().send.finishDiscard({ requestId }),
+  });
+  const lifecycle = createLifecycleGuard({
+    guard,
+    // Flush is non-destructive. Another SDK listener can still veto quit;
+    // never dispose document grants until the process actually exits.
+    stop: async () => {
+      await mainWindow?.flushState();
+    },
+    quit: () => Utils.quit(),
+    reload: async (requestId) => {
+      const response: unknown = await getRpc().request.commitReload({
+        protocolVersion: 1,
+        requestId,
+      });
+      return isReloadCommitResponse(response, requestId) && response.committed;
+    },
+    update: () => updater.applyUpdateAndRestart(),
+    beforeUpdate: async () => {
+      await mainWindow?.flushState();
+    },
+  });
   const commandDependencies = {
     openExternal: Utils.openExternal,
     sendToWebview: (command: Command) => getRpc().send.executeCommand(command),
     saveZoom: (zoom: number) => mainWindow?.saveZoom(zoom),
     updater,
+    lifecycle,
   };
   const executeCommand = (command: Command, window: BrowserWindow): void =>
     executeCommandInBun(command, window, commandDependencies);
@@ -64,6 +91,13 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       return stopPromise;
     },
   };
+
+  // Install the veto before creating a renderer that can become editable.
+  Electrobun.events.on(
+    "before-quit",
+    (event: ElectrobunEvent<{}, { allow: boolean }>) =>
+      lifecycle.beforeQuit(event)
+  );
 
   try {
     const locale = createLocaleController({
@@ -88,24 +122,21 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       executeCommand,
       onWindowCreated: (window) => {
         browserWindow = window;
+        window.on("will-close", (event) =>
+          lifecycle.beforeClose(
+            event as ElectrobunEvent<{}, { allow: boolean }>
+          )
+        );
       },
       onFullScreenChange: (fullScreen) =>
         getRpc().send.fullScreenChanged({ fullScreen }),
     });
     void updater.start();
 
-    const handleBeforeQuit = createShutdownCoordinator({
-      quit: () => app.quit(),
-      stop: () => runtime.stop(),
-    });
-    Electrobun.events.on(
-      "before-quit",
-      (event: ElectrobunEvent<{}, { allow: boolean }>) =>
-        handleBeforeQuit(event)
-    );
-
+    logEvent("app.started");
     return runtime;
   } catch (error) {
+    logEvent("app.start_failed");
     await runtime.stop();
     throw error;
   }
@@ -114,11 +145,12 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
 async function stopDesktopApp(
   cleanups: readonly [name: string, cleanup: () => Promise<void> | void][]
 ): Promise<void> {
-  for (const [name, cleanup] of cleanups) {
+  for (const [, cleanup] of cleanups) {
     try {
       await cleanup();
-    } catch (error) {
-      console.error(`Failed to stop ${name}:`, error);
+    } catch {
+      logEvent("app.cleanup_failed");
     }
   }
+  logEvent("app.stopped");
 }

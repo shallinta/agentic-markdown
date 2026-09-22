@@ -43,6 +43,7 @@ test("command availability RPC validates state before updating native menu", () 
       selectDocument: true,
       reloadDocument: false,
       clearDocument: false,
+      closeDocument: false,
     },
   });
   expect(applicationMenus).toHaveLength(count + 1);
@@ -102,6 +103,10 @@ test("document RPC delegates each request to the validated service boundary", as
     snapshot: null,
   };
   const documents: DocumentService = {
+    cancel: (request) => {
+      calls.push(`cancel:${JSON.stringify(request)}`);
+      return Promise.resolve(response);
+    },
     select: (request) => {
       calls.push(`select:${JSON.stringify(request)}`);
       return Promise.resolve(response);
@@ -125,7 +130,12 @@ test("document RPC delegates each request to the validated service boundary", as
       requests: Record<string, (request: unknown) => Promise<unknown>>;
     };
   };
-  for (const method of ["selectDocument", "readDocument", "releaseDocument"]) {
+  for (const method of [
+    "selectDocument",
+    "readDocument",
+    "releaseDocument",
+    "cancelDocument",
+  ]) {
     expect(
       await rpc.handlers.requests[method]({ protocolVersion: 99 })
     ).toEqual(response);
@@ -134,5 +144,6 @@ test("document RPC delegates each request to the validated service boundary", as
     'select:{"protocolVersion":99}',
     'read:{"protocolVersion":99}',
     'release:{"protocolVersion":99}',
+    'cancel:{"protocolVersion":99}',
   ]);
 });

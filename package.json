@@ -7,6 +7,7 @@
     "apps/*"
   ],
   "scripts": {
+    "sdk:sync": "cd apps/desktop && bunx --no-install electrobun sync",
     "dev": "cd apps/desktop && bun run dev:hmr",
     "dev:cef": "cd apps/desktop && bun run dev:cef",
     "build:canary": "cd apps/desktop && bun run build:canary",
@@ -16,7 +17,8 @@
     "test": "bun test",
     "lint": "eslint --max-warnings 0 .",
     "lint:fix": "eslint --fix .",
-    "check:feature-docs": "bun scripts/check-feature-docs.ts",
+    "check:feature-docs": "bun scripts/check-feature-docs.ts && bun run check:obligations",
+    "check:obligations": "bun scripts/check-obligations.ts",
     "check:lockfile": "bun scripts/check-lockfile-registry.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p packages/ui/tsconfig.json && tsc --noEmit -p apps/desktop/tsconfig.json",
     "prepare": "husky"

@@ -1,4 +1,4 @@
-import { BrowserView, type BrowserWindow } from "electrobun/bun";
+import { BrowserView, Utils, type BrowserWindow } from "electrobun/bun";
 
 import type { Command } from "../../shared/commands";
 import type { DocumentService } from "../../shared/documents";
@@ -28,10 +28,37 @@ export function createMainWindowRPC({
   locale,
   updater,
 }: MainWindowRPCDependencies): MainWindowRPC {
+  const enabled = process.env.AGENTIC_MARKDOWN_PERF_LAB === "1";
+  const autorun = enabled && process.env.AGENTIC_MARKDOWN_PERF_AUTO === "1";
+  let lab:
+    | Promise<
+        ReturnType<(typeof import("../perf-lab"))["createPerfLabService"]>
+      >
+    | undefined;
   return BrowserView.defineRPC<DesktopRPCType>({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        perfLabStatus: () => ({ enabled, autorun }),
+        perfLabRequest: async (request) => {
+          if (!enabled) return { ok: false, error: "DISABLED" as const };
+          lab ??= import("../perf-lab").then((module) =>
+            module.createPerfLabService({ enabled })
+          );
+          const result = await (await lab).run(request);
+          if (
+            result.ok &&
+            request.op === "report" &&
+            autorun &&
+            process.env.AGENTIC_MARKDOWN_PERF_AUTO_EXIT === "1"
+          )
+            setTimeout(() => Utils.quit(), 1000);
+          return result;
+        },
+        checkDocumentWriteCapability: (request) =>
+          documents.checkWriteCapability(request),
+        saveDocument: (request) => documents.save(request),
+        waitForDocumentSaves: (request) => documents.waitForSaves(request),
         selectDocument: (request) => documents.select(request),
         cancelDocument: (request) => documents.cancel(request),
         readDocument: (request) => documents.read(request),

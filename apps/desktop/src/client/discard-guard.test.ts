@@ -6,6 +6,65 @@ const request = () => ({
   requestId: crypto.randomUUID(),
   reason: "quit" as const,
 });
+
+test("late settlement failure after release cannot publish into a newer discard attempt", async () => {
+  const guard = createDiscardGuard();
+  let reject!: (error: Error) => void;
+  let waits = 0,
+    failures = 0;
+  const pending = new Promise<void>((_resolve, fail) => {
+    reject = fail;
+  });
+  guard.register({
+    beginDiscard: () => true,
+    endDiscard: () => undefined,
+    hasDirty: () => false,
+    waitForSaves: () => (++waits === 1 ? pending : Promise.resolve()),
+    reportDiscardFailure: () => {
+      failures++;
+    },
+  });
+  const first = request();
+  const old = guard.request(first);
+  guard.release(first.requestId);
+  const second = request();
+  expect((await guard.request(second)).allow).toBe(true);
+  reject(Error("old save settlement failure"));
+  expect((await old).allow).toBe(false);
+  expect(failures).toBe(0);
+  guard.release(second.requestId);
+});
+
+test("global discard freezes first, waits for save completion, then checks latest dirty state", async () => {
+  const guard = createDiscardGuard();
+  let frozen = false,
+    dirty = true;
+  let finish!: () => void;
+  const saving = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  guard.register({
+    beginDiscard: () => {
+      frozen = true;
+      return true;
+    },
+    endDiscard: () => {
+      frozen = false;
+    },
+    hasDirty: () => dirty,
+    waitForSaves: () => saving,
+  });
+  const req = request();
+  const decision = guard.request(req);
+  expect(frozen).toBe(true);
+  expect(guard.getSnapshot()).toBeNull();
+  dirty = false;
+  finish();
+  expect((await decision).allow).toBe(true);
+  expect(guard.getSnapshot()).toBeNull();
+  guard.release(req.requestId);
+  expect(frozen).toBe(false);
+});
 test("uninitialized guard refuses; release-before-prepare refuses", async () => {
   const guard = createDiscardGuard();
   for (const malformed of [null, { protocolVersion: 1 }]) {

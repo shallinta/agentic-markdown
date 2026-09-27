@@ -9,9 +9,10 @@ import {
   CommandList,
   CommandShortcut,
 } from "@agentic-markdown/ui/ui/command";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { captureHistoryTarget } from "@/client/history-target";
 import { useCommands } from "@/commands";
 import { useUpdateStatus } from "@/components/update-status-provider";
 import { useUpdateMode } from "@/hooks/use-update-mode";
@@ -40,13 +41,20 @@ export function CommandPalette({
   const { executeCommand, isCommandEnabled } = useCommands();
   const previousFocus = useRef<HTMLElement | null>(null);
   const pendingCommand = useRef<CommandType | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<string | undefined>(
+    undefined
+  );
   const { t } = useTranslation("commands");
   const { readyVersion } = useUpdateStatus();
   const { mode: updateMode } = useUpdateMode();
   const label = (type: CommandType): string => {
+    if (type === "toggleSourceMode") return "";
     if (
       type === "selectDocument" ||
+      type === "undoDocument" ||
+      type === "redoDocument" ||
       type === "reloadDocument" ||
+      type === "saveDocument" ||
       type === "clearDocument" ||
       type === "closeDocument"
     )
@@ -56,6 +64,7 @@ export function CommandPalette({
 
   const types = (Object.keys(COMMAND_META) as CommandType[]).filter(
     (type) =>
+      COMMAND_META[type].palette !== false &&
       !blacklist.includes(type) &&
       (type !== "checkForUpdates" || updateMode !== "off") &&
       (type !== "applyUpdateAndRestart" || readyVersion !== null)
@@ -80,6 +89,7 @@ export function CommandPalette({
               ? document.activeElement
               : null;
           pendingCommand.current = null;
+          setHistoryTarget(captureHistoryTarget());
         },
         onCloseAutoFocus: (event) => {
           event.preventDefault();
@@ -88,7 +98,13 @@ export function CommandPalette({
           const type = pendingCommand.current;
           pendingCommand.current = null;
           // Close focus restoration finishes before a command opens a new UI.
-          if (type)
+          if (type === "undoDocument" || type === "redoDocument") {
+            const documentId = historyTarget;
+            if (documentId)
+              queueMicrotask(() =>
+                executeCommand({ type, args: { documentId } })
+              );
+          } else if (type)
             queueMicrotask(() =>
               executeCommand({ type, args: {} } as AppCommand)
             );
@@ -103,7 +119,11 @@ export function CommandPalette({
             <CommandItem
               key={type}
               value={label(type)}
-              disabled={!isCommandEnabled(type)}
+              disabled={
+                !isCommandEnabled(type) ||
+                ((type === "undoDocument" || type === "redoDocument") &&
+                  !historyTarget)
+              }
               onSelect={() => run(type)}
             >
               {label(type)}

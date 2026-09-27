@@ -23,7 +23,11 @@ const REPOSITORY_URL = "https://github.com/shallinta/agentic-markdown";
 let currentUpdateMode: UpdateMode = "automatic";
 let currentUpdateReady = false;
 let commandAvailability: CommandAvailability = {
+  undoDocument: false,
+  redoDocument: false,
+  documentHistory: false,
   selectDocument: false,
+  saveDocument: false,
   reloadDocument: false,
   clearDocument: false,
   closeDocument: false,
@@ -32,7 +36,7 @@ let commandAvailability: CommandAvailability = {
 export function setCommandAvailabilityInMenu(value: unknown): void {
   if (!isCommandAvailabilityMessage(value)) return;
   if (
-    DOCUMENT_COMMAND_TYPES.every(
+    (Object.keys(commandAvailability) as (keyof CommandAvailability)[]).every(
       (type) => commandAvailability[type] === value.availability[type]
     )
   )
@@ -112,8 +116,17 @@ function buildMenu(
     {
       label: t("menu:edit.title"),
       submenu: [
-        { label: t("menu:edit.undo"), role: "undo" },
-        { label: t("menu:edit.redo"), role: "redo" },
+        ...(["undo", "redo"] as const).map((direction) => {
+          const type = direction === "undo" ? "undoDocument" : "redoDocument";
+          return commandAvailability.documentHistory
+            ? {
+                label: PRODUCT_COMMANDS[type]!.label,
+                action: type,
+                enabled: commandAvailability[type],
+                accelerator: PRODUCT_COMMANDS[type]!.accelerator,
+              }
+            : { label: PRODUCT_COMMANDS[type]!.label, role: direction };
+        }),
         { type: "divider" },
         { label: t("menu:edit.cut"), role: "cut" },
         { label: t("menu:edit.copy"), role: "copy" },
@@ -217,7 +230,10 @@ export function setUpdateModeInMenu(mode: UpdateMode) {
 }
 
 const MENU_ACTION_COMMANDS: Record<string, Command> = {
+  undoDocument: { type: "undoDocument", args: {} },
+  redoDocument: { type: "redoDocument", args: {} },
   selectDocument: { type: "selectDocument", args: {} },
+  saveDocument: { type: "saveDocument", args: {} },
   reloadDocument: { type: "reloadDocument", args: {} },
   clearDocument: { type: "clearDocument", args: {} },
   closeDocument: { type: "closeDocument", args: {} },
@@ -241,7 +257,11 @@ export function registerMenuActions(
 ) {
   currentUpdateReady = false;
   commandAvailability = {
+    undoDocument: false,
+    redoDocument: false,
+    documentHistory: false,
     selectDocument: false,
+    saveDocument: false,
     reloadDocument: false,
     clearDocument: false,
     closeDocument: false,
@@ -252,6 +272,11 @@ export function registerMenuActions(
   ApplicationMenu.on("application-menu-clicked", (event) => {
     const { action } = (event as { data: { action: string } }).data;
     const command = MENU_ACTION_COMMANDS[action];
+    if (
+      (action === "undoDocument" || action === "redoDocument") &&
+      (!commandAvailability.documentHistory || !commandAvailability[action])
+    )
+      return;
     if (
       DOCUMENT_COMMAND_TYPES.includes(action as DocumentCommandType) &&
       !commandAvailability[action as DocumentCommandType]

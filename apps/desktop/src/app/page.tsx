@@ -35,6 +35,16 @@ const CommandPalette = lazy(() =>
     default: module.CommandPalette,
   }))
 );
+const PerformanceLab = lazy(() =>
+  import("@/components/performance-lab").then((module) => ({
+    default: module.PerformanceLab,
+  }))
+);
+const EditorProbeLab = lazy(() =>
+  import("@/components/editor-probe-lab").then((module) => ({
+    default: module.EditorProbeLab,
+  }))
+);
 
 function LazyMount({ open, children }: { open: boolean; children: ReactNode }) {
   const mounted = useRef(false);
@@ -44,6 +54,25 @@ function LazyMount({ open, children }: { open: boolean; children: ReactNode }) {
 }
 
 export function Page() {
+  const lab = (
+    globalThis as typeof globalThis & {
+      __AGENTIC_MARKDOWN_PERF_LAB__?: {
+        enabled: boolean;
+        autorun: boolean;
+        editorProbe?: boolean;
+      };
+    }
+  ).__AGENTIC_MARKDOWN_PERF_LAB__;
+  if (lab?.enabled)
+    return (
+      <Suspense fallback={<p>正在加载合成数据实验…</p>}>
+        {lab.editorProbe ? (
+          <EditorProbeLab autorun={lab.autorun} />
+        ) : (
+          <PerformanceLab autorun={lab.autorun} />
+        )}
+      </Suspense>
+    );
   return (
     <CommandProvider>
       <UpdateStatusProvider>

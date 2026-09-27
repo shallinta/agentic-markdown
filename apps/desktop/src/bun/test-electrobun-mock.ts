@@ -48,6 +48,7 @@ export const fakeUpdater = {
 };
 
 export const electrobunBunMock = {
+  Utils: { quit: () => undefined },
   app: { on: () => undefined },
   ApplicationMenu: {
     on: () => undefined,

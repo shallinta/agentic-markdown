@@ -1,17 +1,16 @@
-import {
-  history,
-  invertedEffects,
-  defaultKeymap,
-  historyKeymap,
-} from "@codemirror/commands";
+import { history, invertedEffects, defaultKeymap } from "@codemirror/commands";
 import {
   EditorState,
+  Compartment,
   StateEffect,
   StateField,
   type ChangeSet,
   type Extension,
 } from "@codemirror/state";
 import { drawSelection, EditorView, keymap } from "@codemirror/view";
+
+import { createEditorModeExtensions } from "./editor-mode";
+import { longLineProtection } from "./long-line-protection";
 
 /** CM coordinates count every line separator once; raw bytes stay authoritative. */
 export function editorText(raw: string): string {
@@ -85,6 +84,7 @@ export const rawText = StateField.define<string>({
       : raw;
   },
 });
+export const writePermission = new Compartment();
 function inversePatch(before: string, after: string): RawPatch {
   let from = 0;
   while (
@@ -107,7 +107,8 @@ function inversePatch(before: string, after: string): RawPatch {
 }
 export function createRawEditorState(
   raw: string,
-  extensions: Extension = []
+  extensions: Extension = [],
+  isolated = false
 ): EditorState {
   return EditorState.create({
     doc: editorText(raw),
@@ -137,7 +138,10 @@ export function createRawEditorState(
         ];
       }),
       history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
+      longLineProtection,
+      createEditorModeExtensions(isolated),
+      writePermission.of(EditorState.readOnly.of(false)),
+      keymap.of(defaultKeymap),
       EditorView.lineWrapping,
       // Native DOM selection is hidden while the tab button owns focus. Draw
       // the saved CM range without stealing keyboard focus on tab activation.
@@ -151,10 +155,13 @@ export function createRawEditorState(
         ".cm-scroller": { overflow: "auto", fontFamily: "monospace" },
         ".cm-content": { padding: "16px", caretColor: "var(--foreground)" },
         ".cm-cursor": { borderLeftColor: "var(--foreground)" },
-        ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-          backgroundColor:
-            "color-mix(in oklab, var(--foreground) 20%, var(--background))",
-        },
+        // Match the focused base rule's specificity; a shorter selector loses
+        // to CM's default light lavender even when app color variables are dark.
+        ".cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground":
+          {
+            backgroundColor:
+              "color-mix(in oklab, var(--foreground) 20%, var(--background))",
+          },
       }),
       invertedEffects.of((transaction) => {
         if (!transaction.docChanged) return [];

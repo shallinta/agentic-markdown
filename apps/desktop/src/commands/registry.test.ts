@@ -2,12 +2,46 @@ import { expect, mock, test } from "bun:test";
 
 import { createDocumentController } from "../client/documents";
 import {
+  COMMAND_META,
+  isCommand,
   isCommandAvailabilityMessage,
   PRODUCT_COMMANDS,
 } from "../shared/commands";
 import type { DocumentRequest, DocumentResponse } from "../shared/documents";
 
 import { createCommandRegistry } from "./registry";
+
+test("source mode is a guarded internal command, never a visible product action", () => {
+  const registry = createCommandRegistry(
+    () => {
+      throw new Error("not native");
+    },
+    () => {
+      throw new Error("unexpected failure");
+    }
+  );
+  let enabled = false,
+    count = 0;
+  registry.registerCommandHandlers(
+    {
+      toggleSourceMode: () => {
+        count++;
+      },
+    },
+    { toggleSourceMode: () => enabled }
+  );
+  registry.executeCommand({ type: "toggleSourceMode", args: {} });
+  expect(count).toBe(0);
+  enabled = true;
+  registry.executeCommand({ type: "toggleSourceMode", args: {} });
+  expect(count).toBe(1);
+  expect(COMMAND_META.toggleSourceMode.palette).toBe(false);
+  expect(PRODUCT_COMMANDS.toggleSourceMode).toBeUndefined();
+  expect(isCommand({ type: "toggleSourceMode", args: {} })).toBe(true);
+  expect(isCommand({ type: "toggleSourceMode", args: { extra: true } })).toBe(
+    false
+  );
+});
 
 test("registration ownership, unavailable guard and native forwarding", () => {
   const forward = mock(() => undefined);
@@ -117,6 +151,7 @@ test("live controller guards reject same-tick duplicates and clear fences late s
       hash: "a".repeat(64),
       byteLength: 1,
       text: "x",
+      writeCapability: { writable: true, reason: "writable" },
       fidelity: {
         encoding: "utf-8",
         bom: false,
@@ -137,9 +172,13 @@ test("live controller guards reject same-tick duplicates and clear fences late s
   expect(changed).toHaveBeenCalledTimes(2);
 });
 
-test("availability protocol is bounded to the three boolean document states", () => {
+test("availability protocol is bounded to document command states", () => {
   const availability = {
+    undoDocument: false,
+    redoDocument: false,
+    documentHistory: true,
     selectDocument: true,
+    saveDocument: false,
     reloadDocument: false,
     clearDocument: false,
     closeDocument: false,
@@ -161,5 +200,6 @@ test("availability protocol is bounded to the three boolean document states", ()
     "CommandOrControl+O"
   );
   expect(PRODUCT_COMMANDS.reloadDocument?.accelerator).toBeUndefined();
+  expect(PRODUCT_COMMANDS.saveDocument?.accelerator).toBe("CommandOrControl+S");
   expect(PRODUCT_COMMANDS.clearDocument?.accelerator).toBeUndefined();
 });

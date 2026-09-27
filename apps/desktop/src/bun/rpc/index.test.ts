@@ -44,6 +44,10 @@ test("command availability RPC validates state before updating native menu", () 
       reloadDocument: false,
       clearDocument: false,
       closeDocument: false,
+      saveDocument: false,
+      undoDocument: false,
+      redoDocument: false,
+      documentHistory: true,
     },
   });
   expect(applicationMenus).toHaveLength(count + 1);
@@ -103,6 +107,29 @@ test("document RPC delegates each request to the validated service boundary", as
     snapshot: null,
   };
   const documents: DocumentService = {
+    checkWriteCapability: () =>
+      Promise.resolve({
+        protocolVersion: 1,
+        requestId: "test",
+        handle: "test",
+        capability: { writable: true, reason: "writable" },
+      }),
+    waitForSaves: () =>
+      Promise.resolve({
+        protocolVersion: 1,
+        requestId: "request",
+        settled: true,
+      }),
+    save: (request) => {
+      calls.push(`save:${JSON.stringify(request)}`);
+      return Promise.resolve({
+        protocolVersion: 1 as const,
+        requestId: "request",
+        ok: false as const,
+        error: "INVALID_REQUEST" as const,
+      });
+    },
+    withWriteBarrier: (action) => action(),
     cancel: (request) => {
       calls.push(`cancel:${JSON.stringify(request)}`);
       return Promise.resolve(response);
@@ -135,15 +162,26 @@ test("document RPC delegates each request to the validated service boundary", as
     "readDocument",
     "releaseDocument",
     "cancelDocument",
+    "saveDocument",
   ]) {
     expect(
       await rpc.handlers.requests[method]({ protocolVersion: 99 })
-    ).toEqual(response);
+    ).toEqual(
+      method === "saveDocument"
+        ? {
+            protocolVersion: 1,
+            requestId: "request",
+            ok: false,
+            error: "INVALID_REQUEST",
+          }
+        : response
+    );
   }
   expect(calls).toEqual([
     'select:{"protocolVersion":99}',
     'read:{"protocolVersion":99}',
     'release:{"protocolVersion":99}',
     'cancel:{"protocolVersion":99}',
+    'save:{"protocolVersion":99}',
   ]);
 });

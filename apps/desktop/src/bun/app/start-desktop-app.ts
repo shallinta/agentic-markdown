@@ -32,6 +32,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const nativeFiles = createNativeFileCapabilities();
   const documents = createDocumentService({
     pickFile: () => nativeFiles.pickFile(),
+    onCapabilityChanged: (handle) =>
+      rpc?.send.documentCapabilityChanged({ handle }),
   });
 
   const getRpc = (): MainWindowRPC => {
@@ -51,7 +53,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     release: (requestId) => getRpc().send.finishDiscard({ requestId }),
   });
   const lifecycle = createLifecycleGuard({
-    guard,
+    guard: (reason, execute) =>
+      documents.withWriteBarrier(() => guard(reason, execute)),
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.
     stop: async () => {

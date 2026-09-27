@@ -12,6 +12,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 
+import { isExternalTextTarget } from "@/client/history-target";
 import { electrobun } from "@/lib/electrobun";
 import { type CommandAvailability, type CommandType } from "@/shared/commands";
 
@@ -41,20 +42,48 @@ export function CommandProvider({ children }: { children: ReactNode }) {
   );
   const selectDocument = registry.isCommandEnabled("selectDocument");
   const reloadDocument = registry.isCommandEnabled("reloadDocument");
+  const saveDocument = registry.isCommandEnabled("saveDocument");
   const clearDocument = registry.isCommandEnabled("clearDocument");
   const closeDocument = registry.isCommandEnabled("closeDocument");
+  const undoDocument = registry.isCommandEnabled("undoDocument");
+  const redoDocument = registry.isCommandEnabled("redoDocument");
+  const [documentHistory, setDocumentHistory] = useState(true);
+  useEffect(() => {
+    const update = () =>
+      setDocumentHistory(!isExternalTextTarget(document.activeElement));
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    update();
+    return () => {
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+    };
+  }, []);
   useEffect(() => {
     const availability: CommandAvailability = {
       selectDocument,
       reloadDocument,
+      saveDocument,
       clearDocument,
       closeDocument,
+      undoDocument,
+      redoDocument,
+      documentHistory,
     };
     electrobun.rpc?.send.commandAvailabilityChanged({
       protocolVersion: 1,
       availability,
     });
-  }, [selectDocument, reloadDocument, clearDocument, closeDocument]);
+  }, [
+    selectDocument,
+    saveDocument,
+    reloadDocument,
+    clearDocument,
+    closeDocument,
+    undoDocument,
+    redoDocument,
+    documentHistory,
+  ]);
   useEffect(
     () => () => {
       electrobun.rpc?.send.commandAvailabilityChanged({
@@ -62,8 +91,12 @@ export function CommandProvider({ children }: { children: ReactNode }) {
         availability: {
           selectDocument: false,
           reloadDocument: false,
+          saveDocument: false,
           clearDocument: false,
           closeDocument: false,
+          undoDocument: false,
+          redoDocument: false,
+          documentHistory: false,
         },
       });
     },

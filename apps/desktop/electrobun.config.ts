@@ -37,6 +37,7 @@ export default {
     copy: {
       "dist/index.html": "views/mainview/index.html",
       "dist/assets": "views/mainview/assets",
+      "dist-native": "native",
     },
     // Ignore Vite output in watch mode — HMR handles view rebuilds separately.
     watchIgnore: ["dist/**"],
@@ -56,6 +57,7 @@ export default {
     },
   },
   scripts: {
+    preBuild: "scripts/build-save-native.ts",
     // Both run right before their respective codesign step. Workaround for
     // electrobun#485 (x64-only, no-op elsewhere); see the script header.
     postBuild: "scripts/fix-x64-headerpad.ts",

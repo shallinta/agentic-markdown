@@ -54,7 +54,11 @@ test.each(corpus)(
         requestId: "reload",
         handle: first.snapshot.handle,
       });
-      expect(reload).toMatchObject({ ok: true, snapshot: first.snapshot });
+      const { mirror, ...unchanged } = first.snapshot;
+      expect(reload).toMatchObject({ ok: true, snapshot: unchanged });
+      if (!reload.ok || !reload.snapshot) throw new Error("reload failed");
+      expect(reload.snapshot.mirror?.token).not.toBe(mirror?.token);
+      expect(reload.snapshot.mirror?.hash).toBe(first.snapshot.hash);
       expect(digest(await readFile(path))).toBe(digest(bytes));
       await service.release({
         protocolVersion: 1,

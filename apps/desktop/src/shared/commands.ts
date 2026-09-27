@@ -28,7 +28,11 @@ export interface CheckForUpdatesCommand extends GenericCommand<"checkForUpdates"
 export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdateAndRestart"> {}
 
 export type Command =
+  | GenericCommand<"toggleSourceMode">
+  | GenericCommand<"undoDocument", { documentId?: string }>
+  | GenericCommand<"redoDocument", { documentId?: string }>
   | GenericCommand<"selectDocument">
+  | GenericCommand<"saveDocument">
   | GenericCommand<"reloadDocument">
   | GenericCommand<"clearDocument">
   | GenericCommand<"closeDocument">
@@ -70,6 +74,16 @@ export function isCommand(value: unknown): value is Command {
     return false;
   const args = input.args as Record<string, unknown>;
   const keys = Object.keys(args);
+  if (input.type === "undoDocument" || input.type === "redoDocument")
+    return (
+      keys.length === 0 ||
+      (keys.length === 1 &&
+        keys[0] === "documentId" &&
+        typeof args.documentId === "string" &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
+          args.documentId
+        ))
+    );
   if (input.type === "openLink")
     return (
       keys.length === 1 &&
@@ -90,24 +104,30 @@ export type CommandArgs<T extends CommandType> = Extract<
   { type: T }
 >["args"];
 
-export const COMMAND_META: Record<CommandType, { target: "webview" | "bun" }> =
-  {
-    selectDocument: { target: "webview" },
-    reloadDocument: { target: "webview" },
-    clearDocument: { target: "webview" },
-    closeDocument: { target: "webview" },
-    openSettings: { target: "webview" },
-    openCommandPalette: { target: "webview" },
-    toggleSidebar: { target: "webview" },
-    zoomIn: { target: "bun" },
-    zoomOut: { target: "bun" },
-    resetZoom: { target: "bun" },
-    reload: { target: "bun" },
-    toggleMaximized: { target: "bun" },
-    openLink: { target: "bun" },
-    checkForUpdates: { target: "bun" },
-    applyUpdateAndRestart: { target: "bun" },
-  };
+export const COMMAND_META: Record<
+  CommandType,
+  { target: "webview" | "bun"; palette?: false }
+> = {
+  toggleSourceMode: { target: "webview", palette: false },
+  undoDocument: { target: "webview" },
+  redoDocument: { target: "webview" },
+  selectDocument: { target: "webview" },
+  saveDocument: { target: "webview" },
+  reloadDocument: { target: "webview" },
+  clearDocument: { target: "webview" },
+  closeDocument: { target: "webview" },
+  openSettings: { target: "webview" },
+  openCommandPalette: { target: "webview" },
+  toggleSidebar: { target: "webview" },
+  zoomIn: { target: "bun" },
+  zoomOut: { target: "bun" },
+  resetZoom: { target: "bun" },
+  reload: { target: "bun" },
+  toggleMaximized: { target: "bun" },
+  openLink: { target: "bun" },
+  checkForUpdates: { target: "bun" },
+  applyUpdateAndRestart: { target: "bun" },
+};
 
 /** Product commands; other starter commands remain inherited drafts. */
 export const PRODUCT_COMMANDS: Partial<
@@ -120,12 +140,27 @@ export const PRODUCT_COMMANDS: Partial<
     }
   >
 > = {
+  undoDocument: {
+    label: "撤销",
+    accelerator: "CommandOrControl+Z",
+    shortcut: "⌘Z",
+  },
+  redoDocument: {
+    label: "重做",
+    accelerator: "CommandOrControl+Shift+Z",
+    shortcut: "⌘⇧Z",
+  },
   selectDocument: {
     label: "选择 Markdown 文件",
     accelerator: "CommandOrControl+O",
     shortcut: "⌘O",
   },
   reloadDocument: { label: "重新读取" },
+  saveDocument: {
+    label: "保存当前文档",
+    accelerator: "CommandOrControl+S",
+    shortcut: "⌘S",
+  },
   clearDocument: { label: "清空窗口" },
   closeDocument: {
     label: "关闭当前标签",
@@ -146,12 +181,22 @@ export const PRODUCT_COMMANDS: Partial<
 
 export const DOCUMENT_COMMAND_TYPES = [
   "selectDocument",
+  "saveDocument",
   "reloadDocument",
   "clearDocument",
   "closeDocument",
 ] as const;
 export type DocumentCommandType = (typeof DOCUMENT_COMMAND_TYPES)[number];
-export type CommandAvailability = Record<DocumentCommandType, boolean>;
+export type CommandAvailability = Record<
+  DocumentCommandType | "undoDocument" | "redoDocument" | "documentHistory",
+  boolean
+>;
+const AVAILABILITY_KEYS = [
+  ...DOCUMENT_COMMAND_TYPES,
+  "undoDocument",
+  "redoDocument",
+  "documentHistory",
+] as const;
 export interface CommandAvailabilityMessage {
   protocolVersion: 1;
   availability: CommandAvailability;
@@ -171,8 +216,8 @@ export function isCommandAvailabilityMessage(
     return false;
   const availability = input.availability as Record<string, unknown>;
   return (
-    Object.keys(availability).length === DOCUMENT_COMMAND_TYPES.length &&
-    DOCUMENT_COMMAND_TYPES.every(
+    Object.keys(availability).length === AVAILABILITY_KEYS.length &&
+    AVAILABILITY_KEYS.every(
       (type) =>
         Object.prototype.hasOwnProperty.call(availability, type) &&
         typeof availability[type] === "boolean"

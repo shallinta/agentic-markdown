@@ -2,6 +2,9 @@
   "name": "agentic-markdown",
   "private": true,
   "type": "module",
+  "overrides": {
+    "@lezer/common": "1.5.3"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"

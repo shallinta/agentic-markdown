@@ -15,7 +15,91 @@ import {
   isDocumentResponse,
   type DocumentTransport,
 } from "./documents";
+import { reportEditorFault } from "./editor-fault";
 import { rawText } from "./raw-buffer";
+
+test("safe source preserves dirty revision and transfer, waits for interaction, and stays isolated on reload", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  let editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(
+    value.documentId,
+    editor.state.update({ changes: { from: 0, insert: "未保存" } })
+  );
+  editor = controller.getEditor(value.documentId)!;
+  const transfer = controller.getSaveTransfer(value.documentId);
+  const session = controller.getEditorFault(value.documentId)!;
+  reportEditorFault(session, "presentation");
+  controller.setInteractionCheck(() => false);
+  expect(controller.enterSafeSource(value.documentId, session)).toBe(false);
+  controller.setInteractionCheck(() => true);
+  controller.beginDiscard();
+  expect(controller.enterSafeSource(value.documentId, session)).toBe(false);
+  controller.endDiscard();
+  expect(controller.enterSafeSource(value.documentId, session)).toBe(true);
+  expect(controller.isSafeSource(value.documentId)).toBe(true);
+  expect(controller.canToggleSourceMode()).toBe(false);
+  expect(controller.getEditor(value.documentId)!.revision).toBe(
+    editor.revision
+  );
+  expect(controller.getEditor(value.documentId)!.state.field(rawText)).toBe(
+    editor.state.field(rawText)
+  );
+  expect(controller.getSaveTransfer(value.documentId)).toBe(transfer);
+  expect(controller.isDirty(value.documentId)).toBe(true);
+  expect(controller.runHistory("undo")).toBe(true);
+  expect(controller.getEditor(value.documentId)!.state.field(rawText)).toBe(
+    value.text
+  );
+  await controller.reload();
+  expect(controller.isSafeSource(value.documentId)).toBe(true);
+  expect(controller.toggleSourceMode()).toBe(false);
+  expect(controller.enterSafeSource(value.documentId, session)).toBe(false);
+});
+
+test("parser injection preserves current text and safe source respects read-only", async () => {
+  const { controller, value } = setup();
+  value.writeCapability = { writable: false, reason: "readonly" };
+  await controller.select();
+  expect(controller.injectEditorFault("parser")).toBe(true);
+  const fault = controller.getEditorFault(value.documentId)!;
+  expect(fault.fault).toBe("parser");
+  expect(controller.enterSafeSource(value.documentId, fault)).toBe(true);
+  const editor = controller.getEditor(value.documentId)!;
+  expect(
+    controller.updateEditor(
+      value.documentId,
+      editor.state.update({ changes: { from: 0, insert: "x" } })
+    )
+  ).toBe(false);
+  expect(editor.state.field(rawText)).toBe(value.text);
+  expect(controller.isDirty(value.documentId)).toBe(false);
+});
+
+test("safe source preserves available scroll but a broken geometry capture cannot prevent recovery", async () => {
+  for (const broken of [false, true]) {
+    const { controller, value } = setup();
+    await controller.select();
+    const scroll = EditorView.scrollIntoView(3);
+    let sawScroll = false;
+    controller.setScrollCapture(() => {
+      if (broken) throw new Error("private geometry error");
+      return scroll;
+    });
+    controller.setHistoryDispatch((transaction) => {
+      sawScroll = transaction.effects.includes(scroll);
+      controller.updateEditor(value.documentId, transaction);
+    });
+    const session = controller.getEditorFault(value.documentId)!;
+    reportEditorFault(session, "presentation");
+    expect(controller.enterSafeSource(value.documentId, session)).toBe(true);
+    expect(sawScroll).toBe(!broken);
+    expect(session.recoveryFailed).toBe(false);
+    expect(controller.getEditor(value.documentId)!.state.field(rawText)).toBe(
+      value.text
+    );
+  }
+});
 
 function snapshot(text = "# 中文 <script>alert(1)</script>"): DocumentSnapshot {
   return {
@@ -27,6 +111,7 @@ function snapshot(text = "# 中文 <script>alert(1)</script>"): DocumentSnapshot
     byteLength: new TextEncoder().encode(text).length,
     text,
     fidelity: analyzeTextFidelity(text),
+    writeCapability: { writable: true, reason: "writable" },
   };
 }
 function result(
@@ -67,6 +152,82 @@ function setup() {
   };
 }
 
+test("source mode is per-document and cannot mutate raw, revision, save transfer or dirty state", async () => {
+  const { controller, transport, value } = setup();
+  expect(controller.canToggleSourceMode()).toBe(false);
+  await controller.select();
+  const before = controller.getEditor(value.documentId)!;
+  const transfer = controller.getSaveTransfer(value.documentId);
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(value.documentId)).toBe("source");
+  expect(controller.getEditor(value.documentId)!.revision).toBe(
+    before.revision
+  );
+  expect(controller.getEditor(value.documentId)!.state.doc).toBe(
+    before.state.doc
+  );
+  expect(controller.getSaveTransfer(value.documentId)).toBe(transfer);
+  expect(controller.getSaveStatus(value.documentId).status).toBe("saved");
+  const second = snapshot("second");
+  transport.selectDocument = (request) =>
+    Promise.resolve(result(request, second));
+  await controller.select();
+  expect(controller.getMode(second.documentId)).toBe("editing");
+  controller.activateTab(value.documentId);
+  expect(controller.getMode(value.documentId)).toBe("source");
+  controller.setInteractionCheck(() => false);
+  expect(controller.toggleSourceMode()).toBe(false);
+  controller.setInteractionCheck(() => true);
+  controller.beginDiscard();
+  expect(controller.toggleSourceMode()).toBe(false);
+  controller.endDiscard();
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(value.documentId)).toBe("editing");
+});
+
+test("read-only documents can switch presentation but reject source edits", async () => {
+  const { controller, value } = setup();
+  value.writeCapability = { writable: false, reason: "readonly" };
+  await controller.select();
+  expect(controller.toggleSourceMode()).toBe(true);
+  const editor = controller.getEditor(value.documentId)!;
+  expect(
+    controller.updateEditor(
+      value.documentId,
+      editor.state.update({ changes: { from: 0, insert: "x" } })
+    )
+  ).toBe(false);
+  expect(controller.getEditor(value.documentId)!.state.field(rawText)).toBe(
+    value.text
+  );
+});
+
+test("mode dispatch keeps the current view and scroll effect, and reload retains document mode", async () => {
+  const { controller, transport, value } = setup();
+  await controller.select();
+  const scroll = EditorView.scrollIntoView(2, { y: "start" });
+  controller.setScrollCapture(() => scroll);
+  let dispatched = 0;
+  controller.setHistoryDispatch((transaction) => {
+    expect(transaction.effects).toContain(scroll);
+    expect(transaction.docChanged).toBe(false);
+    dispatched++;
+    controller.updateEditor(value.documentId, transaction);
+  });
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(dispatched).toBe(1);
+  const pending = deferred<DocumentResponse>();
+  transport.readDocument = (request) => {
+    void Promise.resolve().then(() => pending.resolve(result(request, value)));
+    return pending.promise;
+  };
+  const reload = controller.reload();
+  expect(controller.canToggleSourceMode()).toBe(false);
+  expect(controller.toggleSourceMode()).toBe(false);
+  await reload;
+  expect(controller.getMode(value.documentId)).toBe("source");
+});
+
 test("runtime scroll effects follow identical document state and clear on reload/close", async () => {
   const { controller, transport, value } = setup();
   await controller.select();
@@ -105,15 +266,22 @@ test("per-document buffer, selection, history and baseline survive switching and
   transport.selectDocument = (req) => Promise.resolve(result(req, second));
   await controller.select();
   controller.activateTab(value.documentId);
-  expect(controller.getEditor(value.documentId)!.state).toBe(edit.state);
+  expect(controller.getEditor(value.documentId)!.state.doc).toBe(
+    edit.state.doc
+  );
+  expect(controller.getEditor(value.documentId)!.state.selection).toBe(
+    edit.state.selection
+  );
   transport.selectDocument = (req) => Promise.resolve(result(req, value));
   await controller.select();
-  expect(controller.getEditor(value.documentId)!.state).toBe(edit.state);
+  expect(controller.getEditor(value.documentId)!.state.doc).toBe(
+    edit.state.doc
+  );
   expect(
     controller.getEditor(value.documentId)!.state.selection.main.anchor
   ).toBe(2);
   undo({
-    state: edit.state,
+    state: controller.getEditor(value.documentId)!.state,
     dispatch: (tr) => {
       controller.updateEditor(value.documentId, tr);
     },
@@ -136,7 +304,8 @@ test("selection-only noncollapsed range survives A to B to A without a text edit
   await controller.select();
   controller.activateTab(value.documentId);
   const restored = controller.getEditor(value.documentId)!.state;
-  expect(restored).toBe(selected.state);
+  expect(restored.doc).toBe(selected.state.doc);
+  expect(restored.selection).toBe(selected.state.selection);
   expect(restored.selection.main.from).toBe(2);
   expect(restored.selection.main.to).toBe(8);
   expect(restored.selection.main.empty).toBe(false);

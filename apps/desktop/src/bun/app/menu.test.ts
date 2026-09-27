@@ -33,6 +33,48 @@ test("provides an update-mode menu synchronizer", () => {
   ).toBeFunction();
 });
 
+test("document history uses guarded actions and ordinary fields retain native roles", () => {
+  const execute = mock(() => undefined);
+  menuModule.registerMenuActions({} as never, execute);
+  const availability = {
+    selectDocument: true,
+    saveDocument: false,
+    reloadDocument: true,
+    clearDocument: true,
+    closeDocument: true,
+    undoDocument: true,
+    redoDocument: false,
+    documentHistory: true,
+  };
+  menuModule.setCommandAvailabilityInMenu({ protocolVersion: 1, availability });
+  const editItems = () =>
+    (
+      menus[menus.length - 1] as {
+        submenu: { role?: string; action?: string; enabled?: boolean }[];
+      }[]
+    )[2].submenu;
+  expect(editItems()[0]).toMatchObject({
+    action: "undoDocument",
+    enabled: true,
+  });
+  expect(editItems()[0].role).toBeUndefined();
+  expect(editItems()[1]).toMatchObject({
+    action: "redoDocument",
+    enabled: false,
+  });
+  applicationMenuListener?.({ data: { action: "undoDocument" } });
+  applicationMenuListener?.({ data: { action: "redoDocument" } });
+  expect(execute).toHaveBeenCalledTimes(1);
+  menuModule.setCommandAvailabilityInMenu({
+    protocolVersion: 1,
+    availability: { ...availability, documentHistory: false },
+  });
+  expect(editItems()[0]).toMatchObject({ role: "undo" });
+  expect(editItems()[0].action).toBeUndefined();
+  applicationMenuListener?.({ data: { action: "undoDocument" } });
+  expect(execute).toHaveBeenCalledTimes(1);
+});
+
 test("disables the native check-for-updates item in off mode", () => {
   menuModule.registerMenuActions({} as never, () => undefined);
   menuModule.setUpdateModeInMenu("off");
@@ -70,6 +112,12 @@ test("adds document commands disabled until availability sync before Edit", () =
       action: "selectDocument",
       enabled: false,
       accelerator: "CommandOrControl+O",
+    },
+    {
+      label: "保存当前文档",
+      action: "saveDocument",
+      enabled: false,
+      accelerator: "CommandOrControl+S",
     },
     { label: "重新读取", action: "reloadDocument", enabled: false },
     { label: "清空窗口", action: "clearDocument", enabled: false },
@@ -137,7 +185,11 @@ test("synchronizes command availability once and rejects malformed state", () =>
   const value = {
     protocolVersion: 1,
     availability: {
+      undoDocument: false,
+      redoDocument: false,
+      documentHistory: true,
       selectDocument: true,
+      saveDocument: true,
       reloadDocument: false,
       clearDocument: true,
       closeDocument: true,
@@ -155,6 +207,7 @@ test("synchronizes command availability once and rejects malformed state", () =>
       .map((item) => [item.action, item.enabled])
   ).toEqual([
     ["selectDocument", true],
+    ["saveDocument", true],
     ["reloadDocument", false],
     ["clearDocument", true],
     ["closeDocument", true],
@@ -170,7 +223,11 @@ test("guards disabled document menu dispatch and resets on registration", () => 
   menuModule.setCommandAvailabilityInMenu({
     protocolVersion: 1,
     availability: {
+      undoDocument: false,
+      redoDocument: false,
+      documentHistory: true,
       selectDocument: true,
+      saveDocument: false,
       reloadDocument: false,
       clearDocument: true,
       closeDocument: true,

@@ -10,6 +10,63 @@ const linkedRow = row.replace(
 );
 const doc =
   "> 状态：实现中\n<!-- obligations: OBL-001 -->\n<!-- deferred-obligations: none -->\nF-002 中文与外观 命令与键盘 安全与日志";
+
+test("multiple reciprocal slices retain pending work and require all accepted before closure", () => {
+  const links =
+    "[A](./iterations/F-009-open.md)、[B](./iterations/F-009b-open.md)";
+  const multi = row.replace("待承接 | —", `实现中 | ${links}`);
+  const docs = {
+    "F-009-open.md": doc.replace("状态：实现中", "状态：已验收"),
+    "F-009b-open.md": doc,
+  };
+  expect(() => verifyObligations(multi, spec, docs)).not.toThrow();
+  const accepted = multi
+    .replace("实现中", "已验收")
+    .replace("| — |", "| 2026-09-26 用户确认 | ");
+  expect(() => verifyObligations(accepted, spec, docs)).toThrow(
+    "iteration not accepted"
+  );
+  expect(() =>
+    verifyObligations(accepted, spec, {
+      ...docs,
+      "F-009b-open.md": docs["F-009-open.md"],
+    })
+  ).not.toThrow();
+  expect(() =>
+    verifyObligations(multi, spec, { "F-009-open.md": docs["F-009-open.md"] })
+  ).toThrow("reciprocal claim");
+  expect(() =>
+    verifyObligations(multi, spec, {
+      ...docs,
+      "F-009b-open.md": doc.replace(
+        "obligations: OBL-001",
+        "obligations: none"
+      ),
+    })
+  ).toThrow("reciprocal claim");
+});
+
+test("rejects malformed and duplicate links including repeated targets with fragments", () => {
+  for (const link of [
+    "[A](./iterations/F-009-open.md)、oops",
+    "[A](./iterations/F-009-open.md), [B](./iterations/F-009b-open.md)",
+    "[A](./iterations/F-009-open.md)、",
+  ])
+    expect(() =>
+      verifyObligations(row.replace("待承接 | —", `实现中 | ${link}`), spec, {})
+    ).toThrow("malformed iteration link");
+  for (const second of ["F-009-open.md", "F-009-open.md#section"])
+    expect(() =>
+      verifyObligations(
+        row.replace(
+          "待承接 | —",
+          `实现中 | [A](./iterations/F-009-open.md)、[B](./iterations/${second})`
+        ),
+        spec,
+        {}
+      )
+    ).toThrow("duplicate iteration links");
+});
 test("allows pending and active reciprocal claims", () => {
   expect(() => verifyObligations(row, spec, {})).not.toThrow();
   expect(() =>

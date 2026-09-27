@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 
 import { undo, redo } from "@codemirror/commands";
 import { type EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 
 import {
   applyEditorChanges,
@@ -10,6 +11,29 @@ import {
   rawOffset,
   rawText,
 } from "./raw-buffer";
+
+test("focused selection theme matches CodeMirror base specificity and follows app color variables", () => {
+  const styles = createRawEditorState("中文 selection")
+    .facet(EditorView.styleModule)
+    .map((module) => module.getRules())
+    .join("\n");
+  // CM's focused base rule has five class selectors and otherwise wins over
+  // a shorter theme rule, even though the app paints the editor background dark.
+  const selectionRule = styles
+    .split("\n")
+    .find(
+      (rule) =>
+        rule.includes(".cm-selectionBackground") && rule.includes("color-mix")
+    );
+  expect(selectionRule).toBeDefined();
+  expect(selectionRule).toContain(
+    ".cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground"
+  );
+  expect(selectionRule).toContain(
+    "color-mix(in oklab, var(--foreground) 20%, var(--background))"
+  );
+  expect(selectionRule).not.toContain("!important");
+});
 
 test("raw offsets retain BOM, UTF16 emoji, CRLF and lone CR", () => {
   const raw = "\uFEFFa😀\r\nb\rc\n";

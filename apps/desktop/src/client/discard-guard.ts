@@ -10,6 +10,8 @@ interface Participant {
   beginDiscard(): boolean;
   endDiscard(): void;
   hasDirty(): boolean;
+  waitForSaves?(): Promise<void>;
+  reportDiscardFailure?(): void;
 }
 export function createDiscardGuard() {
   let participant: Participant | null = null;
@@ -107,9 +109,11 @@ export function createDiscardGuard() {
       active = current;
       current.promise = (async () => {
         try {
+          if (target.waitForSaves) await target.waitForSaves();
+          if (current.released || participant !== target) return denied;
           const approved =
             !target.hasDirty() ||
-            (await ask("是否放弃全部未保存变更？当前编辑尚不支持保存。"));
+            (await ask("是否放弃全部未保存变更？放弃后无法恢复。"));
           if (!approved || current.released || participant !== target) {
             if (active === current) release(current.id);
             return denied;
@@ -117,7 +121,14 @@ export function createDiscardGuard() {
           current.approved = true;
           return { ...denied, allow: true };
         } catch {
-          if (active === current) release(current.id);
+          if (
+            active === current &&
+            !current.released &&
+            participant === target
+          ) {
+            target.reportDiscardFailure?.();
+            release(current.id);
+          }
           return denied;
         }
       })();

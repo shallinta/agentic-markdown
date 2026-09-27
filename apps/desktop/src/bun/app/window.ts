@@ -58,6 +58,10 @@ export async function createMainWindow({
   onFullScreenChange?: (isFullScreen: boolean) => void;
 }): Promise<ManagedMainWindow> {
   const url = await getMainViewUrl();
+  const labPreload =
+    process.env.AGENTIC_MARKDOWN_PERF_LAB === "1"
+      ? `;globalThis.__AGENTIC_MARKDOWN_PERF_LAB__ = { enabled: true, autorun: ${process.env.AGENTIC_MARKDOWN_PERF_AUTO === "1"}, editorProbe: ${process.env.AGENTIC_MARKDOWN_PERF_EDITOR === "1"} };`
+      : "";
   const windowState = await loadWindowState();
   const savedFrame = getWindowFrame(windowState) ?? DEFAULT_WINDOW_FRAME;
   const savedZoom = getWindowZoom(windowState) ?? 1;
@@ -66,7 +70,12 @@ export async function createMainWindow({
     title: "Agentic Markdown",
     url,
     navigationRules: shellNavigationRules(url),
-    preload: SHELL_PRELOAD,
+    preload:
+      SHELL_PRELOAD +
+      labPreload +
+      (process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB === "1"
+        ? ";globalThis.__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__ = true;"
+        : ""),
     titleBarStyle: "hiddenInset",
     rpc,
     trafficLightOffset: { x: 2, y: 16 },

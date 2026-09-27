@@ -1,4 +1,7 @@
-import { expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   browserWindowListeners,
@@ -12,9 +15,36 @@ await mock.module("electrobun/bun", () => electrobunBunMock);
 
 const { createMainWindow } = await import("./window");
 
+let previousAppHome: string | undefined;
+let testAppHome: string;
+const windows: Awaited<ReturnType<typeof createMainWindow>>[] = [];
+beforeEach(async () => {
+  previousAppHome = process.env.AGENTIC_MARKDOWN_HOME;
+  testAppHome = await mkdtemp(join(tmpdir(), "agentic-window-test-"));
+  process.env.AGENTIC_MARKDOWN_HOME = testAppHome;
+});
+afterEach(async () => {
+  try {
+    // Drain debounce timers before restoring the environment: otherwise a delayed
+    // resize write could escape this fixture into actual user preferences.
+    await Promise.all(windows.splice(0).map((window) => window.flushState()));
+    await rm(testAppHome, { recursive: true, force: true });
+  } finally {
+    if (previousAppHome === undefined) delete process.env.AGENTIC_MARKDOWN_HOME;
+    else process.env.AGENTIC_MARKDOWN_HOME = previousAppHome;
+  }
+});
+async function createTestWindow(
+  options: Parameters<typeof createMainWindow>[0]
+) {
+  const window = await createMainWindow(options);
+  windows.push(window);
+  return window;
+}
+
 test("creates a managed window whose pending state can be flushed", async () => {
   resetFakeBrowserWindow();
-  const managedWindow = (await createMainWindow({
+  const managedWindow = (await createTestWindow({
     rpc: {} as never,
     executeCommand: () => undefined,
   })) as unknown as {
@@ -33,7 +63,7 @@ test("reports the created window before the initial full-screen state", async ()
   const events: string[] = [];
   let createdWindow: unknown;
 
-  await createMainWindow({
+  await createTestWindow({
     rpc: {} as never,
     executeCommand: () => undefined,
     onWindowCreated: (window: unknown) => {
@@ -51,7 +81,7 @@ test("forwards observed full-screen changes", async () => {
   resetFakeBrowserWindow();
   const observed: boolean[] = [];
 
-  await createMainWindow({
+  await createTestWindow({
     rpc: {} as never,
     executeCommand: () => undefined,
     onFullScreenChange: (fullScreen: boolean) => observed.push(fullScreen),

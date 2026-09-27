@@ -1,18 +1,47 @@
-import type { EditorState, Transaction, StateEffect } from "@codemirror/state";
+import { undo, redo, undoDepth, redoDepth } from "@codemirror/commands";
+import {
+  Transaction,
+  type EditorState,
+  type StateEffect,
+} from "@codemirror/state";
 
 import {
   MAX_DOCUMENT_BYTES,
+  isWriteCapability,
+  type WriteCapability,
   type DocumentErrorCode,
   type DocumentHandleRequest,
   type DocumentRequest,
   type DocumentResponse,
   type DocumentSnapshot,
+  type SaveDocumentRequest,
 } from "../shared/documents";
+import { validMirror } from "../shared/save-content";
 import { isTextFidelity } from "../shared/text-fidelity";
 
+import {
+  editorFaultSession,
+  type EditorFaultSession,
+  type EditorFaultKind,
+} from "./editor-fault";
+import {
+  getEditorMode,
+  switchEditorMode,
+  isSafeSource,
+  safeSourceEffects,
+  restartParserForFaultTest,
+  pauseEditorParser,
+  resumeEditorParser,
+} from "./editor-mode";
 import { createRawEditorState, rawText } from "./raw-buffer";
+import { incrementalSave } from "./save-channel";
 
 export interface DocumentTransport {
+  checkDocumentWriteCapability?(
+    request: DocumentHandleRequest
+  ): Promise<unknown>;
+  saveDocument?(request: SaveDocumentRequest): Promise<unknown>;
+  waitForDocumentSaves?(request: DocumentRequest): Promise<unknown>;
   cancelDocument(request: DocumentRequest): Promise<unknown>;
   selectDocument(request: DocumentRequest): Promise<unknown>;
   readDocument(request: DocumentHandleRequest): Promise<unknown>;
@@ -31,13 +60,30 @@ export interface DocumentViewState {
 }
 export type DocumentEntry = Pick<
   DocumentSnapshot,
-  "handle" | "documentId" | "fileName" | "locationId" | "displayPath"
+  | "handle"
+  | "documentId"
+  | "fileName"
+  | "locationId"
+  | "displayPath"
+  | "writeCapability"
 >;
+export interface SaveViewStatus {
+  status: "saved" | "dirty" | "saving" | "failed" | "uncertain";
+  message?: string;
+}
 const locationKey = (snapshot: DocumentEntry) =>
   snapshot.locationId ?? snapshot.documentId;
 
 const ERROR_TEXT: Record<DocumentErrorCode, string> = {
   CANCELLED: "文档请求已取消。",
+  MIRROR_MISMATCH:
+    "内存镜像版本失配，保存未完成；当前编辑内容已保留。请重试保存。",
+  READ_ONLY: "当前文档不可写，内存修改已保留。请检查文件和父目录权限。",
+  CONFLICT: "磁盘内容已被外部修改，未覆盖。请保留内存内容并重新核对文件。",
+  SAVE_FAILED: "保存失败，内存修改已保留，请检查文件权限后重试。",
+  SAVE_UNCERTAIN:
+    "保存结果未确认，内存修改已保留。请重新读取或重新打开核对，不要盲目重复保存。",
+  UNSUPPORTED_SAVE: "当前文件或文件系统不支持安全保存，内存修改已保留。",
   INVALID_REQUEST: "文档请求无效，请重试。",
   INVALID_HANDLE: "读取授权已失效，请重新选择文件。",
   UNSUPPORTED_FILE: "请选择普通的 .md 或 .markdown 文件。",
@@ -76,6 +122,7 @@ export function isDocumentResponse(
   const s = value.snapshot;
   return (
     record(s) &&
+    (s.mirror === undefined || validMirror(s.mirror)) &&
     typeof s.handle === "string" &&
     UUID.test(s.handle) &&
     typeof s.documentId === "string" &&
@@ -99,7 +146,8 @@ export function isDocumentResponse(
     typeof s.text === "string" &&
     s.text.length <= MAX_DOCUMENT_BYTES &&
     new TextEncoder().encode(s.text).length === s.byteLength &&
-    isTextFidelity(s.fidelity, s.text)
+    isTextFidelity(s.fidelity, s.text) &&
+    isWriteCapability(s.writeCapability)
   );
 }
 
@@ -107,7 +155,8 @@ export function isDocumentResponse(
 export function createDocumentController(
   transport: DocumentTransport,
   confirmDiscard: (message: string) => Promise<boolean> = () =>
-    Promise.resolve(false)
+    Promise.resolve(false),
+  capabilityTimeoutMs = 5000
 ) {
   let state: DocumentViewState = {
     entries: [],
@@ -131,12 +180,129 @@ export function createDocumentController(
     }
   >();
   const editors = new Map<string, { state: EditorState; revision: number }>();
+  const transfers = new Map<
+    string,
+    { mode: "patch" | "resync"; payloadBytes: number }
+  >();
+  const capabilityChecks = new Map<
+    string,
+    { invalidated: boolean; expired: boolean }
+  >();
+  const capabilityLifetimes = new Map<string, object>();
+  const canWrite = (documentId: string) =>
+    state.tabs.find((tab) => tab.documentId === documentId)?.writeCapability
+      .writable === true;
+  function applyCapability(handle: string, capability: WriteCapability) {
+    const current = state.entries.find((entry) => entry.handle === handle);
+    if (
+      !current ||
+      (current.writeCapability.writable === capability.writable &&
+        current.writeCapability.reason === capability.reason)
+    )
+      return;
+    publish({
+      ...state,
+      entries: state.entries.map((entry) =>
+        entry.handle === handle
+          ? { ...entry, writeCapability: capability }
+          : entry
+      ),
+      tabs: state.tabs.map((tab) =>
+        tab.handle === handle ? { ...tab, writeCapability: capability } : tab
+      ),
+      snapshot:
+        state.snapshot?.handle === handle
+          ? { ...state.snapshot, writeCapability: capability }
+          : state.snapshot,
+    });
+  }
+  async function refreshWriteCapability(
+    handle = state.snapshot?.handle,
+    invalidate = false
+  ) {
+    if (
+      !handle ||
+      !transport.checkDocumentWriteCapability ||
+      !state.entries.some((entry) => entry.handle === handle)
+    )
+      return;
+    if (invalidate)
+      applyCapability(handle, { writable: false, reason: "unavailable" });
+    const running = capabilityChecks.get(handle);
+    if (running) {
+      running.invalidated ||= invalidate;
+      return;
+    }
+    const token = { invalidated: false, expired: false };
+    const lifetime = capabilityLifetimes.get(handle);
+    capabilityChecks.set(handle, token);
+    const params = { ...request(), handle };
+    const deadline = setTimeout(() => {
+      token.invalidated = true;
+      token.expired = true;
+      if (capabilityChecks.get(handle) === token)
+        capabilityChecks.delete(handle);
+      if (capabilityLifetimes.get(handle) === lifetime)
+        applyCapability(handle, { writable: false, reason: "unavailable" });
+    }, capabilityTimeoutMs);
+    try {
+      const response = await transport.checkDocumentWriteCapability(params);
+      if (token.invalidated || capabilityLifetimes.get(handle) !== lifetime)
+        return;
+      if (
+        !record(response) ||
+        Object.keys(response).length !== 4 ||
+        response.protocolVersion !== 1 ||
+        response.requestId !== params.requestId ||
+        response.handle !== handle ||
+        !isWriteCapability(response.capability)
+      )
+        throw Error("invalid capability response");
+      applyCapability(handle, response.capability);
+    } catch {
+      if (!token.expired && capabilityLifetimes.get(handle) === lifetime)
+        applyCapability(handle, { writable: false, reason: "unavailable" });
+    } finally {
+      clearTimeout(deadline);
+      if (capabilityChecks.get(handle) === token) {
+        capabilityChecks.delete(handle);
+        if (token.invalidated && !token.expired)
+          void refreshWriteCapability(handle);
+      }
+    }
+  }
+  const saving = new Map<string, Promise<void>>();
+  const saveResults = new Map<
+    string,
+    { status: "saved" | "failed" | "uncertain"; message?: string }
+  >();
+  const uncertain = new Set<string>();
+  // A rejected/expired RPC does not prove the backend write has stopped.
+  let saveDrainRequired = false;
+  const waitForSaves = async () => {
+    await Promise.all([...saving.values()]);
+    if (!saveDrainRequired) return;
+    const params = request();
+    const response = await transport.waitForDocumentSaves?.(params);
+    if (
+      !record(response) ||
+      Object.keys(response).length !== 3 ||
+      response.protocolVersion !== 1 ||
+      response.requestId !== params.requestId ||
+      response.settled !== true
+    )
+      throw new Error("Save settlement unconfirmed");
+    saveDrainRequired = false;
+  };
   let canLeaveEditor = () => true;
   function isDirty(documentId: string) {
     const editor = editors.get(documentId);
     const baseline = state.tabs.find((tab) => tab.documentId === documentId);
     return (
-      !!editor && !!baseline && editor.state.field(rawText) !== baseline.text
+      !!editor &&
+      !!baseline &&
+      (uncertain.has(documentId) ||
+        editor.state.field(rawText) !== baseline.text)
     );
   }
   function beginDiscard() {
@@ -147,14 +313,37 @@ export function createDocumentController(
   function endDiscard() {
     publish({ ...state, frozen: false });
   }
+  function reportDiscardFailure() {
+    publish({
+      ...state,
+      error:
+        "无法确认后台保存已结束，本次操作已取消，内存修改完整保留。请稍后重试。",
+    });
+  }
   function protect(ids: string[], action: () => void | Promise<void>) {
     if (state.frozen || !canLeaveEditor()) return;
-    if (!ids.some(isDirty)) return action();
+    if (!saveDrainRequired && !saving.size && !ids.some(isDirty))
+      return action();
     if (!beginDiscard()) return;
     return (async () => {
       try {
-        if (await confirmDiscard("是否放弃未保存变更？当前编辑尚不支持保存。"))
+        await waitForSaves();
+        const dirtyIds = ids.filter(isDirty);
+        const name =
+          dirtyIds.length === 1
+            ? state.tabs.find((tab) => tab.documentId === dirtyIds[0])?.fileName
+            : undefined;
+        if (
+          !dirtyIds.length ||
+          (await confirmDiscard(
+            name
+              ? `是否放弃“${name}”的未保存变更？放弃后无法恢复。`
+              : "是否放弃全部未保存变更？放弃后无法恢复。"
+          ))
+        )
           await action();
+      } catch {
+        reportDiscardFailure();
       } finally {
         endDiscard();
       }
@@ -172,6 +361,25 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
+    const previousId = state.snapshot?.documentId;
+    const nextId = next.snapshot?.documentId;
+    if (previousId !== nextId) {
+      // Only the two changed active slots, never every tab on each keystroke.
+      for (const id of [previousId, nextId]) {
+        const editor = id && editors.get(id);
+        if (!id || !editor) continue;
+        editors.set(id, {
+          ...editor,
+          state: editor.state.update({
+            effects:
+              id === nextId
+                ? resumeEditorParser(editor.state)
+                : pauseEditorParser(),
+            annotations: Transaction.addToHistory.of(false),
+          }).state,
+        });
+      }
+    }
     state = next;
     listeners.forEach((listener) => listener());
   }
@@ -251,8 +459,13 @@ export function createDocumentController(
       // Explicit re-selection activates the open instance without replacing its content.
       const active =
         select && existing
-          ? { ...existing, handle: snapshot.handle }
+          ? {
+              ...existing,
+              handle: snapshot.handle,
+              writeCapability: snapshot.writeCapability,
+            }
           : snapshot;
+      capabilityLifetimes.set(active.handle, {});
       if (!select || !existing) staleDocuments.delete(active.documentId);
       const replaced = state.tabs.find(
         (tab) =>
@@ -277,11 +490,30 @@ export function createDocumentController(
         scrollPositions.delete(replaced.documentId);
         scrollSnapshots.delete(replaced.documentId);
         editors.delete(replaced.documentId);
+        transfers.delete(replaced.documentId);
+        saveResults.delete(replaced.documentId);
+        uncertain.delete(replaced.documentId);
       }
       if (!select || !existing) {
+        saveResults.delete(active.documentId);
+        uncertain.delete(active.documentId);
         scrollSnapshots.delete(active.documentId);
+        const previousMode = editors.get(active.documentId)?.state;
+        const previousFault = previousMode?.field(editorFaultSession);
+        const nextEditor = createRawEditorState(
+          active.text,
+          [],
+          !!previousFault?.fault
+        );
+        if (previousFault?.fault)
+          nextEditor.field(editorFaultSession).fault = previousFault.fault;
         editors.set(active.documentId, {
-          state: createRawEditorState(active.text),
+          state:
+            previousMode &&
+            !previousFault?.fault &&
+            getEditorMode(previousMode) === "source"
+              ? nextEditor.update({ effects: switchEditorMode("source") }).state
+              : nextEditor,
           revision: 0,
         });
       }
@@ -310,6 +542,7 @@ export function createDocumentController(
                     fileName: snapshot.fileName,
                     locationId: snapshot.locationId,
                     displayPath: snapshot.displayPath,
+                    writeCapability: snapshot.writeCapability,
                   }
                 : value
             )
@@ -321,6 +554,7 @@ export function createDocumentController(
                 fileName: snapshot.fileName,
                 locationId: snapshot.locationId,
                 displayPath: snapshot.displayPath,
+                writeCapability: snapshot.writeCapability,
               },
             ],
         snapshot: active,
@@ -361,6 +595,10 @@ export function createDocumentController(
     scrollPositions.clear();
     scrollSnapshots.clear();
     editors.clear();
+    transfers.clear();
+    capabilityLifetimes.clear();
+    saveResults.clear();
+    uncertain.clear();
     publish({
       entries: [],
       tabs: [],
@@ -394,6 +632,7 @@ export function createDocumentController(
     ++generation;
     cancelPending();
     const tabs = state.tabs.filter((tab) => tab.documentId !== documentId);
+    capabilityLifetimes.delete(state.tabs[index].handle);
     const snapshot =
       state.snapshot?.documentId === documentId
         ? (tabs[index] ?? tabs[index - 1] ?? null)
@@ -402,6 +641,9 @@ export function createDocumentController(
     scrollPositions.delete(documentId);
     scrollSnapshots.delete(documentId);
     editors.delete(documentId);
+    transfers.delete(documentId);
+    saveResults.delete(documentId);
+    uncertain.delete(documentId);
     publish({
       ...state,
       tabs,
@@ -412,7 +654,143 @@ export function createDocumentController(
       elapsedMs: null,
     });
   }
-  return {
+  let historyDispatch: ((transaction: Transaction) => void) | undefined;
+  let captureScroll: (() => StateEffect<unknown>) | undefined;
+  const canToggleSourceMode = () =>
+    !!state.snapshot &&
+    editors.has(state.snapshot.documentId) &&
+    !editors.get(state.snapshot.documentId)!.state.field(editorFaultSession)
+      .fault &&
+    !state.frozen &&
+    !state.busy &&
+    canLeaveEditor();
+  const canHistory = (
+    direction: "undo" | "redo",
+    documentId = state.snapshot?.documentId
+  ) => {
+    const editor = documentId && editors.get(documentId);
+    return (
+      !!editor &&
+      documentId === state.snapshot?.documentId &&
+      !state.frozen &&
+      !state.busy &&
+      canLeaveEditor() &&
+      (direction === "undo"
+        ? undoDepth(editor.state)
+        : redoDepth(editor.state)) > 0 &&
+      canWrite(documentId)
+    );
+  };
+  const controller = {
+    isSafeSource: (documentId: string) => {
+      const editor = editors.get(documentId);
+      return !!editor && isSafeSource(editor.state);
+    },
+    getEditorFault: (documentId: string) =>
+      editors.get(documentId)?.state.field(editorFaultSession),
+    enterSafeSource: (documentId: string, session: EditorFaultSession) => {
+      const editor = editors.get(documentId);
+      if (
+        editor?.state.field(editorFaultSession) !== session ||
+        !session.fault ||
+        session.recoveryFailed ||
+        state.frozen ||
+        state.busy ||
+        !canLeaveEditor()
+      )
+        return false;
+      if (isSafeSource(editor.state)) return true;
+      try {
+        const effects = safeSourceEffects();
+        // View geometry can itself be unavailable after a presentation fault.
+        // Preserve scroll when possible, but never make it a recovery dependency.
+        if (state.snapshot?.documentId === documentId) {
+          try {
+            const scroll = captureScroll?.();
+            if (scroll) effects.push(scroll);
+          } catch {
+            // The accepted editor state remains the source of recovery truth.
+          }
+        }
+        const transaction = editor.state.update({
+          effects,
+          annotations: Transaction.addToHistory.of(false),
+        });
+        if (state.snapshot?.documentId === documentId && historyDispatch)
+          historyDispatch(transaction);
+        else controller.updateEditor(documentId, transaction);
+        return isSafeSource(editors.get(documentId)!.state);
+      } catch {
+        session.recoveryFailed = true;
+        publish({
+          ...state,
+          error: "安全源码恢复失败，内存状态已保留；请勿关闭文档。",
+        });
+        return false;
+      }
+    },
+    injectEditorFault: (kind: EditorFaultKind) => {
+      if (!canToggleSourceMode()) return false;
+      const documentId = state.snapshot!.documentId;
+      const editor = editors.get(documentId)!;
+      if (kind === "presentation" && getEditorMode(editor.state) !== "editing")
+        return false;
+      const session = editor.state.field(editorFaultSession);
+      session.inject = kind;
+      const transaction = editor.state.update({
+        effects: kind === "parser" ? restartParserForFaultTest() : [],
+        annotations: Transaction.addToHistory.of(false),
+        selection: editor.state.selection,
+      });
+      if (historyDispatch) historyDispatch(transaction);
+      else controller.updateEditor(documentId, transaction);
+      return true;
+    },
+    canToggleSourceMode,
+    getMode: (documentId: string) => {
+      const editor = editors.get(documentId);
+      return editor ? getEditorMode(editor.state) : "editing";
+    },
+    toggleSourceMode: () => {
+      if (!canToggleSourceMode()) return false;
+      const documentId = state.snapshot!.documentId;
+      const editor = editors.get(documentId)!;
+      const scroll = captureScroll?.();
+      const effect = switchEditorMode(
+        getEditorMode(editor.state) === "editing" ? "source" : "editing"
+      );
+      const transaction = editor.state.update({
+        effects: scroll ? [effect, scroll] : effect,
+        annotations: Transaction.addToHistory.of(false),
+      });
+      if (historyDispatch) historyDispatch(transaction);
+      else controller.updateEditor(documentId, transaction);
+      return editors.get(documentId)?.state === transaction.state;
+    },
+    setScrollCapture: (capture?: () => StateEffect<unknown>) => {
+      captureScroll = capture;
+    },
+    canWrite,
+    refreshWriteCapability,
+    canUndo: () => canHistory("undo"),
+    canRedo: () => canHistory("redo"),
+    runHistory: (
+      direction: "undo" | "redo",
+      documentId = state.snapshot?.documentId
+    ) => {
+      if (!documentId || !canHistory(direction, documentId)) return false;
+      return (direction === "undo" ? undo : redo)({
+        state: editors.get(documentId)!.state,
+        dispatch: (transaction) => {
+          if (historyDispatch) historyDispatch(transaction);
+          else controller.updateEditor(documentId, transaction);
+        },
+      });
+    },
+    setHistoryDispatch: (dispatch?: (transaction: Transaction) => void) => {
+      historyDispatch = dispatch;
+    },
+    notifyInteraction: () => publish({ ...state }),
     getSnapshot: () => state,
     subscribe(this: void, listener: () => void) {
       listeners.add(listener);
@@ -421,7 +799,11 @@ export function createDocumentController(
       };
     },
     select: () => {
-      if (!state.frozen && canLeaveEditor()) return load(true);
+      if (!state.frozen && canLeaveEditor()) {
+        if (saving.size || saveDrainRequired)
+          return protect([], () => load(true));
+        return load(true);
+      }
     },
     reload: () =>
       protect(state.snapshot ? [state.snapshot.documentId] : [], () =>
@@ -432,7 +814,7 @@ export function createDocumentController(
       if (state.tabs.some((tab) => tab.documentId === entry.documentId))
         activateTab(entry.documentId);
       else if (state.entries.some((value) => value.handle === entry.handle))
-        await load(false, entry);
+        await protect([], () => load(false, entry));
     },
     activateTab,
     closeTab: (documentId: string) =>
@@ -472,15 +854,150 @@ export function createDocumentController(
         state.tabs.map((tab) => tab.documentId),
         clear
       ),
-    dispose: clear,
+    dispose: () => {
+      if (saving.size || saveDrainRequired) {
+        void waitForSaves()
+          .then(clear)
+          .catch(() => undefined);
+      } else clear();
+    },
     isDirty,
     hasDirty: () => state.tabs.some((tab) => isDirty(tab.documentId)),
+    waitForSaves,
+    hasSaves: () => saving.size > 0,
+    canSave: () =>
+      !!transport.saveDocument &&
+      canLeaveEditor() &&
+      !state.frozen &&
+      !state.busy &&
+      !!state.snapshot &&
+      canWrite(state.snapshot.documentId) &&
+      !saving.size &&
+      !uncertain.has(state.snapshot.documentId) &&
+      isDirty(state.snapshot.documentId),
+    getSaveStatus: (documentId: string): SaveViewStatus =>
+      saving.has(documentId)
+        ? { status: "saving" }
+        : saveResults.get(documentId)?.status === "failed" ||
+            saveResults.get(documentId)?.status === "uncertain"
+          ? saveResults.get(documentId)!
+          : isDirty(documentId)
+            ? { status: "dirty" }
+            : { status: "saved" },
+    save: () => {
+      const baseline = state.snapshot;
+      if (
+        !baseline ||
+        !canWrite(baseline.documentId) ||
+        !transport.saveDocument ||
+        state.frozen ||
+        state.busy ||
+        saving.size ||
+        uncertain.has(baseline.documentId) ||
+        !isDirty(baseline.documentId) ||
+        !canLeaveEditor()
+      )
+        return;
+      const editor = editors.get(baseline.documentId)!;
+      const text = editor.state.field(rawText);
+      const params = {
+        ...request(),
+        handle: baseline.handle,
+        documentId: baseline.documentId,
+        expectedRevision: baseline.revision,
+        expectedHash: baseline.hash,
+        bufferRevision: editor.revision,
+      };
+      const operation = Promise.resolve().then(async () => {
+        let dispatched = false;
+        try {
+          const outcome = await incrementalSave(
+            params,
+            baseline,
+            text,
+            (request) => {
+              dispatched = true;
+              return transport.saveDocument!(request);
+            },
+            (value) => transfers.set(baseline.documentId, value)
+          );
+          const response = outcome.response;
+          if (!isDocumentResponse(response, outcome.requestId))
+            throw Error("invalid save response");
+          if (!response.ok) {
+            if (response.error === "READ_ONLY") {
+              applyCapability(baseline.handle, {
+                writable: false,
+                reason: "unavailable",
+              });
+              void refreshWriteCapability(baseline.handle);
+            }
+            if (response.error === "SAVE_UNCERTAIN")
+              uncertain.add(baseline.documentId);
+            saveResults.set(baseline.documentId, {
+              status:
+                response.error === "SAVE_UNCERTAIN" ? "uncertain" : "failed",
+              message: ERROR_TEXT[response.error],
+            });
+            return;
+          }
+          const next = response.snapshot;
+          if (
+            !next ||
+            response.savedBufferRevision !== params.bufferRevision ||
+            next.documentId !== baseline.documentId ||
+            next.handle !== baseline.handle ||
+            next.text !== text ||
+            next.revision <= baseline.revision
+          )
+            throw Error("mismatched save response");
+          saveResults.set(baseline.documentId, { status: "saved" });
+          staleDocuments.delete(baseline.documentId);
+          publish({
+            ...state,
+            entries: state.entries.map((entry) =>
+              entry.handle === next.handle
+                ? { ...entry, writeCapability: next.writeCapability }
+                : entry
+            ),
+            tabs: state.tabs.map((tab) =>
+              tab.documentId === baseline.documentId ? next : tab
+            ),
+            snapshot:
+              state.snapshot?.documentId === baseline.documentId
+                ? next
+                : state.snapshot,
+            stale:
+              state.snapshot?.documentId === baseline.documentId
+                ? false
+                : state.stale,
+          });
+        } catch {
+          if (dispatched) uncertain.add(baseline.documentId);
+          saveResults.set(baseline.documentId, {
+            status: dispatched ? "uncertain" : "failed",
+            message: dispatched
+              ? "保存通信失败或回执无效，结果未确认；内存修改已保留。请核对磁盘后再继续。"
+              : "保存准备失败，尚未请求写盘；内存修改已保留。",
+          });
+        } finally {
+          saving.delete(baseline.documentId);
+          publish({ ...state });
+        }
+      });
+      saveDrainRequired = true;
+      saving.set(baseline.documentId, operation);
+      publish({ ...state });
+      return operation;
+    },
     beginDiscard,
     endDiscard,
+    reportDiscardFailure,
     setInteractionCheck: (check: () => boolean) => {
       canLeaveEditor = check;
     },
     getEditor: (documentId: string) => editors.get(documentId),
+    getSaveTransfer: (documentId: string) => transfers.get(documentId),
     updateEditor: (documentId: string, transaction: Transaction) => {
       const editor = editors.get(documentId);
       if (
@@ -491,6 +1008,11 @@ export function createDocumentController(
       )
         return false;
       const raw = transaction.state.field(rawText);
+      if (
+        (transaction.docChanged || raw !== editor.state.field(rawText)) &&
+        !canWrite(documentId)
+      )
+        return false;
       if (
         transaction.docChanged &&
         new TextEncoder().encode(raw).length > MAX_DOCUMENT_BYTES
@@ -503,10 +1025,17 @@ export function createDocumentController(
       }
       editors.set(documentId, {
         state: transaction.state,
-        revision: editor.revision + (transaction.docChanged ? 1 : 0),
+        revision:
+          editor.revision + (raw !== editor.state.field(rawText) ? 1 : 0),
       });
-      if (transaction.docChanged) publish({ ...state });
+      if (
+        transaction.docChanged ||
+        isSafeSource(editor.state) !== isSafeSource(transaction.state) ||
+        getEditorMode(editor.state) !== getEditorMode(transaction.state)
+      )
+        publish({ ...state });
       return true;
     },
   };
+  return controller;
 }

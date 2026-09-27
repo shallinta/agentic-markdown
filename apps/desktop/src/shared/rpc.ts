@@ -11,13 +11,35 @@ import type {
   DocumentHandleRequest,
   DocumentRequest,
   DocumentResponse,
+  SaveDocumentRequest,
+  SaveDocumentResponse,
+  DocumentSavesSettledResponse,
+  WriteCapabilityResponse,
 } from "./documents";
 import type { SupportedLocale } from "./i18n";
+import type { PerfRequest, PerfResponse } from "./perf-lab";
 import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      perfLabStatus: {
+        params: Record<string, never>;
+        response: { enabled: boolean; autorun: boolean };
+      };
+      perfLabRequest: { params: PerfRequest; response: PerfResponse };
+      checkDocumentWriteCapability: {
+        params: DocumentHandleRequest;
+        response: WriteCapabilityResponse;
+      };
+      saveDocument: {
+        params: SaveDocumentRequest;
+        response: SaveDocumentResponse;
+      };
+      waitForDocumentSaves: {
+        params: DocumentRequest;
+        response: DocumentSavesSettledResponse;
+      };
       selectDocument: { params: DocumentRequest; response: DocumentResponse };
       cancelDocument: { params: DocumentRequest; response: DocumentResponse };
       readDocument: {
@@ -62,6 +84,7 @@ export interface DesktopRPCType {
     };
     messages: {
       finishDiscard: { requestId: string };
+      documentCapabilityChanged: { handle: string };
       updateStatusChanged: UpdateStatusChangedPayload;
       executeCommand: Command;
       fullScreenChanged: { fullScreen: boolean };

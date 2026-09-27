@@ -15,6 +15,7 @@ export default defineConfig([
       "**/.hutch/**",
       "hutch.config.ts",
       "**/dist/**",
+      "**/dist-native/**",
       "**/build/**",
       "**/.next/**",
       "**/.turbo/**",

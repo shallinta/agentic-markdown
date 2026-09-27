@@ -11,7 +11,10 @@ import {
   createDocumentController,
   type DocumentTransport,
 } from "@/client/documents";
+import { isExternalTextTarget } from "@/client/history-target";
+import { longLineProtection } from "@/client/long-line-protection";
 import { rawText } from "@/client/raw-buffer";
+import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
@@ -25,12 +28,22 @@ export function useDocumentWorkspace() {
     const rpc = electrobun.rpc;
     const unavailable = () => Promise.reject(new Error("RPC unavailable"));
     const transport: DocumentTransport = {
+      checkDocumentWriteCapability: (request) =>
+        rpc
+          ? rpc.request.checkDocumentWriteCapability(request, {
+              maxRequestTime: 4000,
+            })
+          : unavailable(),
       cancelDocument: (request) =>
         rpc ? rpc.request.cancelDocument(request) : unavailable(),
       selectDocument: (request) =>
         rpc ? rpc.request.selectDocument(request) : unavailable(),
       readDocument: (request) =>
         rpc ? rpc.request.readDocument(request) : unavailable(),
+      saveDocument: (request) =>
+        rpc ? rpc.request.saveDocument(request) : unavailable(),
+      waitForDocumentSaves: (request) =>
+        rpc ? rpc.request.waitForDocumentSaves(request) : unavailable(),
       releaseDocument: (request) =>
         rpc ? rpc.request.releaseDocument(request) : unavailable(),
     };
@@ -43,15 +56,36 @@ export function useDocumentWorkspace() {
   const { executeCommand, isCommandEnabled } = useCommands();
   const notifyCommands = useRegisterCommands(
     {
+      toggleSourceMode: () => {
+        controller.toggleSourceMode();
+      },
       selectDocument: controller.select,
       reloadDocument: controller.reload,
+      saveDocument: controller.save,
       clearDocument: controller.clear,
       closeDocument: controller.closeActive,
+      undoDocument: ({ documentId }) => {
+        if (documentId || !isExternalTextTarget(document.activeElement))
+          controller.runHistory("undo", documentId);
+      },
+      redoDocument: ({ documentId }) => {
+        if (documentId || !isExternalTextTarget(document.activeElement))
+          controller.runHistory("redo", documentId);
+      },
     },
     true,
     {
+      toggleSourceMode: () =>
+        controller.canToggleSourceMode() &&
+        !isExternalTextTarget(document.activeElement) &&
+        !document.querySelector('[role="dialog"], [role="alertdialog"]'),
       selectDocument: () =>
-        !controller.getSnapshot().busy && !controller.getSnapshot().frozen,
+        !controller.getSnapshot().busy &&
+        !controller.getSnapshot().frozen &&
+        !controller.hasSaves(),
+      saveDocument: controller.canSave,
+      undoDocument: controller.canUndo,
+      redoDocument: controller.canRedo,
       reloadDocument: () =>
         !controller.getSnapshot().busy &&
         !controller.getSnapshot().frozen &&
@@ -69,6 +103,47 @@ export function useDocumentWorkspace() {
     [controller, notifyCommands]
   );
   useEffect(() => discardGuard.register(controller), [controller]);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) =>
+      routeSourceModeShortcut(
+        event,
+        document.activeElement,
+        !!document.querySelector('[role="dialog"], [role="alertdialog"]'),
+        isCommandEnabled("toggleSourceMode"),
+        executeCommand
+      );
+    window.addEventListener("keydown", shortcut, true);
+    return () => window.removeEventListener("keydown", shortcut, true);
+  }, [executeCommand, isCommandEnabled]);
+  useEffect(() => {
+    const refresh = () => {
+      void controller.refreshWriteCapability();
+    };
+    const changed = (value: unknown) => {
+      if (
+        value &&
+        typeof value === "object" &&
+        Object.keys(value).length === 1 &&
+        "handle" in value &&
+        typeof value.handle === "string"
+      )
+        void controller.refreshWriteCapability(value.handle, true);
+    };
+    electrobun.rpc?.addMessageListener("documentCapabilityChanged", changed);
+    window.addEventListener("focus", refresh);
+    const timer = setInterval(refresh, 3000);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      electrobun.rpc?.removeMessageListener(
+        "documentCapabilityChanged",
+        changed
+      );
+    };
+  }, [controller]);
+  useEffect(() => {
+    void controller.refreshWriteCapability();
+  }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
   return { controller, state, executeCommand, isCommandEnabled };
 }
@@ -107,6 +182,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
                 onClick={() => void controller.activate(entry)}
               >
                 {entry.fileName}
+                {!entry.writeCapability.writable ? " · 只读" : ""}
               </button>
             </li>
           ))}
@@ -153,6 +229,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               onClick={() => controller.activateTab(tab.documentId)}
             >
               {tab.fileName}
+              {!tab.writeCapability.writable ? " · 只读" : ""}
               {controller.isDirty(tab.documentId) ? " ● 未保存" : ""}
             </button>
             <button
@@ -173,10 +250,57 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
           {snapshot
-            ? "原文编辑验证入口 · 当前编辑尚不支持保存 · 非正式编辑/源码模式 · 单文件限 1 MiB"
+            ? controller.isSafeSource(snapshot.documentId)
+              ? "安全源码 · 解析与排版已停用 · 手动保存 ⌘S · 单文件限 1 MiB"
+              : controller.getMode(snapshot.documentId) === "source"
+                ? "基础源码模式 · 完整原文与基础高亮 · 手动保存 ⌘S · 单文件限 1 MiB"
+                : "基础编辑模式 · 标题、粗体、斜体与行内代码 · 手动保存 ⌘S · 单文件限 1 MiB"
             : "打开本地 Markdown 文件，开始查看。文件只会加入当前窗口，不会加入其父目录。"}
         </p>
       </div>
+      {editor &&
+        snapshot &&
+        controller.getMode(snapshot.documentId) === "editing" &&
+        editor.state.field(longLineProtection).length > 0 && (
+          <p role="status" className="text-muted-foreground text-sm">
+            部分超长行已简化行内排版，代码与引用结构保留；缩短后恢复，软换行与保存不变。
+          </p>
+        )}
+      {snapshot && controller.getEditorFault(snapshot.documentId)?.fault && (
+        <p role="status">
+          {controller.getEditorFault(snapshot.documentId)?.recoveryFailed
+            ? "安全源码恢复失败，内存状态已保留；请勿关闭文档。"
+            : controller.isSafeSource(snapshot.documentId)
+              ? "编辑呈现发生异常，已切换为安全源码；内存内容已保留。关闭后重新打开才会重新尝试。"
+              : "编辑呈现发生异常，正在等待当前输入或操作结束后切换安全源码。"}
+        </p>
+      )}
+      {(
+        globalThis as typeof globalThis & {
+          __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean;
+        }
+      ).__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__ === true && (
+        <div className="flex gap-2" aria-label="编辑故障实验">
+          <button
+            className={buttonClass}
+            disabled={
+              !controller.canToggleSourceMode() ||
+              (!!snapshot &&
+                controller.getMode(snapshot.documentId) !== "editing")
+            }
+            onClick={() => controller.injectEditorFault("presentation")}
+          >
+            实验：呈现故障
+          </button>
+          <button
+            className={buttonClass}
+            disabled={!controller.canToggleSourceMode()}
+            onClick={() => controller.injectEditorFault("parser")}
+          >
+            实验：解析故障
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         <button
           className={buttonClass}
@@ -199,7 +323,40 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         >
           清空窗口
         </button>
+        <button
+          className={buttonClass}
+          disabled={!isCommandEnabled("saveDocument")}
+          onClick={() => executeCommand({ type: "saveDocument", args: {} })}
+        >
+          保存当前文档
+        </button>
       </div>
+      {snapshot && (
+        <p role="status" aria-live="polite" className="text-sm">
+          {controller.getMode(snapshot.documentId) === "source"
+            ? "源码模式 · "
+            : "编辑模式 · "}
+          {snapshot.writeCapability.writable
+            ? "可编辑 · "
+            : snapshot.writeCapability.reason === "readonly"
+              ? "只读：文件或父目录不允许安全写入；仍可选择、复制和滚动。 · "
+              : snapshot.writeCapability.reason === "invalid"
+                ? "只读：文件授权已失效，请重新选择文件。内存内容已保留。 · "
+                : "只读：暂时无法确认写入能力，正在自动重试。内存内容已保留。 · "}
+          {
+            {
+              saving: "保存中…",
+              saved: "已保存（与读取/保存基线一致）",
+              dirty: "未保存",
+              failed: "保存失败",
+              uncertain: "保存结果未确认",
+            }[controller.getSaveStatus(snapshot.documentId).status]
+          }
+          {controller.getSaveStatus(snapshot.documentId).message
+            ? ` · ${controller.getSaveStatus(snapshot.documentId).message}`
+            : ""}
+        </p>
+      )}
       <div
         className="text-muted-foreground text-sm"
         role="status"
@@ -237,8 +394,14 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               <dd className="font-mono">{snapshot.documentId}</dd>
               <dt>磁盘 revision</dt>
               <dd>{snapshot.revision}</dd>
+              <dt>最近保存传输</dt>
+              <dd>
+                {controller.getSaveTransfer(snapshot.documentId)
+                  ? `${controller.getSaveTransfer(snapshot.documentId)!.mode === "patch" ? "增量" : "权威全文重同步"} · JSON 应用载荷 ${controller.getSaveTransfer(snapshot.documentId)!.payloadBytes} 字节（不含底层协议开销）`
+                  : "尚未保存"}
+              </dd>
               <dt>权限</dt>
-              <dd>仅当前文件只读，不授权父目录或相邻文件</dd>
+              <dd>仅当前已授权文档可读取/手动保存，不授权任意路径或相邻文件</dd>
               <TextFidelityDetails fidelity={snapshot.fidelity} />
             </dl>
             {editor && diagnosticsOpen && (

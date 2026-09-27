@@ -86,6 +86,11 @@ function renderPalette() {
   );
 }
 
+test("source mode has no command palette entry", () => {
+  expect(renderPalette()).not.toContain("toggleSourceMode");
+  expect(renderPalette()).not.toContain("源码");
+});
+
 test("hides restart command until an update is ready", () => {
   readyVersion = null;
 

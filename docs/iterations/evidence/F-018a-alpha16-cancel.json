@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "date": "2026-09-25T10:28:04.109Z",
+  "bun": "1.4.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "unit": "decimal bytes",
+  "cpuScope": "Bun process including workers, cumulative deltas; excludes WebView",
+  "memoryScope": "Bun process samples, not peaks or exact copy counts",
+  "measurementScope": {
+    "fullText": "renderer -> Bun -> Worker upload; metadata ACK only; download not measured",
+    "chunks": "workerMs and hostMs are sums of chunk requests; UTF-16 chunk positions, UTF-8 byte totals",
+    "binary": "Bun -> Worker only; clone/transfer not evidence of renderer RPC binary support",
+    "patch": "roundTrip excludes baseline; CPU and memory include baseline setup",
+    "generation": "renderer corpus generation except binary rows: Bun corpus generation and encoding",
+    "jsonUtf8Bytes": "not measured",
+    "cm": "1 MB visible viewport, 10/50 MB state only; double RAF is opportunity, not paint completion",
+    "cleanup": "ownedTextUnitsAfterStop zero only after Worker close; not VM/RSS reclamation"
+  },
+  "rows": [
+    {
+      "bytes": 0,
+      "shape": "lines",
+      "route": "rpc-binary-probe",
+      "status": "unsupported",
+      "metrics": {
+        "nativeCopyCount": null
+      }
+    },
+    {
+      "bytes": 50000000,
+      "shape": "lines",
+      "route": "full-text",
+      "status": "cancelled",
+      "metrics": {
+        "generationMs": 0,
+        "digestMs": 73,
+        "nativeCopyCount": null,
+        "jsonUtf8Bytes": null,
+        "rendererHeapBytes": null,
+        "ownedTextUnitsAfterStop": 0,
+        "workerExitObserved": 1
+      }
+    }
+  ]
+}

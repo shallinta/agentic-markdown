@@ -28,7 +28,7 @@ export function verifyObligations(
   }
   const entries = new Map<
     string,
-    { owner: string; state: string; iteration: string }
+    { owner: string; state: string; iterations: string[] }
   >();
   for (const line of register.split("\n")) {
     const cells = line.split("|").map((cell) => cell.trim());
@@ -49,7 +49,20 @@ export function verifyObligations(
       throw new Error(`${id}: accepted without dated evidence`);
     if (state !== "待承接" && iteration === "—")
       throw new Error(`${id}: missing iteration`);
-    entries.set(id, { owner: owner!, state: state!, iteration: iteration! });
+    const iterations =
+      iteration === "—"
+        ? []
+        : iteration!.split("、").map((link) => {
+            const match =
+              /^\[[^\]]+\]\(\.\/iterations\/([^/#]+\.md)(?:#[^)]*)?\)$/.exec(
+                link.trim()
+              );
+            if (!match) throw new Error(`${id}: malformed iteration link`);
+            return match[1]!;
+          });
+    if (new Set(iterations).size !== iterations.length)
+      throw new Error(`${id}: duplicate iteration links`);
+    entries.set(id, { owner: owner!, state: state!, iterations });
   }
   if (!entries.size) throw new Error("Empty obligation register");
   const claims = new Map<string, Set<string>>();
@@ -72,11 +85,7 @@ export function verifyObligations(
     for (const id of list) {
       if (entries.get(id)?.owner !== parent)
         throw new Error(`${name}: unknown obligation or wrong owner ${id}`);
-      const target =
-        /^\[[^\]]+\]\(\.\/iterations\/([^/#]+\.md)(?:#[^)]*)?\)$/.exec(
-          entries.get(id)!.iteration
-        )?.[1];
-      if (target !== name)
+      if (!entries.get(id)!.iterations.includes(name))
         throw new Error(
           `${name}: claim missing reciprocal register link ${id}`
         );
@@ -105,18 +114,12 @@ export function verifyObligations(
     deferred.set(name, new Set(deferredList));
   }
   for (const [id, entry] of entries) {
-    if (entry.iteration === "—") continue;
-    const match =
-      /^\[[^\]]+\]\(\.\/iterations\/([^/#]+\.md)(?:#[^)]*)?\)$/.exec(
-        entry.iteration
-      );
-    if (!match || !claims.get(match[1]!)?.has(id))
-      throw new Error(`${id}: missing iteration or reciprocal claim`);
-    if (
-      entry.state === "已验收" &&
-      !/^> 状态：已验收\s*$/m.test(docs[match[1]!]!)
-    )
-      throw new Error(`${id}: iteration not accepted`);
+    for (const name of entry.iterations) {
+      if (!claims.get(name)?.has(id))
+        throw new Error(`${id}: missing iteration or reciprocal claim`);
+      if (entry.state === "已验收" && !/^> 状态：已验收\s*$/m.test(docs[name]!))
+        throw new Error(`${id}: iteration not accepted`);
+    }
   }
   for (const [feature, state] of features) {
     if (

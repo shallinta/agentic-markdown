@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, watch, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 
 import {
   DOCUMENT_PROTOCOL_VERSION,
@@ -10,9 +10,18 @@ import {
   type DocumentResponse,
   type DocumentService,
   type DocumentSnapshot,
+  type SaveDocumentRequest,
+  type WriteCapability,
 } from "../../shared/documents";
+import { validMirror } from "../../shared/save-content";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
 
+import {
+  atomicSave,
+  type AtomicSaveInput,
+  type AtomicSaveResult,
+} from "./atomic-save";
+import { createBufferMirrors, validateSaveContent } from "./buffer-mirror";
 import {
   authorizeSingleFile,
   DocumentPathError,
@@ -20,6 +29,7 @@ import {
   verifySingleFileAuthorization,
   type SingleFileAuthorization,
 } from "./path-authorization";
+import { checkWriteCapability } from "./write-capability";
 
 interface Identity {
   documentId: string;
@@ -38,6 +48,44 @@ class DocumentFailure extends Error {
   constructor(readonly code: DocumentErrorCode) {
     super(code);
   }
+}
+
+function validateSave(value: unknown): value is SaveDocumentRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+  const keys = [
+    "protocolVersion",
+    "requestId",
+    "handle",
+    "documentId",
+    "expectedRevision",
+    "expectedHash",
+    "bufferRevision",
+    "mirror",
+    "content",
+  ];
+  return (
+    Object.keys(r).length === keys.length &&
+    Object.keys(r).every((k) => keys.includes(k)) &&
+    r.protocolVersion === 1 &&
+    typeof r.requestId === "string" &&
+    r.requestId.length > 0 &&
+    r.requestId.length <= 80 &&
+    typeof r.handle === "string" &&
+    uuidPattern.test(r.handle) &&
+    typeof r.documentId === "string" &&
+    uuidPattern.test(r.documentId) &&
+    typeof r.expectedRevision === "number" &&
+    Number.isSafeInteger(r.expectedRevision) &&
+    r.expectedRevision > 0 &&
+    typeof r.bufferRevision === "number" &&
+    Number.isSafeInteger(r.bufferRevision) &&
+    r.bufferRevision >= 0 &&
+    typeof r.expectedHash === "string" &&
+    /^[a-f0-9]{64}$/.test(r.expectedHash) &&
+    validMirror(r.mirror) &&
+    validateSaveContent(r.content)
+  );
 }
 
 function validate(
@@ -69,12 +117,58 @@ export function createDocumentService({
   pickFile,
   authorize = authorizeSingleFile,
   verify = verifySingleFileAuthorization,
+  write = atomicSave,
+  capability = checkWriteCapability,
+  onCapabilityChanged = () => undefined,
 }: {
   pickFile: () => Promise<string | null>;
   authorize?: typeof authorizeSingleFile;
   verify?: typeof verifySingleFileAuthorization;
+  write?: (input: AtomicSaveInput) => Promise<AtomicSaveResult>;
+  capability?: typeof checkWriteCapability;
+  onCapabilityChanged?: (handle: string) => void;
 }): DocumentService {
   const grants = new Map<string, Grant>();
+  const mirrors = createBufferMirrors();
+  const capabilityJobs = new Map<string, Promise<WriteCapability>>();
+  const capabilityVersions = new Map<string, number>();
+  let capabilityVersion = 0;
+  const watchers = new Map<string, FSWatcher[]>();
+  const hints = new Map<string, ReturnType<typeof setTimeout>>();
+  const unwatch = (handle: string) => {
+    capabilityVersions.delete(handle);
+    watchers.get(handle)?.forEach((watcher) => watcher.close());
+    watchers.delete(handle);
+    clearTimeout(hints.get(handle));
+    hints.delete(handle);
+  };
+  const watchGrant = (grant: Grant) => {
+    unwatch(grant.handle);
+    capabilityVersions.set(grant.handle, ++capabilityVersion);
+    const attached: FSWatcher[] = [];
+    const hint = () => {
+      capabilityVersions.set(grant.handle, ++capabilityVersion);
+      if (hints.has(grant.handle)) return;
+      hints.set(
+        grant.handle,
+        setTimeout(() => {
+          hints.delete(grant.handle);
+          if (grants.has(grant.handle)) onCapabilityChanged(grant.handle);
+        }, 60)
+      );
+    };
+    for (const path of [grant.path, dirname(grant.path)]) {
+      try {
+        // Non-recursive metadata hints only. Never consume names as authority.
+        const watcher = watch(path, { persistent: false }, hint);
+        watcher.on("error", hint);
+        attached.push(watcher);
+      } catch {
+        /* Focus/poll fallback still revalidates permissions. */
+      }
+    }
+    watchers.set(grant.handle, attached);
+  };
   const locations = new Map<string, string>();
   interface Task {
     id: string;
@@ -92,6 +186,11 @@ export function createDocumentService({
   let disposed = false;
   let epoch = 0;
   const identities = new Map<string, Identity>();
+  let saveTail: Promise<void> = Promise.resolve();
+  let saving = 0;
+  let writeBarrier = false;
+  const uncertain = new Set<string>();
+  const savingRequests = new Set<string>();
   const result = (
     requestId: string,
     snapshot: DocumentSnapshot | null
@@ -104,7 +203,12 @@ export function createDocumentService({
   const failure = (
     requestId: string,
     error: DocumentErrorCode
-  ): DocumentResponse => ({ protocolVersion: 1, requestId, ok: false, error });
+  ): Extract<DocumentResponse, { ok: false }> => ({
+    protocolVersion: 1,
+    requestId,
+    ok: false,
+    error,
+  });
   const cancel = (task: Task | null) => {
     if (!task || task.committed) return;
     task.cancelled = true;
@@ -231,6 +335,7 @@ export function createDocumentService({
       byteLength: length,
       text,
       fidelity,
+      writeCapability: await capability(grant),
     };
   }
   function commit(
@@ -247,11 +352,239 @@ export function createDocumentService({
       hash: next.hash,
     });
     locations.set(grant.path, next.locationId!);
+    // Explicit successful re-read/reselection establishes a fresh baseline.
+    uncertain.delete(next.documentId);
+    next.mirror = mirrors.put(grant.handle, next.text, 0);
   }
 
   return {
+    async checkWriteCapability(request) {
+      const valid = validate(request, true);
+      const response = {
+        protocolVersion: 1 as const,
+        requestId: valid ? request.requestId : "",
+        handle: valid ? request.handle : "",
+      };
+      const grant = valid && grants.get(request.handle);
+      if (disposed || !grant)
+        return {
+          ...response,
+          capability: { writable: false, reason: "invalid" },
+        };
+      let job = capabilityJobs.get(grant.handle);
+      if (!job) {
+        if (capabilityJobs.size >= 2)
+          return {
+            ...response,
+            capability: { writable: false, reason: "unavailable" },
+          };
+        job = (async (): Promise<WriteCapability> => {
+          await saveTail;
+          if (disposed || grants.get(grant.handle) !== grant)
+            return { writable: false, reason: "invalid" };
+          const fingerprint = grant.fingerprint;
+          const version = capabilityVersions.get(grant.handle);
+          try {
+            const checked = await capability(grant);
+            if (
+              disposed ||
+              grants.get(grant.handle) !== grant ||
+              grant.fingerprint !== fingerprint ||
+              capabilityVersions.get(grant.handle) !== version
+            )
+              return { writable: false, reason: "unavailable" };
+            return checked;
+          } catch {
+            return { writable: false, reason: "unavailable" };
+          }
+        })();
+        capabilityJobs.set(grant.handle, job);
+        void job.finally(() => {
+          if (capabilityJobs.get(grant.handle) === job)
+            capabilityJobs.delete(grant.handle);
+        });
+      }
+      const checked = await job;
+      if (disposed || grants.get(grant.handle) !== grant)
+        return {
+          ...response,
+          capability: { writable: false, reason: "unavailable" },
+        };
+      return { ...response, capability: checked };
+    },
+    async waitForSaves(request) {
+      if (!validate(request, false))
+        return { protocolVersion: 1, requestId: "", settled: false };
+      // Renderer has frozen local mutation before this handshake. If a new writer
+      // was nevertheless admitted meanwhile, wait for its published outcome too.
+      do {
+        await saveTail;
+      } while (saving > 0);
+      return {
+        protocolVersion: 1,
+        requestId: request.requestId,
+        settled: !disposed,
+      };
+    },
+    async save(request) {
+      if (!validateSave(request)) return failure("", "INVALID_REQUEST");
+      if (disposed || !grants.has(request.handle))
+        return failure(request.requestId, "INVALID_HANDLE");
+      if (
+        writeBarrier ||
+        savingRequests.has(request.requestId) ||
+        saving >= 2 ||
+        running ||
+        pending ||
+        selecting
+      )
+        return failure(request.requestId, "BUSY");
+      saving++;
+      savingRequests.add(request.requestId);
+      const previous = saveTail;
+      let finish!: () => void;
+      saveTail = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      try {
+        await previous;
+        const grant = grants.get(request.handle);
+        if (!grant || disposed)
+          return failure(request.requestId, "INVALID_HANDLE");
+        const identity = identities.get(grant.identityKey);
+        if (identity?.documentId !== request.documentId)
+          return failure(request.requestId, "INVALID_HANDLE");
+        if (uncertain.has(identity.documentId))
+          return failure(request.requestId, "SAVE_UNCERTAIN");
+        if (
+          identity.revision !== request.expectedRevision ||
+          identity.hash !== request.expectedHash
+        )
+          return failure(request.requestId, "CONFLICT");
+        const checked = await capability(grant);
+        if (!checked.writable) return failure(request.requestId, "READ_ONLY");
+        const prepared = mirrors.prepare(request);
+        if (!prepared.ok && prepared.error === "MIRROR_MISMATCH") {
+          // Never classify a changed disk baseline as a recoverable mirror miss.
+          const file = await open(
+            grant.path,
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+          ).catch(() => null);
+          if (!file) return failure(request.requestId, "CONFLICT");
+          try {
+            const before = await verify({ ...grant, file });
+            if (before.size > BigInt(MAX_DOCUMENT_BYTES))
+              return failure(request.requestId, "CONFLICT");
+            const bytes = Buffer.alloc(Number(before.size) + 1);
+            let count = 0;
+            while (count < bytes.length) {
+              const part = await file.read(
+                bytes,
+                count,
+                bytes.length - count,
+                count
+              );
+              if (!part.bytesRead) break;
+              count += part.bytesRead;
+            }
+            const after = await verify({ ...grant, file });
+            if (
+              fileFingerprint(before) !== fileFingerprint(after) ||
+              BigInt(count) !== before.size ||
+              before.size !== after.size ||
+              before.mtimeNs !== after.mtimeNs ||
+              before.ctimeNs !== after.ctimeNs ||
+              createHash("sha256")
+                .update(bytes.subarray(0, count))
+                .digest("hex") !== request.expectedHash
+            )
+              return failure(request.requestId, "CONFLICT");
+          } catch {
+            return failure(request.requestId, "CONFLICT");
+          } finally {
+            await file.close();
+          }
+        }
+        if (!prepared.ok)
+          return {
+            ...failure(request.requestId, prepared.error),
+            ...(prepared.error === "MIRROR_MISMATCH"
+              ? { recovery: prepared.recovery }
+              : {}),
+          };
+        const text = prepared.text;
+        const authorization = {
+          selectedPath: grant.selectedPath,
+          path: grant.path,
+          selectedParent: grant.selectedParent,
+          fingerprint: grant.fingerprint,
+          directories: grant.directories,
+        };
+        const written = await write({
+          authorization,
+          expectedHash: request.expectedHash,
+          text,
+        });
+        if (!written.ok) {
+          if (written.error === "SAVE_UNCERTAIN")
+            uncertain.add(identity.documentId);
+          return failure(request.requestId, written.error);
+        }
+        const oldKey = grant.identityKey;
+        const newKey = `${grant.path}:${written.fingerprint}`;
+        const nextIdentity = {
+          documentId: identity.documentId,
+          revision: identity.revision + 1,
+          hash: written.hash,
+        };
+        identities.delete(oldKey);
+        identities.set(newKey, nextIdentity);
+        for (const owned of grants.values())
+          if (owned.identityKey === oldKey) {
+            owned.fingerprint = written.fingerprint;
+            owned.identityKey = newKey;
+            watchGrant(owned);
+          }
+        return {
+          protocolVersion: 1,
+          requestId: request.requestId,
+          ok: true,
+          savedBufferRevision: request.bufferRevision,
+          snapshot: {
+            ...nextIdentity,
+            handle: grant.handle,
+            locationId: locations.get(grant.path),
+            displayPath: grant.path,
+            fileName: basename(grant.path),
+            byteLength: written.byteLength,
+            mirror: mirrors.put(grant.handle, text, request.bufferRevision),
+            fidelity: analyzeTextFidelity(text),
+            writeCapability: await capability(grant),
+          },
+        };
+      } catch {
+        // A thrown transport/worker outcome cannot prove a replacement did not occur.
+        uncertain.add(request.documentId);
+        return failure(request.requestId, "SAVE_UNCERTAIN");
+      } finally {
+        saving--;
+        savingRequests.delete(request.requestId);
+        finish();
+      }
+    },
+    async withWriteBarrier(action) {
+      if (writeBarrier || disposed) return false;
+      writeBarrier = true;
+      try {
+        await saveTail;
+        return await action();
+      } finally {
+        writeBarrier = false;
+      }
+    },
     async select(request) {
       if (!validate(request, false)) return failure("", "INVALID_REQUEST");
+      if (saving || writeBarrier) return failure(request.requestId, "BUSY");
       if (disposed) return failure(request.requestId, "INVALID_HANDLE");
       if (selecting || duplicate(request.requestId))
         return failure(request.requestId, "BUSY");
@@ -282,6 +615,7 @@ export function createDocumentService({
               // The renderer adopts the new grant before releasing its old one.
               // A committed selection can still arrive after it was cancelled.
               grants.set(candidate.handle, candidate);
+              watchGrant(candidate);
               return result(request.requestId, next);
             } catch (error) {
               return failure(request.requestId, codeOf(error));
@@ -299,6 +633,7 @@ export function createDocumentService({
     },
     async read(request) {
       if (!validate(request, true)) return failure("", "INVALID_REQUEST");
+      if (saving || writeBarrier) return failure(request.requestId, "BUSY");
       if (duplicate(request.requestId))
         return failure(request.requestId, "BUSY");
       const grant = grants.get(request.handle);
@@ -335,7 +670,11 @@ export function createDocumentService({
           return result(request.requestId, next);
         } catch (error) {
           const code = codeOf(error);
-          if (code === "FILE_CHANGED") grants.delete(grant.handle);
+          if (code === "FILE_CHANGED") {
+            grants.delete(grant.handle);
+            mirrors.release(grant.handle);
+            unwatch(grant.handle);
+          }
           return failure(request.requestId, code);
         }
       });
@@ -352,9 +691,13 @@ export function createDocumentService({
     release(request) {
       if (!validate(request, true))
         return Promise.resolve(failure("", "INVALID_REQUEST"));
+      if (saving || writeBarrier)
+        return Promise.resolve(failure(request.requestId, "BUSY"));
       if (disposed || !grants.has(request.handle))
         return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
       grants.delete(request.handle);
+      mirrors.release(request.handle);
+      unwatch(request.handle);
       if (running?.handle === request.handle) cancel(running);
       if (pending?.task.handle === request.handle) {
         cancel(pending.task);
@@ -362,10 +705,14 @@ export function createDocumentService({
       }
       return Promise.resolve(result(request.requestId, null));
     },
-    dispose() {
+    async dispose() {
+      writeBarrier = true;
+      await saveTail;
       disposed = true;
       epoch++;
       grants.clear();
+      mirrors.clear();
+      for (const handle of watchers.keys()) unwatch(handle);
       cancel(selecting);
       cancel(running);
       cancel(pending?.task ?? null);

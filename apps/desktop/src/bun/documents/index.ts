@@ -120,6 +120,7 @@ export function createDocumentService({
   write = atomicSave,
   capability = checkWriteCapability,
   onCapabilityChanged = () => undefined,
+  onTiming,
 }: {
   pickFile: () => Promise<string | null>;
   authorize?: typeof authorizeSingleFile;
@@ -127,6 +128,10 @@ export function createDocumentService({
   write?: (input: AtomicSaveInput) => Promise<AtomicSaveResult>;
   capability?: typeof checkWriteCapability;
   onCapabilityChanged?: (handle: string) => void;
+  onTiming?: (
+    phase: "pickerMs" | "authorizeMs" | "diskReadMs" | "decodeAnalyzeMs",
+    ms: number
+  ) => void;
 }): DocumentService {
   const grants = new Map<string, Grant>();
   const mirrors = createBufferMirrors();
@@ -270,6 +275,7 @@ export function createDocumentService({
     generation: number,
     task: Task
   ): Promise<DocumentSnapshot> {
+    const readStart = onTiming ? performance.now() : 0;
     checkTask(task, generation);
     const before = await verify(grant);
     checkTask(task, generation);
@@ -305,6 +311,8 @@ export function createDocumentService({
     }
     if (length > MAX_DOCUMENT_BYTES) throw new DocumentFailure("TOO_LARGE");
     const content = bytes.subarray(0, length);
+    onTiming?.("diskReadMs", performance.now() - readStart);
+    const decodeStart = onTiming ? performance.now() : 0;
     let text: string;
     try {
       text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
@@ -318,6 +326,7 @@ export function createDocumentService({
     const byteBom =
       content[0] === 0xef && content[1] === 0xbb && content[2] === 0xbf;
     if (fidelity.bom !== byteBom) throw new DocumentFailure("INVALID_UTF8");
+    onTiming?.("decodeAnalyzeMs", performance.now() - decodeStart);
     const previous = identities.get(grant.identityKey);
     const identity = {
       documentId: previous?.documentId ?? randomUUID(),
@@ -593,7 +602,9 @@ export function createDocumentService({
       const generation = epoch;
       void (async () => {
         try {
+          const pickerStart = onTiming ? performance.now() : 0;
           const selected = await pickFile();
+          onTiming?.("pickerMs", performance.now() - pickerStart);
           checkTask(task, generation);
           if (selected === null) {
             task.resolve(result(request.requestId, null));
@@ -603,7 +614,9 @@ export function createDocumentService({
             let candidate: Grant | null = null;
             try {
               checkTask(task, generation);
+              const authorizeStart = onTiming ? performance.now() : 0;
               const authorization = await authorize(selected);
+              onTiming?.("authorizeMs", performance.now() - authorizeStart);
               candidate = {
                 ...authorization,
                 handle: randomUUID(),

@@ -43,7 +43,10 @@ export function createMainWindowRPC({
         perfLabRequest: async (request) => {
           if (!enabled) return { ok: false, error: "DISABLED" as const };
           lab ??= import("../perf-lab").then((module) =>
-            module.createPerfLabService({ enabled })
+            module.createPerfLabService({
+              enabled,
+              openEnabled: process.env.AGENTIC_MARKDOWN_PERF_OPEN === "1",
+            })
           );
           const result = await (await lab).run(request);
           if (

@@ -11,6 +11,7 @@ import {
   switchEditorMode,
 } from "./editor-mode";
 import { createRawEditorState, rawText } from "./raw-buffer";
+import { sourceColorDecorations } from "./source-highlighting";
 
 test("source highlighting changes only color, leaving all Markdown uniformly typeset", () => {
   for (const spec of sourceHighlightStyle.specs) {
@@ -35,7 +36,17 @@ test("source highlighting changes only color, leaving all Markdown uniformly typ
     tags.monospace,
     tags.processingInstruction,
   ])
-    expect(highlightingFor(source, [tag])).toBeTruthy();
+    expect(sourceHighlightStyle.style([tag])).toBeTruthy();
+  expect(
+    sourceColorDecorations(
+      source,
+      syntaxTree(source),
+      [{ from: 0, to: source.doc.length }],
+      sourceHighlightStyle
+    ).size
+  ).toBeGreaterThan(0);
+  // No duplicate built-in highlighter remains installed.
+  expect(highlightingFor(source, [tags.heading])).toBeNull();
 });
 
 test("presentation switch retains language tree, selection, raw fidelity and undo history", () => {
@@ -59,7 +70,14 @@ test("presentation switch retains language tree, selection, raw fidelity and und
   expect(state.doc).toBe(doc);
   expect(state.selection).toBe(selection);
   expect(state.field(rawText)).toBe(original + "!");
-  expect(highlightingFor(state, [tags.heading])).toBeTruthy();
+  expect(
+    sourceColorDecorations(
+      state,
+      tree,
+      [{ from: 0, to: state.doc.length }],
+      sourceHighlightStyle
+    ).size
+  ).toBeGreaterThan(0);
   const dispatch = (transaction: Transaction) => {
     state = transaction.state;
   };

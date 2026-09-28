@@ -1,4 +1,4 @@
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle } from "@codemirror/language";
 import { Compartment, Facet, type EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
@@ -9,6 +9,7 @@ import {
   createEditingMarkdown,
   livePresentation,
 } from "./live-formatting";
+import { protectedSourceHighlighting } from "./source-highlighting";
 
 export type EditorMode = "editing" | "source";
 const mode = Facet.define<EditorMode, EditorMode>({
@@ -56,7 +57,7 @@ const safe = Facet.define<boolean, boolean>({
 });
 const sourcePresentation = [
   mode.of("source"),
-  syntaxHighlighting(sourceHighlightStyle),
+  protectedSourceHighlighting(sourceHighlightStyle),
 ];
 export const createEditorModeExtensions = (isolated = false) => [
   editorFaultSession,

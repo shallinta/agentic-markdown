@@ -14,6 +14,10 @@ export type PerfRoute =
   | "cm-viewport"
   | "cm-long-line-view"
   | "cm-parser-lifecycle"
+  | "cm-dense-diagnostic"
+  | "cm-responsive-input"
+  | "cm-parser-work"
+  | "cm-disk-open"
   | "cancel";
 export interface PerfRow {
   bytes: number;
@@ -29,6 +33,23 @@ export interface PerfMetrics {
   cpuSystemUs: number;
 }
 export type PerfRequest =
+  | { op: "open-start" }
+  | { op: "open-prepare"; runId: string; sample: number }
+  | { op: "open-stop"; runId: string }
+  | {
+      op: "open-call";
+      runId: string;
+      action:
+        | "select"
+        | "read"
+        | "save"
+        | "release"
+        | "cancel"
+        | "checkWriteCapability"
+        | "waitForSaves";
+      sample: number;
+      request: unknown;
+    }
   | { op: "start"; runId: string; bytes: number; shape: PerfShape }
   | { op: "probe"; array: unknown; typed: unknown }
   | { op: "download"; runId: string; sequence: number }
@@ -53,6 +74,8 @@ export type PerfRequest =
   | { op: "stop"; runId: string }
   | { op: "report"; rows: PerfRow[] };
 export interface PerfResponse {
+  document?: unknown;
+  openMetrics?: Record<string, number>;
   ok: boolean;
   error?: "DISABLED" | "INVALID" | "BUSY" | "CANCELLED" | "TIMEOUT" | "FAILED";
   runId?: string;

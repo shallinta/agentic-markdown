@@ -260,10 +260,12 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       </div>
       {editor &&
         snapshot &&
-        controller.getMode(snapshot.documentId) === "editing" &&
+        !controller.isSafeSource(snapshot.documentId) &&
         editor.state.field(longLineProtection).length > 0 && (
           <p role="status" className="text-muted-foreground text-sm">
-            部分超长行已简化行内排版，代码与引用结构保留；缩短后恢复，软换行与保存不变。
+            {controller.getMode(snapshot.documentId) === "source"
+              ? "部分超长行已暂停语法着色；缩短后恢复，自动折行、原文与保存不变。"
+              : "部分超长行已简化行内排版，代码与引用结构保留；缩短后恢复，软换行与保存不变。"}
           </p>
         )}
       {snapshot && controller.getEditorFault(snapshot.documentId)?.fault && (

@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 
 import type { Tree } from "@lezer/common";
 
-import { lifecycleOutcome, MeasuredParser } from "./editor-view-probe";
+import {
+  lifecycleOutcome,
+  longLineProbeText,
+  MeasuredParser,
+} from "./editor-view-probe";
 import { editingMarkdown } from "./live-formatting";
 
 function nodes(tree: Tree) {
@@ -14,6 +18,27 @@ function nodes(tree: Tree) {
   });
   return result;
 }
+
+test("long-line view corpus covers dense syntax without changing sample sizes or file boundary", () => {
+  for (const units of [10_000, 50_000, 200_000]) {
+    for (const dense of [false, true]) {
+      const raw = longLineProbeText(units, dense);
+      expect(raw.startsWith("\uFEFF# 合成视图探针\n\n")).toBe(true);
+      const lines = raw.split("\n");
+      expect(lines[lines.length - 1]?.length).toBe(units);
+      expect(new TextEncoder().encode(raw).length).toBeLessThanOrEqual(
+        1_048_576
+      );
+      if (dense) {
+        const names = nodes(editingMarkdown.parser.parse(raw)).map(
+          ([name]) => name
+        );
+        for (const name of ["StrongEmphasis", "Link", "Entity", "Escape"])
+          expect(names).toContain(name);
+      }
+    }
+  }
+});
 
 test("measured parser delegates real CommonMark unchanged and attributes advance counters", () => {
   const parser = new MeasuredParser(editingMarkdown.parser);

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { undo, redo } from "@codemirror/commands";
-import { highlightingFor, syntaxTree } from "@codemirror/language";
+import { syntaxTree } from "@codemirror/language";
 import {
   EditorSelection,
   type EditorState,
@@ -13,14 +13,17 @@ import {
   safeSourceEffects,
   sourceHighlightStyle,
   switchEditorMode,
+  getEditorMode,
+  isSafeSource,
 } from "./editor-mode";
 import { createRawEditorState, rawText } from "./raw-buffer";
 
 function colors(state: EditorState) {
   const result: { from: number; to: number; classes: string }[] = [];
+  if (getEditorMode(state) !== "source" || isSafeSource(state)) return result;
   highlightTree(
     syntaxTree(state),
-    { style: (nodeTags) => highlightingFor(state, nodeTags) },
+    sourceHighlightStyle,
     (from, to, classes) => {
       result.push({ from, to, classes });
     }
@@ -84,7 +87,7 @@ test("actual CommonMark nodes receive the missing source colors, not merely regi
       },
     });
     expect(found).toBe(true);
-    const expectedClass = highlightingFor(state, [fixture.tag]);
+    const expectedClass = sourceHighlightStyle.style([fixture.tag]);
     expect(expectedClass).toBeTruthy();
     const from = state.doc.toString().indexOf(fixture.token),
       to = from + fixture.token.length;

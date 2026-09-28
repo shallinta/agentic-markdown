@@ -1,0 +1,1157 @@
+{
+  "scope": "Bun production background routing with real Worker; UTF-16 sizes; three fresh states per cell, three end edits per state; no View/RPC/natural input; full parse timed independently after edits; readiness wait starts AFTER independent full parse, not total syntax latency; exact tree wire comparison outside measured intervals",
+  "rows": [
+    {
+      "units": 31994,
+      "targetUnits": 32000,
+      "kind": "ordinary",
+      "trial": 0,
+      "stateMs": 12.229124999999996,
+      "edits": [
+        5.606499999999997,
+        3.6594580000000008,
+        3.02554099999999
+      ],
+      "fullParseMs": 2.384749999999997,
+      "complete": true,
+      "readyWaitMs": 2.4147920000000056,
+      "equivalent": true
+    },
+    {
+      "units": 31994,
+      "targetUnits": 32000,
+      "kind": "ordinary",
+      "trial": 1,
+      "stateMs": 2.7120419999999967,
+      "edits": [
+        2.842084,
+        2.7235410000000115,
+        2.780875000000009
+      ],
+      "fullParseMs": 2.061917000000008,
+      "complete": true,
+      "readyWaitMs": 1.930250000000001,
+      "equivalent": true
+    },
+    {
+      "units": 31994,
+      "targetUnits": 32000,
+      "kind": "ordinary",
+      "trial": 2,
+      "stateMs": 2.3719169999999963,
+      "edits": [
+        2.487375,
+        2.629917000000006,
+        2.4157920000000104
+      ],
+      "fullParseMs": 1.8786249999999995,
+      "complete": true,
+      "readyWaitMs": 1.9173329999999993,
+      "equivalent": true
+    },
+    {
+      "units": 31972,
+      "targetUnits": 32000,
+      "kind": "dense",
+      "trial": 0,
+      "stateMs": 3.342084,
+      "edits": [
+        1.055250000000001,
+        0.6867079999999959,
+        0.6062079999999952
+      ],
+      "fullParseMs": 4.998540999999989,
+      "complete": true,
+      "readyWaitMs": 3.4562080000000037,
+      "equivalent": true
+    },
+    {
+      "units": 31972,
+      "targetUnits": 32000,
+      "kind": "dense",
+      "trial": 1,
+      "stateMs": 1.0452080000000024,
+      "edits": [
+        0.6659999999999968,
+        0.5847089999999753,
+        0.713957999999991
+      ],
+      "fullParseMs": 2.2034170000000017,
+      "complete": true,
+      "readyWaitMs": 1.981250000000017,
+      "equivalent": true
+    },
+    {
+      "units": 31972,
+      "targetUnits": 32000,
+      "kind": "dense",
+      "trial": 2,
+      "stateMs": 0.7444590000000062,
+      "edits": [
+        0.7248749999999973,
+        0.6897919999999829,
+        0.6368339999999932
+      ],
+      "fullParseMs": 2.598374999999976,
+      "complete": true,
+      "readyWaitMs": 2.3998750000000086,
+      "equivalent": true
+    },
+    {
+      "units": 32001,
+      "targetUnits": 32000,
+      "kind": "fence",
+      "trial": 0,
+      "stateMs": 1.1885829999999942,
+      "edits": [
+        0.835125000000005,
+        0.7336249999999893,
+        0.7291659999999922
+      ],
+      "fullParseMs": 0.34716600000001563,
+      "complete": true,
+      "readyWaitMs": 0.2481249999999875,
+      "equivalent": true
+    },
+    {
+      "units": 32001,
+      "targetUnits": 32000,
+      "kind": "fence",
+      "trial": 1,
+      "stateMs": 0.6494580000000099,
+      "edits": [
+        0.686458999999985,
+        0.7718750000000227,
+        0.6436669999999935
+      ],
+      "fullParseMs": 0.24187499999999318,
+      "complete": true,
+      "readyWaitMs": 0.12999999999999545,
+      "equivalent": true
+    },
+    {
+      "units": 32001,
+      "targetUnits": 32000,
+      "kind": "fence",
+      "trial": 2,
+      "stateMs": 0.5674999999999955,
+      "edits": [
+        0.6348750000000223,
+        0.6180840000000103,
+        0.6310419999999795
+      ],
+      "fullParseMs": 0.22837499999999977,
+      "complete": true,
+      "readyWaitMs": 1.1358339999999885,
+      "equivalent": true
+    },
+    {
+      "units": 31994,
+      "targetUnits": 32000,
+      "kind": "mixed",
+      "trial": 0,
+      "stateMs": 3.6172090000000026,
+      "edits": [
+        0.8827919999999949,
+        0.7127079999999921,
+        0.7162500000000023
+      ],
+      "fullParseMs": 5.761583000000002,
+      "complete": true,
+      "readyWaitMs": 4.446875000000006,
+      "equivalent": true
+    },
+    {
+      "units": 31994,
+      "targetUnits": 32000,
+      "kind": "mixed",
+      "trial": 1,
+      "stateMs": 2.853457999999989,
+      "edits": [
+        1.1868340000000046,
+        1.0040839999999776,
+        0.8367920000000026
+      ],
+      "fullParseMs": 4.472082999999998,
+      "complete": true,
+      "readyWaitMs": 4.495915999999994,
+      "equivalent": true
+    },
+    {
+      "units": 31994,
+      "targetUnits": 32000,
+      "kind": "mixed",
+      "trial": 2,
+      "stateMs": 2.071957999999995,
+      "edits": [
+        0.8720000000000141,
+        0.7257079999999974,
+        0.7567499999999825
+      ],
+      "fullParseMs": 4.129334,
+      "complete": true,
+      "readyWaitMs": 10.435709000000003,
+      "equivalent": true
+    },
+    {
+      "units": 63994,
+      "targetUnits": 64000,
+      "kind": "ordinary",
+      "trial": 0,
+      "stateMs": 4.533584000000019,
+      "edits": [
+        4.842792000000031,
+        4.710583999999983,
+        4.900374999999997
+      ],
+      "fullParseMs": 3.792291999999975,
+      "complete": true,
+      "readyWaitMs": 3.8527500000000146,
+      "equivalent": true
+    },
+    {
+      "units": 63994,
+      "targetUnits": 64000,
+      "kind": "ordinary",
+      "trial": 1,
+      "stateMs": 4.694457999999997,
+      "edits": [
+        5.086500000000001,
+        4.73275000000001,
+        9.18145800000002
+      ],
+      "fullParseMs": 4.090917000000047,
+      "complete": true,
+      "readyWaitMs": 3.909582999999998,
+      "equivalent": true
+    },
+    {
+      "units": 63994,
+      "targetUnits": 64000,
+      "kind": "ordinary",
+      "trial": 2,
+      "stateMs": 4.549292000000037,
+      "edits": [
+        4.964042000000006,
+        5.069958999999983,
+        4.865042000000017
+      ],
+      "fullParseMs": 3.8008330000000115,
+      "complete": true,
+      "readyWaitMs": 3.4791249999999536,
+      "equivalent": true
+    },
+    {
+      "units": 63968,
+      "targetUnits": 64000,
+      "kind": "dense",
+      "trial": 0,
+      "stateMs": 0.9557920000000308,
+      "edits": [
+        0.9897919999999658,
+        0.9630420000000299,
+        0.9238339999999994
+      ],
+      "fullParseMs": 5.029333000000008,
+      "complete": true,
+      "readyWaitMs": 4.983042000000012,
+      "equivalent": true
+    },
+    {
+      "units": 63968,
+      "targetUnits": 64000,
+      "kind": "dense",
+      "trial": 1,
+      "stateMs": 1.0452089999999998,
+      "edits": [
+        1.0028330000000096,
+        0.9309999999999832,
+        0.9701249999999959
+      ],
+      "fullParseMs": 4.979166999999961,
+      "complete": true,
+      "readyWaitMs": 4.675417000000039,
+      "equivalent": true
+    },
+    {
+      "units": 63968,
+      "targetUnits": 64000,
+      "kind": "dense",
+      "trial": 2,
+      "stateMs": 1.3068340000000376,
+      "edits": [
+        1.1794160000000034,
+        1.0161249999999882,
+        1.0745829999999614
+      ],
+      "fullParseMs": 5.669292000000041,
+      "complete": true,
+      "readyWaitMs": 4.375499999999988,
+      "equivalent": true
+    },
+    {
+      "units": 63995,
+      "targetUnits": 64000,
+      "kind": "fence",
+      "trial": 0,
+      "stateMs": 1.0509159999999724,
+      "edits": [
+        1.2430420000000026,
+        1.3119159999999965,
+        1.103166999999985
+      ],
+      "fullParseMs": 0.3883329999999887,
+      "complete": true,
+      "readyWaitMs": 0.1791249999999991,
+      "equivalent": true
+    },
+    {
+      "units": 63995,
+      "targetUnits": 64000,
+      "kind": "fence",
+      "trial": 1,
+      "stateMs": 0.9144170000000145,
+      "edits": [
+        1.0657080000000292,
+        1.0774170000000254,
+        1.047208000000012
+      ],
+      "fullParseMs": 0.372916000000032,
+      "complete": true,
+      "readyWaitMs": 0.1712500000000432,
+      "equivalent": true
+    },
+    {
+      "units": 63995,
+      "targetUnits": 64000,
+      "kind": "fence",
+      "trial": 2,
+      "stateMs": 0.9723330000000487,
+      "edits": [
+        1.2157079999999496,
+        1.0944580000000315,
+        1.0215000000000032
+      ],
+      "fullParseMs": 0.3877499999999827,
+      "complete": true,
+      "readyWaitMs": 0.17237499999998818,
+      "equivalent": true
+    },
+    {
+      "units": 63974,
+      "targetUnits": 64000,
+      "kind": "mixed",
+      "trial": 0,
+      "stateMs": 4.556708000000015,
+      "edits": [
+        1.4839170000000195,
+        1.2822909999999865,
+        1.2332499999999982
+      ],
+      "fullParseMs": 8.34250000000003,
+      "complete": true,
+      "readyWaitMs": 16.933625000000006,
+      "equivalent": true
+    },
+    {
+      "units": 63974,
+      "targetUnits": 64000,
+      "kind": "mixed",
+      "trial": 1,
+      "stateMs": 3.064583000000084,
+      "edits": [
+        1.5765420000000177,
+        1.394042000000013,
+        1.2761669999999867
+      ],
+      "fullParseMs": 6.923167000000035,
+      "complete": true,
+      "readyWaitMs": 13.000625000000014,
+      "equivalent": true
+    },
+    {
+      "units": 63974,
+      "targetUnits": 64000,
+      "kind": "mixed",
+      "trial": 2,
+      "stateMs": 3.1224169999999276,
+      "edits": [
+        1.3327920000000404,
+        1.367750000000001,
+        1.2279160000000502
+      ],
+      "fullParseMs": 7.7727910000000975,
+      "complete": true,
+      "readyWaitMs": 16.098791000000006,
+      "equivalent": true
+    },
+    {
+      "units": 127994,
+      "targetUnits": 128000,
+      "kind": "ordinary",
+      "trial": 0,
+      "stateMs": 8.273666000000048,
+      "edits": [
+        9.221917000000076,
+        9.012583999999947,
+        10.369707999999946
+      ],
+      "fullParseMs": 7.437542000000008,
+      "complete": true,
+      "readyWaitMs": 13.96712500000001,
+      "equivalent": true
+    },
+    {
+      "units": 127994,
+      "targetUnits": 128000,
+      "kind": "ordinary",
+      "trial": 1,
+      "stateMs": 8.581500000000005,
+      "edits": [
+        8.827958999999964,
+        9.072915999999964,
+        8.84379100000001
+      ],
+      "fullParseMs": 7.291417000000024,
+      "complete": true,
+      "readyWaitMs": 14.290208000000007,
+      "equivalent": true
+    },
+    {
+      "units": 127994,
+      "targetUnits": 128000,
+      "kind": "ordinary",
+      "trial": 2,
+      "stateMs": 8.524000000000001,
+      "edits": [
+        9.335750000000075,
+        10.313417000000072,
+        9.568917000000056
+      ],
+      "fullParseMs": 7.58141599999999,
+      "complete": true,
+      "readyWaitMs": 13.307166999999936,
+      "equivalent": true
+    },
+    {
+      "units": 127998,
+      "targetUnits": 128000,
+      "kind": "dense",
+      "trial": 0,
+      "stateMs": 1.575917000000004,
+      "edits": [
+        1.8071249999999281,
+        1.7819999999999254,
+        1.8671249999999873
+      ],
+      "fullParseMs": 8.772832999999991,
+      "complete": true,
+      "readyWaitMs": 16.25137499999994,
+      "equivalent": true
+    },
+    {
+      "units": 127998,
+      "targetUnits": 128000,
+      "kind": "dense",
+      "trial": 1,
+      "stateMs": 1.6322920000000067,
+      "edits": [
+        1.9151669999999967,
+        1.875291999999945,
+        1.9905410000000074
+      ],
+      "fullParseMs": 8.339624999999955,
+      "complete": true,
+      "readyWaitMs": 17.002916000000027,
+      "equivalent": true
+    },
+    {
+      "units": 127998,
+      "targetUnits": 128000,
+      "kind": "dense",
+      "trial": 2,
+      "stateMs": 1.6976250000000164,
+      "edits": [
+        1.867750000000001,
+        1.7788750000000846,
+        1.89812500000005
+      ],
+      "fullParseMs": 8.317207999999937,
+      "complete": true,
+      "readyWaitMs": 15.810749999999985,
+      "equivalent": true
+    },
+    {
+      "units": 128000,
+      "targetUnits": 128000,
+      "kind": "fence",
+      "trial": 0,
+      "stateMs": 1.7807910000001357,
+      "edits": [
+        2.0963339999998425,
+        2.061541000000034,
+        2.2914169999999103
+      ],
+      "fullParseMs": 0.8399999999999181,
+      "complete": true,
+      "readyWaitMs": 37.0173749999999,
+      "equivalent": true
+    },
+    {
+      "units": 128000,
+      "targetUnits": 128000,
+      "kind": "fence",
+      "trial": 1,
+      "stateMs": 2.2021669999999176,
+      "edits": [
+        2.2097499999999854,
+        2.1428330000001097,
+        1.7522079999998823
+      ],
+      "fullParseMs": 0.7556670000001304,
+      "complete": true,
+      "readyWaitMs": 37.11912499999994,
+      "equivalent": true
+    },
+    {
+      "units": 128000,
+      "targetUnits": 128000,
+      "kind": "fence",
+      "trial": 2,
+      "stateMs": 1.9979169999999158,
+      "edits": [
+        2.538208000000168,
+        2.5132089999999607,
+        1.9409590000000208
+      ],
+      "fullParseMs": 0.7756670000001122,
+      "complete": true,
+      "readyWaitMs": 30.742707999999993,
+      "equivalent": true
+    },
+    {
+      "units": 127986,
+      "targetUnits": 128000,
+      "kind": "mixed",
+      "trial": 0,
+      "stateMs": 7.497292000000016,
+      "edits": [
+        2.637749999999869,
+        2.6896659999999883,
+        3.0065839999999753
+      ],
+      "fullParseMs": 17.902916000000005,
+      "complete": true,
+      "readyWaitMs": 29.315000000000055,
+      "equivalent": true
+    },
+    {
+      "units": 127986,
+      "targetUnits": 128000,
+      "kind": "mixed",
+      "trial": 1,
+      "stateMs": 6.829791000000114,
+      "edits": [
+        3.0047910000000684,
+        2.4579579999999623,
+        2.6773749999999836
+      ],
+      "fullParseMs": 16.680916000000025,
+      "complete": true,
+      "readyWaitMs": 31.50041599999986,
+      "equivalent": true
+    },
+    {
+      "units": 127986,
+      "targetUnits": 128000,
+      "kind": "mixed",
+      "trial": 2,
+      "stateMs": 6.335084000000052,
+      "edits": [
+        2.6739590000001954,
+        2.6191250000001673,
+        2.384999999999991
+      ],
+      "fullParseMs": 15.627958000000035,
+      "complete": true,
+      "readyWaitMs": 30.185999999999922,
+      "equivalent": true
+    },
+    {
+      "units": 255994,
+      "targetUnits": 256000,
+      "kind": "ordinary",
+      "trial": 0,
+      "stateMs": 2.423375000000078,
+      "edits": [
+        4.931084000000055,
+        3.474040999999943,
+        3.5557909999999993
+      ],
+      "fullParseMs": 14.93425000000002,
+      "complete": true,
+      "readyWaitMs": 41.665042000000085,
+      "equivalent": true
+    },
+    {
+      "units": 255994,
+      "targetUnits": 256000,
+      "kind": "ordinary",
+      "trial": 1,
+      "stateMs": 2.3089590000001863,
+      "edits": [
+        3.7701250000000073,
+        3.7710420000000795,
+        3.6979579999999714
+      ],
+      "fullParseMs": 15.037959,
+      "complete": true,
+      "readyWaitMs": 42.49020799999994,
+      "equivalent": true
+    },
+    {
+      "units": 255994,
+      "targetUnits": 256000,
+      "kind": "ordinary",
+      "trial": 2,
+      "stateMs": 2.3598749999998745,
+      "edits": [
+        3.476165999999921,
+        3.3911249999998745,
+        3.632041999999956
+      ],
+      "fullParseMs": 15.257249999999885,
+      "complete": true,
+      "readyWaitMs": 41.730749999999944,
+      "equivalent": true
+    },
+    {
+      "units": 255982,
+      "targetUnits": 256000,
+      "kind": "dense",
+      "trial": 0,
+      "stateMs": 2.5346669999998994,
+      "edits": [
+        3.601709000000028,
+        3.460583999999926,
+        3.668374999999969
+      ],
+      "fullParseMs": 18.640749999999798,
+      "complete": true,
+      "readyWaitMs": 90.28449999999998,
+      "equivalent": true
+    },
+    {
+      "units": 255982,
+      "targetUnits": 256000,
+      "kind": "dense",
+      "trial": 1,
+      "stateMs": 2.4273749999999836,
+      "edits": [
+        3.4736250000000837,
+        3.5246250000000146,
+        3.476084000000128
+      ],
+      "fullParseMs": 16.277541999999812,
+      "complete": true,
+      "readyWaitMs": 89.57212500000014,
+      "equivalent": true
+    },
+    {
+      "units": 255982,
+      "targetUnits": 256000,
+      "kind": "dense",
+      "trial": 2,
+      "stateMs": 2.3916250000002037,
+      "edits": [
+        3.4360420000002705,
+        3.3323749999999563,
+        3.3860829999998714
+      ],
+      "fullParseMs": 16.71587499999987,
+      "complete": true,
+      "readyWaitMs": 90.25454200000013,
+      "equivalent": true
+    },
+    {
+      "units": 255993,
+      "targetUnits": 256000,
+      "kind": "fence",
+      "trial": 0,
+      "stateMs": 2.709291000000121,
+      "edits": [
+        3.4817080000002534,
+        3.3865419999997357,
+        3.698833999999806
+      ],
+      "fullParseMs": 1.5325419999999212,
+      "complete": true,
+      "readyWaitMs": 24.697000000000116,
+      "equivalent": true
+    },
+    {
+      "units": 255993,
+      "targetUnits": 256000,
+      "kind": "fence",
+      "trial": 1,
+      "stateMs": 2.974499999999807,
+      "edits": [
+        3.6533339999996315,
+        3.645332999999937,
+        3.517583000000286
+      ],
+      "fullParseMs": 1.4245829999999842,
+      "complete": true,
+      "readyWaitMs": 24.807999999999993,
+      "equivalent": true
+    },
+    {
+      "units": 255993,
+      "targetUnits": 256000,
+      "kind": "fence",
+      "trial": 2,
+      "stateMs": 2.7735829999996895,
+      "edits": [
+        3.5255839999999807,
+        3.584209000000101,
+        3.6227090000002136
+      ],
+      "fullParseMs": 1.5334579999998823,
+      "complete": true,
+      "readyWaitMs": 23.83183400000007,
+      "equivalent": true
+    },
+    {
+      "units": 255958,
+      "targetUnits": 256000,
+      "kind": "mixed",
+      "trial": 0,
+      "stateMs": 16.482082999999875,
+      "edits": [
+        4.985833000000184,
+        4.821291000000201,
+        4.913333000000421
+      ],
+      "fullParseMs": 34.15645799999993,
+      "complete": true,
+      "readyWaitMs": 284.47695799999974,
+      "equivalent": true
+    },
+    {
+      "units": 255958,
+      "targetUnits": 256000,
+      "kind": "mixed",
+      "trial": 1,
+      "stateMs": 16.075416000000132,
+      "edits": [
+        4.9324579999997695,
+        4.918749999999818,
+        4.770665999999892
+      ],
+      "fullParseMs": 32.47333299999991,
+      "complete": true,
+      "readyWaitMs": 279.957042,
+      "equivalent": true
+    },
+    {
+      "units": 255958,
+      "targetUnits": 256000,
+      "kind": "mixed",
+      "trial": 2,
+      "stateMs": 16.52724999999964,
+      "edits": [
+        4.876791000000139,
+        4.663958000000093,
+        5.00320899999997
+      ],
+      "fullParseMs": 29.884166999999707,
+      "complete": true,
+      "readyWaitMs": 298.32450000000017,
+      "equivalent": true
+    },
+    {
+      "units": 511994,
+      "targetUnits": 512000,
+      "kind": "ordinary",
+      "trial": 0,
+      "stateMs": 5.305207999999766,
+      "edits": [
+        7.036041999999725,
+        7.230415999999877,
+        6.873041999999714
+      ],
+      "fullParseMs": 29.84612500000003,
+      "complete": true,
+      "readyWaitMs": 49.64887499999986,
+      "equivalent": true
+    },
+    {
+      "units": 511994,
+      "targetUnits": 512000,
+      "kind": "ordinary",
+      "trial": 1,
+      "stateMs": 5.053915999999845,
+      "edits": [
+        7.11783400000013,
+        6.950333000000228,
+        6.961957999999868
+      ],
+      "fullParseMs": 30.96566699999994,
+      "complete": true,
+      "readyWaitMs": 44.43845799999963,
+      "equivalent": true
+    },
+    {
+      "units": 511994,
+      "targetUnits": 512000,
+      "kind": "ordinary",
+      "trial": 2,
+      "stateMs": 5.108040999999957,
+      "edits": [
+        7.160583000000315,
+        7.101624999999331,
+        7.135457999999744
+      ],
+      "fullParseMs": 29.678499999999985,
+      "complete": true,
+      "readyWaitMs": 43.92591700000048,
+      "equivalent": true
+    },
+    {
+      "units": 511988,
+      "targetUnits": 512000,
+      "kind": "dense",
+      "trial": 0,
+      "stateMs": 5.448333000000275,
+      "edits": [
+        6.818666000000121,
+        7.073999999999614,
+        6.905042000000321
+      ],
+      "fullParseMs": 36.50512499999968,
+      "complete": true,
+      "readyWaitMs": 142.9057499999999,
+      "equivalent": true
+    },
+    {
+      "units": 511988,
+      "targetUnits": 512000,
+      "kind": "dense",
+      "trial": 1,
+      "stateMs": 5.2048750000003565,
+      "edits": [
+        6.993290999999772,
+        7.237749999999323,
+        7.152291999999761
+      ],
+      "fullParseMs": 42.52050000000054,
+      "complete": true,
+      "readyWaitMs": 143.9626670000007,
+      "equivalent": true
+    },
+    {
+      "units": 511988,
+      "targetUnits": 512000,
+      "kind": "dense",
+      "trial": 2,
+      "stateMs": 5.400583999999981,
+      "edits": [
+        7.022375000000466,
+        6.906750000000102,
+        7.017292000000452
+      ],
+      "fullParseMs": 41.04145799999969,
+      "complete": true,
+      "readyWaitMs": 144.66191700000036,
+      "equivalent": true
+    },
+    {
+      "units": 511996,
+      "targetUnits": 512000,
+      "kind": "fence",
+      "trial": 0,
+      "stateMs": 6.186958999999661,
+      "edits": [
+        6.98174999999992,
+        8.82195800000045,
+        7.12029099999927
+      ],
+      "fullParseMs": 2.882332999999562,
+      "complete": true,
+      "readyWaitMs": 18.080957999999555,
+      "equivalent": true
+    },
+    {
+      "units": 511996,
+      "targetUnits": 512000,
+      "kind": "fence",
+      "trial": 1,
+      "stateMs": 6.181916999999885,
+      "edits": [
+        7.350957999999991,
+        7.398624999999811,
+        7.32024999999976
+      ],
+      "fullParseMs": 3.9748749999998836,
+      "complete": true,
+      "readyWaitMs": 16.86945899999955,
+      "equivalent": true
+    },
+    {
+      "units": 511996,
+      "targetUnits": 512000,
+      "kind": "fence",
+      "trial": 2,
+      "stateMs": 6.3680410000006304,
+      "edits": [
+        7.105208000000857,
+        7.211041999999907,
+        7.027208000000428
+      ],
+      "fullParseMs": 2.924124999999549,
+      "complete": true,
+      "readyWaitMs": 18.840124999999716,
+      "equivalent": true
+    },
+    {
+      "units": 511954,
+      "targetUnits": 512000,
+      "kind": "mixed",
+      "trial": 0,
+      "stateMs": 19.873082999999497,
+      "edits": [
+        9.726166000000376,
+        11.196208000000297,
+        9.580458000000363
+      ],
+      "fullParseMs": 73.8907079999999,
+      "complete": true,
+      "readyWaitMs": 614.3582079999996,
+      "equivalent": true
+    },
+    {
+      "units": 511954,
+      "targetUnits": 512000,
+      "kind": "mixed",
+      "trial": 1,
+      "stateMs": 21.60649999999987,
+      "edits": [
+        9.314291000000594,
+        9.364332999999533,
+        10.264957999999751
+      ],
+      "fullParseMs": 59.244040999999925,
+      "complete": true,
+      "readyWaitMs": 618.5127500000008,
+      "equivalent": true
+    },
+    {
+      "units": 511954,
+      "targetUnits": 512000,
+      "kind": "mixed",
+      "trial": 2,
+      "stateMs": 21.421666999999616,
+      "edits": [
+        9.277416999999332,
+        10.027250000000095,
+        9.95508300000074
+      ],
+      "fullParseMs": 68.70391699999982,
+      "complete": true,
+      "readyWaitMs": 604.6092090000002,
+      "equivalent": true
+    },
+    {
+      "units": 799994,
+      "targetUnits": 800000,
+      "kind": "ordinary",
+      "trial": 0,
+      "stateMs": 9.083457999999155,
+      "edits": [
+        10.99066700000003,
+        11.467083999999886,
+        11.416708000000654
+      ],
+      "fullParseMs": 49.161041999999725,
+      "complete": true,
+      "readyWaitMs": 52.47175000000061,
+      "equivalent": true
+    },
+    {
+      "units": 799994,
+      "targetUnits": 800000,
+      "kind": "ordinary",
+      "trial": 1,
+      "stateMs": 9.285250000000815,
+      "edits": [
+        10.896042000000307,
+        10.8940419999999,
+        11.111249999999927
+      ],
+      "fullParseMs": 47.2778330000001,
+      "complete": true,
+      "readyWaitMs": 51.048666999999114,
+      "equivalent": true
+    },
+    {
+      "units": 799994,
+      "targetUnits": 800000,
+      "kind": "ordinary",
+      "trial": 2,
+      "stateMs": 9.390333999999712,
+      "edits": [
+        10.990207999999257,
+        10.947625000000698,
+        11.118917000001602
+      ],
+      "fullParseMs": 47.08395799999926,
+      "complete": true,
+      "readyWaitMs": 51.7116670000014,
+      "equivalent": true
+    },
+    {
+      "units": 799990,
+      "targetUnits": 800000,
+      "kind": "dense",
+      "trial": 0,
+      "stateMs": 9.982749999999214,
+      "edits": [
+        10.823374999999942,
+        10.695207999999184,
+        11.331041999999798
+      ],
+      "fullParseMs": 57.3999160000003,
+      "complete": true,
+      "readyWaitMs": 193.80995800000164,
+      "equivalent": true
+    },
+    {
+      "units": 799990,
+      "targetUnits": 800000,
+      "kind": "dense",
+      "trial": 1,
+      "stateMs": 10.017541999999594,
+      "edits": [
+        10.65875000000051,
+        10.979541999999128,
+        10.831167000000278
+      ],
+      "fullParseMs": 51.98920800000087,
+      "complete": true,
+      "readyWaitMs": 201.88029199999983,
+      "equivalent": true
+    },
+    {
+      "units": 799990,
+      "targetUnits": 800000,
+      "kind": "dense",
+      "trial": 2,
+      "stateMs": 10.333832999998776,
+      "edits": [
+        10.649374999999054,
+        10.849124999998821,
+        11.345083000000159
+      ],
+      "fullParseMs": 54.04149999999936,
+      "complete": true,
+      "readyWaitMs": 209.58995800000048,
+      "equivalent": true
+    },
+    {
+      "units": 799993,
+      "targetUnits": 800000,
+      "kind": "fence",
+      "trial": 0,
+      "stateMs": 12.003582999999708,
+      "edits": [
+        11.229208999999173,
+        11.172708999998576,
+        10.995417000000089
+      ],
+      "fullParseMs": 4.742207999999664,
+      "complete": true,
+      "readyWaitMs": 12.328499999999622,
+      "equivalent": true
+    },
+    {
+      "units": 799993,
+      "targetUnits": 800000,
+      "kind": "fence",
+      "trial": 1,
+      "stateMs": 11.659249999998792,
+      "edits": [
+        11.522291999999652,
+        10.887375000000247,
+        11.219375000000582
+      ],
+      "fullParseMs": 4.275625000000218,
+      "complete": true,
+      "readyWaitMs": 15.111790999999357,
+      "equivalent": true
+    },
+    {
+      "units": 799993,
+      "targetUnits": 800000,
+      "kind": "fence",
+      "trial": 2,
+      "stateMs": 11.643292000000656,
+      "edits": [
+        11.461249999998472,
+        11.341542000000118,
+        11.235666999999012
+      ],
+      "fullParseMs": 4.806042000000161,
+      "complete": true,
+      "readyWaitMs": 13.553125000000364,
+      "equivalent": true
+    },
+    {
+      "units": 799982,
+      "targetUnits": 800000,
+      "kind": "mixed",
+      "trial": 0,
+      "stateMs": 32.09887499999968,
+      "edits": [
+        15.483374999999796,
+        15.600916000001234,
+        16.916416999998546
+      ],
+      "fullParseMs": 111.4288749999996,
+      "complete": true,
+      "readyWaitMs": 920.950166999999,
+      "equivalent": true
+    },
+    {
+      "units": 799982,
+      "targetUnits": 800000,
+      "kind": "mixed",
+      "trial": 1,
+      "stateMs": 31.407665999999153,
+      "edits": [
+        16.009624999998778,
+        15.521875000000364,
+        16.37683299999844
+      ],
+      "fullParseMs": 112.37599999999838,
+      "complete": true,
+      "readyWaitMs": 925.1637090000004,
+      "equivalent": true
+    },
+    {
+      "units": 799982,
+      "targetUnits": 800000,
+      "kind": "mixed",
+      "trial": 2,
+      "stateMs": 44.95508300000074,
+      "edits": [
+        15.966207999999824,
+        15.655791000001045,
+        17.032666999999492
+      ],
+      "fullParseMs": 115.4136669999989,
+      "complete": true,
+      "readyWaitMs": 994.532416,
+      "equivalent": true
+    }
+  ]
+}

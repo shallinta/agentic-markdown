@@ -35,6 +35,10 @@ test("production CSP allows hashed bootstrap and loopback bridge only", () => {
   expect(policy).toContain("frame-src 'none'");
   expect(policy).toContain("form-action 'none'");
   expect(
+    policy.split("; ").find((item) => item.startsWith("worker-src "))
+  ).toBe("worker-src blob:");
+  expect(script).not.toContain("blob:");
+  expect(
     policy.split("; ").find((item) => item.startsWith("connect-src "))
   ).toBe("connect-src ws://127.0.0.1:*");
   expect(shellContentSecurityPolicy([], true)).toContain(

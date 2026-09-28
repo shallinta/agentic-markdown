@@ -13,6 +13,7 @@ import {
 } from "react";
 import { usePanelRef } from "react-resizable-panels";
 
+import "@/client/markdown-worker-browser";
 import { CommandProvider, useCommands, useRegisterCommands } from "@/commands";
 import {
   DocumentServicePanel,
@@ -60,14 +61,28 @@ export function Page() {
         enabled: boolean;
         autorun: boolean;
         editorProbe?: boolean;
+        denseProbe?: boolean;
+        responsiveProbe?: boolean;
+        parserWorkProbe?: boolean;
+        openDocumentProbe?: boolean;
       };
     }
   ).__AGENTIC_MARKDOWN_PERF_LAB__;
   if (lab?.enabled)
     return (
       <Suspense fallback={<p>正在加载合成数据实验…</p>}>
-        {lab.editorProbe ? (
-          <EditorProbeLab autorun={lab.autorun} />
+        {lab.editorProbe ||
+        lab.denseProbe ||
+        lab.responsiveProbe ||
+        lab.parserWorkProbe ||
+        lab.openDocumentProbe ? (
+          <EditorProbeLab
+            autorun={lab.autorun}
+            dense={lab.denseProbe}
+            responsive={lab.responsiveProbe}
+            parserWork={lab.parserWorkProbe}
+            openDocuments={lab.openDocumentProbe}
+          />
         ) : (
           <PerformanceLab autorun={lab.autorun} />
         )}

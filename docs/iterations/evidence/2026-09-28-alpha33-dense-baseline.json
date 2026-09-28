@@ -1,0 +1,286 @@
+{
+  "format": 1,
+  "date": "2026-09-28T03:49:07.753Z",
+  "bun": "1.4.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "unit": "decimal bytes",
+  "cpuScope": "Bun process including workers, cumulative deltas; excludes WebView",
+  "memoryScope": "Bun process samples, not peaks or exact copy counts",
+  "measurementScope": {
+    "fullText": "renderer -> Bun -> Worker upload; metadata ACK only",
+    "downlink": "small renderer request -> Bun corpus generation and application JSON probe -> full text response; RTT is not one-way; session Worker is idle on download",
+    "chunks": "workerMs and hostMs are sums of chunk requests; UTF-16 chunk positions, UTF-8 byte totals",
+    "binary": "Bun -> Worker only; clone/transfer not evidence of renderer RPC binary support",
+    "patch": "roundTrip excludes baseline; CPU and memory include baseline setup",
+    "generation": "renderer corpus generation except binary and downlink rows: Bun corpus generation; binary rows additionally encode UTF-8",
+    "jsonUtf8Bytes": "legacy wire size remains unmeasured; applicationJson fields probe {text} on download and application request objects on upload, excluding SDK envelope, transport framing and probe fields; chunk values are summed; patch excludes setup",
+    "jsonTiming": "probes allocate JSON and UTF-8 buffers; WebView request probes and Bun download {text} probes are inside RTT; Bun CPU/memory samples include only Bun probe work, exclude WebView request probes/client validation and occur before SDK response serialization; client validation recorded separately",
+    "oneWayMs": "null: clocks and bridge serialization are not instrumented for strict one-way measurement",
+    "cm": "1 MB visible viewport, 10/50 MB state only; double RAF is opportunity, not paint completion",
+    "editorViewProbe": "isolated real EditorView with production editor state and synthetic dispatch/undo; twoFramesMs is scheduling opportunity, not keyboard/IME or paint latency; source mode=1, editing=0; corpus=0 plain x, corpus=1 dense Markdown; coords round trip is approximate",
+    "parserLifecycle": "isolated real CM parse worker with delegating parser observation, live positive control versus destroyed view; unsupported if no pending work/progress observed; finite observation does not prove all future callbacks or process memory reclamation",
+    "cleanup": "ownedTextUnitsAfterStop zero only after Worker close; not VM/RSS reclamation"
+  },
+  "rows": [
+    {
+      "bytes": 10025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 0,
+        "corpus": 0,
+        "lineUnits": 10000,
+        "viewCreateMs": 4,
+        "dispatchMs": 7,
+        "twoFramesMs": 26,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": null
+      }
+    },
+    {
+      "bytes": 10025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 1,
+        "corpus": 0,
+        "lineUnits": 10000,
+        "viewCreateMs": 1,
+        "dispatchMs": 2,
+        "twoFramesMs": 30,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": 0
+      }
+    },
+    {
+      "bytes": 50025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 0,
+        "corpus": 0,
+        "lineUnits": 50000,
+        "viewCreateMs": 1,
+        "dispatchMs": 8,
+        "twoFramesMs": 33,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": null
+      }
+    },
+    {
+      "bytes": 50025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 1,
+        "corpus": 0,
+        "lineUnits": 50000,
+        "viewCreateMs": 1,
+        "dispatchMs": 5,
+        "twoFramesMs": 24,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": 0
+      }
+    },
+    {
+      "bytes": 200025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 0,
+        "corpus": 0,
+        "lineUnits": 200000,
+        "viewCreateMs": 1,
+        "dispatchMs": 21,
+        "twoFramesMs": 26,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": null
+      }
+    },
+    {
+      "bytes": 200025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 1,
+        "corpus": 0,
+        "lineUnits": 200000,
+        "viewCreateMs": 1,
+        "dispatchMs": 20,
+        "twoFramesMs": 34,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": 0
+      }
+    },
+    {
+      "bytes": 10025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 0,
+        "corpus": 1,
+        "lineUnits": 10000,
+        "viewCreateMs": 1,
+        "dispatchMs": 3,
+        "twoFramesMs": 13,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": null
+      }
+    },
+    {
+      "bytes": 10025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 1,
+        "corpus": 1,
+        "lineUnits": 10000,
+        "viewCreateMs": 1,
+        "dispatchMs": 1,
+        "twoFramesMs": 14,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": 0
+      }
+    },
+    {
+      "bytes": 50025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 0,
+        "corpus": 1,
+        "lineUnits": 50000,
+        "viewCreateMs": 2,
+        "dispatchMs": 13,
+        "twoFramesMs": 28,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": null
+      }
+    },
+    {
+      "bytes": 50025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 1,
+        "corpus": 1,
+        "lineUnits": 50000,
+        "viewCreateMs": 2,
+        "dispatchMs": 12,
+        "twoFramesMs": 17,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": 0
+      }
+    },
+    {
+      "bytes": 200025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 0,
+        "corpus": 1,
+        "lineUnits": 200000,
+        "viewCreateMs": 1,
+        "dispatchMs": 130,
+        "twoFramesMs": 16,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": null
+      }
+    },
+    {
+      "bytes": 200025,
+      "shape": "long-line",
+      "route": "cm-long-line-view",
+      "status": "ok",
+      "metrics": {
+        "mode": 1,
+        "corpus": 1,
+        "lineUnits": 200000,
+        "viewCreateMs": 1,
+        "dispatchMs": 129,
+        "twoFramesMs": 22,
+        "coordsAvailable": 1,
+        "roundTripDelta": 0,
+        "rawMatches": 1,
+        "undoMatches": 1,
+        "wrappingEnabled": 1,
+        "protectedColorMarks": 0
+      }
+    },
+    {
+      "bytes": 768025,
+      "shape": "lines",
+      "route": "cm-parser-lifecycle",
+      "status": "ok",
+      "metrics": {
+        "observationMs": 1201,
+        "controlPending": 1,
+        "cancelledPending": 1,
+        "controlAdvanceCount": 2037,
+        "controlAdvanceMs": 9,
+        "cancelledAdvanceCount": 68,
+        "afterDestroyAdvanceCount": 0,
+        "afterDestroyAdvanceMs": 0,
+        "rawMatches": 1,
+        "selectionMatches": 1,
+        "historyMatches": 1
+      }
+    }
+  ]
+}

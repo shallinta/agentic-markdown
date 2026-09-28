@@ -156,7 +156,8 @@ export function createDocumentController(
   transport: DocumentTransport,
   confirmDiscard: (message: string) => Promise<boolean> = () =>
     Promise.resolve(false),
-  capabilityTimeoutMs = 5000
+  capabilityTimeoutMs = 5000,
+  onTiming?: (phase: "stateCreateMs", ms: number) => void
 ) {
   let state: DocumentViewState = {
     entries: [],
@@ -500,6 +501,7 @@ export function createDocumentController(
         scrollSnapshots.delete(active.documentId);
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
+        const stateStart = onTiming ? performance.now() : 0;
         const nextEditor = createRawEditorState(
           active.text,
           [],
@@ -516,6 +518,7 @@ export function createDocumentController(
               : nextEditor,
           revision: 0,
         });
+        onTiming?.("stateCreateMs", performance.now() - stateStart);
       }
       const tabs = state.tabs.some(
         (tab) =>

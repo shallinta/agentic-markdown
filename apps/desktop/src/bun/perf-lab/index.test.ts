@@ -39,7 +39,14 @@ const row = {
 
 describe("isolated performance service", () => {
   test("view probes accept bounded synthetic sizes but reject content and oversized samples", () => {
-    for (const route of ["cm-long-line-view", "cm-parser-lifecycle"]) {
+    for (const route of [
+      "cm-long-line-view",
+      "cm-parser-lifecycle",
+      "cm-dense-diagnostic",
+      "cm-responsive-input",
+      "cm-parser-work",
+      "cm-disk-open",
+    ]) {
       const probe = {
         ...row,
         route,
@@ -128,6 +135,20 @@ describe("isolated performance service", () => {
       error: "DISABLED",
     });
     expect(await service.dispose()).toBeNull();
+  });
+
+  test("disk fixture capability requires both lab and explicit open flag", async () => {
+    for (const flags of [
+      { enabled: false, openEnabled: true },
+      { enabled: true, openEnabled: false },
+    ]) {
+      const service = createPerfLabService({ ...flags, workerPath });
+      expect(await service.run({ op: "open-start" })).toEqual({
+        ok: false,
+        error: "DISABLED",
+      });
+      await service.dispose();
+    }
   });
 
   test("rejects unsupported sizes and extra fields before allocating", async () => {

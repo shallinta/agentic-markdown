@@ -1,0 +1,245 @@
+{
+  "runtime": "Bun cost model; no DOM or heap measurement",
+  "rows": [
+    {
+      "units": 10000,
+      "dense": 0,
+      "repeat": 0,
+      "decodeMs": 0.03666700000000134,
+      "costMs": 0.053541000000002725,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 10000,
+      "dense": 0,
+      "repeat": 1,
+      "decodeMs": 0.0027910000000019863,
+      "costMs": 0.0033340000000023906,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 10000,
+      "dense": 0,
+      "repeat": 2,
+      "decodeMs": 0.0017090000000052896,
+      "costMs": 0.011874999999996305,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 10000,
+      "dense": 1,
+      "repeat": 0,
+      "decodeMs": 0.0045000000000001705,
+      "costMs": 0.06174999999999642,
+      "bufferBytes": 25152,
+      "estimatedObjectBytes": 1728,
+      "accountedBytes": 26880
+    },
+    {
+      "units": 10000,
+      "dense": 1,
+      "repeat": 1,
+      "decodeMs": 0.003917000000001281,
+      "costMs": 0.008000000000002672,
+      "bufferBytes": 25152,
+      "estimatedObjectBytes": 1728,
+      "accountedBytes": 26880
+    },
+    {
+      "units": 10000,
+      "dense": 1,
+      "repeat": 2,
+      "decodeMs": 0.011625000000002217,
+      "costMs": 0.013416999999996904,
+      "bufferBytes": 25152,
+      "estimatedObjectBytes": 1728,
+      "accountedBytes": 26880
+    },
+    {
+      "units": 50000,
+      "dense": 0,
+      "repeat": 0,
+      "decodeMs": 0.002291999999997074,
+      "costMs": 0.02083300000000321,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 50000,
+      "dense": 0,
+      "repeat": 1,
+      "decodeMs": 0.0035420000000030427,
+      "costMs": 0.002874999999995964,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 50000,
+      "dense": 0,
+      "repeat": 2,
+      "decodeMs": 0.0025420000000053733,
+      "costMs": 0.0017919999999946867,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 50000,
+      "dense": 1,
+      "repeat": 0,
+      "decodeMs": 0.009999999999990905,
+      "costMs": 0.06008400000000336,
+      "bufferBytes": 125712,
+      "estimatedObjectBytes": 7488,
+      "accountedBytes": 133200
+    },
+    {
+      "units": 50000,
+      "dense": 1,
+      "repeat": 1,
+      "decodeMs": 0.00679200000000435,
+      "costMs": 0.014915999999999485,
+      "bufferBytes": 125712,
+      "estimatedObjectBytes": 7488,
+      "accountedBytes": 133200
+    },
+    {
+      "units": 50000,
+      "dense": 1,
+      "repeat": 2,
+      "decodeMs": 0.0030000000000001137,
+      "costMs": 0.010625000000004547,
+      "bufferBytes": 125712,
+      "estimatedObjectBytes": 7488,
+      "accountedBytes": 133200
+    },
+    {
+      "units": 200000,
+      "dense": 0,
+      "repeat": 0,
+      "decodeMs": 0.017250000000004206,
+      "costMs": 0.0037499999999965894,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 200000,
+      "dense": 0,
+      "repeat": 1,
+      "decodeMs": 0.001208000000005427,
+      "costMs": 0.003084000000001197,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 200000,
+      "dense": 0,
+      "repeat": 2,
+      "decodeMs": 0.001125000000001819,
+      "costMs": 0.000999999999990564,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 200000,
+      "dense": 1,
+      "repeat": 0,
+      "decodeMs": 0.005207999999981894,
+      "costMs": 0.0952920000000006,
+      "bufferBytes": 502856,
+      "estimatedObjectBytes": 28800,
+      "accountedBytes": 531656
+    },
+    {
+      "units": 200000,
+      "dense": 1,
+      "repeat": 1,
+      "decodeMs": 0.013583000000011225,
+      "costMs": 0.03849999999999909,
+      "bufferBytes": 502856,
+      "estimatedObjectBytes": 28800,
+      "accountedBytes": 531656
+    },
+    {
+      "units": 200000,
+      "dense": 1,
+      "repeat": 2,
+      "decodeMs": 0.008541999999977179,
+      "costMs": 0.02800000000002001,
+      "bufferBytes": 502856,
+      "estimatedObjectBytes": 28800,
+      "accountedBytes": 531656
+    },
+    {
+      "units": 1000000,
+      "dense": 0,
+      "repeat": 0,
+      "decodeMs": 0.01608300000000895,
+      "costMs": 0.003333999999995285,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 1000000,
+      "dense": 0,
+      "repeat": 1,
+      "decodeMs": 0.005708999999995967,
+      "costMs": 0.0009579999999971278,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 1000000,
+      "dense": 0,
+      "repeat": 2,
+      "decodeMs": 0.0005830000000059954,
+      "costMs": 0.0007090000000005148,
+      "bufferBytes": 0,
+      "estimatedObjectBytes": 288,
+      "accountedBytes": 288
+    },
+    {
+      "units": 1000000,
+      "dense": 1,
+      "repeat": 0,
+      "decodeMs": 0.024333999999726075,
+      "costMs": 0.21750000000065484,
+      "bufferBytes": 2514296,
+      "estimatedObjectBytes": 142272,
+      "accountedBytes": 2656568
+    },
+    {
+      "units": 1000000,
+      "dense": 1,
+      "repeat": 1,
+      "decodeMs": 0.023000000000138243,
+      "costMs": 0.09699999999975262,
+      "bufferBytes": 2514296,
+      "estimatedObjectBytes": 142272,
+      "accountedBytes": 2656568
+    },
+    {
+      "units": 1000000,
+      "dense": 1,
+      "repeat": 2,
+      "decodeMs": 0.02358300000014424,
+      "costMs": 0.08158300000013696,
+      "bufferBytes": 2514296,
+      "estimatedObjectBytes": 142272,
+      "accountedBytes": 2656568
+    }
+  ]
+}

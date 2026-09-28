@@ -9,6 +9,7 @@ import {
 } from "@codemirror/state";
 import { drawSelection, EditorView, keymap } from "@codemirror/view";
 
+import { largeDocumentParsing } from "./background-parsing";
 import { createEditorModeExtensions } from "./editor-mode";
 import { longLineProtection } from "./long-line-protection";
 
@@ -139,6 +140,7 @@ export function createRawEditorState(
       }),
       history(),
       longLineProtection,
+      largeDocumentParsing,
       createEditorModeExtensions(isolated),
       writePermission.of(EditorState.readOnly.of(false)),
       keymap.of(defaultKeymap),

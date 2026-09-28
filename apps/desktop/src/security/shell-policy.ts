@@ -23,7 +23,9 @@ export function shellContentSecurityPolicy(
     `connect-src ws://127.0.0.1:*${development ? " ws://localhost:* http://localhost:5173" : ""}`,
     "frame-src 'none'",
     "object-src 'none'",
-    "worker-src 'none'",
+    // Vite inlines the fixed Markdown parser in a Blob worker. No remote workers,
+    // eval, inline page scripts, or Markdown-generated code are permitted.
+    "worker-src blob:",
     "base-uri 'none'",
     "form-action 'none'",
   ].join("; ");

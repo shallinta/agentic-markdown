@@ -16,6 +16,7 @@ import {
   type PerfShape,
 } from "../../shared/perf-lab";
 
+import { createOpenDocumentLab } from "./open-documents";
 import type { WorkerOperation } from "./worker-state";
 
 const metrics = (): PerfMetrics => {
@@ -37,6 +38,70 @@ export function resolvePerfWorkerEntry(directory: string) {
     : join(directory, "../native/perf-worker.js");
 }
 const metricKeys = new Set([
+  "pickerMs",
+  "authorizeMs",
+  "diskReadMs",
+  "decodeAnalyzeMs",
+  "backendDocumentMs",
+  "pickerNative",
+  "openRoundTripMs",
+  "controllerOpenMs",
+  "firstDispatchMs",
+  "openToInteractionMs",
+  "reloadMatches",
+  "redoMatches",
+  "saveRetainsHistory",
+  "workPolicy",
+  "inputPattern",
+  "trial",
+  "inputCount",
+  "inputMinMs",
+  "inputMedianMs",
+  "inputMaxMs",
+  "inputSumMs",
+  "lastInputToReadyMs",
+  "saveMatches",
+  "parserReadyBeforeSave",
+  "continuousMatches",
+  "continuousParserReady",
+  "workerHeapBytes",
+  ...Array.from({ length: 10 }, (_, i) => `input${i}Ms`),
+  ...["Ready", "Destroyed"].flatMap((phase) =>
+    [
+      "Started",
+      "Completed",
+      "Terminated",
+      "StaleDiscarded",
+      "RunningCount",
+      "PendingCount",
+      "Restarts",
+      "TreeBufferBytes",
+      "TreeEstimatedObjectBytes",
+      "TreeAccountedBytes",
+      "ActiveTreeBudgetBytes",
+      "TotalBudgetBytes",
+      "PinnedExcessBytes",
+      "TextReferenceCount",
+      "RetainedWireBytes",
+      "RetiredTreeBytes",
+    ].map((key) => `work${phase}${key}`)
+  ),
+  "asyncParser",
+  "controllerUpdateMs",
+  "inputDispatchMs",
+  "treeMatches",
+  "finalParserReady",
+  "instrumented",
+  "orderIndex",
+  "sampleIndex",
+  "parserReady",
+  "readyWaitMs",
+  "stateUpdateMs",
+  "viewUpdateMs",
+  "parserStateMs",
+  "parserViewMs",
+  "parserStateAdvances",
+  "parserViewAdvances",
   "roundTripMs",
   "setupMs",
   "workerMs",
@@ -74,6 +139,9 @@ const metricKeys = new Set([
   "completedBeforeCancel",
   "mode",
   "lineUnits",
+  "corpus",
+  "wrappingEnabled",
+  "protectedColorMarks",
   "dispatchMs",
   "twoFramesMs",
   "coordsAvailable",
@@ -100,9 +168,14 @@ export function validPerfRows(value: unknown): value is PerfRow[] {
         perfRecord(row) &&
         exact(row, ["bytes", "shape", "route", "status", "metrics"]) &&
         typeof row.bytes === "number" &&
-        (["cm-long-line-view", "cm-parser-lifecycle"].includes(
-          String(row.route)
-        )
+        ([
+          "cm-long-line-view",
+          "cm-parser-lifecycle",
+          "cm-dense-diagnostic",
+          "cm-responsive-input",
+          "cm-parser-work",
+          "cm-disk-open",
+        ].includes(String(row.route))
           ? Number.isInteger(row.bytes) &&
             row.bytes > 0 &&
             row.bytes <= 1_048_576
@@ -122,6 +195,10 @@ export function validPerfRows(value: unknown): value is PerfRow[] {
           "cm-viewport",
           "cm-long-line-view",
           "cm-parser-lifecycle",
+          "cm-dense-diagnostic",
+          "cm-responsive-input",
+          "cm-parser-work",
+          "cm-disk-open",
           "cancel",
         ].includes(row.route) &&
         typeof row.status === "string" &&
@@ -142,11 +219,14 @@ export function createPerfLabService({
   enabled,
   timeoutMs = 120_000,
   workerPath = resolvePerfWorkerEntry(import.meta.dir),
+  openEnabled = false,
 }: {
   enabled: boolean;
   timeoutMs?: number;
   workerPath?: string;
+  openEnabled?: boolean;
 }) {
+  const openLab = createOpenDocumentLab(enabled && openEnabled);
   interface Session {
     id: string;
     bytes: number;
@@ -194,6 +274,7 @@ export function createPerfLabService({
     if (!enabled) return { ok: false, error: "DISABLED" };
     if (!perfRecord(value) || typeof value.op !== "string")
       return { ok: false, error: "INVALID" };
+    if (value.op.startsWith("open-")) return openLab.run(value);
     if (value.op === "probe") {
       if (!exact(value, ["op", "array", "typed"]))
         return { ok: false, error: "INVALID" };
@@ -232,6 +313,16 @@ export function createPerfLabService({
               memoryScope:
                 "Bun process samples, not peaks or exact copy counts",
               measurementScope: {
+                openContinuousFollowup:
+                  "After original open metrics and reload, remount current editor state, dispatch three isolated-history end insertions with requested 20ms gaps, then save before waiting for syntax. input0Ms..input2Ms/inputSumMs measure synchronous dispatch, not natural keyboard/IME/paint; parserReadyBeforeSave records actual readiness (zero means pending observed). Final full-tree equality, three undo/redo steps and validated disk reload contribute continuousMatches. Original firstDispatchMs/readyWaitMs remain unchanged in scope. Open lab enables the same fixed Worker factory as production.",
+                openDocument:
+                  "24 groups: six fixed disposable disk fixtures x editing/source x two trials; fixture generation outside open timing; pickerNative=0 uses a fixed-path selector, not native picker dwell; backend diskReadMs includes identity/stat verification and read, decodeAnalyzeMs includes text fidelity and hashing; backend phases nested in backendDocumentMs nested in openRoundTripMs nested in controllerOpenMs, never add nested intervals; stateCreateMs captures first open only, not reload; source rows open default editing state then switch to source before View creation; openToInteractionMs includes that switch, View construction and end insertion with scrollIntoView; firstDispatchMs is synthetic transaction completion, not natural input or paint; readiness measured separately and full tree comparison outside readiness timing; save/undo/redo/reload exact raw checked independently; one-way and renderer heap remain unknown",
+                parserWork:
+                  "same-build wait versus quiet-restart; 48 groups: plain10k/dense200k x editing/source x policy x 3/10-input pattern x 3 independent trials; policy order alternates by trial, not randomized; each group retains input0Ms..input9Ms, unused slots null; min/median/max/sum summarize synchronous dispatch only, even-count median averages central two values; 20ms requested gaps between inputs, actual scheduling can vary; lastInputToReadyMs begins immediately before last dispatch and includes synthetic save capture and public readiness polling, not paint or pure parse latency; group raw/selection cover every input, final tree/undo/save checked separately; Ready work snapshot before undo, Destroyed after cleanup; owned task/cost counters are not CPU, RSS, exact allocations or GC; workerHeapBytes unknown",
+                responsiveInput:
+                  "same-build synchronous versus background-parser configurations; synthetic continuous edits through real document controller and EditorView with disposable in-memory transport; no user files; state/controller/view intervals are disjoint, inputDispatchMs encloses them; syntax readiness and equivalent final tree checked separately; not natural keyboard/IME/paint latency; no numeric performance gate",
+                denseDiagnostic:
+                  "isolated EditorView only; sampleIndex 0=new-view first edit, 1..3=public syntaxTreeAvailable before each edit; parserReady is observed, timeout=unsupported; stateUpdateMs explicitly forces lazy transaction.state before view.update (different evaluation placement from historical unsplit dispatch); parserStateMs/parserViewMs are nested subsets not additive; plain versus wrapped-parser overhead control uses alternating orderIndex with same forced evaluation; undo/readiness wait excluded from edit timing; no natural keyboard/IME/paint latency or exact residual attribution",
                 fullText: "renderer -> Bun -> Worker upload; metadata ACK only",
                 downlink:
                   "small renderer request -> Bun corpus generation and application JSON probe -> full text response; RTT is not one-way; session Worker is idle on download",
@@ -251,7 +342,7 @@ export function createPerfLabService({
                   "null: clocks and bridge serialization are not instrumented for strict one-way measurement",
                 cm: "1 MB visible viewport, 10/50 MB state only; double RAF is opportunity, not paint completion",
                 editorViewProbe:
-                  "isolated real EditorView with production editor state and synthetic dispatch/undo; twoFramesMs is scheduling opportunity, not keyboard/IME or paint latency; source mode=1, editing=0; coords round trip is approximate",
+                  "isolated real EditorView with production editor state and synthetic dispatch/undo; twoFramesMs is scheduling opportunity, not keyboard/IME or paint latency; source mode=1, editing=0; corpus=0 plain x, corpus=1 dense Markdown; coords round trip is approximate",
                 parserLifecycle:
                   "isolated real CM parse worker with delegating parser observation, live positive control versus destroyed view; unsupported if no pending work/progress observed; finite observation does not prove all future callbacks or process memory reclamation",
                 cleanup:
@@ -451,6 +542,9 @@ export function createPerfLabService({
   }
   return {
     run,
-    dispose: () => (session ? stop(session) : Promise.resolve(null)),
+    dispose: async () => {
+      await openLab.dispose();
+      return session ? stop(session) : null;
+    },
   };
 }

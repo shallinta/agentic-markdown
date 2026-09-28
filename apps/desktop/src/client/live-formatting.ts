@@ -14,8 +14,13 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import { Parser, Tree, TreeFragment, type Input } from "@lezer/common";
 
+import {
+  AsyncLongLineParser,
+  asyncMarkdownSession,
+  asyncMarkdownLifecycle,
+} from "./async-markdown";
+import { BomAwareParser } from "./bom-aware-parser";
 import { GuardedParser, editorFaultSession } from "./editor-fault";
 import {
   longLineProtection,
@@ -24,60 +29,11 @@ import {
   unprotectedParts,
 } from "./long-line-protection";
 
-/** BOM belongs to the raw file, not Markdown syntax. Keep every CM offset intact. */
-class BomAwareParser extends Parser {
-  createParse(
-    input: Input,
-    fragments: readonly TreeFragment[],
-    ranges: readonly { from: number; to: number }[]
-  ) {
-    if (input.read(0, 1) !== "\uFEFF")
-      return commonmarkLanguage.parser.startParse(input, fragments, ranges);
-    const shifted: Input = {
-      length: input.length - 1,
-      lineChunks: input.lineChunks,
-      chunk: (from) => input.chunk(from + 1),
-      read: (from, to) => input.read(from + 1, to + 1),
-    };
-    const parse = commonmarkLanguage.parser.startParse(
-      shifted,
-      TreeFragment.applyChanges(fragments, [
-        { fromA: 0, toA: 1, fromB: 0, toB: 0 },
-      ]),
-      ranges.map((range) => ({
-        from: Math.max(0, range.from - 1),
-        to: Math.max(0, range.to - 1),
-      }))
-    );
-    return {
-      advance() {
-        const tree = parse.advance();
-        return tree
-          ? new Tree(
-              tree.type,
-              tree.children,
-              tree.positions.map((position) => position + 1),
-              tree.length + 1
-            )
-          : null;
-      },
-      get parsedPos() {
-        return parse.parsedPos + 1;
-      },
-      get stoppedAt() {
-        return parse.stoppedAt === null ? null : parse.stoppedAt + 1;
-      },
-      stopAt(position: number) {
-        parse.stopAt(Math.max(0, position - 1));
-      },
-    };
-  }
-}
 export const createEditingMarkdown = () =>
   new Language(
     commonmarkLanguage.data,
-    new GuardedParser(new BomAwareParser()),
-    [],
+    new GuardedParser(new AsyncLongLineParser(new BomAwareParser())),
+    [asyncMarkdownSession, asyncMarkdownLifecycle],
     "markdown"
   );
 export const editingMarkdown = createEditingMarkdown();

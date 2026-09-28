@@ -6,6 +6,7 @@ import { electrobun } from "@/lib/electrobun";
 import { PERF_SIZES, type PerfRow } from "@/shared/perf-lab";
 
 const routeLabels: Record<PerfRow["route"], string> = {
+  "cm-disk-open": "真实磁盘打开",
   "rpc-binary-probe": "RPC 二进制能力探测",
   "full-text": "全文上传",
   "full-text-downlink": "全文下行（含小请求往返）",
@@ -17,6 +18,9 @@ const routeLabels: Record<PerfRow["route"], string> = {
   "cm-viewport": "CM6 视口",
   "cm-long-line-view": "编辑视图长行探针",
   "cm-parser-lifecycle": "解析生命周期探针",
+  "cm-dense-diagnostic": "密集长行分段诊断",
+  "cm-responsive-input": "长行输入响应对照",
+  "cm-parser-work": "解析任务与派生缓存对照",
   cancel: "取消回收",
 };
 const statusLabels: Record<PerfRow["status"], string> = {

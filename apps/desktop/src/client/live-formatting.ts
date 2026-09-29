@@ -14,6 +14,7 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
+import type { SyntaxNode } from "@lezer/common";
 
 import {
   AsyncLongLineParser,
@@ -28,6 +29,10 @@ import {
   touchesProtected,
   unprotectedParts,
 } from "./long-line-protection";
+import {
+  displayTextCharacter,
+  TextCharacterWidget,
+} from "./text-character-presentation";
 
 export const createEditingMarkdown = () =>
   new Language(
@@ -84,6 +89,17 @@ function touched(state: EditorState, from: number, to: number): boolean {
   return state.selection.ranges.some(
     (range) => range.from <= to && range.to >= from
   );
+}
+
+function touchedSetextAncestor(state: EditorState, node: SyntaxNode): boolean {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (
+      (parent.name === "SetextHeading1" || parent.name === "SetextHeading2") &&
+      touched(state, parent.from, parent.to)
+    )
+      return true;
+  }
+  return false;
 }
 
 /** Only visits visible syntax; no ensureSyntaxTree/forced parsing on cursor moves. */
@@ -267,7 +283,197 @@ export function liveDecorations(
           )
         )
           return false;
-        if (name === "HTMLBlock") return false;
+        if (["HTMLBlock", "HTMLTag", "URL", "LinkTitle"].includes(name))
+          return false;
+        if (name === "HardBreak") {
+          // Lezer includes the physical newline in this node. Only replace
+          // marker characters, never the newline or the next container prefix.
+          const markerTo = Math.min(to, state.doc.lineAt(from).to);
+          const key = `hard-break:${from}:${to}`;
+          if (
+            markerTo > from &&
+            !seen.has(key) &&
+            !touched(state, from, markerTo) &&
+            !touchedSetextAncestor(state, ref.node)
+          ) {
+            seen.add(key);
+            add(Decoration.replace({}).range(from, markerTo));
+          }
+          return false;
+        }
+        if (name === "Escape" || name === "Entity") {
+          let reveal =
+            touched(state, from, to) || touchedSetextAncestor(state, ref.node);
+          for (let parent = ref.node.parent; parent; parent = parent.parent) {
+            if (
+              parent.name === "Link" &&
+              touched(state, parent.from, parent.to)
+            )
+              reveal = true;
+            if (
+              [
+                "InlineCode",
+                "Image",
+                "LinkReference",
+                "URL",
+                "LinkTitle",
+                "HTMLTag",
+              ].includes(parent.name)
+            )
+              return false;
+          }
+          const key = `character:${from}:${to}`;
+          if (
+            !reveal &&
+            !seen.has(key) &&
+            state.doc.lineAt(from).number === state.doc.lineAt(to).number &&
+            !touchesProtected(protectedLines, from, to)
+          ) {
+            seen.add(key);
+            const value = displayTextCharacter(name, state.sliceDoc(from, to));
+            if (value !== null)
+              add(
+                Decoration.replace({
+                  widget: new TextCharacterWidget(value),
+                }).range(from, to)
+              );
+          }
+          return false;
+        }
+        if (name === "SetextHeading1" || name === "SetextHeading2") {
+          const marker = ref.node.lastChild;
+          if (marker?.name !== "HeaderMark") return false;
+          const markerLine = state.doc.lineAt(marker.from);
+          // Lezer omits QuoteMark nodes on a Setext underline's physical
+          // line. Compensate only inside this already-parsed heading/container,
+          // never by recognizing headings or scanning other document lines.
+          const prefixKey = `setext-quote-prefix:${markerLine.from}`;
+          if (
+            markerLine.from <= visible.to &&
+            markerLine.to >= visible.from &&
+            !seen.has(prefixKey) &&
+            !protectedPosition(protectedLines, markerLine.from) &&
+            !touched(state, from, to) &&
+            !touched(state, markerLine.from, markerLine.to)
+          ) {
+            seen.add(prefixKey);
+            let quoteDepth = 0;
+            for (let parent = ref.node.parent; parent; parent = parent.parent)
+              if (parent.name === "Blockquote") quoteDepth++;
+            if (quoteDepth) {
+              const prefix = state.sliceDoc(markerLine.from, marker.from);
+              const marks = [...prefix.matchAll(/>/g)];
+              // Only container punctuation and indentation are eligible. Any
+              // other text, or excess quote marks, leaves the prefix untouched.
+              if (/^[ \t>]*$/.test(prefix) && marks.length <= quoteDepth)
+                for (const mark of marks) {
+                  const start = markerLine.from + mark.index;
+                  const end =
+                    start +
+                    1 +
+                    (/[ \t]/.test(prefix[mark.index + 1] ?? "") ? 1 : 0);
+                  const markKey = `quote-rule:${start}:${start + 1}`;
+                  if (!seen.has(markKey)) {
+                    seen.add(markKey);
+                    add(
+                      Decoration.replace({ widget: quoteSymbol }).range(
+                        start,
+                        end
+                      )
+                    );
+                  }
+                }
+            }
+          }
+          const level = name === "SetextHeading1" ? 1 : 2;
+          let line = state.doc.lineAt(Math.max(from, visible.from));
+          // Only physical body lines intersecting this viewport segment. The
+          // underline's own physical line remains normal height, even hidden.
+          while (line.from < markerLine.from && line.from <= visible.to) {
+            const key = `setext-line:${line.from}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              add(
+                Decoration.line({
+                  class: `cm-live-heading cm-live-h${level}`,
+                }).range(line.from)
+              );
+            }
+            if (line.to >= visible.to || line.to === state.doc.length) break;
+            line = state.doc.lineAt(line.to + 1);
+          }
+          const key = `setext-marker:${marker.from}:${marker.to}`;
+          if (
+            marker.from <= visible.to &&
+            marker.to >= visible.from &&
+            !seen.has(key)
+          ) {
+            seen.add(key);
+            add(
+              (touched(state, from, to)
+                ? Decoration.mark({ class: "cm-live-marker" })
+                : Decoration.replace({})
+              ).range(marker.from, marker.to)
+            );
+          }
+        }
+        if (name === "Image" || name === "LinkReference") return false;
+        if (name === "Link" || name === "Autolink") {
+          // Conservative all-or-nothing eligibility. Reference Link nodes are
+          // syntactic candidates, not proof that a definition exists.
+          if (
+            state.doc.lineAt(from).number !== state.doc.lineAt(to).number ||
+            touchesProtected(protectedLines, from, to)
+          )
+            return false;
+          const children = ref.node.getChildren("LinkMark");
+          let labelFrom: number;
+          let labelTo: number;
+          if (name === "Autolink") {
+            if (
+              children.length !== 2 ||
+              state.sliceDoc(children[0].from, children[0].to) !== "<" ||
+              state.sliceDoc(children[1].from, children[1].to) !== ">"
+            )
+              return false;
+            labelFrom = children[0].to;
+            labelTo = children[1].from;
+          } else {
+            if (
+              children.length !== 4 ||
+              children
+                .map((child) => state.sliceDoc(child.from, child.to))
+                .join("") !== "[]()"
+            )
+              return false;
+            labelFrom = children[0].to;
+            labelTo = children[1].from;
+            const cursor = ref.node.cursor();
+            // A SyntaxNode cursor may advance to later siblings in its tree.
+            // Stop at this link's end, never scan the rest of the document.
+            while (cursor.next() && cursor.from < to)
+              if (cursor.name === "Image") return false;
+          }
+          if (labelFrom === labelTo) return false;
+          const key = `link:${from}:${to}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            add(
+              Decoration.mark({ tagName: "span", class: "cm-live-link" }).range(
+                labelFrom,
+                labelTo
+              )
+            );
+            if (
+              !touched(state, from, to) &&
+              !touchedSetextAncestor(state, ref.node)
+            ) {
+              add(Decoration.replace({}).range(from, labelFrom));
+              add(Decoration.replace({}).range(labelTo, to));
+            }
+          }
+          // Continue into eligible labels for existing emphasis/code styling.
+        }
         if (name === "QuoteMark" || name === "HorizontalRule") {
           const key = `quote-rule:${from}:${to}`;
           if (seen.has(key)) return;
@@ -450,11 +656,18 @@ export function liveDecorations(
         if (seen.has(key)) return;
         seen.add(key);
         const line = state.doc.lineAt(from);
-        const reveal = touched(
-          state,
-          heading ? line.from : from,
-          heading ? line.to : to
-        );
+        let reveal =
+          touchedSetextAncestor(state, ref.node) ||
+          touched(state, heading ? line.from : from, heading ? line.to : to);
+        for (let parent = ref.node.parent; parent; parent = parent.parent) {
+          if (
+            parent.name === "Link" &&
+            touched(state, parent.from, parent.to)
+          ) {
+            reveal = true;
+            break;
+          }
+        }
         if (heading)
           add(Decoration.line({ class: className }).range(line.from));
         else add(Decoration.mark({ class: className }).range(from, to));
@@ -666,6 +879,12 @@ const liveTheme = EditorView.baseTheme({
   ".cm-live-h5": { fontSize: "1.05em" },
   ".cm-live-h6": { fontSize: "1em" },
   ".cm-live-strong": { fontWeight: "700" },
+  ".cm-live-character": { font: "inherit", color: "inherit" },
+  ".cm-live-link": {
+    color: "var(--primary)",
+    textDecoration: "underline",
+    textUnderlineOffset: "0.15em",
+  },
   ".cm-live-emphasis": { fontStyle: "italic" },
   ".cm-live-code": {
     fontFamily: "monospace",

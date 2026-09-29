@@ -157,19 +157,19 @@ test("caret and both selection edges reveal enclosing spans, while untouched spa
     )
   ).toEqual([]);
 });
-test("nested styles own direct markers, escapes and unmatched syntax stay raw", () => {
+test("nested styles own direct markers, escapes render independently and unmatched syntax stays raw", () => {
   const state = away("***nested*** \\*escaped\\* **unfinished");
   expect(
     decorations(state)
       .filter((v) => v.hidden)
       .map((v) => v.text)
       .join("")
-  ).toBe("******");
+  ).toBe("******\\*\\*");
   expect(
-    decorations(state.update({ selection: { anchor: 5 } }).state).filter(
-      (v) => v.hidden
-    )
-  ).toEqual([]);
+    decorations(state.update({ selection: { anchor: 5 } }).state)
+      .filter((v) => v.hidden)
+      .map((v) => v.text)
+  ).toEqual(["\\*", "\\*"]);
 });
 test("fenced/indented code and HTML blocks do not render contained pseudo Markdown", () => {
   for (const text of [
@@ -193,7 +193,7 @@ test("fenced/indented code and HTML blocks do not render contained pseudo Markdo
     ).toBe(true);
   }
 });
-test("multiline inline syntax only replaces single-line delimiters, raw HTML/links stay text", () => {
+test("multiline inline markers remain bounded and raw HTML stays text beside inline links", () => {
   const values = decorations(
     away("**first\nlast** and ``a\nb`` <img src=x> [link](https://example.com)")
   );
@@ -202,6 +202,8 @@ test("multiline inline syntax only replaces single-line delimiters, raw HTML/lin
     "**",
     "``",
     "``",
+    "[",
+    "](https://example.com)",
   ]);
   expect(values.some((v) => v.hidden && v.text.includes("\n"))).toBe(false);
 });

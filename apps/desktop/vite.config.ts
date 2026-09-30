@@ -1,6 +1,7 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { shellContentSecurityPolicy } from "./src/security/shell-policy";
@@ -9,6 +10,22 @@ import { electrobunViteAliases } from "./.hutch/devkit/api/config/electrobun-vit
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  worker: {
+    plugins: () => [
+      {
+        name: "worker-pure-character-decoder",
+        enforce: "pre",
+        // This dependency's browser export requires document. Its public default
+        // export is the same pure table implementation as its worker export.
+        resolveId(id) {
+          if (id === "decode-named-character-reference")
+            return createRequire(
+              createRequire(import.meta.url).resolve("mdast-util-from-markdown")
+            ).resolve(id);
+        },
+      },
+    ],
+  },
   plugins: [
     react(),
     {

@@ -1,6 +1,6 @@
 {
   "name": "@agentic-markdown/desktop",
-  "version": "0.1.0-alpha.53",
+  "version": "0.1.0-alpha.55",
   "scripts": {
     "start": "bun run build:view && electrobun dev",
     "prepare:sdk": "electrobun prepare",
@@ -29,6 +29,7 @@
     "electrobun": "2.0.1",
     "i18next": "^26.3.6",
     "lucide-react": "^1.22.0",
+    "mdast-util-from-markdown": "2.0.2",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-i18next": "^17.0.11",

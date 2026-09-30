@@ -60,7 +60,7 @@ export async function createMainWindow({
   const url = await getMainViewUrl();
   const labPreload =
     process.env.AGENTIC_MARKDOWN_PERF_LAB === "1"
-      ? `;globalThis.__AGENTIC_MARKDOWN_PERF_LAB__ = { enabled: true, autorun: ${process.env.AGENTIC_MARKDOWN_PERF_AUTO === "1"}, editorProbe: ${process.env.AGENTIC_MARKDOWN_PERF_EDITOR === "1"}, denseProbe: ${process.env.AGENTIC_MARKDOWN_PERF_DENSE === "1"}, responsiveProbe: ${process.env.AGENTIC_MARKDOWN_PERF_RESPONSIVE === "1"}, parserWorkProbe: ${process.env.AGENTIC_MARKDOWN_PERF_PARSER_WORK === "1"}, openDocumentProbe: ${process.env.AGENTIC_MARKDOWN_PERF_OPEN === "1"} };`
+      ? `;globalThis.__AGENTIC_MARKDOWN_PERF_LAB__ = { enabled: true, autorun: ${process.env.AGENTIC_MARKDOWN_PERF_AUTO === "1"}, editorProbe: ${process.env.AGENTIC_MARKDOWN_PERF_EDITOR === "1"}, denseProbe: ${process.env.AGENTIC_MARKDOWN_PERF_DENSE === "1"}, responsiveProbe: ${process.env.AGENTIC_MARKDOWN_PERF_RESPONSIVE === "1"}, parserWorkProbe: ${process.env.AGENTIC_MARKDOWN_PERF_PARSER_WORK === "1"}, openDocumentProbe: ${process.env.AGENTIC_MARKDOWN_PERF_OPEN === "1"}, canonicalProbe: ${process.env.AGENTIC_MARKDOWN_CANONICAL_LAB === "1"} };`
       : "";
   const windowState = await loadWindowState();
   const savedFrame = getWindowFrame(windowState) ?? DEFAULT_WINDOW_FRAME;

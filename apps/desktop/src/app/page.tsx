@@ -46,6 +46,11 @@ const CanonicalLab = lazy(() =>
     default: module.CanonicalLab,
   }))
 );
+const SecurityLab = lazy(() =>
+  import("@/components/security-lab").then((module) => ({
+    default: module.SecurityLab,
+  }))
+);
 const EditorProbeLab = lazy(() =>
   import("@/components/editor-probe-lab").then((module) => ({
     default: module.EditorProbeLab,
@@ -71,13 +76,16 @@ export function Page() {
         parserWorkProbe?: boolean;
         openDocumentProbe?: boolean;
         canonicalProbe?: boolean;
+        securityProbe?: boolean;
       };
     }
   ).__AGENTIC_MARKDOWN_PERF_LAB__;
   if (lab?.enabled)
     return (
       <Suspense fallback={<p>正在加载合成数据实验…</p>}>
-        {lab.canonicalProbe ? (
+        {lab.securityProbe ? (
+          <SecurityLab />
+        ) : lab.canonicalProbe ? (
           <CanonicalLab />
         ) : lab.editorProbe ||
           lab.denseProbe ||

@@ -1,5 +1,3 @@
-import { fromMarkdown } from "mdast-util-from-markdown";
-
 import {
   CANONICAL_CONFIG,
   canonicalCorpus,
@@ -7,24 +5,9 @@ import {
 } from "../shared/canonical-corpus";
 
 import { BomAwareParser } from "./bom-aware-parser";
+import { parseCanonicalMarkdown } from "./canonical-parser";
 
-/** Internal tree only; no HTML compiler, plugin pipeline or public AST transport. */
-export function parseCanonicalMarkdown(text: string) {
-  const bom = text.startsWith("\uFEFF") ? 1 : 0;
-  const tree = fromMarkdown(text.slice(bom));
-  if (bom) {
-    const shift = (node: typeof tree | (typeof tree.children)[number]) => {
-      if (node.position)
-        for (const point of [node.position.start, node.position.end]) {
-          if (point.offset !== undefined) point.offset += bom;
-          if (point.line === 1) point.column += bom;
-        }
-      if ("children" in node) for (const child of node.children) shift(child);
-    };
-    shift(tree);
-  }
-  return tree;
-}
+export { parseCanonicalMarkdown } from "./canonical-parser";
 const canonicalKinds = new Set([
   "heading",
   "blockquote",

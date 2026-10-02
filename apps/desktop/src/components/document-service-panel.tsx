@@ -6,7 +6,12 @@ import {
 } from "@agentic-markdown/ui/ui/dialog";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
+import CurrentCanonicalWorker from "@/client/current-canonical.worker?worker&inline";
 import { discardGuard } from "@/client/discard-guard";
+import {
+  canonicalDiscardParticipant,
+  createDocumentCanonical,
+} from "@/client/document-canonical";
 import {
   createDocumentController,
   type DocumentTransport,
@@ -53,6 +58,16 @@ export function useDocumentWorkspace() {
     controller.subscribe,
     controller.getSnapshot
   );
+  const [canonical] = useState(() =>
+    createDocumentCanonical(controller, () => new CurrentCanonicalWorker())
+  );
+  useEffect(() => {
+    const unsubscribe = controller.subscribe(canonical.invalidate);
+    return () => {
+      unsubscribe();
+      canonical.cancel();
+    };
+  }, [controller, canonical]);
   const { executeCommand, isCommandEnabled } = useCommands();
   const notifyCommands = useRegisterCommands(
     {
@@ -102,7 +117,11 @@ export function useDocumentWorkspace() {
     () => controller.subscribe(notifyCommands),
     [controller, notifyCommands]
   );
-  useEffect(() => discardGuard.register(controller), [controller]);
+  useEffect(
+    () =>
+      discardGuard.register(canonicalDiscardParticipant(controller, canonical)),
+    [controller, canonical]
+  );
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) =>
       routeSourceModeShortcut(
@@ -145,7 +164,7 @@ export function useDocumentWorkspace() {
     void controller.refreshWriteCapability();
   }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
-  return { controller, state, executeCommand, isCommandEnabled };
+  return { controller, state, canonical, executeCommand, isCommandEnabled };
 }
 type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
@@ -202,6 +221,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
     discardGuard.getSnapshot
   );
   const editor = snapshot && controller.getEditor(snapshot.documentId);
+  const canonicalState = useSyncExternalStore(
+    workspace.canonical.subscribe,
+    workspace.canonical.getSnapshot
+  );
   const buttonClass =
     "rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50";
 
@@ -282,7 +305,31 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean;
         }
       ).__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__ === true && (
-        <div className="flex gap-2" aria-label="编辑故障实验">
+        <div className="flex flex-wrap gap-2" aria-label="编辑故障实验">
+          <button
+            className={buttonClass}
+            disabled={!snapshot || state.busy || state.frozen}
+            onClick={() => void workspace.canonical.request()}
+          >
+            实验：解析当前文档
+          </button>
+          <button
+            className={buttonClass}
+            disabled={canonicalState.status !== "running"}
+            onClick={workspace.canonical.cancel}
+          >
+            取消当前解析
+          </button>
+          <p role="status">
+            规范解析：
+            {canonicalState.status === "ready"
+              ? `完成 · revision ${canonicalState.result.revision} · ${canonicalState.result.tree.children.length} 个顶层块 · ${canonicalState.result.milliseconds.toFixed(2)} ms（仅 Worker 内解析）`
+              : canonicalState.status === "running"
+                ? "进行中"
+                : canonicalState.status === "failed"
+                  ? "失败，原文未改变"
+                  : "尚无当前结果"}
+          </p>
           <button
             className={buttonClass}
             disabled={

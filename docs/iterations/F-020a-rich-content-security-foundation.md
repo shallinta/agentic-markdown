@@ -86,3 +86,9 @@
 ```sh
 AGENTIC_MARKDOWN_PERF_LAB=1 AGENTIC_MARKDOWN_SECURITY_LAB=1 '/private/tmp/agentic-markdown-batch56.GFvtRc/Agentic Markdown-canary.app/Contents/MacOS/launcher'
 ```
+
+## 2026-10-02 已验收基线 Git 收尾
+
+用户新增每轮验收后自动提交推送授权，主 Agent 将本片已验收代码及本迭代记录独立提交为 `0c2a701`，未混入尚未验收的 F-019b；共享状态文档的连续批次更新不在该基线提交内。提交前基线全量 595 项测试通过，耗时 14.95 秒，日志 `/tmp/agentic-mvp-baseline.log`；本片文件范围 lint 通过。并行编辑期间全仓 lint 曾因未完成的 F-019b 报错，不能将局部通过宣称为当时全仓通过。
+
+主 Agent 报告 SSH 22 连接关闭、443 严格主机名检查初次未通过，随后使用临时 `GIT_SSH_COMMAND` 的 443 连接及 `HostKeyAlias=github.com` 复用已有可信主机密钥，推送成功；未修改全局配置、未放宽主机校验。随后通过同一严格校验的 443 路径执行 `ls-remote`，远端引用与本地提交 `0c2a701e2975f847f63f7bbad924363917078baf` 一致；不需要在 F-019b 验收前再补基线提交。

@@ -13,6 +13,10 @@ import {
   createDocumentCanonical,
 } from "@/client/document-canonical";
 import {
+  documentCapabilitySuffix,
+  documentStatusLabel,
+} from "@/client/document-status-label";
+import {
   createDocumentController,
   type DocumentTransport,
 } from "@/client/documents";
@@ -26,6 +30,7 @@ import { PRODUCT_COMMANDS } from "@/shared/commands";
 import { analyzeTextFidelity } from "@/shared/text-fidelity";
 
 import { MemoryEditor } from "./memory-editor";
+import { ReadingView } from "./reading-view";
 import { TextFidelityDetails } from "./text-fidelity-details";
 
 export function useDocumentWorkspace() {
@@ -71,6 +76,9 @@ export function useDocumentWorkspace() {
   const { executeCommand, isCommandEnabled } = useCommands();
   const notifyCommands = useRegisterCommands(
     {
+      toggleReadingMode: () => {
+        controller.toggleReadingMode();
+      },
       toggleSourceMode: () => {
         controller.toggleSourceMode();
       },
@@ -90,6 +98,7 @@ export function useDocumentWorkspace() {
     },
     true,
     {
+      toggleReadingMode: controller.canToggleReadingMode,
       toggleSourceMode: () =>
         controller.canToggleSourceMode() &&
         !isExternalTextTarget(document.activeElement) &&
@@ -201,7 +210,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
                 onClick={() => void controller.activate(entry)}
               >
                 {entry.fileName}
-                {!entry.writeCapability.writable ? " · 只读" : ""}
+                {documentCapabilitySuffix(entry.writeCapability)}
               </button>
             </li>
           ))}
@@ -252,7 +261,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               onClick={() => controller.activateTab(tab.documentId)}
             >
               {tab.fileName}
-              {!tab.writeCapability.writable ? " · 只读" : ""}
+              {documentCapabilitySuffix(tab.writeCapability)}
               {controller.isDirty(tab.documentId) ? " ● 未保存" : ""}
             </button>
             <button
@@ -277,7 +286,9 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               ? "安全源码 · 解析与排版已停用 · 手动保存 ⌘S · 单文件限 1 MiB"
               : controller.getMode(snapshot.documentId) === "source"
                 ? "基础源码模式 · 完整原文与基础高亮 · 手动保存 ⌘S · 单文件限 1 MiB"
-                : "基础编辑模式 · 标题、粗体、斜体与行内代码 · 手动保存 ⌘S · 单文件限 1 MiB"
+                : controller.getMode(snapshot.documentId) === "reading"
+                  ? "基础阅读模式 · 只读当前内存正文 · 图片、链接与 HTML 尚未接入"
+                  : "基础编辑模式 · 标题、粗体、斜体与行内代码 · 手动保存 ⌘S · 单文件限 1 MiB"
             : "打开本地 Markdown 文件，开始查看。文件只会加入当前窗口，不会加入其父目录。"}
         </p>
       </div>
@@ -382,16 +393,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       </div>
       {snapshot && (
         <p role="status" aria-live="polite" className="text-sm">
-          {controller.getMode(snapshot.documentId) === "source"
-            ? "源码模式 · "
-            : "编辑模式 · "}
-          {snapshot.writeCapability.writable
-            ? "可编辑 · "
-            : snapshot.writeCapability.reason === "readonly"
-              ? "只读：文件或父目录不允许安全写入；仍可选择、复制和滚动。 · "
-              : snapshot.writeCapability.reason === "invalid"
-                ? "只读：文件授权已失效，请重新选择文件。内存内容已保留。 · "
-                : "只读：暂时无法确认写入能力，正在自动重试。内存内容已保留。 · "}
+          {documentStatusLabel(
+            controller.getMode(snapshot.documentId),
+            snapshot.writeCapability
+          )}
           {
             {
               saving: "保存中…",
@@ -469,11 +474,48 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               </>
             )}
           </details>
-          <MemoryEditor
-            controller={controller}
-            documentId={snapshot.documentId}
-            frozen={state.frozen || state.busy}
-          />
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {controller.getMode(snapshot.documentId) !== "source" &&
+              !controller.isSafeSource(snapshot.documentId) && (
+                <button
+                  className="bg-background/60 absolute top-2 right-3 z-10 rounded border p-2 opacity-50 backdrop-blur hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 disabled:opacity-30"
+                  title={
+                    controller.getMode(snapshot.documentId) === "reading"
+                      ? "切换为编辑模式"
+                      : "切换为阅读模式"
+                  }
+                  aria-label={
+                    controller.getMode(snapshot.documentId) === "reading"
+                      ? "切换为编辑模式"
+                      : "切换为阅读模式"
+                  }
+                  disabled={!isCommandEnabled("toggleReadingMode")}
+                  onClick={() =>
+                    executeCommand({ type: "toggleReadingMode", args: {} })
+                  }
+                >
+                  <span aria-hidden="true">
+                    {controller.getMode(snapshot.documentId) === "reading"
+                      ? "✎"
+                      : "▤"}
+                  </span>
+                </button>
+              )}
+            {controller.getMode(snapshot.documentId) === "reading" ? (
+              <ReadingView
+                controller={controller}
+                canonical={workspace.canonical}
+                documentId={snapshot.documentId}
+                frozen={state.frozen || state.busy}
+              />
+            ) : (
+              <MemoryEditor
+                controller={controller}
+                documentId={snapshot.documentId}
+                frozen={state.frozen || state.busy}
+              />
+            )}
+          </div>
         </>
       )}
       <Dialog

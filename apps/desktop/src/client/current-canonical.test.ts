@@ -311,6 +311,10 @@ test("real controller captures unsaved buffer, ignores selection and cancels on 
   });
   const unsubscribe = controller.subscribe(service.invalidate);
   await controller.select();
+  controller.beginDiscard();
+  expect(await service.request()).toBeNull();
+  expect(workers.length).toBe(0);
+  controller.endDiscard();
   const initial = controller.getEditor(value.documentId)!;
   controller.updateEditor(
     value.documentId,

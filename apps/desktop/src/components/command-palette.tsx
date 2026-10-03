@@ -13,6 +13,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { captureHistoryTarget } from "@/client/history-target";
+import { restorePaletteFocus } from "@/client/palette-focus";
 import { useCommands } from "@/commands";
 import { useUpdateStatus } from "@/components/update-status-provider";
 import { useUpdateMode } from "@/hooks/use-update-mode";
@@ -51,6 +52,7 @@ export function CommandPalette({
     if (type === "toggleSourceMode") return "";
     if (
       type === "selectDocument" ||
+      type === "toggleReadingMode" ||
       type === "undoDocument" ||
       type === "redoDocument" ||
       type === "reloadDocument" ||
@@ -94,7 +96,7 @@ export function CommandPalette({
         onCloseAutoFocus: (event) => {
           event.preventDefault();
           const previous = previousFocus.current;
-          if (previous?.isConnected) previous.focus();
+          restorePaletteFocus(previous);
           const type = pendingCommand.current;
           pendingCommand.current = null;
           // Close focus restoration finishes before a command opens a new UI.

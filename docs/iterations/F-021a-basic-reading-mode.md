@@ -1,6 +1,58 @@
 # F-021a：基础独立阅读模式
 
-> 状态：2026-10-02 最小方案已记录，等待安全消费者准备后实施；尚无实现、构建或代验通过结论。用户授权持续 MVP 开发、逐片文档及 Agent 代验；每轮验收通过后自动提交并推送本轮相关改动，实际 Git 结果须核验。
+> 状态：已验收
+
+最终收尾复跑：源码 617 pass / 0 fail、17265 断言、99 文件、12.62 秒（`/tmp/agentic-reading-final62.log`），typecheck、完整 lint 与 lockfile 检查通过。临时内容关闭清理后 `⌘Q` 正常返回 App quit。本次仅文档收尾，无需重新构建，不将该复跑写成新版本。
+
+2026-10-03：alpha.62 本片经用户授权由 Agent 代验通过，独立复核无剩余阻断；非用户亲验。临时 IME 内容经关闭放弃后，完整 AX 确认欢迎页、无打开标签而文件树 B 保留；磁盘 B 仍 157 字节，SHA-256 `3afe08140f446b53ba6cca1dc5665dee4a280a6d0f334d9966d24a01deab523e`，未保存临时输入。输入源三次只读检查均为搜狗拼音，本轮未切换系统输入源。
+
+下方“未验收/待授权/待复验”均为历史检查点，不覆盖本结论；版本差异、失败和有限实操边界保留。完整父 F-020/F-021/F-030、OBL-030/047 保持开放，OBL-029 主题延期，其他既有义务不关闭。连续自动推进及验收后 Git 授权保持；当前提交推送尚未执行，不预写成功。
+
+## 最新检查点：alpha.62 待复验（2026-10-03）
+
+最新退出放弃分支已取得 alpha.62 实际确认框、App quit、目标包进程消失及磁盘未写临时内容的证据，详见[退出放弃追加](#alpha62-退出放弃最终实证)。系统主题、键盘入口、双长文样本、惰性点击、重新打开及关闭/退出已有各自范围内证据；真实 IME 仍待系统输入源临时切换授权与操作，不提前标整批已验收、不 Git。
+
+本轮 alpha.62 已补齐重复打开保持单实例/阅读模式、真实“权限确认中”文案以及阅读脏文档关闭放弃的实证；安全文本点击后仍留阅读区。完整过程见[alpha.62 重复打开与关闭放弃](#alpha62-重复打开与关闭放弃)，仍缺退出放弃及真实 IME，本批未全验收。
+
+当前包 `/tmp/agentic-markdown-alpha62.Xbkepv/Agentic Markdown-canary.app`，版本 `0.1.0-alpha.62`、hash `199hn43mu7z6i`，构建成功（`/tmp/agentic-reading-build62.log`）。源码与包内各 617 pass / 0 fail、17265 断言、99 文件，分别 12.04 秒与 11.48 秒，日志 `/tmp/agentic-reading-test62.log` 和 `/tmp/agentic-reading-packaged62.log`；typecheck、完整 lint、feature-docs、obligations 及差异检查真实通过。权限文案独立复核无阻断，但新版真实文案路径仍待复验；alpha.62 已启动并成功打开 A 安全样本，不据此宣称整批通过。
+
+alpha.61 另有系统外观证据：选择跟随系统后阅读画面正常，再打开设置，AX 确认组合框为“跟随系统”；之后 Up、Return 执行恢复深色，但动作后未单独 AX 读取组合框，不将恢复动作写成已复核设置值。Escape 后 `⌘Q` 普通退出，CUA 返回 App quit；该记录属于 alpha.61，不外推为 alpha.62 退出或系统明暗切换全过程验证。以下旧版本检查点保持历史，完整父功能与 OBL 不关闭，未全验收、不 Git。
+
+## 最新检查点：alpha.61 局部复验（2026-10-03）
+
+后续 alpha.61 已实际确认取消命令面板后的编辑区焦点，以及 `⇧Tab`/`⌥Tab` 到 toggle、Return 进入阅读聚焦；6230 字节 BOM/混合换行长文在编辑/阅读/源码间保持 B07 附近，见 [F-030a 最新证据](./F-030a-mode-lifecycle-foundation.md#alpha61-焦点与混合换行长文位置)。旧 long 的 unavailable 暂态被文案误报只读正在修正，仍未全验收；普通 Tab 未实证。
+
+当前待验包为 `/tmp/agentic-markdown-alpha61.TSp0bB/Agentic Markdown-canary.app`，版本 `0.1.0-alpha.61`、hash `1gety8p99mazd`，构建成功（`/tmp/agentic-reading-build61.log`）。源码 Bun：615 pass / 0 fail、17254 断言、99 文件、12.25 秒（`/tmp/agentic-reading-test61.log`）；包内同数、11.34 秒（`/tmp/agentic-reading-packaged61.log`）。主 Agent 确认 typecheck/lint/文档检查通过；本次实际读取 `/tmp/agentic-reading-check61.log` 仅含 lockfile registry 检查通过，不能将该文件冒充其他检查日志。
+
+真实 alpha.61 长文经命令面板编辑→阅读→编辑保持第 06 节末/07～09 节附近，alpha.60 命令面板跳顶问题已实际复测修复；Escape 后截图亦保持附近，焦点仍待 AX 确认。alpha.60 浅色截图正常、已恢复深色，属于旧版外观证据，不冒充 alpha.61 或系统主题专项。剩余 UI 验收与完整父功能/义务保持开放，未验收、不 Git；下方 alpha.60 失败和阶段记录保留历史。
+
+## 最新检查点：alpha.60 待复验（2026-10-03）
+
+最新本轮已实证 B 选区模式往返、阅读中关闭/退出取消保留 dirty 和正文、回编辑撤销恢复 clean，以及命令面板键盘入口；但长文源码→编辑→阅读最后一步实际跳回开头，位置缺陷正在诊断修复，不能总体验收。详见 [F-030a 最新记录](./F-030a-mode-lifecycle-foundation.md#alpha60-选区保护通过与长文模式位置缺陷)。下方旧“选区未知”为此前历史；用户要求超时后间隔重试，不因单次超时停止或放宽验收。
+
+本轮新增 3416 字节长文真实编辑→阅读位置证据：两视口均在第 06 节末第二段附近且 07/08/09 节可见，详见 [F-030a 长文检查点](./F-030a-mode-lifecycle-foundation.md#alpha60-长文编辑到阅读位置局部实证)。返回编辑及选区仍因工具超时未知，不等于像素级或全三模式位置验收；本批仍未总体验收。
+
+本轮最新证据见[阅读保存保真与暂态只读观察](#alpha60-阅读保存保真与暂态只读观察)：已实证 A/B 模式保持、阅读保存与混合换行保真，以及 fidelity 阅读→源码→阅读；暂态只读和剩余验证仍开放。以下“第二文件未证实/返回未知”等段落均为此前历史检查点，不覆盖本轮新增证据；仍未总体验收。
+
+后续实际打开 B 成功，默认编辑且 clean，A/B 同时存在；返回 A 的操作继续超时，最终结果未知。详见 [F-030a 本次真实检查点](./F-030a-mode-lifecycle-foundation.md#alpha60-新增打开-b-的真实检查点)，不据此宣称多文档往返或改变未验收状态。
+
+后续实际进展：alpha.60 已成功打开 reading-a 并进入阅读，正确只读状态文案复验通过；规范解析 rev 0 / 20 块 / 7 ms（仅 Worker），DOM 诊断通过 68 个受控元素且无编辑 DOM。深色实景样式可辨；第二文件打开及其他必要路径仍未证实，未验收、不提交。详细新证据与工具阻塞边界见 [F-021a](./F-021a-basic-reading-mode.md#alpha60-局部真实复验与后续工具阻塞)，下方首次连接失败保持历史。
+
+下方 alpha.59 阻塞记录保留为历史，后续已取得局部真实窗口证据，不能外推为全部通过；当前最终待验包为 alpha.60。三片与完整父功能/OBL 均不据此关闭。用户重申后续自动推进，不再逐轮要求手动打开文件；遇到实际无法克服的验证阻塞仍如实说明并在必要时请求协助。
+
+alpha.60 修正阅读状态条误报“编辑模式 · 可编辑”的显示问题，独立复核及专项 11 项 / 204 断言通过。源码和包内全量各 612 pass / 0 fail、17246 断言、97 文件，分别 12.65 秒与 11.39 秒，日志为 `/tmp/agentic-reading-test60.log`、`/tmp/agentic-reading-packaged60.log`。构建成功，日志 `/tmp/agentic-reading-build60.log`；产物 `/tmp/agentic-markdown-alpha60.M5Sl6x/Agentic Markdown-canary.app`，版本 `0.1.0-alpha.60`、hash `2vwyssfti5ctq`。以 `AGENTIC_MARKDOWN_EDITOR_FAULT_LAB=1` 启动，会话 `79902` / PID `48027`；首次 CUA 获取应用 120 秒超时，尚未完成新版复验。完整 alpha.59 进展和环境边界见 [F-021a](./F-021a-basic-reading-mode.md#alpha59-继续真实代验与-alpha60-环境边界)，不将旧版证据冒充新版复验。
+
+## 当前检查点：alpha.59 待真实代验（2026-10-03）
+
+未实证真实打开后的阅读呈现、无编辑 DOM、未保存正文、保存/关闭及焦点主题路径。 以下此前等待构建的记录为历史，本段仅更新实际交付证据，不预写验收。三片共享同一构建，各自责任和完整父功能仍开放，连续授权保留，但须先完成本批验收再提交。
+
+- 源码全量测试 611 pass / 0 fail、17215 断言、96 文件、13.35 秒；日志 `/tmp/agentic-reading-full-test.log`。包内 Bun 同数通过、11.47 秒；日志 `/tmp/agentic-reading-packaged59.log`。
+- typecheck、lint、check:feature-docs、check:obligations 和 lockfile 检查通过；独立 Standards/Spec 最终无阻断，但不等于真实 UI 验收。
+- `AGENTIC_MARKDOWN_SKIP_SIGNING=1 bun run build:canary` 成功，日志 `/tmp/agentic-reading-build59.log`；产物 `/tmp/agentic-markdown-alpha59.rpbM4N/Agentic Markdown-canary.app`，版本 `0.1.0-alpha.59`、hash `2wd300v77wvvc`。
+
+主 Agent 以 `AGENTIC_MARKDOWN_EDITOR_FAULT_LAB=1` 启动本包，会话 `31495` / Bun PID `45539`（检查点时观察）。实际只确认欢迎页、诊断入口、alpha.59 提示、`⌘O` 原生选择器及 `⌘⇧G` 路径框。设置临时 reading-a 路径并两次 Return 的工具调用约 124 秒后 Sky 超时，重绑应用约 20 秒超时并重置内核，再次获取应用 120 秒超时；未实证成功打开文档、阅读、三模式或 DOM。工具此前每次调用亦曾约 78 秒，原因未知，不据此判断锁屏或应用故障。
+
+恢复用临时样本目录为 `/tmp/agentic-reading-acceptance.bpUydC`，未写回用户文档或这些样本。a SHA-256：`2fbfa46474cbfcbc5cba04ead012490e6d3d9ef780574bd48b95ddf2fadd33f0`；b：`3b638c94bb52473c314d1d09ff87fbf09ffce9a31a85f1747d33166f2f08f2bb`；fidelity：`025d4fd419fe0cdacb7985a1eed53bfc90edcaae8ca7054da2cabe40e4b04944`。主 Agent 准备请用户手动打开样本以解除工具阻塞，不将该计划写成已操作。OBL-030/047 仅局部实施、OBL-029 延期，原父功能与其他义务不关闭。
 
 <!-- obligations: none -->
 <!-- deferred-obligations: OBL-029 -->
@@ -44,3 +96,85 @@ OBL-047 由 F-030a 主承接；OBL-065/066/067/070 在其原主承接父项保�
 ## 实际实施与验收记录
 
 尚未实施。后续追加真实改动、命令结果、递增 alpha 版本及产物核对、独立审查和 Agent 代验结果；本轮只关闭有证据的消费者子范围，不提前完成 F-021/F-030 或相关 L2 父功能。
+
+### 2026-10-03 实施检查点
+
+上句为方案阶段历史。`ReadingView` 仅在阅读模式挂载，`MemoryEditor` 卸载但 controller 内 EditorState 不销毁。当前内存正文经真实 Worker 解析后交 F-020b；用 `canonical.isCurrent` 再检查会话/正文/版本而非只靠订阅顺序。读取 `busy || frozen` 门控，依赖编辑会话处理相同 revision 的重新读取，加载、取消、失败、成功分开显示；失败可安全原文及重试。
+
+仅实验开关展示实际挂载 DOM 审计，普通运行不执行额外审计遍历。选择、复制不写正文；保存、关闭和退出保留原链路。基础样式使用外壳颜色变量，不宣称独立阅读主题已交付。联合专项 46 pass / 0 fail、605 assertions 与 typecheck / scoped ESLint 通过；测试清单及命令见同批 F-020b，真实窗口、滚动/主题/IME/焦点验证待协调 Agent 执行。
+
+### alpha.59 代验发现的状态文案修正
+
+本节修正已随 alpha.60 构建交付，新版真实复验仍待完成；以下“由协调 Agent 补入”为当时记录。
+
+真实窗口已进入阅读，但状态条仍显示“编辑模式 · 可编辑”：旧状态条仅区分源码/编辑，且把文件可写权限直接当作当前视图可编辑。修正为纯函数 `documentStatusLabel`，三模式名称明确；可写文件在阅读中显示“只读视图（已有未保存内容仍可保存）”，文件不可写仍显示原权限原因。仅改展示，不改 `canSave`、保存链路或文件授权。`bun test apps/desktop/src/client/document-status-label.test.ts apps/desktop/src/client/cross-mode-save.test.ts`：11 pass / 0 fail、204 assertions；typecheck 通过。修正后的打包版本及真实窗口复验由协调 Agent 补入，不把 alpha.59 当最终通过包。
+
+### alpha.59 继续真实代验与 alpha.60 环境边界
+
+主 Agent 在 alpha.59 的真实窗口打开临时 `reading-a`（1031 字节），通过粘贴追加 `\n\n## 未保存阅读验收标记\n` 后显示 dirty；切换阅读看到新增标题。HTML、iframe、form、SVG、MathML、download 属性和 img 内容显示为源码文本，图片为占位，普通与危险协议链接为文本而不是 AX link。该证据来自实际可见内容/可访问树，不冒充原生下载全面阻断或任意 DOM 的证明。
+
+`⌘⇧M` 进入源码后 toggle 隐藏，再次快捷键返回阅读；阅读中 `⌘Z` 后可访问树没有变化。回编辑后 `⌘Z` 移除新增标题，恢复 clean 且保存按钮禁用。尝试 `selectText` 后点击发生超时，因此没有取得实际选区保留证据，不以其他模式往返操作补造。随后 `⌘Q` 普通退出，CUA 返回 App quit，PID `47052`/`47053` 均不存在；磁盘 a 的 SHA-256 仍为基线 `2fbfa46474cbfcbc5cba04ead012490e6d3d9ef780574bd48b95ddf2fadd33f0`。
+
+真实发现的阅读状态条误报由本文件上一节记录，已修正为 alpha.60；以上 alpha.59 成功路径保持旧版证据，不能自动算作 alpha.60 的实际复验。当前新版首次工具连接超时，仍未验收，不提交推送。
+
+期间曾发现旧 alpha.58、构建目录 alpha.59 与临时 alpha.59 同时运行；主 Agent 正常退出空白 alpha.58，临时 alpha.59 已正常退出，构建目录实例无法绑定且未强杀。多开是否造成工具超时未知。Bun PID `47053` 采样显示等待事件循环、低 CPU，不证明 WebView 无问题，也不据此归因。保留真实工具延迟和通信失败历史；本次没有将进程观察当作根因修复。
+
+### alpha.60 局部真实复验与后续工具阻塞
+
+主 Agent 后续重新连接成功，观察到诊断开关入口，打开临时 `reading-a`（1031 字节）；界面请求 86167 ms 包含选择器等待，不作为读取性能。点击阅读操作虽工具超时，重连后的实际界面证实阅读已激活，状态条正确显示“阅读模式 · 只读视图（已有未保存内容仍可保存） · 已保存”，本次状态文案修复复验通过。
+
+实际规范解析为 revision 0、20 个顶层块、7 ms（仅 Worker 内解析）。真实阅读 DOM 诊断通过：68 个受控元素、无编辑 DOM、revision 0。主 Agent 实际截图中深色标题、引用、列表与行内样式可区分；不冒充浅色/系统主题专项或任意输入安全证明。
+
+随后 `⌘O` 再打开选择器，反复 120/100/75 秒操作后取得完整 AX 树；`OpenFinderItem` 选择样本 b 超时约 122 秒，之后 `getAXState` 又超时 120 秒并重置内核。尚未证实 b 成功打开、多文档状态、混合换行实际保存、选区保持、长文几何位置、完整主题及 IME 等剩余代验。没有因工具超时改写验收要求或宣称这些路径通过。
+
+保持 alpha.60 运行现场，未强杀；本次没有再请用户代点，常规自动推进仍由 Agent 执行。此为局部复验，不是本批验收，尚不提交推送；连续授权保留，完整父功能及 OBL 责任不关闭。首次连接失败、alpha.59 文案缺陷和其他历史工具问题仍保留，不推断其根因。
+
+### alpha.60 阅读保存保真与暂态只读观察
+
+此处暂态只读观察为 alpha.60 历史；alpha.62 后续已实际显示“权限确认中”，见文末最新记录，不删除原失败历史。
+
+本轮 alpha.60 实际确认 A 阅读、B 编辑的逐文档模式保持，并在 B 粘贴修改后从阅读执行 `⌘S`，保持阅读且变为 clean/157 字节，磁盘含新增标记；操作与审计细节见 [F-030a](./F-030a-mode-lifecycle-foundation.md#alpha60-逐文档模式与阅读保存新增实证)。这是真实临时文件保存，不是仅 UI 状态或测试替身。
+
+随后打开临时 fidelity（77 字节），默认编辑；追加“保真验收”后进入阅读，revision 1、DOM 审计 6 个受控元素通过。按 `⌘S` 后未立即观察到 clean，随后按钮保存调用超时，但稍后完整 AX 明确显示阅读模式、已保存、89 字节。shell 磁盘断言确认：原 77 字节前缀的 SHA-256 仍为 `025d4fd419fe0cdacb7985a1eed53bfc90edcaae8ca7054da2cabe40e4b04944`，末尾仅追加 UTF-8 `Buffer('保真验收')` 的 12 字节，BOM、3 个 CRLF 和 2 个 LF 均保留。无法将最终保存精确归因到前一次快捷键还是后一次按钮，但有最终磁盘保真和阅读 clean 的实际证据。
+
+同时观察到异常：打开 fidelity 后，B 的文件树/标签曾显示只读；fidelity 保存后，后续完整 AX 中 B 的只读标识自行消失。原因未知，不写为已修复。executor 新增 `reading-save-capability.test.ts`，以真实 service、controller、native save 和 watcher 路径重复测试，10 pass / 50 assertions，未复现；该测试不证明 UI 异常根因或排除运行时问题。
+
+当前桌面仍约 75～120 秒延迟/超时，选区保持、长文几何、浅色/系统主题和真实 IME 等仍未完成；暂态只读需继续追踪。因此仍未总体验收，不提交本批，父功能及完整 OBL 保持开放。
+
+本轮随后在 fidelity 保存 clean 后按 `⌘⇧M` 成功进入源码，完整原文可见且 toggle 隐藏；再次 `⌘⇧M` 返回阅读，仍为 clean、revision 1、DOM 审计 6 个受控元素通过。之后点击编辑模式又超时 120 秒，最终切换/选区保持仍未知，不补造成功。本轮生产代码与版本未变，仅新增此前记录的测试，不执行 Git。
+
+### alpha.62 重复打开与关闭放弃
+
+本轮 A 安全样本处于阅读；普通点击文本、辅助中键点击的工具回执超时，但随后 AX 和截图仍为同一阅读区、未观察到导航，Return 后 `⌘O` 入口仍工作。这是有限实际交互证据，不是网络抓包或原生下载全面阻断证明。
+
+重复打开 A 第一次超过 310 秒后出现通用错误，未成功；缩短路径操作后重试成功，最近请求 88742 ms 包含选择器等待，不能作为读取性能。只有一个 A 标签且保持阅读，实证已有实例重新打开不重复、不切换模式。
+
+打开 B 后 A 的文件树与标签实际显示“权限确认中”，证明 alpha.62 修正文案路径已运行；后来 B 关闭后 A 恢复无权限后缀。不将此显示修正外推为全部权限问题解决。
+
+B 追加 `\n关闭放弃验收临时文字` 后切阅读，保持 dirty；`⌘W` 弹出确认，点击放弃后 B 标签关闭、文件树中的 B 保留，A 为 clean 阅读。磁盘 `wc` 仍为 157 字节，含“保存验收标记”、不含临时文字，放弃内容没有写回。BOM 长文样本本轮哈希仍与此前基线一致，未改变。
+
+输入法切换授权已由主 Agent 异步询问，尚无答复，不把合成 IME 测试当真实候选操作。剩余退出放弃与真实 IME 尚未完成，仍未全验收，不执行 Git。
+
+### alpha.62 退出放弃最终实证
+
+本轮在临时 B 追加 `\n退出放弃验收临时文字` 后进入阅读、dirty，执行 `⌘Q`。前几次工具索引失效或疑似取消，无法确定结果，不计为退出成功。最终再次 `⌘Q` 后，`getAXAndScreenshot` 实际可见全部未保存变更确认框，默认项为继续编辑；点击当时 AX 索引 57 的放弃按钮后 CUA 返回 App quit。
+
+随后以 `ps` 检查 `/tmp/agentic-markdown-alpha62.Xbkepv` 对应包已无进程；磁盘 B 仍为 157 字节，只保留原“保存验收标记”，没有退出临时文字。因此本次有实际退出放弃及磁盘未写回的证据，不仅是按钮调用回执。
+
+至此系统主题、键盘入口、双长文样本、惰性点击、重新打开、关闭/退出已各有此前记录所限定的真实证据，不把不同版本或不同范围混成全覆盖。临时切换系统输入源的授权已问用户但仍未答，真实 IME 尚待，不用合成测试替代，不标整批已验收，不执行 Git。
+
+### alpha.62 真实中文 IME 补证
+
+用户随后明确允许临时切换已安装输入法，但本次实际不需要切换：`defaults` 只读检查前后输入源均为搜狗拼音。主 Agent 在临时 B 使用真实按键 `⌘End`、Return、`n i h a o`；AX 显示 `ni'hao`，应用截图显示蓝色下划线 marked text（组合态），模式 toggle 与保存按钮禁用。这里没有外部候选窗截图，不将应用 marked text 冒充候选窗证据。
+
+组合期间按 `⌘⇧M` 实际仍保持编辑模式，`ni'hao` 未丢失；按 Space 确认为“你好”后，toggle 与保存恢复可用。点击 toggle 的工具调用虽超时，间隔 20 秒后的完整 AX 确认已进入阅读、dirty，且含“你好”。磁盘 B 仍为 157 字节，未保存该临时输入；前后输入源相同，无需恢复切换。
+
+本段仅补真实 IME 证据，主 Agent 正清理临时未保存内容并安排独立复核，尚不据本段标整批已验收或执行 Git。此前未获输入源授权及未验证记录保留为历史。
+
+### alpha.61 暂态权限标签分类调查与修正候选
+
+主 Agent 再次观察旧阅读文档在打开另一文件后显示“只读”。代码核对未发现 reading/isEditable 推导文件权限：树和标签直接使用 `writeCapability`。确定的 UI 分类问题是将所有 `writable=false` 一概标为只读，其中也包含 metadata hint 立即失效期间的 `unavailable` 与 `invalid`。
+
+真实 controller 受控延迟回执回归：A 阅读、B 活动，调用生产 hint 同入口 `refreshWriteCapability(A.handle, true)`；此时 A 为不可写的 `unavailable`，但旧标签显示“只读”。红测试实际运行：`bun test apps/desktop/src/client/documents.test.ts -t 'inactive reading tab distinguishes'`，Expected“权限确认中”、Received“只读”，1 fail。修正共享 `documentCapabilitySuffix` 后，确认只读显示“只读”、失效显示“授权失效”、暂未确定显示“权限确认中”，可写无后缀；仍保持不可写保护，不改后台判断、轮询或读取。
+
+修后 `bun test apps/desktop/src/client/documents.test.ts apps/desktop/src/client/document-status-label.test.ts apps/desktop/src/client/reading-save-capability.test.ts`：27 pass / 0 fail、300 assertions；typecheck 与 scoped ESLint 通过。这证明 UI 分类修正，不证明真实那次暂态由哪条 hint/超时触发；既有真实 native 路径重复未复现及后台原因未知的证据保留。新包真实复验由协调 Agent 执行，未由本条记录宣称验收。

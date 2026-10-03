@@ -58,6 +58,8 @@ export function createCurrentCanonical(
   };
   return {
     getSnapshot: () => state,
+    isCurrent: (result: CanonicalResult) =>
+      state.status === "ready" && state.result === result && matches(),
     subscribe(this: void, listener: () => void) {
       listeners.add(listener);
       return () => {

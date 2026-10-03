@@ -8,7 +8,12 @@ import {
   type EditorFaultSession,
 } from "@/client/editor-fault";
 import { routeHistoryInput } from "@/client/history-input";
-import { writePermission } from "@/client/raw-buffer";
+import {
+  editorOffset,
+  rawOffset,
+  rawText,
+  writePermission,
+} from "@/client/raw-buffer";
 import { useCommands } from "@/commands";
 
 export function MemoryEditor({
@@ -60,6 +65,49 @@ export function MemoryEditor({
     view.contentDOM.setAttribute("aria-label", "Markdown 编辑区");
     if (!scrollTo)
       view.scrollDOM.scrollTop = controller.getScrollPosition(documentId);
+    const captureViewport = () => {
+      const top = view.scrollDOM.getBoundingClientRect().top;
+      const block = view.lineBlockAtHeight(Math.max(0, top - view.documentTop));
+      const current = controller.getEditor(documentId);
+      if (current)
+        controller.setViewport(documentId, {
+          from: rawOffset(current.state.field(rawText), block.from),
+          offset: view.documentTop + block.top - top,
+          ratio:
+            view.scrollDOM.scrollTop /
+            Math.max(
+              1,
+              view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight
+            ),
+          revision: current.revision,
+        });
+    };
+    controller.setViewportCapture(captureViewport);
+    const viewport = controller.getViewport(documentId);
+    if (viewport) {
+      const position = editorOffset(editor.state.field(rawText), viewport.from);
+      view.dispatch({
+        effects: EditorView.scrollIntoView(position, { y: "start" }),
+      });
+      view.requestMeasure({
+        read: () => view.coordsAtPos(position),
+        write: (rect) => {
+          if (rect)
+            view.scrollDOM.scrollTop +=
+              rect.top -
+              view.scrollDOM.getBoundingClientRect().top -
+              viewport.offset;
+          else
+            view.scrollDOM.scrollTop =
+              viewport.ratio *
+              Math.max(
+                0,
+                view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight
+              );
+        },
+      });
+    }
+    view.focus();
     const saveScroll = () =>
       controller.setScrollPosition(documentId, view.scrollDOM.scrollTop);
     view.scrollDOM.addEventListener("scroll", saveScroll);
@@ -101,6 +149,8 @@ export function MemoryEditor({
       if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
       faultSessionRef.current = null;
       recoverRef.current = undefined;
+      captureViewport();
+      controller.setViewportCapture(undefined);
       saveScroll();
       controller.setScrollSnapshot(
         documentId,

@@ -181,6 +181,20 @@ export function createDocumentController(
     }
   >();
   const editors = new Map<string, { state: EditorState; revision: number }>();
+  const reading = new Set<string>();
+  const sourceReturn = new Map<string, "editing" | "reading">();
+  const viewports = new Map<
+    string,
+    { from: number; offset: number; ratio: number; revision: number }
+  >();
+  let captureViewport: (() => void) | undefined;
+  const captureCurrentViewport = () => {
+    try {
+      captureViewport?.();
+    } catch {
+      /* Geometry failure must not block document operations. */
+    }
+  };
   const transfers = new Map<
     string,
     { mode: "patch" | "resync"; payloadBytes: number }
@@ -491,6 +505,9 @@ export function createDocumentController(
         scrollPositions.delete(replaced.documentId);
         scrollSnapshots.delete(replaced.documentId);
         editors.delete(replaced.documentId);
+        reading.delete(replaced.documentId);
+        sourceReturn.delete(replaced.documentId);
+        viewports.delete(replaced.documentId);
         transfers.delete(replaced.documentId);
         saveResults.delete(replaced.documentId);
         uncertain.delete(replaced.documentId);
@@ -598,6 +615,9 @@ export function createDocumentController(
     scrollPositions.clear();
     scrollSnapshots.clear();
     editors.clear();
+    reading.clear();
+    sourceReturn.clear();
+    viewports.clear();
     transfers.clear();
     capabilityLifetimes.clear();
     saveResults.clear();
@@ -618,6 +638,7 @@ export function createDocumentController(
     if (state.frozen || !canLeaveEditor()) return;
     const snapshot = state.tabs.find((tab) => tab.documentId === documentId);
     if (!snapshot) return;
+    captureCurrentViewport();
     ++generation;
     cancelPending();
     publish({
@@ -644,6 +665,9 @@ export function createDocumentController(
     scrollPositions.delete(documentId);
     scrollSnapshots.delete(documentId);
     editors.delete(documentId);
+    reading.delete(documentId);
+    sourceReturn.delete(documentId);
+    viewports.delete(documentId);
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
@@ -674,6 +698,7 @@ export function createDocumentController(
     const editor = documentId && editors.get(documentId);
     return (
       !!editor &&
+      !reading.has(documentId) &&
       documentId === state.snapshot?.documentId &&
       !state.frozen &&
       !state.busy &&
@@ -752,12 +777,47 @@ export function createDocumentController(
     canToggleSourceMode,
     getMode: (documentId: string) => {
       const editor = editors.get(documentId);
-      return editor ? getEditorMode(editor.state) : "editing";
+      return editor && getEditorMode(editor.state) === "source"
+        ? "source"
+        : reading.has(documentId)
+          ? "reading"
+          : "editing";
+    },
+    setViewportCapture: (capture?: () => void) => {
+      captureViewport = capture;
+    },
+    getViewport: (documentId: string) => viewports.get(documentId),
+    setViewport: (
+      documentId: string,
+      value: { from: number; offset: number; ratio: number; revision: number }
+    ) => {
+      if (
+        editors.has(documentId) &&
+        Number.isFinite(value.from) &&
+        Number.isFinite(value.offset) &&
+        Number.isFinite(value.ratio)
+      )
+        viewports.set(documentId, value);
+    },
+    canToggleReadingMode: () =>
+      canToggleSourceMode() &&
+      controller.getMode(state.snapshot!.documentId) !== "source",
+    toggleReadingMode: () => {
+      if (!controller.canToggleReadingMode()) return false;
+      const id = state.snapshot!.documentId;
+      captureCurrentViewport();
+      if (reading.has(id)) reading.delete(id);
+      else reading.add(id);
+      publish({ ...state });
+      return true;
     },
     toggleSourceMode: () => {
       if (!canToggleSourceMode()) return false;
       const documentId = state.snapshot!.documentId;
       const editor = editors.get(documentId)!;
+      captureCurrentViewport();
+      const previous = controller.getMode(documentId);
+      if (previous !== "source") sourceReturn.set(documentId, previous);
       const scroll = captureScroll?.();
       const effect = switchEditorMode(
         getEditorMode(editor.state) === "editing" ? "source" : "editing"
@@ -768,6 +828,12 @@ export function createDocumentController(
       });
       if (historyDispatch) historyDispatch(transaction);
       else controller.updateEditor(documentId, transaction);
+      if (editors.get(documentId)?.state === transaction.state) {
+        if (previous === "source" && sourceReturn.get(documentId) === "reading")
+          reading.add(documentId);
+        else reading.delete(documentId);
+        publish({ ...state });
+      }
       return editors.get(documentId)?.state === transaction.state;
     },
     setScrollCapture: (capture?: () => StateEffect<unknown>) => {
@@ -1013,7 +1079,7 @@ export function createDocumentController(
       const raw = transaction.state.field(rawText);
       if (
         (transaction.docChanged || raw !== editor.state.field(rawText)) &&
-        !canWrite(documentId)
+        (!canWrite(documentId) || reading.has(documentId))
       )
         return false;
       if (

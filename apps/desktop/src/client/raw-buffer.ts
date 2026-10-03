@@ -29,6 +29,16 @@ export function rawOffset(raw: string, editorOffset: number): number {
   return cursor;
 }
 
+/** Map raw UTF-16 offsets back to CM's LF coordinates, retaining BOM. */
+export function editorOffset(raw: string, rawPosition: number): number {
+  const end = Math.max(0, Math.min(raw.length, rawPosition));
+  let offset = 0;
+  for (let cursor = 0; cursor < end; cursor++, offset++)
+    if (raw[cursor] === "\r" && raw[cursor + 1] === "\n" && cursor + 1 < end)
+      cursor++;
+  return offset;
+}
+
 function contextualSeparator(raw: string, offset: number): string {
   // Prefer the current line's terminator, then the previous terminator.
   for (let cursor = offset; cursor < raw.length; cursor++) {

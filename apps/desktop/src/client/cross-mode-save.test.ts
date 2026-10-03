@@ -14,6 +14,28 @@ import { rawText } from "./raw-buffer";
 import { requestText, savedReply, waitCaptured } from "./save-test-helper";
 
 type Mode = "editing" | "source" | "safe";
+
+test("reading saves captured dirty text without mode/history/selection loss", async () => {
+  const { a, c, state, edit, finish, request } = await setup("editing");
+  edit("阅读保存");
+  const before = state();
+  const raw = before.field(rawText);
+  expect(c.toggleReadingMode()).toBe(true);
+  expect(c.canSave()).toBe(true);
+  expect(c.canUndo()).toBe(false);
+  const saving = c.save();
+  await waitCaptured(() => !!request());
+  expect(requestText(request(), a)).toBe(raw);
+  finish(savedReply(request(), a));
+  await saving;
+  expect(c.getMode(a.documentId)).toBe("reading");
+  expect(state()).toBe(before);
+  expect(c.isDirty(a.documentId)).toBe(false);
+  expect(c.toggleReadingMode()).toBe(true);
+  expect(c.runHistory("undo")).toBe(true);
+  expect(state().field(rawText)).toBe(a.text);
+  expect(c.isDirty(a.documentId)).toBe(true);
+});
 async function setup(mode: Mode) {
   const make = (text: string): DocumentSnapshot => ({
     documentId: crypto.randomUUID(),

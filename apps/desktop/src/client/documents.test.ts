@@ -10,6 +10,7 @@ import type {
 } from "../shared/documents";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
+import { documentCapabilitySuffix } from "./document-status-label";
 import {
   createDocumentController,
   isDocumentResponse,
@@ -151,6 +152,128 @@ function setup() {
     controller: createDocumentController(transport),
   };
 }
+
+test("inactive reading tab distinguishes pending capability refresh from confirmed readonly", async () => {
+  const { controller, transport, value } = setup();
+  await controller.select();
+  controller.toggleReadingMode();
+  const other = snapshot("# another");
+  transport.selectDocument = (request) =>
+    Promise.resolve(result(request, other));
+  await controller.select();
+  let finish!: () => void;
+  transport.checkDocumentWriteCapability = (request) =>
+    new Promise((resolve) => {
+      finish = () =>
+        resolve({
+          ...request,
+          capability: { writable: true, reason: "writable" },
+        });
+    });
+  const pending = controller.refreshWriteCapability(value.handle, true);
+  try {
+    const tab = controller
+      .getSnapshot()
+      .tabs.find((tab) => tab.documentId === value.documentId)!;
+    const entry = controller
+      .getSnapshot()
+      .entries.find((entry) => entry.documentId === value.documentId)!;
+    expect(tab.writeCapability).toEqual({
+      writable: false,
+      reason: "unavailable",
+    });
+    expect(controller.getMode(value.documentId)).toBe("reading");
+    expect(controller.canWrite(value.documentId)).toBe(false);
+    expect(documentCapabilitySuffix(tab.writeCapability)).toBe(" · 权限确认中");
+    expect(documentCapabilitySuffix(entry.writeCapability)).toBe(
+      " · 权限确认中"
+    );
+  } finally {
+    finish();
+    await pending;
+  }
+  expect(controller.canWrite(value.documentId)).toBe(true);
+  expect(
+    documentCapabilitySuffix(
+      controller
+        .getSnapshot()
+        .tabs.find((tab) => tab.documentId === value.documentId)!
+        .writeCapability
+    )
+  ).toBe("");
+  controller.dispose();
+});
+
+test("reading is per document, source returns to prior mode and preserves selection/history/dirty", async () => {
+  const { controller, transport, value } = setup();
+  await controller.select();
+  const edit = controller.getEditor(value.documentId)!.state.update({
+    changes: { from: 0, insert: "未保存\n" },
+    selection: { anchor: 2, head: 4 },
+  });
+  controller.updateEditor(value.documentId, edit);
+  const before = controller.getEditor(value.documentId)!;
+  expect(controller.toggleReadingMode()).toBe(true);
+  expect(controller.getMode(value.documentId)).toBe("reading");
+  expect(controller.getEditor(value.documentId)).toBe(before);
+  expect(controller.isDirty(value.documentId)).toBe(true);
+  expect(controller.canUndo()).toBe(false);
+  expect(controller.runHistory("undo")).toBe(false);
+  expect(
+    controller.updateEditor(
+      value.documentId,
+      before.state.update({ changes: { from: 0, insert: "forbidden" } })
+    )
+  ).toBe(false);
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(value.documentId)).toBe("source");
+  expect(controller.canToggleReadingMode()).toBe(false);
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(value.documentId)).toBe("reading");
+  expect(controller.getEditor(value.documentId)!.state.selection).toEqual(
+    before.state.selection
+  );
+  const second = snapshot("# B");
+  transport.selectDocument = (request) =>
+    Promise.resolve(result(request, second));
+  await controller.select();
+  expect(controller.getMode(second.documentId)).toBe("editing");
+  controller.activateTab(value.documentId);
+  expect(controller.getMode(value.documentId)).toBe("reading");
+  transport.selectDocument = (request) =>
+    Promise.resolve(result(request, value));
+  await controller.select();
+  expect(controller.getMode(value.documentId)).toBe("reading");
+  expect(controller.getSnapshot().tabs.length).toBe(2);
+  expect(controller.toggleReadingMode()).toBe(true);
+  expect(controller.getMode(value.documentId)).toBe("editing");
+  expect(controller.runHistory("undo")).toBe(true);
+  expect(controller.getEditor(value.documentId)!.state.field(rawText)).toBe(
+    value.text
+  );
+  controller.dispose();
+});
+
+test("mode transitions respect IME, frozen state and safe source isolation", async () => {
+  const { controller, value } = setup();
+  expect(controller.toggleReadingMode()).toBe(false);
+  await controller.select();
+  controller.setInteractionCheck(() => false);
+  expect(controller.toggleReadingMode()).toBe(false);
+  expect(controller.toggleSourceMode()).toBe(false);
+  controller.setInteractionCheck(() => true);
+  controller.beginDiscard();
+  expect(controller.toggleReadingMode()).toBe(false);
+  controller.endDiscard();
+  const fault = controller.getEditorFault(value.documentId)!;
+  reportEditorFault(fault, "presentation");
+  expect(controller.toggleReadingMode()).toBe(false);
+  controller.enterSafeSource(value.documentId, fault);
+  expect(controller.getMode(value.documentId)).toBe("source");
+  expect(controller.toggleReadingMode()).toBe(false);
+  expect(controller.toggleSourceMode()).toBe(false);
+  controller.dispose();
+});
 
 test("source mode is per-document and cannot mutate raw, revision, save transfer or dirty state", async () => {
   const { controller, transport, value } = setup();

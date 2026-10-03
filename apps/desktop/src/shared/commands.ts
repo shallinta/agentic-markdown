@@ -28,6 +28,7 @@ export interface CheckForUpdatesCommand extends GenericCommand<"checkForUpdates"
 export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdateAndRestart"> {}
 
 export type Command =
+  | GenericCommand<"toggleReadingMode">
   | GenericCommand<"toggleSourceMode">
   | GenericCommand<"undoDocument", { documentId?: string }>
   | GenericCommand<"redoDocument", { documentId?: string }>
@@ -108,6 +109,7 @@ export const COMMAND_META: Record<
   CommandType,
   { target: "webview" | "bun"; palette?: false }
 > = {
+  toggleReadingMode: { target: "webview" },
   toggleSourceMode: { target: "webview", palette: false },
   undoDocument: { target: "webview" },
   redoDocument: { target: "webview" },
@@ -140,6 +142,7 @@ export const PRODUCT_COMMANDS: Partial<
     }
   >
 > = {
+  toggleReadingMode: { label: "切换编辑 / 阅读模式" },
   undoDocument: {
     label: "撤销",
     accelerator: "CommandOrControl+Z",

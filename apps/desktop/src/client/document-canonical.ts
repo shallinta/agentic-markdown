@@ -11,7 +11,9 @@ export function createDocumentCanonical(
   factory: () => CurrentCanonicalWorker
 ) {
   return createCurrentCanonical(() => {
-    const snapshot = controller.getSnapshot().snapshot;
+    const state = controller.getSnapshot();
+    if (state.frozen || state.busy) return null;
+    const snapshot = state.snapshot;
     const editor = snapshot && controller.getEditor(snapshot.documentId);
     const identity = snapshot && controller.getEditorFault(snapshot.documentId);
     return snapshot && editor && identity

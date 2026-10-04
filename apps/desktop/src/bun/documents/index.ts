@@ -34,6 +34,7 @@ import {
   verifySingleFileAuthorization,
   type SingleFileAuthorization,
 } from "./path-authorization";
+import { createRefreshAcceptanceLedger, validRefreshAcceptance, type RefreshAcceptanceResult } from "./refresh-acceptance";
 import { createRefreshCandidates, validRefreshBinding, type RefreshResult } from "./refresh-candidates";
 import { checkWriteCapability } from "./write-capability";
 
@@ -61,6 +62,8 @@ export interface DocumentScope {
   release?(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  acceptRefreshCandidate(request: unknown): Promise<RefreshAcceptanceResult>;
+  queryRefreshAcceptance(request: unknown): RefreshAcceptanceResult;
   readRefreshCandidate(request: unknown): Promise<RefreshResult>;
   checkRefreshCandidateBinding(token: unknown): Promise<boolean>;
   discardRefreshCandidate(handle: string): void;
@@ -225,6 +228,7 @@ export function createDocumentService({
   }, () => !saving && !writeBarrier && !disposed);
   const forgetObservation = (handle: string) => { observations.delete(handle); observationQueue.remove(handle); };
   const releaseObservation = (handle: string) => {
+    acceptance.release(handle);
     candidates.discardHandle(handle);
     forgetObservation(handle); observationEpochs.delete(handle);
     for (const id of commits.keys()) if (![...grants.values()].some(grant => identities.get(grant.identityKey)?.documentId === id)) commits.delete(id);
@@ -291,6 +295,7 @@ export function createDocumentService({
   const identities = new Map<string, Identity>();
   let saveTail: Promise<void> = Promise.resolve();
   let saving = 0;
+  const acceptance = createRefreshAcceptanceLedger();
   let writeBarrier = false;
   const uncertain = new Set<string>();
   const savingRequests = new Set<string>();
@@ -358,7 +363,7 @@ export function createDocumentService({
       ? error.code
       : "READ_FAILED";
   const candidates = createRefreshCandidates(
-    () => !disposed && !saving && !writeBarrier && !running && !pending && !selecting,
+    () => !disposed && !saving && !writeBarrier && !running && !pending && !selecting && !acceptance.busy(),
     codeOf
   );
   const checkTask = (task: Task, generation: number) => {
@@ -472,6 +477,50 @@ export function createDocumentService({
   }
 
   return {
+    async acceptRefreshCandidate(request) {
+      if (!validRefreshAcceptance(request)) return { status: "rejected", error: "INVALID_REQUEST" };
+      const params = { ...request };
+      if (disposed || !grants.has(params.handle)) return { status: "unknown" };
+      const result = await acceptance.run(params, !saving && !writeBarrier && !running && !pending && !selecting, async () => {
+        const lease = candidates.acquire(params.token, params.handle), grant = grants.get(params.handle);
+        if (!lease || !grant) return { status: "rejected", error: "INVALID_HANDLE" };
+        const identity = identities.get(grant.identityKey), generation = epoch;
+        const current = () => !disposed && !saving && !writeBarrier && epoch === generation && grants.get(params.handle) === grant &&
+          identities.get(grant.identityKey) === identity && lease.current();
+        const task: Task = { id: params.operationId, get cancelled() { return !current(); }, committed: false, resolve: () => undefined };
+        try {
+          checkTask(task, generation);
+          const file = await open(grant.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          let next: DocumentSnapshot;
+          try {
+            const before = await verify({ ...grant, file });
+            next = await snapshot({ ...grant, file }, generation, task);
+            const after = await verify({ ...grant, file });
+            if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || next.hash !== lease.candidate.hash)
+              throw new DocumentFailure("FILE_CHANGED");
+          } finally { await file.close(); }
+          // All asynchronous verification is complete. No await between this
+          // lifetime/CAS check and the accepted in-memory baseline publication.
+          checkTask(task, generation);
+          if (identity?.documentId !== lease.candidate.documentId || identity.revision !== lease.candidate.expectedRevision || identity.hash !== lease.candidate.expectedHash)
+            throw new DocumentFailure("CONFLICT");
+          commit(grant, next, task, generation);
+          observationQueue.hint(grant.handle);
+          return { status: "committed", snapshot: next };
+        } catch (error) {
+          // Once publication starts, even an unexpected local failure must not
+          // masquerade as proof that no baseline change happened.
+          return task.committed ? { status: "unknown" } : { status: "rejected", error: codeOf(error) };
+        }
+      });
+      candidates.wake();
+      return result;
+    },
+    queryRefreshAcceptance(request) {
+      if (!validRefreshAcceptance(request)) return { status: "rejected", error: "INVALID_REQUEST" };
+      if (disposed || !grants.has(request.handle)) return { status: "unknown" };
+      return acceptance.query(request);
+    },
     async readRefreshCandidate(request) {
       if (!validRefreshBinding(request)) return { ok: false, error: "INVALID_REQUEST" };
       const binding = { ...request }, grant = grants.get(binding.handle);
@@ -480,7 +529,7 @@ export function createDocumentService({
         return { ok: false, error: "INVALID_HANDLE" };
       if (identity.revision !== binding.expectedRevision || identity.hash !== binding.expectedHash)
         return { ok: false, error: "CONFLICT" };
-      if (saving || writeBarrier || uncertain.has(identity.documentId)) return { ok: false, error: "BUSY" };
+      if (saving || writeBarrier || acceptance.busy() || uncertain.has(identity.documentId)) return { ok: false, error: "BUSY" };
       const fingerprint = grant.fingerprint, generation = epoch;
       const current = () => !disposed && epoch === generation && !saving && !writeBarrier &&
         grants.get(binding.handle) === grant && grant.fingerprint === fingerprint &&
@@ -564,7 +613,7 @@ export function createDocumentService({
     async openAuthorized(request, getAuthorization, scope) {
       if (!validate(request, false)) return failure("", "INVALID_REQUEST");
       if (disposed) return failure(request.requestId, "INVALID_HANDLE");
-      if (saving || writeBarrier || selecting || duplicate(request.requestId))
+      if (saving || writeBarrier || acceptance.busy() || selecting || duplicate(request.requestId))
         return failure(request.requestId, "BUSY");
       const { task, promise } = taskFor(request.requestId),
         generation = epoch;
@@ -736,7 +785,8 @@ export function createDocumentService({
       // was nevertheless admitted meanwhile, wait for its published outcome too.
       do {
         await saveTail;
-      } while (saving > 0);
+        await acceptance.settled();
+      } while (saving > 0 || acceptance.busy());
       return {
         protocolVersion: 1,
         requestId: request.requestId,
@@ -766,6 +816,9 @@ export function createDocumentService({
       });
       try {
         await previous;
+        // A foreground save invalidates the candidate and lets an in-flight
+        // acceptance settle before inspecting its authoritative baseline.
+        await acceptance.settled();
         const grant = grants.get(request.handle);
         if (!grant || disposed)
           return failure(request.requestId, "INVALID_HANDLE");
@@ -904,6 +957,7 @@ export function createDocumentService({
       writeBarrier = true;
       try {
         await saveTail;
+        await acceptance.settled();
         return await action();
       } finally {
         writeBarrier = false;
@@ -912,7 +966,7 @@ export function createDocumentService({
     },
     async select(request) {
       if (!validate(request, false)) return failure("", "INVALID_REQUEST");
-      if (saving || writeBarrier) return failure(request.requestId, "BUSY");
+      if (saving || writeBarrier || acceptance.busy()) return failure(request.requestId, "BUSY");
       if (disposed) return failure(request.requestId, "INVALID_HANDLE");
       if (selecting || duplicate(request.requestId))
         return failure(request.requestId, "BUSY");
@@ -968,7 +1022,7 @@ export function createDocumentService({
     },
     async read(request) {
       if (!validate(request, true)) return failure("", "INVALID_REQUEST");
-      if (saving || writeBarrier) return failure(request.requestId, "BUSY");
+      if (saving || writeBarrier || acceptance.busy()) return failure(request.requestId, "BUSY");
       if (duplicate(request.requestId))
         return failure(request.requestId, "BUSY");
       const grant = grants.get(request.handle);
@@ -1048,6 +1102,8 @@ export function createDocumentService({
       writeBarrier = true;
       candidates.dispose();
       await saveTail;
+      await acceptance.settled();
+      acceptance.clear();
       disposed = true;
       observationQueue.dispose();
       observations.clear();

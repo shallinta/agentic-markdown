@@ -1,6 +1,14 @@
 # AGENTS.md
 
-## 当前推进：F-028a 外部刷新候选基础（2026-10-05）
+## 当前推进：F-028b 内部候选接受与结果确认（2026-10-05）
+
+[F-028b](docs/iterations/F-028b-external-refresh-acceptance.md) alpha.84 非离线内部服务本片经独立最终 verifier 核对 0 阻断，主线确认受托 Agent 代验通过，非用户亲验；Git 待执行。仅接受/查询并更新内存基线，不写磁盘、不等同 durable 保存；无 UI/RPC，不宣称自动刷新。无主承接/延期 OBL，完整父功能及 F-028b-offline-final 留最终人工保持开放，不断网。
+
+F-028c 自动刷新遇到撤销历史处理产品选项，主线已异步询问用户，当前待用户决定；不得默认清空历史，也不得以仅处理空历史文档绕过该决定。F-026c 仅调查、未启动，不以推荐代替实施授权或方案。
+
+## 前轮：F-028a 外部刷新候选基础（2026-10-05）
+
+F-028a 已由主线实际提交推送 `37e35ee7cedc82cf297520352b79e76b0aa93893`，ls-remote 核验远端 main 同 SHA，当时 git status 为空；下方待 Git 文案为提交前历史。非离线内部服务受托代验结论不扩大，父 F-028 与 F-028a-offline-final 继续开放。
 
 [F-028a](docs/iterations/F-028a-external-refresh-candidates.md) alpha.83 内部服务非离线本片经独立最终 verifier 核对 0 阻断，主线确认受托 Agent 代验通过，非用户亲验；Git 待执行。真实服务集成及原生保存补证见唯一迭代，窗口仅启动/退出 smoke，不冒称自动刷新 UI 验收。仅候选获取、绑定检查与丢弃，不接受候选或推进基线；无主承接/延期 OBL，父 F-028 及完整 F-027 义务开放，F-028a-offline-final 留最终人工，不断网。
 

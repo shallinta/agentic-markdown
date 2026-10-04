@@ -102,6 +102,12 @@ export function createRefreshCandidates(canRun: () => boolean, errorCode: (error
     })();
   }
   return {
+    /** Backend-only lease; callers cannot manufacture content or extend lifetime. */
+    acquire(token: string, handle: string) {
+      const item = [...items.values()].find(value => value.candidate?.token === token && value.context.binding.handle === handle);
+      if (!item?.candidate || !live(item)) return null;
+      return { candidate: structuredClone(item.candidate), current: () => live(item) };
+    },
     request(context: RefreshContext): Promise<RefreshResult> {
       if (disposed) return Promise.resolve({ ok: false, error: "INVALID_HANDLE" });
       const id = context.binding.documentId;

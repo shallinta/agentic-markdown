@@ -34,6 +34,7 @@ import {
   verifySingleFileAuthorization,
   type SingleFileAuthorization,
 } from "./path-authorization";
+import { createRefreshCandidates, validRefreshBinding, type RefreshResult } from "./refresh-candidates";
 import { checkWriteCapability } from "./write-capability";
 
 interface Identity {
@@ -60,6 +61,9 @@ export interface DocumentScope {
   release?(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  readRefreshCandidate(request: unknown): Promise<RefreshResult>;
+  checkRefreshCandidateBinding(token: unknown): Promise<boolean>;
+  discardRefreshCandidate(handle: string): void;
   openAuthorized(
     request: unknown,
     authorize: () => Promise<SingleFileAuthorization>,
@@ -221,6 +225,7 @@ export function createDocumentService({
   }, () => !saving && !writeBarrier && !disposed);
   const forgetObservation = (handle: string) => { observations.delete(handle); observationQueue.remove(handle); };
   const releaseObservation = (handle: string) => {
+    candidates.discardHandle(handle);
     forgetObservation(handle); observationEpochs.delete(handle);
     for (const id of commits.keys()) if (![...grants.values()].some(grant => identities.get(grant.identityKey)?.documentId === id)) commits.delete(id);
   };
@@ -345,12 +350,17 @@ export function createDocumentService({
       running = null;
       work.task.resolve(response);
       drain();
+      candidates.wake();
     })();
   }
   const codeOf = (error: unknown): DocumentErrorCode =>
     error instanceof DocumentFailure || error instanceof DocumentPathError
       ? error.code
       : "READ_FAILED";
+  const candidates = createRefreshCandidates(
+    () => !disposed && !saving && !writeBarrier && !running && !pending && !selecting,
+    codeOf
+  );
   const checkTask = (task: Task, generation: number) => {
     checkLive(generation);
     if (task.cancelled) throw new DocumentFailure("CANCELLED");
@@ -449,6 +459,7 @@ export function createDocumentService({
   ) {
     checkTask(task, generation);
     task.committed = true;
+    candidates.invalidate(next.documentId);
     identities.set(grant.identityKey, {
       documentId: next.documentId,
       revision: next.revision,
@@ -461,6 +472,39 @@ export function createDocumentService({
   }
 
   return {
+    async readRefreshCandidate(request) {
+      if (!validRefreshBinding(request)) return { ok: false, error: "INVALID_REQUEST" };
+      const binding = { ...request }, grant = grants.get(binding.handle);
+      const identity = grant && identities.get(grant.identityKey);
+      if (disposed || !grant || identity?.documentId !== binding.documentId)
+        return { ok: false, error: "INVALID_HANDLE" };
+      if (identity.revision !== binding.expectedRevision || identity.hash !== binding.expectedHash)
+        return { ok: false, error: "CONFLICT" };
+      if (saving || writeBarrier || uncertain.has(identity.documentId)) return { ok: false, error: "BUSY" };
+      const fingerprint = grant.fingerprint, generation = epoch;
+      const current = () => !disposed && epoch === generation && !saving && !writeBarrier &&
+        grants.get(binding.handle) === grant && grant.fingerprint === fingerprint &&
+        identities.get(grant.identityKey) === identity && !uncertain.has(identity.documentId);
+      return candidates.request({
+        binding, current,
+        verify: async () => {
+          const file = await open(grant.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          try { await verify({ ...grant, file }); } finally { await file.close(); }
+        },
+        read: async alive => {
+          const task: Task = { id: randomUUID(), get cancelled() { return !alive(); }, committed: false, resolve: () => undefined };
+          checkTask(task, generation);
+          const file = await open(grant.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          try {
+            const content = await snapshot({ ...grant, file }, generation, task);
+            checkTask(task, generation);
+            return { text: content.text, hash: content.hash, byteLength: content.byteLength, fidelity: content.fidelity };
+          } finally { await file.close(); }
+        },
+      });
+    },
+    checkRefreshCandidateBinding: candidates.checkBinding,
+    discardRefreshCandidate: candidates.discardHandle,
     observe(request) {
       if (!validObservationRequest(request)) return Promise.resolve({ ok: false, requestId: "" });
       const { active, requestId, ...binding } = request;
@@ -713,6 +757,7 @@ export function createDocumentService({
       )
         return failure(request.requestId, "BUSY");
       saving++;
+      candidates.invalidate(request.documentId);
       savingRequests.add(request.requestId);
       const previous = saveTail;
       let finish!: () => void;
@@ -851,6 +896,7 @@ export function createDocumentService({
         saving--;
         savingRequests.delete(request.requestId);
         finish();
+        candidates.wake();
       }
     },
     async withWriteBarrier(action) {
@@ -861,6 +907,7 @@ export function createDocumentService({
         return await action();
       } finally {
         writeBarrier = false;
+        candidates.wake();
       }
     },
     async select(request) {
@@ -914,6 +961,7 @@ export function createDocumentService({
           task.resolve(failure(request.requestId, codeOf(error)));
         } finally {
           if (selecting === task) selecting = null;
+          candidates.wake();
         }
       })();
       return promise;
@@ -998,6 +1046,7 @@ export function createDocumentService({
     },
     async dispose() {
       writeBarrier = true;
+      candidates.dispose();
       await saveTail;
       disposed = true;
       observationQueue.dispose();

@@ -1,0 +1,55 @@
+[data-reading-theme] {
+  background: var(--reading-background);
+  color: var(--reading-foreground);
+  font-family: var(--reading-font);
+  font-size: var(--reading-size);
+  line-height: var(--reading-leading);
+  border-color: var(--reading-border);
+  outline-color: var(--reading-foreground);
+  color-scheme: normal;
+}
+[data-reading-theme] > [data-reading-content] {
+  width: 100%;
+  max-width: var(--reading-width);
+  margin-inline: auto;
+}
+[data-reading-theme] :is(p, ol, ul) {
+  margin-block: var(--reading-paragraph);
+  line-height: inherit;
+}
+[data-reading-theme] :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 1.2em 0.5em;
+  line-height: 1.35;
+}
+[data-reading-theme] h1 {
+  font-size: 1.8em;
+}
+[data-reading-theme] h2 {
+  font-size: 1.5em;
+}
+[data-reading-theme] h3 {
+  font-size: 1.25em;
+}
+[data-reading-theme] :is(h4, h5, h6) {
+  font-size: 1.05em;
+}
+[data-reading-theme] :is(code, pre) {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 0.9em;
+}
+[data-reading-theme] pre code {
+  font-size: inherit;
+}
+[data-reading-theme] :is(.bg-muted, blockquote) {
+  background: var(--reading-muted);
+}
+[data-reading-theme] .text-muted-foreground {
+  color: var(--reading-secondary);
+}
+[data-reading-theme] :is(blockquote, hr) {
+  border-color: var(--reading-border);
+}
+[data-reading-theme] ::selection {
+  background: #426da8;
+  color: #fff;
+}

@@ -51,6 +51,8 @@ export function CommandPalette({
   const label = (type: CommandType): string => {
     if (type === "toggleSourceMode") return "";
     if (
+      type === "readingThemePaper" ||
+      type === "readingThemeInk" ||
       type === "selectDocument" ||
       type === "toggleReadingMode" ||
       type === "undoDocument" ||

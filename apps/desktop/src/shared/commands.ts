@@ -28,6 +28,8 @@ export interface CheckForUpdatesCommand extends GenericCommand<"checkForUpdates"
 export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdateAndRestart"> {}
 
 export type Command =
+  | GenericCommand<"readingThemePaper">
+  | GenericCommand<"readingThemeInk">
   | GenericCommand<"toggleReadingMode">
   | GenericCommand<"toggleSourceMode">
   | GenericCommand<"undoDocument", { documentId?: string }>
@@ -109,6 +111,8 @@ export const COMMAND_META: Record<
   CommandType,
   { target: "webview" | "bun"; palette?: false }
 > = {
+  readingThemePaper: { target: "webview" },
+  readingThemeInk: { target: "webview" },
   toggleReadingMode: { target: "webview" },
   toggleSourceMode: { target: "webview", palette: false },
   undoDocument: { target: "webview" },
@@ -142,6 +146,8 @@ export const PRODUCT_COMMANDS: Partial<
     }
   >
 > = {
+  readingThemePaper: { label: "阅读主题：纸页" },
+  readingThemeInk: { label: "阅读主题：墨夜" },
   toggleReadingMode: { label: "切换编辑 / 阅读模式" },
   undoDocument: {
     label: "撤销",

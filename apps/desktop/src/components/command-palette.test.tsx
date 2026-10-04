@@ -91,6 +91,11 @@ test("source mode has no command palette entry", () => {
   expect(renderPalette()).not.toContain("源码");
 });
 
+test("reading theme commands use Chinese product names without origin classification", () => {
+  expect(renderPalette()).toContain("阅读主题：纸页");
+  expect(renderPalette()).toContain("阅读主题：墨夜");
+});
+
 test("hides restart command until an update is ready", () => {
   readyVersion = null;
 

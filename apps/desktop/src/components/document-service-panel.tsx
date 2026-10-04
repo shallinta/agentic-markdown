@@ -5,6 +5,7 @@ import {
   DialogTitle,
 } from "@agentic-markdown/ui/ui/dialog";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 
 import CurrentCanonicalWorker from "@/client/current-canonical.worker?worker&inline";
 import { discardGuard } from "@/client/discard-guard";
@@ -23,6 +24,7 @@ import {
 import { isExternalTextTarget } from "@/client/history-target";
 import { longLineProtection } from "@/client/long-line-protection";
 import { rawText } from "@/client/raw-buffer";
+import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
@@ -66,6 +68,20 @@ export function useDocumentWorkspace() {
   const [canonical] = useState(() =>
     createDocumentCanonical(controller, () => new CurrentCanonicalWorker())
   );
+  const [readingThemes] = useState(() =>
+    createReadingThemeSelection(
+      controller.captureCurrentViewport,
+      controller.canChangeReadingTheme
+    )
+  );
+  const readingTheme = useSyncExternalStore(
+    readingThemes.subscribe,
+    readingThemes.getSnapshot
+  );
+  const chooseReadingTheme = (id: string) => {
+    const error = readingThemes.select(id);
+    if (error) toast.error(error);
+  };
   useEffect(() => {
     const unsubscribe = controller.subscribe(canonical.invalidate);
     return () => {
@@ -76,6 +92,8 @@ export function useDocumentWorkspace() {
   const { executeCommand, isCommandEnabled } = useCommands();
   const notifyCommands = useRegisterCommands(
     {
+      readingThemePaper: () => chooseReadingTheme("paper"),
+      readingThemeInk: () => chooseReadingTheme("ink"),
       toggleReadingMode: () => {
         controller.toggleReadingMode();
       },
@@ -98,6 +116,8 @@ export function useDocumentWorkspace() {
     },
     true,
     {
+      readingThemePaper: controller.canChangeReadingTheme,
+      readingThemeInk: controller.canChangeReadingTheme,
       toggleReadingMode: controller.canToggleReadingMode,
       toggleSourceMode: () =>
         controller.canToggleSourceMode() &&
@@ -173,7 +193,14 @@ export function useDocumentWorkspace() {
     void controller.refreshWriteCapability();
   }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
-  return { controller, state, canonical, executeCommand, isCommandEnabled };
+  return {
+    controller,
+    state,
+    canonical,
+    readingTheme,
+    executeCommand,
+    isCommandEnabled,
+  };
 }
 type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
@@ -503,6 +530,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               )}
             {controller.getMode(snapshot.documentId) === "reading" ? (
               <ReadingView
+                theme={workspace.readingTheme}
                 controller={controller}
                 canonical={workspace.canonical}
                 documentId={snapshot.documentId}

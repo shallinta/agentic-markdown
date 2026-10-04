@@ -1,0 +1,12 @@
+[data-reading-theme="paper"] {
+  --reading-background: #faf7ef;
+  --reading-foreground: #302e29;
+  --reading-muted: #ece6d9;
+  --reading-secondary: #665e50;
+  --reading-border: #c5baa6;
+  --reading-font: Georgia, "Songti SC", serif;
+  --reading-size: 18px;
+  --reading-leading: 1.85;
+  --reading-width: 44rem;
+  --reading-paragraph: 1em;
+}

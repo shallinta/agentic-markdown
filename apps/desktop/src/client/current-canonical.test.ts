@@ -21,6 +21,7 @@ import {
 } from "./document-canonical";
 import { createDocumentController, type DocumentTransport } from "./documents";
 import { rawText } from "./raw-buffer";
+import { createReadingThemeSelection } from "./reading-theme";
 
 class FakeWorker implements CurrentCanonicalWorker {
   onmessage: CurrentCanonicalWorker["onmessage"] = null;
@@ -331,6 +332,40 @@ test("real controller captures unsaved buffer, ignores selection and cancels on 
   workers[0].complete();
   expect(await request).not.toBeNull();
   expect(controller.isDirty(value.documentId)).toBe(true);
+  const ready = service.getSnapshot();
+  const terminated = workers[0].terminated;
+  const selectedEditor = controller.getEditor(value.documentId);
+  const documentState = controller.getSnapshot();
+  let captures = 0;
+  controller.setViewportCapture(() => {
+    captures++;
+    controller.setViewport(value.documentId, {
+      from: 3,
+      offset: -20,
+      ratio: 0.5,
+      revision: 1,
+    });
+  });
+  const themes = createReadingThemeSelection(
+    controller.captureCurrentViewport,
+    controller.canChangeReadingTheme
+  );
+  for (const id of ["ink", "paper", "ink"])
+    expect(themes.select(id)).toBeNull();
+  expect(captures).toBe(3);
+  expect(service.getSnapshot()).toBe(ready);
+  expect(workers).toHaveLength(1);
+  expect(workers[0].terminated).toBe(terminated);
+  expect(controller.getEditor(value.documentId)).toBe(selectedEditor);
+  expect(controller.getSnapshot()).toBe(documentState);
+  expect(controller.getViewport(value.documentId)?.offset).toBe(-20);
+  controller.setInteractionCheck(() => false);
+  expect(themes.select("paper")).toContain("当前操作进行中");
+  controller.setInteractionCheck(() => true);
+  controller.beginDiscard();
+  expect(themes.select("paper")).toContain("当前操作进行中");
+  controller.endDiscard();
+  controller.setViewportCapture(undefined);
   await controller.reload();
   expect(service.getSnapshot().status).toBe("idle");
   const reload = service.request();

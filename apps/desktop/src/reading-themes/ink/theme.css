@@ -1,0 +1,12 @@
+[data-reading-theme="ink"] {
+  --reading-background: #19212c;
+  --reading-foreground: #e2e7ee;
+  --reading-muted: #273343;
+  --reading-secondary: #b3c1d2;
+  --reading-border: #63758b;
+  --reading-font: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  --reading-size: 17px;
+  --reading-leading: 1.7;
+  --reading-width: 48rem;
+  --reading-paragraph: 0.85em;
+}

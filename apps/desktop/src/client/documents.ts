@@ -378,6 +378,13 @@ export function createDocumentController(
   function publish(next: DocumentViewState) {
     const previousId = state.snapshot?.documentId;
     const nextId = next.snapshot?.documentId;
+    // Capture before subscribers can invalidate/unmount the current reading DOM.
+    if (
+      previousId !== nextId ||
+      (!state.busy && next.busy) ||
+      (!state.frozen && next.frozen)
+    )
+      captureCurrentViewport();
     if (previousId !== nextId) {
       // Only the two changed active slots, never every tab on each keystroke.
       for (const id of [previousId, nextId]) {
@@ -775,6 +782,9 @@ export function createDocumentController(
       return true;
     },
     canToggleSourceMode,
+    canChangeReadingTheme: () =>
+      !state.frozen && !state.busy && canLeaveEditor(),
+    captureCurrentViewport,
     getMode: (documentId: string) => {
       const editor = editors.get(documentId);
       return editor && getEditorMode(editor.state) === "source"

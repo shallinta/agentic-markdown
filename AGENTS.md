@@ -1,6 +1,10 @@
 # AGENTS.md
 
-## 当前结论：F-022a 非离线本片已代验（2026-10-04）
+## 当前结论：F-023a 非离线本片已代验（2026-10-04）
+
+[F-023a](docs/iterations/F-023a-safe-reading-html.md) alpha.70 非离线本片于 2026-10-04 受托 Agent 代验通过，非用户亲验；独立 planner 与 verify_html_acceptance 最终均 0 阻断，Git 待主线实际核验。真实 WK 安全呈现/完整源码降级、dirty 撤销及模式/主题/外观和退出证据已记录；WK 未实测 sentinel/网络探针或新开第二文档，Chrome/集成证据不冒充 WK。首开失败与工具超时保留历史；F-023a-offline-final 留最终人工，不断网，父 F-023/完整 OBL-032 及后续范围开放。
+
+## 前轮结论：F-022a 非离线本片已代验（2026-10-04，历史）
 
 [F-022a](docs/iterations/F-022a-local-reading-images.md) alpha.69 非离线本片于 2026-10-04 经受托 Agent 代验通过，非用户亲验；独立 Spec / Standards 最终均 0 阻断，Git 待主线实际执行核验；已补齐关闭 B 返回、浅/深/当前系统外观、主题复用及正常退出实证，临时文件校验未变。晚回执/释放由单测覆盖，不冒称 UI race 或 RSS；超时和首次测试失败历史保留。F-022a-offline-final 留最终人工，不断网，父 F-022/完整 OBL-010/031 及后续消费者开放。
 

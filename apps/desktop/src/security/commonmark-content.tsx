@@ -2,8 +2,14 @@ import { createElement, type ReactNode } from "react";
 
 import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
+import { ReadingHtmlBlock } from "../components/reading-html-block";
 import { ReadingImage } from "../components/reading-image";
 import { MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS } from "../shared/local-images";
+
+import {
+  MAX_HTML_DOCUMENT_SOURCE,
+  MAX_HTML_DOCUMENT_BLOCKS,
+} from "./reading-html";
 
 type Tree = ReturnType<typeof parseCanonicalMarkdown>;
 type Node = Tree | Tree["children"][number];
@@ -16,6 +22,8 @@ export function commonmarkContent(
 ): ReactNode {
   let work = 0;
   let definitionWork = 0;
+  let htmlSource = 0;
+  let htmlBlocks = 0;
   const definitions = new Map<string, string>();
   function collect(node: Node, depth = 0) {
     if (++definitionWork > 100000 || depth > 128)
@@ -41,11 +49,25 @@ export function commonmarkContent(
       throw Error("Missing source range");
     return source.slice(from, to);
   };
-  const render = (node: Node, depth: number, key: number): ReactNode => {
+  const render = (
+    node: Node,
+    depth: number,
+    key: number,
+    flow = false
+  ): ReactNode => {
     if (++work > 100000 || depth > 128) throw Error("Presentation budget");
     const children = () =>
       "children" in node
-        ? node.children.map((child, index) => render(child, depth + 1, index))
+        ? node.children.map((child, index) =>
+            render(
+              child,
+              depth + 1,
+              index,
+              node.type === "root" ||
+                node.type === "blockquote" ||
+                node.type === "listItem"
+            )
+          )
         : [];
     switch (node.type) {
       case "text":
@@ -139,10 +161,30 @@ export function commonmarkContent(
           </span>
         );
       case "html":
+        if (flow) {
+          const source = raw(node);
+          htmlSource += source.length;
+          htmlBlocks++;
+          return (
+            <ReadingHtmlBlock
+              key={key}
+              source={source}
+              reason={
+                htmlBlocks > MAX_HTML_DOCUMENT_BLOCKS
+                  ? "HTML 正文累计超过安全块数限制，保留原文"
+                  : htmlSource > MAX_HTML_DOCUMENT_SOURCE
+                    ? "HTML 正文累计超过安全源长限制，保留原文"
+                    : source !== node.value
+                      ? "HTML 块范围需要规范化，本片保留原文"
+                      : undefined
+              }
+            />
+          );
+        }
         return (
           <code
             key={key}
-            title="HTML 尚未开放，按原文显示"
+            title="行内 HTML 保留原文"
             className="bg-muted break-words whitespace-pre-wrap"
           >
             {raw(node)}
@@ -182,7 +224,7 @@ export function commonmarkContent(
           data-reading-from={node.position!.start.offset}
           data-reading-to={node.position!.end.offset}
         >
-          {render(node, 0, index)}
+          {render(node, 0, index, true)}
         </div>
       );
     });
@@ -240,7 +282,7 @@ const classes: Record<string, readonly string[]> = {
     "text-muted-foreground",
     "reading-image",
   ],
-  div: ["bg-muted my-4 rounded p-3"],
+  div: ["bg-muted my-4 rounded p-3", "reading-html"],
   pre: [
     "font-mono break-words whitespace-pre-wrap",
     "break-words whitespace-pre-wrap",
@@ -287,7 +329,7 @@ export function isControlledReadingElement(element: {
           (element.localName === "span" &&
             attribute.value === "链接打开尚未接入") ||
           (element.localName === "code" &&
-            ["HTML 尚未开放，按原文显示", "未支持结构，按原文显示"].includes(
+            ["行内 HTML 保留原文", "未支持结构，按原文显示"].includes(
               attribute.value
             ))
         );

@@ -118,12 +118,16 @@ export async function authorizeSingleFile(
 ): Promise<SingleFileAuthorization> {
   if (!isAbsolute(selectedPath) || selectedPath.includes("\0"))
     throw new DocumentPathError("READ_FAILED");
+  if (selectedPath.split("/").includes(".git"))
+    throw new DocumentPathError("UNSUPPORTED_FILE");
   if (!isMarkdown(selectedPath))
     throw new DocumentPathError("UNSUPPORTED_FILE");
   // Preserve the selected spelling: lexical resolution of symlink/.. changes
   // filesystem semantics. Native realpath supplies volume-aware canonicalization.
   const directories = new Map<string, DirectoryIdentity>();
   const path = await canonicalizeSelectedPath(selectedPath, directories);
+  if (path.split("/").includes(".git"))
+    throw new DocumentPathError("UNSUPPORTED_FILE");
   if (!isMarkdown(path)) throw new DocumentPathError("UNSUPPORTED_FILE");
   const initial = await lstat(path, { bigint: true });
   if (!initial.isFile()) throw new DocumentPathError("UNSUPPORTED_FILE");

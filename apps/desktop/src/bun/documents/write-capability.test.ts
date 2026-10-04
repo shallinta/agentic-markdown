@@ -71,18 +71,22 @@ describe.skipIf(process.platform !== "darwin")(
     });
     const check = () =>
       service.checkWriteCapability({ ...request, handle: base.handle });
-    async function expectWritableEventually() {
+    async function expectCapabilityEventually(
+      reason: "writable" | "readonly" = "writable"
+    ) {
       // Metadata hints can arrive after chmod/our own rename and invalidate a
       // concurrently running probe. That result must remain fail-closed, then
-      // a fresh check must recover; readonly/invalid are not acceptable here.
+      // a fresh check must establish the expected concrete permission. Any
+      // different concrete state fails immediately; only unavailable retries.
       for (let attempt = 0; attempt < 100; attempt++) {
         const { capability } = await check();
-        if (capability.writable) {
-          expect(capability.reason).toBe("writable");
+        if (capability.reason === reason) {
+          expect(capability.writable).toBe(reason === "writable");
           return;
         }
         if (capability.reason !== "unavailable")
           throw Error(`Unexpected recovery state: ${capability.reason}`);
+        expect(capability.writable).toBe(false);
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       throw Error("Write capability did not recover after metadata settled");
@@ -107,17 +111,14 @@ describe.skipIf(process.platform !== "darwin")(
       expect(base.writeCapability.writable).toBe(true);
       const before = await readdir(parent);
       await chmod(path, 0o444);
-      expect((await check()).capability).toEqual({
-        writable: false,
-        reason: "readonly",
-      });
+      await expectCapabilityEventually("readonly");
       expect(await save()).toMatchObject({ ok: false, error: "READ_ONLY" });
       expect(await readFile(path, "utf8")).toBe(base.text);
       await chmod(path, 0o600);
       await chmod(parent, 0o500);
       expect((await check()).capability.writable).toBe(false);
       await chmod(parent, 0o700);
-      await expectWritableEventually();
+      await expectCapabilityEventually();
       expect(await readdir(parent)).toEqual(before);
       for (let i = 0; i < 100 && !hints.length; i++)
         await new Promise((resolve) => setTimeout(resolve, 5));
@@ -137,7 +138,7 @@ describe.skipIf(process.platform !== "darwin")(
         expect((await check()).capability.writable).toBe(false);
         command("chflags", `no${flag}`, path);
       }
-      await expectWritableEventually();
+      await expectCapabilityEventually();
     });
     test("save replacement revalidates fresh descriptors and keeps the same identity writable", async () => {
       const result = await save();
@@ -148,7 +149,7 @@ describe.skipIf(process.platform !== "darwin")(
       const diskText = await readFile(path, "utf8");
       expect(diskText).toBe("saved\n");
       base = { ...result.snapshot, text: diskText };
-      await expectWritableEventually();
+      await expectCapabilityEventually();
       expect(await save()).toMatchObject({ ok: true });
     });
     test("forged requests, replacement and released handles fail closed", async () => {

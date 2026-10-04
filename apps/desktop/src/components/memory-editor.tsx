@@ -31,6 +31,7 @@ export function MemoryEditor({
   const recoverRef = useRef<(() => void) | undefined>(undefined);
   const editor = controller.getEditor(documentId);
   const readOnly = !controller.canWrite(documentId);
+  const inputBlocked = controller.isEditorInputBlocked();
   const { executeCommand } = useCommands();
   useLayoutEffect(() => {
     if (!container.current || !editor) return;
@@ -189,15 +190,18 @@ export function MemoryEditor({
       view.dispatch({
         effects: writePermission.reconfigure(EditorState.readOnly.of(readOnly)),
       });
-    view.contentDOM.contentEditable = frozen ? "false" : "true";
-    view.contentDOM.setAttribute("aria-readonly", String(frozen || readOnly));
+    view.contentDOM.contentEditable = frozen || inputBlocked ? "false" : "true";
+    view.contentDOM.setAttribute(
+      "aria-readonly",
+      String(frozen || inputBlocked || readOnly)
+    );
     view.contentDOM.setAttribute(
       "aria-label",
       controller.getMode(documentId) === "source"
         ? "Markdown 源码编辑区"
         : "Markdown 编辑区"
     );
-  }, [controller, documentId, editor, frozen, readOnly]);
+  }, [controller, documentId, editor, frozen, readOnly, inputBlocked]);
   return (
     <div
       ref={container}

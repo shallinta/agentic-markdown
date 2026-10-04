@@ -23,6 +23,7 @@ const REPOSITORY_URL = "https://github.com/shallinta/agentic-markdown";
 let currentUpdateMode: UpdateMode = "automatic";
 let currentUpdateReady = false;
 let commandAvailability: CommandAvailability = {
+  selectFolder: false,
   undoDocument: false,
   redoDocument: false,
   documentHistory: false,
@@ -230,6 +231,7 @@ export function setUpdateModeInMenu(mode: UpdateMode) {
 }
 
 const MENU_ACTION_COMMANDS: Record<string, Command> = {
+  selectFolder: { type: "selectFolder", args: {} },
   undoDocument: { type: "undoDocument", args: {} },
   redoDocument: { type: "redoDocument", args: {} },
   selectDocument: { type: "selectDocument", args: {} },
@@ -257,6 +259,7 @@ export function registerMenuActions(
 ) {
   currentUpdateReady = false;
   commandAvailability = {
+    selectFolder: false,
     undoDocument: false,
     redoDocument: false,
     documentHistory: false,

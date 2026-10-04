@@ -3,6 +3,7 @@ import { BrowserView, Utils, type BrowserWindow } from "electrobun/bun";
 import type { Command } from "../../shared/commands";
 import type { DocumentService } from "../../shared/documents";
 import type { DesktopRPCType } from "../../shared/rpc";
+import type { WorkspaceService } from "../../shared/workspace";
 import { setCommandAvailabilityInMenu } from "../app/menu";
 import type { LocaleController } from "../i18n/controller";
 import type { UpdaterService } from "../updates";
@@ -13,6 +14,7 @@ export type MainWindowRPC = ReturnType<
 
 export interface MainWindowRPCDependencies {
   documents: DocumentService;
+  workspace?: WorkspaceService;
   executeCommand: (command: Command) => void;
   getMainWindow: () => BrowserWindow;
   locale: LocaleController;
@@ -23,6 +25,7 @@ const MAX_REQUEST_TIME_MS = 5 * 60_000 + 10_000;
 
 export function createMainWindowRPC({
   documents,
+  workspace,
   executeCommand,
   getMainWindow,
   locale,
@@ -39,6 +42,24 @@ export function createMainWindowRPC({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        workspaceRequest: (request) =>
+          workspace
+            ? workspace.request(request)
+            : Promise.resolve({
+                protocolVersion: 1 as const,
+                requestId: request.requestId,
+                ok: false as const,
+                error: "UNAVAILABLE" as const,
+              }),
+        openWorkspaceDocument: (request) =>
+          workspace
+            ? workspace.open(request)
+            : Promise.resolve({
+                protocolVersion: 1 as const,
+                requestId: request.requestId,
+                ok: false as const,
+                error: "INVALID_HANDLE" as const,
+              }),
         perfLabStatus: () => ({ enabled, autorun }),
         perfLabRequest: async (request) => {
           if (!enabled) return { ok: false, error: "DISABLED" as const };

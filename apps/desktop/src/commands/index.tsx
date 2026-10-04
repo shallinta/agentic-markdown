@@ -41,6 +41,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
     registry.getSnapshot
   );
   const selectDocument = registry.isCommandEnabled("selectDocument");
+  const selectFolder = registry.isCommandEnabled("selectFolder");
   const reloadDocument = registry.isCommandEnabled("reloadDocument");
   const saveDocument = registry.isCommandEnabled("saveDocument");
   const clearDocument = registry.isCommandEnabled("clearDocument");
@@ -61,6 +62,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     const availability: CommandAvailability = {
+      selectFolder,
       selectDocument,
       reloadDocument,
       saveDocument,
@@ -75,6 +77,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
       availability,
     });
   }, [
+    selectFolder,
     selectDocument,
     saveDocument,
     reloadDocument,
@@ -89,6 +92,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
       electrobun.rpc?.send.commandAvailabilityChanged({
         protocolVersion: 1,
         availability: {
+          selectFolder: false,
           selectDocument: false,
           reloadDocument: false,
           saveDocument: false,

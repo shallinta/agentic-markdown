@@ -120,7 +120,7 @@ test("live controller guards reject same-tick duplicates and clear fences late s
     {
       selectDocument: controller.select,
       reloadDocument: controller.reload,
-      clearDocument: controller.clear,
+      clearDocument: () => controller.clear(),
     },
     {
       selectDocument: () => !controller.getSnapshot().busy,
@@ -178,6 +178,7 @@ test("availability protocol is bounded to document command states", () => {
     redoDocument: false,
     documentHistory: true,
     selectDocument: true,
+    selectFolder: true,
     saveDocument: false,
     reloadDocument: false,
     clearDocument: false,

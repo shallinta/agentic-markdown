@@ -54,6 +54,7 @@ export function CommandPalette({
       type === "readingThemePaper" ||
       type === "readingThemeInk" ||
       type === "selectDocument" ||
+      type === "selectFolder" ||
       type === "toggleReadingMode" ||
       type === "undoDocument" ||
       type === "redoDocument" ||

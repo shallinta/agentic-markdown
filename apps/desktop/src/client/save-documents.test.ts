@@ -58,6 +58,46 @@ async function setup(confirm = () => Promise.resolve(false)) {
   };
   return { baseline, transport, controller, edit };
 }
+test("settings input guard blocks background text but preserves selection, save and close-state protections", async () => {
+  const { controller, baseline, edit } = await setup();
+  edit("before settings");
+  const original = controller.getEditor(baseline.documentId)!;
+  controller.setEditorInputBlocked(true);
+  expect(controller.isEditorInputBlocked()).toBe(true);
+  edit("\n");
+  expect(controller.getEditor(baseline.documentId)).toBe(original);
+  expect(
+    controller.updateEditor(
+      baseline.documentId,
+      original.state.update({ selection: { anchor: 1 } })
+    )
+  ).toBe(true);
+  expect(controller.canSave()).toBe(true);
+  await controller.save();
+  expect(controller.isDirty(baseline.documentId)).toBe(false);
+  expect(controller.getSnapshot().snapshot!.text).toBe(
+    original.state.field(rawText)
+  );
+  // Closing settings must not release an unrelated discard/save freeze.
+  controller.beginDiscard();
+  controller.setEditorInputBlocked(false);
+  edit("still frozen");
+  expect(controller.getEditor(baseline.documentId)!.state.field(rawText)).toBe(
+    original.state.field(rawText)
+  );
+  controller.endDiscard();
+  edit("after settings");
+  expect(controller.isDirty(baseline.documentId)).toBe(true);
+  expect(
+    controller.getEditor(baseline.documentId)!.state.field(rawText)
+  ).toEndWith("after settings");
+  controller.setEditorInputBlocked(true);
+  edit("blocked again");
+  expect(
+    controller.getEditor(baseline.documentId)!.state.field(rawText)
+  ).toEndWith("after settings");
+  controller.setEditorInputBlocked(false);
+});
 test("save exact raw snapshot updates only baseline; edits made during save remain dirty", async () => {
   const { baseline, controller, transport, edit } = await setup();
   const pending = deferred<unknown>();
@@ -80,6 +120,121 @@ test("save exact raw snapshot updates only baseline; edits made during save rema
   expect(controller.getEditor(baseline.documentId)!.state).toBe(newest);
   expect(controller.getSnapshot().snapshot!.text).toBe(sent.field(rawText));
   expect(controller.isDirty(baseline.documentId)).toBe(true);
+});
+
+test("completed save restores workspace availability but mutations still await backend settlement", async () => {
+  const { controller, transport, edit } = await setup();
+  edit("saved");
+  await controller.save();
+  expect(controller.hasSaves()).toBe(false);
+  expect(controller.canSelectFolder()).toBe(true);
+  const barrier = deferred<void>();
+  let settlements = 0,
+    mutations = 0;
+  transport.waitForDocumentSaves = async (request) => {
+    settlements++;
+    await barrier.promise;
+    return { ...request, settled: true };
+  };
+  const operation = controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  await waitCaptured(() => settlements === 1);
+  expect(mutations).toBe(0);
+  expect(controller.canSelectFolder()).toBe(false);
+  barrier.resolve();
+  await operation;
+  expect(mutations).toBe(1);
+  expect(controller.canSelectFolder()).toBe(true);
+  await controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  expect(settlements).toBe(1);
+  expect(mutations).toBe(2);
+});
+
+test("workspace actions reject inflight saves, composition and freeze; late save keeps newer edits", async () => {
+  const { controller, transport, baseline, edit } = await setup();
+  const pending = deferred<unknown>();
+  let request!: SaveDocumentRequest;
+  let mutations = 0,
+    opens = 0;
+  transport.saveDocument = (value) => {
+    request = value;
+    return pending.promise;
+  };
+  transport.openWorkspaceDocument = (value) => {
+    opens++;
+    return Promise.resolve({ ...value, ok: true, snapshot: baseline });
+  };
+  edit("captured");
+  const saving = controller.save();
+  await waitCaptured(() => !!request);
+  expect(controller.canSelectFolder()).toBe(false);
+  await controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  await controller.openWorkspaceEntry("root", "node");
+  edit("newer");
+  const memory = controller.getEditor(baseline.documentId)!.state;
+  pending.resolve(saved(request, baseline));
+  await saving;
+  expect(controller.canSelectFolder()).toBe(true);
+  expect(controller.isDirty(baseline.documentId)).toBe(true);
+  expect(controller.getEditor(baseline.documentId)!.state).toBe(memory);
+  controller.setInteractionCheck(() => false);
+  await controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  await controller.openWorkspaceEntry("root", "node");
+  controller.setInteractionCheck(() => true);
+  controller.beginDiscard();
+  await controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  await controller.openWorkspaceEntry("root", "node");
+  controller.endDiscard();
+  expect(mutations).toBe(0);
+  expect(opens).toBe(0);
+  await controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  expect(mutations).toBe(1);
+  expect(controller.getEditor(baseline.documentId)!.state).toBe(memory);
+});
+
+test("failed workspace settlement preserves dirty memory and retries before root changes or opens", async () => {
+  const { controller, transport, baseline, edit } = await setup();
+  edit("unconfirmed");
+  transport.saveDocument = () => Promise.reject(new Error("expired RPC"));
+  await controller.save();
+  const memory = controller.getEditor(baseline.documentId)!.state;
+  let mutations = 0,
+    opens = 0;
+  transport.openWorkspaceDocument = (value) => {
+    opens++;
+    return Promise.resolve({ ...value, ok: true, snapshot: baseline });
+  };
+  transport.waitForDocumentSaves = () =>
+    Promise.reject(new Error("unavailable"));
+  await controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  await controller.openWorkspaceEntry("root", "node");
+  expect(mutations).toBe(0);
+  expect(opens).toBe(0);
+  expect(controller.isDirty(baseline.documentId)).toBe(true);
+  expect(controller.getEditor(baseline.documentId)!.state).toBe(memory);
+  expect(controller.getSnapshot().error).toContain("本次操作已取消");
+  expect(controller.canSelectFolder()).toBe(true);
+  transport.waitForDocumentSaves = (request) =>
+    Promise.resolve({ ...request, settled: true });
+  await controller.runWorkspaceAction(() => {
+    mutations++;
+  });
+  expect(mutations).toBe(1);
+  expect(controller.isDirty(baseline.documentId)).toBe(true);
+  expect(controller.getEditor(baseline.documentId)!.state).toBe(memory);
 });
 test("invalid raw UTF-16 fails before dispatch without falsely declaring a disk-uncertain result", async () => {
   const { baseline, controller, transport, edit } = await setup();

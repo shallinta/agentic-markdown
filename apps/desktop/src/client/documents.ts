@@ -18,6 +18,7 @@ import {
 } from "../shared/documents";
 import { validMirror } from "../shared/save-content";
 import { isTextFidelity } from "../shared/text-fidelity";
+import type { WorkspaceOpenRequest } from "../shared/workspace";
 
 import {
   editorFaultSession,
@@ -37,6 +38,7 @@ import { createRawEditorState, rawText } from "./raw-buffer";
 import { incrementalSave } from "./save-channel";
 
 export interface DocumentTransport {
+  openWorkspaceDocument?(request: WorkspaceOpenRequest): Promise<unknown>;
   checkDocumentWriteCapability?(
     request: DocumentHandleRequest
   ): Promise<unknown>;
@@ -310,6 +312,7 @@ export function createDocumentController(
     saveDrainRequired = false;
   };
   let canLeaveEditor = () => true;
+  let editorInputBlocked = false;
   function isDirty(documentId: string) {
     const editor = editors.get(documentId);
     const baseline = state.tabs.find((tab) => tab.documentId === documentId);
@@ -412,7 +415,11 @@ export function createDocumentController(
       /* Process shutdown is the final fallback for a failed release request. */
     }
   }
-  async function load(select: boolean, entry?: DocumentEntry) {
+  async function load(
+    select: boolean,
+    entry?: DocumentEntry,
+    open?: (request: DocumentRequest) => Promise<unknown>
+  ) {
     const previous = state.snapshot;
     const target = entry ?? previous;
     if (!select && !target) return;
@@ -424,7 +431,7 @@ export function createDocumentController(
     publish({ ...state, busy: true, error: null });
     try {
       const response = select
-        ? await transport.selectDocument(params)
+        ? await (open ?? transport.selectDocument)(params)
         : await transport.readDocument({ ...params, handle: target!.handle });
       if (!isDocumentResponse(response, params.requestId))
         throw new Error("invalid-response");
@@ -884,6 +891,21 @@ export function createDocumentController(
         return load(true);
       }
     },
+    canSelectFolder: () =>
+      !state.frozen && !state.busy && !saving.size && canLeaveEditor(),
+    runWorkspaceAction: (action: () => void | Promise<void>) => {
+      if (!controller.canSelectFolder()) return;
+      // Availability is not settlement: a completed/expired save still needs
+      // the backend barrier before changing root ownership or scan generations.
+      return protect([], action);
+    },
+    openWorkspaceEntry: (root: string, entry: string) => {
+      if (!controller.canSelectFolder() || !transport.openWorkspaceDocument)
+        return;
+      const open = (params: DocumentRequest) =>
+        transport.openWorkspaceDocument!({ ...params, root, entry });
+      return protect([], () => load(true, undefined, open));
+    },
     reload: () =>
       protect(state.snapshot ? [state.snapshot.documentId] : [], () =>
         load(false)
@@ -928,10 +950,14 @@ export function createDocumentController(
       )
         scrollPositions.set(documentId, offset);
     },
-    clear: () =>
+    clear: (beforeClear?: () => Promise<void>) =>
       protect(
         state.tabs.map((tab) => tab.documentId),
-        clear
+        () => {
+          if (!beforeClear) return clear();
+          publish({ ...state, frozen: true });
+          return beforeClear().then(clear).finally(endDiscard);
+        }
       ),
     dispose: () => {
       if (saving.size || saveDrainRequired) {
@@ -1075,6 +1101,12 @@ export function createDocumentController(
     setInteractionCheck: (check: () => boolean) => {
       canLeaveEditor = check;
     },
+    isEditorInputBlocked: () => editorInputBlocked,
+    setEditorInputBlocked: (blocked: boolean) => {
+      if (editorInputBlocked === blocked) return;
+      editorInputBlocked = blocked;
+      publish({ ...state });
+    },
     getEditor: (documentId: string) => editors.get(documentId),
     getSaveTransfer: (documentId: string) => transfers.get(documentId),
     updateEditor: (documentId: string, transaction: Transaction) => {
@@ -1089,7 +1121,7 @@ export function createDocumentController(
       const raw = transaction.state.field(rawText);
       if (
         (transaction.docChanged || raw !== editor.state.field(rawText)) &&
-        (!canWrite(documentId) || reading.has(documentId))
+        (editorInputBlocked || !canWrite(documentId) || reading.has(documentId))
       )
         return false;
       if (

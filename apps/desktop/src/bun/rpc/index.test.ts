@@ -41,6 +41,7 @@ test("command availability RPC validates state before updating native menu", () 
     protocolVersion: 1,
     availability: {
       selectDocument: true,
+      selectFolder: true,
       reloadDocument: false,
       clearDocument: false,
       closeDocument: false,
@@ -107,12 +108,13 @@ test("document RPC delegates each request to the validated service boundary", as
     snapshot: null,
   };
   const documents: DocumentService = {
-    readLocalImage: () => Promise.resolve({
-      protocolVersion: 1,
-      requestId: "image-test",
-      ok: false,
-      error: "UNAVAILABLE",
-    }),
+    readLocalImage: () =>
+      Promise.resolve({
+        protocolVersion: 1,
+        requestId: "image-test",
+        ok: false,
+        error: "UNAVAILABLE",
+      }),
     checkWriteCapability: () =>
       Promise.resolve({
         protocolVersion: 1,

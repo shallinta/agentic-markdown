@@ -52,3 +52,11 @@ const perfWorker = await Bun.build({
 });
 if (!perfWorker.success)
   throw new AggregateError(perfWorker.logs, "Performance worker build failed");
+const scanWorker = await Bun.build({
+  entrypoints: [join(root, "src/bun/workspace/scan-worker.ts")],
+  outdir: output,
+  target: "bun",
+  naming: "scan-worker.js",
+});
+if (!scanWorker.success)
+  throw new AggregateError(scanWorker.logs, "Scan worker build failed");

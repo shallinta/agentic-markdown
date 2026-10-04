@@ -38,6 +38,7 @@ test("document history uses guarded actions and ordinary fields retain native ro
   menuModule.registerMenuActions({} as never, execute);
   const availability = {
     selectDocument: true,
+    selectFolder: true,
     saveDocument: false,
     reloadDocument: true,
     clearDocument: true,
@@ -107,6 +108,7 @@ test("adds document commands disabled until availability sync before Edit", () =
   ]);
   expect(latestMenu[1]?.submenu).toEqual([
     { label: "新建…", enabled: false },
+    { label: "加入文件夹", action: "selectFolder", enabled: false },
     {
       label: "选择 Markdown 文件",
       action: "selectDocument",
@@ -165,6 +167,7 @@ test("synchronizes command availability once and rejects malformed state", () =>
       protocolVersion: 1,
       availability: {
         selectDocument: true,
+        selectFolder: true,
         reloadDocument: false,
         clearDocument: false,
         unknown: true,
@@ -174,6 +177,7 @@ test("synchronizes command availability once and rejects malformed state", () =>
       protocolVersion: 1,
       availability: {
         selectDocument: true,
+        selectFolder: true,
         reloadDocument: false,
         clearDocument: "yes",
       },
@@ -189,6 +193,7 @@ test("synchronizes command availability once and rejects malformed state", () =>
       redoDocument: false,
       documentHistory: true,
       selectDocument: true,
+      selectFolder: true,
       saveDocument: true,
       reloadDocument: false,
       clearDocument: true,
@@ -206,6 +211,7 @@ test("synchronizes command availability once and rejects malformed state", () =>
       .filter((item) => item.action)
       .map((item) => [item.action, item.enabled])
   ).toEqual([
+    ["selectFolder", true],
     ["selectDocument", true],
     ["saveDocument", true],
     ["reloadDocument", false],
@@ -227,6 +233,7 @@ test("guards disabled document menu dispatch and resets on registration", () => 
       redoDocument: false,
       documentHistory: true,
       selectDocument: true,
+      selectFolder: true,
       saveDocument: false,
       reloadDocument: false,
       clearDocument: true,

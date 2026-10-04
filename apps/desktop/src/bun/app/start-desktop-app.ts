@@ -15,6 +15,7 @@ import { logEvent } from "../logging";
 import { createNativeFileCapabilities } from "../native-files";
 import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { UpdaterService } from "../updates";
+import { createWorkspaceService } from "../workspace";
 
 import { createDiscardCoordinator } from "./discard-coordinator";
 import { createLifecycleGuard } from "./lifecycle-guard";
@@ -34,6 +35,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     pickFile: () => nativeFiles.pickFile(),
     onCapabilityChanged: (handle) =>
       rpc?.send.documentCapabilityChanged({ handle }),
+  });
+  const workspace = createWorkspaceService({
+    pickDirectory: () => nativeFiles.pickDirectory(),
+    documents,
   });
 
   const getRpc = (): MainWindowRPC => {
@@ -87,6 +92,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const runtime: DesktopAppRuntime = {
     stop() {
       stopPromise ??= stopDesktopApp([
+        ["workspace", () => workspace.dispose()],
         ["documents", () => documents.dispose()],
         ["window state", () => mainWindow?.flushState()],
         ["updater", () => updater.stop()],
@@ -115,6 +121,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     await locale.initialize();
     rpc = createMainWindowRPC({
       documents,
+      workspace,
       executeCommand: (command) => executeCommand(command, getMainWindow()),
       getMainWindow,
       locale,

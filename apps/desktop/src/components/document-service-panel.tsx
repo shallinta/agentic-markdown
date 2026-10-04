@@ -26,6 +26,7 @@ import { longLineProtection } from "@/client/long-line-protection";
 import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
+import { createFolderWorkspace } from "@/client/workspace";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
@@ -35,6 +36,7 @@ import { analyzeTextFidelity } from "@/shared/text-fidelity";
 import { MemoryEditor } from "./memory-editor";
 import { ReadingView } from "./reading-view";
 import { TextFidelityDetails } from "./text-fidelity-details";
+import { WorkspaceTree } from "./workspace-tree";
 
 const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
   electrobun.rpc
@@ -46,6 +48,8 @@ export function useDocumentWorkspace() {
     const rpc = electrobun.rpc;
     const unavailable = () => Promise.reject(new Error("RPC unavailable"));
     const transport: DocumentTransport = {
+      openWorkspaceDocument: (request) =>
+        rpc ? rpc.request.openWorkspaceDocument(request) : unavailable(),
       checkDocumentWriteCapability: (request) =>
         rpc
           ? rpc.request.checkDocumentWriteCapability(request, {
@@ -67,6 +71,33 @@ export function useDocumentWorkspace() {
     };
     return createDocumentController(transport, discardGuard.ask);
   });
+  const [folders] = useState(() =>
+    createFolderWorkspace((request) => {
+      if (!electrobun.rpc) return Promise.reject(new Error("RPC unavailable"));
+      return electrobun.rpc.request.workspaceRequest(request);
+    })
+  );
+  const folderState = useSyncExternalStore(
+    folders.subscribe,
+    folders.getSnapshot
+  );
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        await folders.refresh();
+      } catch {
+        /* State exposes the fixed error. */
+      }
+      if (!stopped) timer = setTimeout(poll, 350);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [folders]);
   const state = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot
@@ -107,9 +138,10 @@ export function useDocumentWorkspace() {
         controller.toggleSourceMode();
       },
       selectDocument: controller.select,
+      selectFolder: () => controller.runWorkspaceAction(folders.select),
       reloadDocument: controller.reload,
       saveDocument: controller.save,
-      clearDocument: controller.clear,
+      clearDocument: () => controller.clear(folders.clear),
       closeDocument: controller.closeActive,
       undoDocument: ({ documentId }) => {
         if (documentId || !isExternalTextTarget(document.activeElement))
@@ -133,6 +165,8 @@ export function useDocumentWorkspace() {
         !controller.getSnapshot().busy &&
         !controller.getSnapshot().frozen &&
         !controller.hasSaves(),
+      selectFolder: () =>
+        controller.canSelectFolder() && !folders.getSnapshot().busy,
       saveDocument: controller.canSave,
       undoDocument: controller.canUndo,
       redoDocument: controller.canRedo,
@@ -143,7 +177,8 @@ export function useDocumentWorkspace() {
       clearDocument: () =>
         !controller.getSnapshot().frozen &&
         (controller.getSnapshot().busy ||
-          controller.getSnapshot().entries.length > 0),
+          controller.getSnapshot().entries.length > 0 ||
+          folders.getSnapshot().roots.length > 0),
       closeDocument: () =>
         !controller.getSnapshot().frozen && !!controller.getSnapshot().snapshot,
     }
@@ -152,6 +187,7 @@ export function useDocumentWorkspace() {
     () => controller.subscribe(notifyCommands),
     [controller, notifyCommands]
   );
+  useEffect(() => folders.subscribe(notifyCommands), [folders, notifyCommands]);
   useEffect(
     () =>
       discardGuard.register(canonicalDiscardParticipant(controller, canonical)),
@@ -201,6 +237,8 @@ export function useDocumentWorkspace() {
   useEffect(() => () => controller.dispose(), [controller]);
   return {
     controller,
+    folders,
+    folderState,
     state,
     canonical,
     readingTheme,
@@ -212,13 +250,33 @@ type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
 export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
+  const [selected, setSelected] = useState<string | null>(null);
+  const entries = state.entries.filter(
+    (entry) =>
+      !(
+        workspace.folderState.coveredHandles.includes(entry.handle) &&
+        Object.values(workspace.folderState.nodes).some((nodes) =>
+          nodes.some(
+            (node) =>
+              node.kind === "file" && node.displayPath === entry.displayPath
+          )
+        )
+      )
+  );
   return (
     <nav
       aria-label="独立 Markdown 文件"
       className="flex size-full min-w-0 flex-col gap-3 px-3 pt-16 pb-4"
     >
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-medium">文件</h2>
+        <h2 className="text-sm font-medium">工作区</h2>
+        <button
+          className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50"
+          disabled={!isCommandEnabled("selectFolder")}
+          onClick={() => executeCommand({ type: "selectFolder", args: {} })}
+        >
+          加入文件夹
+        </button>
         <button
           className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50"
           disabled={!isCommandEnabled("selectDocument")}
@@ -227,11 +285,24 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
           打开文件
         </button>
       </div>
-      {state.entries.length === 0 ? (
+      <WorkspaceTree
+        folders={workspace.folders}
+        state={workspace.folderState}
+        disabled={!controller.canSelectFolder()}
+        runAction={controller.runWorkspaceAction}
+        open={(root, node) => {
+          const existing = state.entries.find(
+            (entry) => entry.displayPath === node.displayPath
+          );
+          if (existing) void controller.activate(existing);
+          else void controller.openWorkspaceEntry(root, node.handle);
+        }}
+      />
+      {entries.length === 0 ? (
         <p className="text-muted-foreground text-xs">打开的文件将在这里显示</p>
       ) : (
         <ul className="min-h-0 overflow-auto">
-          {state.entries.map((entry) => (
+          {entries.map((entry) => (
             <li key={entry.locationId ?? entry.documentId}>
               <button
                 disabled={state.frozen}
@@ -239,8 +310,16 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
                 aria-current={
                   state.snapshot?.handle === entry.handle ? "page" : undefined
                 }
-                className="hover:bg-muted aria-[current=page]:bg-muted w-full truncate rounded px-2 py-2 text-left text-sm disabled:opacity-50"
-                onClick={() => void controller.activate(entry)}
+                className="hover:bg-muted aria-pressed:bg-muted aria-[current=page]:bg-muted w-full truncate rounded px-2 py-2 text-left text-sm disabled:opacity-50"
+                aria-pressed={selected === entry.handle}
+                onClick={() => setSelected(entry.handle)}
+                onDoubleClick={() => void controller.activate(entry)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    void controller.activate(entry);
+                  }
+                }}
               >
                 {entry.fileName}
                 {documentCapabilitySuffix(entry.writeCapability)}
@@ -311,7 +390,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       </nav>
       <div>
         <h1 className="text-xl font-semibold">
-          {snapshot?.fileName ?? "欢迎使用 Agentic Markdown"}
+          {snapshot?.fileName ??
+            (workspace.folderState.roots.length
+              ? "文件夹工作区"
+              : "欢迎使用 Agentic Markdown")}
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
           {snapshot
@@ -322,7 +404,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
                 : controller.getMode(snapshot.documentId) === "reading"
                   ? "阅读模式 · 只读当前内存正文 · 本地静态 PNG/JPEG · 远程图片默认不加载"
                   : "基础编辑模式 · 标题、粗体、斜体与行内代码 · 手动保存 ⌘S · 单文件限 1 MiB"
-            : "打开本地 Markdown 文件，开始查看。文件只会加入当前窗口，不会加入其父目录。"}
+            : "打开本地 Markdown 文件或加入文件夹。侧栏单击选择，双击或按 Enter 打开文档。"}
         </p>
       </div>
       {editor &&
@@ -395,6 +477,13 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         </div>
       )}
       <div className="flex flex-wrap gap-2">
+        <button
+          className={buttonClass}
+          disabled={!isCommandEnabled("selectFolder")}
+          onClick={() => executeCommand({ type: "selectFolder", args: {} })}
+        >
+          加入文件夹
+        </button>
         <button
           className={buttonClass}
           disabled={!isCommandEnabled("selectDocument")}

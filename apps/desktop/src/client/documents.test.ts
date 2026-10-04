@@ -153,6 +153,63 @@ function setup() {
   };
 }
 
+test("folder open reuses dirty mode and history and honors composition", async () => {
+  const { controller, transport, value } = setup();
+  let opens = 0;
+  transport.openWorkspaceDocument = (request) => {
+    opens++;
+    return Promise.resolve(result(request, value));
+  };
+  await controller.select();
+  const editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(
+    value.documentId,
+    editor.state.update({ changes: { from: 0, insert: "dirty" } })
+  );
+  controller.toggleReadingMode();
+  const before = controller.getEditor(value.documentId);
+  await controller.openWorkspaceEntry("root", "entry");
+  expect(controller.getEditor(value.documentId)).toBe(before);
+  expect(controller.getMode(value.documentId)).toBe("reading");
+  expect(controller.isDirty(value.documentId)).toBe(true);
+  expect(controller.getSnapshot().tabs).toHaveLength(1);
+  controller.setInteractionCheck(() => false);
+  expect(controller.canSelectFolder()).toBe(false);
+  await controller.openWorkspaceEntry("root", "entry");
+  expect(opens).toBe(1);
+});
+
+test("root clear runs only after discard approval and failed root clear preserves documents", async () => {
+  const { transport, value } = setup();
+  let approved = false,
+    clears = 0;
+  const controller = createDocumentController(transport, () =>
+    Promise.resolve(approved)
+  );
+  await controller.select();
+  const editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(
+    value.documentId,
+    editor.state.update({ changes: { from: 0, insert: "dirty" } })
+  );
+  await controller.clear(() => {
+    clears++;
+    return Promise.resolve();
+  });
+  expect(clears).toBe(0);
+  expect(controller.isDirty(value.documentId)).toBe(true);
+  approved = true;
+  await controller.clear(() => Promise.reject(new Error("unavailable")));
+  expect(controller.getSnapshot().tabs).toHaveLength(1);
+  expect(controller.getSnapshot().frozen).toBe(false);
+  await controller.clear(() => {
+    clears++;
+    return Promise.resolve();
+  });
+  expect(clears).toBe(1);
+  expect(controller.getSnapshot().tabs).toHaveLength(0);
+});
+
 test("inactive reading tab distinguishes pending capability refresh from confirmed readonly", async () => {
   const { controller, transport, value } = setup();
   await controller.select();

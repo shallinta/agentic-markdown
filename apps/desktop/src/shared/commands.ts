@@ -35,6 +35,7 @@ export type Command =
   | GenericCommand<"undoDocument", { documentId?: string }>
   | GenericCommand<"redoDocument", { documentId?: string }>
   | GenericCommand<"selectDocument">
+  | GenericCommand<"selectFolder">
   | GenericCommand<"saveDocument">
   | GenericCommand<"reloadDocument">
   | GenericCommand<"clearDocument">
@@ -118,6 +119,7 @@ export const COMMAND_META: Record<
   undoDocument: { target: "webview" },
   redoDocument: { target: "webview" },
   selectDocument: { target: "webview" },
+  selectFolder: { target: "webview" },
   saveDocument: { target: "webview" },
   reloadDocument: { target: "webview" },
   clearDocument: { target: "webview" },
@@ -164,6 +166,7 @@ export const PRODUCT_COMMANDS: Partial<
     accelerator: "CommandOrControl+O",
     shortcut: "⌘O",
   },
+  selectFolder: { label: "加入文件夹" },
   reloadDocument: { label: "重新读取" },
   saveDocument: {
     label: "保存当前文档",
@@ -189,6 +192,7 @@ export const PRODUCT_COMMANDS: Partial<
 };
 
 export const DOCUMENT_COMMAND_TYPES = [
+  "selectFolder",
   "selectDocument",
   "saveDocument",
   "reloadDocument",

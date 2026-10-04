@@ -23,6 +23,14 @@ import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      workspaceRequest: {
+        params: import("./workspace").WorkspaceRequest;
+        response: import("./workspace").WorkspaceResponse;
+      };
+      openWorkspaceDocument: {
+        params: import("./workspace").WorkspaceOpenRequest;
+        response: DocumentResponse;
+      };
       readLocalImage: {
         params: import("./local-images").LocalImageRequest;
         response: import("./local-images").LocalImageResponse;

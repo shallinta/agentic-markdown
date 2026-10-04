@@ -117,6 +117,16 @@ function PageInner() {
   const workspace = useDocumentWorkspace();
   const { executeCommand } = useCommands();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const changeSettingsOpen = (open: boolean) => {
+    // Set the controller guard synchronously, before lazy dialog mounting or
+    // focus restoration can deliver editing events to the background view.
+    workspace.controller.setEditorInputBlocked(open);
+    setSettingsOpen(open);
+  };
+  useEffect(
+    () => () => workspace.controller.setEditorInputBlocked(false),
+    [workspace.controller]
+  );
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const sidebarPanelRef = usePanelRef();
@@ -125,7 +135,7 @@ function PageInner() {
   useRegisterCommands({
     openSettings: ({ tab }) => {
       setSettingsTab(tab ?? "general");
-      setSettingsOpen(true);
+      changeSettingsOpen(true);
     },
     openCommandPalette: () => setCommandPaletteOpen(true),
     toggleSidebar: () => {
@@ -185,7 +195,7 @@ function PageInner() {
         <SettingsDialog
           tab={settingsTab}
           open={settingsOpen}
-          onOpenChange={setSettingsOpen}
+          onOpenChange={changeSettingsOpen}
           onTabChange={setSettingsTab}
         />
       </LazyMount>

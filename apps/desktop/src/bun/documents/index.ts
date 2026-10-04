@@ -42,6 +42,20 @@ interface Grant extends SingleFileAuthorization {
   handle: string;
   path: string;
   identityKey: string;
+  scope?: DocumentScope;
+}
+export interface DocumentScope {
+  verify(): Promise<void>;
+  release?(): void;
+}
+export interface TrustedDocumentService extends DocumentService {
+  openAuthorized(
+    request: unknown,
+    authorize: () => Promise<SingleFileAuthorization>,
+    scope: DocumentScope
+  ): Promise<DocumentResponse>;
+  locations(): { handle: string; path: string; documentId?: string }[];
+  revokeScope(scope: DocumentScope): void;
 }
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -118,9 +132,9 @@ function validate(
 export function createDocumentService({
   pickFile,
   authorize = authorizeSingleFile,
-  verify = verifySingleFileAuthorization,
+  verify: verifyFile = verifySingleFileAuthorization,
   write = atomicSave,
-  capability = checkWriteCapability,
+  capability: checkCapability = checkWriteCapability,
   onCapabilityChanged = () => undefined,
   onTiming,
 }: {
@@ -134,7 +148,29 @@ export function createDocumentService({
     phase: "pickerMs" | "authorizeMs" | "diskReadMs" | "decodeAnalyzeMs",
     ms: number
   ) => void;
-}): DocumentService {
+}): TrustedDocumentService {
+  const verify = (
+    grant: SingleFileAuthorization & { scope?: DocumentScope }
+  ) => {
+    if (!grant.scope) return verifyFile(grant);
+    return (async () => {
+      await grant.scope!.verify();
+      const result = await verifyFile(grant);
+      await grant.scope!.verify();
+      return result;
+    })();
+  };
+  const capability = (
+    grant: Omit<SingleFileAuthorization, "file"> & { scope?: DocumentScope }
+  ) => {
+    if (!grant.scope) return checkCapability(grant);
+    return (async () => {
+      await grant.scope!.verify();
+      const result = await checkCapability(grant);
+      await grant.scope!.verify();
+      return result;
+    })();
+  };
   const grants = new Map<string, Grant>();
   const images = createImageReader();
   let imageJobs = 0;
@@ -371,6 +407,62 @@ export function createDocumentService({
   }
 
   return {
+    locations: () =>
+      [...grants.values()].map((grant) => ({
+        handle: grant.handle,
+        path: grant.path,
+        documentId: identities.get(grant.identityKey)?.documentId,
+      })),
+    revokeScope(scope) {
+      for (const [handle, grant] of grants)
+        if (grant.scope === scope) {
+          grants.delete(handle);
+          mirrors.release(handle);
+          unwatch(handle);
+          if (running?.handle === handle) cancel(running);
+          if (pending?.task.handle === handle) {
+            cancel(pending.task);
+            pending = null;
+          }
+        }
+      scope.release?.();
+    },
+    async openAuthorized(request, getAuthorization, scope) {
+      if (!validate(request, false)) return failure("", "INVALID_REQUEST");
+      if (disposed) return failure(request.requestId, "INVALID_HANDLE");
+      if (saving || writeBarrier || selecting || duplicate(request.requestId))
+        return failure(request.requestId, "BUSY");
+      const { task, promise } = taskFor(request.requestId),
+        generation = epoch;
+      enqueue(task, async () => {
+        let candidate: Grant | null = null;
+        try {
+          checkTask(task, generation);
+          await scope.verify();
+          const authorization = await getAuthorization();
+          candidate = {
+            ...authorization,
+            handle: randomUUID(),
+            identityKey: `${authorization.path}:${authorization.fingerprint}`,
+            scope,
+          };
+          checkTask(task, generation);
+          await scope.verify();
+          const next = await snapshot(candidate, generation, task);
+          await scope.verify();
+          checkTask(task, generation);
+          commit(candidate, next, task, generation);
+          grants.set(candidate.handle, candidate);
+          watchGrant(candidate);
+          return result(request.requestId, next);
+        } catch (error) {
+          return failure(request.requestId, codeOf(error));
+        } finally {
+          await close(candidate);
+        }
+      });
+      return promise;
+    },
     async readLocalImage(request) {
       const valid = validLocalImageRequest(request);
       const envelope = {
@@ -528,7 +620,12 @@ export function createDocumentService({
           identity.hash !== request.expectedHash
         )
           return failure(request.requestId, "CONFLICT");
-        const checked = await capability(grant);
+        let checked: WriteCapability;
+        try {
+          checked = await capability(grant);
+        } catch (error) {
+          return failure(request.requestId, codeOf(error));
+        }
         if (!checked.writable) return failure(request.requestId, "READ_ONLY");
         const prepared = mirrors.prepare(request);
         if (!prepared.ok && prepared.error === "MIRROR_MISMATCH") {
@@ -745,6 +842,7 @@ export function createDocumentService({
             grants.delete(grant.handle);
             mirrors.release(grant.handle);
             unwatch(grant.handle);
+            grant.scope?.release?.();
           }
           return failure(request.requestId, code);
         }
@@ -766,6 +864,7 @@ export function createDocumentService({
         return Promise.resolve(failure(request.requestId, "BUSY"));
       if (disposed || !grants.has(request.handle))
         return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
+      grants.get(request.handle)?.scope?.release?.();
       grants.delete(request.handle);
       mirrors.release(request.handle);
       unwatch(request.handle);
@@ -782,6 +881,7 @@ export function createDocumentService({
       disposed = true;
       images.dispose();
       epoch++;
+      for (const grant of grants.values()) grant.scope?.release?.();
       grants.clear();
       mirrors.clear();
       for (const handle of watchers.keys()) unwatch(handle);

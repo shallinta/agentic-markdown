@@ -1,0 +1,422 @@
+import { randomUUID } from "node:crypto";
+import { basename, join, relative } from "node:path";
+
+import {
+  WORKSPACE_CACHE_BYTES,
+  WORKSPACE_MAX_ROOTS,
+  WORKSPACE_PAGE_SIZE,
+  validWorkspaceOpen,
+  validWorkspaceRequest,
+  type WorkspaceNode,
+  type WorkspaceResponse,
+  type WorkspaceRoot,
+  type WorkspaceService,
+} from "../../shared/workspace";
+import type { TrustedDocumentService, DocumentScope } from "../documents";
+import { DocumentPathError } from "../documents/path-authorization";
+
+import {
+  authorizeRoot,
+  authorizeEntry,
+  containsPath,
+  verifyRoot,
+  visiblePath,
+  type RootAuthorization,
+} from "./authorization";
+import type { ScanFile } from "./scan";
+import { validScanBatch } from "./scan-protocol";
+import { createScanWorker } from "./worker";
+
+interface Root {
+  meta: WorkspaceRoot;
+  authorization: RootAuthorization;
+  nodes: WorkspaceNode[];
+  byPath: Map<string, WorkspaceNode>;
+  files: Map<string, ScanFile>;
+  bytes: number;
+  started: boolean;
+  live: boolean;
+  scopes: Set<Owner>;
+  priorities: string[];
+  queueBytes: number;
+}
+interface Owner extends DocumentScope {
+  root: Root;
+}
+export function createWorkspaceService({
+  pickDirectory,
+  documents,
+  worker = createScanWorker(),
+  cacheLimit = WORKSPACE_CACHE_BYTES,
+}: {
+  pickDirectory: () => Promise<string | null>;
+  documents: TrustedDocumentService;
+  worker?: ReturnType<typeof createScanWorker>;
+  cacheLimit?: number;
+}): WorkspaceService {
+  const roots: Root[] = [];
+  let selecting = false,
+    disposed = false,
+    epoch = 0,
+    running = false,
+    cacheBytes = 0,
+    turn = 0;
+  const cleanup: string[] = [];
+  const workerKeys = new Set<string>();
+  const queueCleanup = (value: string) => {
+    if (workerKeys.has(value) && !cleanup.includes(value)) cleanup.push(value);
+  };
+  const key = (root: Root) => `${root.meta.handle}:${root.meta.generation}`;
+  const state = (id: string): WorkspaceResponse => ({
+    protocolVersion: 1,
+    requestId: id,
+    ok: true,
+    roots: roots.map((root) => ({ ...root.meta })),
+    cacheBytes,
+    queueBytes: roots.reduce((sum, root) => sum + root.queueBytes, 0),
+    coveredHandles: documents
+      .locations()
+      .filter((file) =>
+        roots.some((root) => root.byPath.get(file.path)?.kind === "file")
+      )
+      .map((file) => file.handle),
+  });
+  const failure = (
+    id: string,
+    error: "INVALID_REQUEST" | "INVALID_HANDLE" | "UNAVAILABLE" | "BUSY"
+  ): WorkspaceResponse => ({
+    protocolVersion: 1,
+    requestId: id,
+    ok: false,
+    error,
+  });
+  const live = (root: Root, generation: number) =>
+    !disposed &&
+    root.live &&
+    root.meta.generation === generation &&
+    roots.includes(root);
+  const invalidate = (root: Root) => {
+    queueCleanup(key(root));
+    root.live = false;
+    cacheBytes -= root.bytes;
+    root.bytes = 0;
+    root.queueBytes = 0;
+    root.nodes = [];
+    root.byPath.clear();
+    root.files.clear();
+  };
+  function merge(root: Root, files: ScanFile[]) {
+    for (const file of files) {
+      if (
+        !visiblePath(root.authorization.path, file.path) ||
+        root.byPath.has(file.path)
+      )
+        continue;
+      const additions: WorkspaceNode[] = [];
+      let cursor = root.authorization.path,
+        parent = root.meta.handle;
+      for (const part of relative(root.authorization.path, file.path).split(
+        "/"
+      )) {
+        cursor = join(cursor, part);
+        const previous = root.byPath.get(cursor);
+        if (previous) {
+          parent = previous.handle;
+          continue;
+        }
+        const node: WorkspaceNode = {
+          handle: randomUUID(),
+          parent,
+          name: part,
+          kind: cursor === file.path ? "file" : "directory",
+          displayPath: cursor,
+        };
+        additions.push(node);
+        parent = node.handle;
+      }
+      const bytes =
+        Buffer.byteLength(JSON.stringify(additions)) +
+        Buffer.byteLength(JSON.stringify(file));
+      if (cacheBytes + bytes > cacheLimit) {
+        root.meta.status = "paused";
+        queueCleanup(key(root));
+        return;
+      }
+      for (const node of additions) {
+        root.nodes.push(node);
+        root.byPath.set(node.displayPath, node);
+      }
+      root.files.set(parent, file);
+      root.bytes += bytes;
+      cacheBytes += bytes;
+      root.meta.entries = root.nodes.length;
+    }
+  }
+  async function drain() {
+    if (running || disposed) return;
+    running = true;
+    try {
+      while (!disposed || cleanup.length) {
+        const stale = cleanup.shift();
+        if (stale) {
+          await worker.call({ op: "close", key: stale }).catch(() => undefined);
+          workerKeys.delete(stale);
+          continue;
+        }
+        const scheduled = Array.from(
+          { length: roots.length },
+          (_, index) => roots[(turn + index) % roots.length]
+        );
+        const root = scheduled.find((item) => item.meta.status === "scanning");
+        if (!root) break;
+        turn = (roots.indexOf(root) + 1) % roots.length;
+        const generation = root.meta.generation;
+        try {
+          if (!root.started) {
+            workerKeys.add(key(root));
+            await worker.call({
+              op: "start",
+              key: key(root),
+              root: root.authorization,
+            });
+            if (!live(root, generation)) continue;
+            root.started = true;
+          }
+          const priority = root.priorities.shift();
+          if (priority)
+            await worker.call({
+              op: "prioritize",
+              key: key(root),
+              path: priority,
+            });
+          const batch = await worker.call({
+            op: "next",
+            key: key(root),
+          });
+          if (!live(root, generation)) continue;
+          if (!validScanBatch(batch)) throw Error();
+          root.meta.examined += batch.examined;
+          root.queueBytes = batch.queueBytes;
+          root.meta.errors += batch.errors;
+          merge(root, batch.files);
+          if (batch.paused) root.meta.status = "paused";
+          else if (batch.done && root.meta.status === "scanning")
+            root.meta.status = root.meta.errors ? "partial" : "complete";
+          if (root.meta.status !== "scanning") queueCleanup(key(root));
+          if (root.meta.status !== "scanning") root.queueBytes = 0;
+        } catch {
+          if (live(root, generation)) {
+            root.meta.status = "failed";
+            root.meta.errors++;
+            queueCleanup(key(root));
+          }
+        }
+        // A macrotask allows picker/open/save RPCs between metadata batches.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    } finally {
+      running = false;
+      if (disposed) worker.dispose();
+    }
+  }
+  const wake = () => {
+    void drain();
+  };
+  async function removeAll() {
+    const accepted = await documents.withWriteBarrier(() => {
+      epoch++;
+      for (const root of roots) {
+        invalidate(root);
+        for (const owner of root.scopes) documents.revokeScope(owner);
+        root.scopes.clear();
+      }
+      roots.length = 0;
+      return Promise.resolve(true);
+    });
+    wake();
+    return accepted;
+  }
+  return {
+    async request(value) {
+      if (!validWorkspaceRequest(value)) return failure("", "INVALID_REQUEST");
+      if (disposed) return failure(value.requestId, "UNAVAILABLE");
+      if (value.op === "state") return state(value.requestId);
+      if (value.op === "clear")
+        return (await removeAll())
+          ? state(value.requestId)
+          : failure(value.requestId, "BUSY");
+      if (value.op === "select") {
+        if (selecting) return failure(value.requestId, "BUSY");
+        selecting = true;
+        const generation = epoch;
+        try {
+          const selected = await pickDirectory();
+          if (disposed || generation !== epoch)
+            return failure(value.requestId, "INVALID_HANDLE");
+          if (selected === null) return state(value.requestId);
+          const authorization = await authorizeRoot(selected);
+          if (disposed || generation !== epoch)
+            return failure(value.requestId, "INVALID_HANDLE");
+          const existing = roots.find((root) =>
+            containsPath(root.authorization.path, authorization.path)
+          );
+          if (existing) {
+            await verifyRoot(existing.authorization);
+            return state(value.requestId);
+          }
+          const covered = roots.filter((root) =>
+            containsPath(authorization.path, root.authorization.path)
+          );
+          if (roots.length - covered.length >= WORKSPACE_MAX_ROOTS)
+            return failure(value.requestId, "BUSY");
+          const root: Root = {
+            meta: {
+              handle: randomUUID(),
+              name: basename(authorization.path) || "/",
+              displayPath: authorization.path,
+              generation: 1,
+              status: "scanning",
+              examined: 0,
+              errors: 0,
+              entries: 0,
+            },
+            authorization,
+            nodes: [],
+            byPath: new Map(),
+            files: new Map(),
+            bytes: 0,
+            started: false,
+            live: true,
+            scopes: new Set(),
+            priorities: [],
+            queueBytes: 0,
+          };
+          for (const child of covered) {
+            // The new parent retains every still-open derived grant's authority.
+            for (const owner of child.scopes) {
+              owner.root = root;
+              root.scopes.add(owner);
+            }
+            child.scopes.clear();
+            invalidate(child);
+            roots.splice(roots.indexOf(child), 1);
+          }
+          roots.push(root);
+          wake();
+          return state(value.requestId);
+        } catch {
+          return failure(value.requestId, "UNAVAILABLE");
+        } finally {
+          selecting = false;
+        }
+      }
+      const root = roots.find((item) => item.meta.handle === value.root);
+      if (!root) return failure(value.requestId, "INVALID_HANDLE");
+      if (value.op === "page") {
+        if (
+          root.meta.generation !== value.generation ||
+          value.cursor! > root.nodes.length
+        )
+          return failure(value.requestId, "INVALID_HANDLE");
+        return {
+          ...state(value.requestId),
+          root: root.meta.handle,
+          generation: root.meta.generation,
+          nodes: root.nodes.slice(
+            value.cursor,
+            value.cursor! + WORKSPACE_PAGE_SIZE
+          ),
+          nextCursor: Math.min(
+            root.nodes.length,
+            value.cursor! + WORKSPACE_PAGE_SIZE
+          ),
+        } as WorkspaceResponse;
+      }
+      if (value.op === "prioritize") {
+        const node = root.nodes.find((item) => item.handle === value.entry);
+        if (node?.kind !== "directory")
+          return failure(value.requestId, "INVALID_HANDLE");
+        root.priorities = [node.displayPath];
+        wake();
+        return state(value.requestId);
+      }
+      try {
+        await verifyRoot(root.authorization);
+      } catch {
+        return failure(value.requestId, "UNAVAILABLE");
+      }
+      if (!root.live) return failure(value.requestId, "INVALID_HANDLE");
+      queueCleanup(key(root));
+      cacheBytes -= root.bytes;
+      root.bytes = 0;
+      root.nodes = [];
+      root.files.clear();
+      root.byPath.clear();
+      root.started = false;
+      root.meta = {
+        ...root.meta,
+        generation: root.meta.generation + 1,
+        status: "scanning",
+        errors: 0,
+        examined: 0,
+        entries: 0,
+      };
+      wake();
+      return state(value.requestId);
+    },
+    async open(value) {
+      const envelope = {
+        protocolVersion: 1 as const,
+        requestId: validWorkspaceOpen(value) ? value.requestId : "",
+      };
+      if (!validWorkspaceOpen(value))
+        return { ...envelope, ok: false, error: "INVALID_REQUEST" };
+      const root = roots.find((item) => item.meta.handle === value.root),
+        file = root?.files.get(value.entry);
+      if (disposed || !root || !file)
+        return { ...envelope, ok: false, error: "INVALID_HANDLE" };
+      const generation = root.meta.generation;
+      const owner: Owner = {
+        root,
+        release() {
+          this.root.scopes.delete(this);
+        },
+        async verify() {
+          if (disposed || !this.root.live || !roots.includes(this.root))
+            throw new DocumentPathError("INVALID_HANDLE");
+          await verifyRoot(this.root.authorization);
+          if (!this.root.live) throw new DocumentPathError("INVALID_HANDLE");
+        },
+      };
+      root.scopes.add(owner);
+      const response = await documents.openAuthorized(
+        envelope,
+        async () => {
+          if (!live(root, generation) || root.files.get(value.entry) !== file)
+            throw new DocumentPathError("INVALID_HANDLE");
+          const candidate = await authorizeEntry(
+            root.authorization,
+            file.path,
+            file.fingerprint,
+            file.chain
+          );
+          if (!live(root, generation)) {
+            await candidate.file.close();
+            throw new DocumentPathError("INVALID_HANDLE");
+          }
+          return candidate;
+        },
+        owner
+      );
+      if (!response.ok || !response.snapshot) owner.root.scopes.delete(owner);
+      return response;
+    },
+    async dispose() {
+      await removeAll();
+      disposed = true;
+      epoch++;
+      while (running) await new Promise((resolve) => setTimeout(resolve, 1));
+      worker.dispose();
+    },
+  };
+}

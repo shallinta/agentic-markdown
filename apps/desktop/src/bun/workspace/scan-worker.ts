@@ -17,14 +17,18 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
     self.postMessage({ id, ok: false });
     return;
   }
-  const { id, op, key, root, path } = event.data;
+  const { id, op, key, root, path, showHidden } = event.data;
   try {
     if (op === "start") {
       scans.get(key)?.close();
       if (scans.size >= 32 && !scans.has(key)) throw Error();
       scans.set(
         key,
-        createScan(root!, join(import.meta.dir, "save-primitives.node"))
+        createScan(
+          root!,
+          join(import.meta.dir, "save-primitives.node"),
+          showHidden
+        )
       );
     } else if (op === "close") {
       scans.get(key)?.close();

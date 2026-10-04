@@ -39,7 +39,11 @@ interface PendingDirectory {
   chain: DirectoryIdentity[];
 }
 /** One owned cursor per session; all filtered entries consume batch capacity. */
-export function createScan(root: RootAuthorization, nativePath: string) {
+export function createScan(
+  root: RootAuthorization,
+  nativePath: string,
+  showHidden = false
+) {
   const native = createRequire(import.meta.url)(nativePath) as Native;
   const pending: PendingDirectory[] = [{ path: root.path, chain: [] }];
   let current: {
@@ -120,7 +124,8 @@ export function createScan(root: RootAuthorization, nativePath: string) {
           chain.pop();
           continue;
         }
-        if (part.startsWith(".")) return null;
+        if (part === ".git" || (!showHidden && part.startsWith(".")))
+          return null;
         const fd = descriptors[descriptors.length - 1],
           metadata = native.scanStat(fd, part);
         if (metadata.kind === "link") {
@@ -204,7 +209,11 @@ export function createScan(root: RootAuthorization, nativePath: string) {
         const batch = native.scanBatch(active.cursor, SCAN_BATCH_SIZE);
         result.examined = batch.names.length;
         for (const name of batch.names) {
-          if (name.startsWith(".")) continue;
+          // Native batches count every dirent; structural entries are never
+          // user files, even when ordinary hidden names are enabled.
+          if (name === "." || name === "..") continue;
+          if (name === ".git" || (!showHidden && name.startsWith(".")))
+            continue;
           try {
             const metadata = native.scanStat(active.fd, name),
               path = join(active.directory.path, name);

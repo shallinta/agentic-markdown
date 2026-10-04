@@ -10,6 +10,7 @@ import {
   rm,
   readFile,
   stat,
+  realpath,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -23,6 +24,7 @@ import type {
 import { createDocumentService } from "../documents";
 
 import { authorizeRoot } from "./authorization";
+import { createHiddenPreferences } from "./preferences";
 import { createScan } from "./scan";
 
 import { createWorkspaceService } from ".";
@@ -82,6 +84,176 @@ async function nodes(root: WorkspaceRoot) {
   }
   return result;
 }
+test("hidden toggle shares scan/link/open policy and preserves explicit provenance across handles", async () => {
+  await mkdir(join(directory, ".secret"));
+  await mkdir(join(directory, ".git"));
+  for (const name of [
+    "plain.md",
+    ".hidden.md",
+    ".secret/nested.md",
+    ".git/bad.md",
+  ])
+    await writeFile(join(directory, name), `# ${name}`);
+  await symlink(".hidden.md", join(directory, "alias.md"));
+  await symlink(".git/bad.md", join(directory, "git-alias.md"));
+  selected = join(directory, ".hidden.md");
+  const explicit = await documents.select(request("select"));
+  // Document requests deliberately exclude workspace's op field.
+  expect(explicit.ok).toBe(false);
+  const picked = await documents.select({
+    protocolVersion: 1,
+    requestId: "pick-hidden",
+  });
+  if (!picked.ok || !picked.snapshot) throw Error("pick");
+  expect(picked.snapshot.explicitStandalone).toBe(true);
+  selected = directory;
+  await workspace.request(request("select"));
+  let state = await settle();
+  expect((await nodes(state.roots[0])).map((n) => n.name)).not.toContain(
+    ".hidden.md"
+  );
+  await workspace.request(
+    request("hidden", { root: state.roots[0].handle, showHidden: true })
+  );
+  state = await settle();
+  const all = await nodes(state.roots[0]);
+  expect(state.roots[0].errors).toBe(0);
+  expect(state.roots[0].status).toBe("complete");
+  expect(all.map((n) => n.name)).toContain(".hidden.md");
+  expect(all.map((n) => n.name)).toContain("nested.md");
+  expect(all.map((n) => n.name)).not.toContain(".git");
+  expect(all.map((n) => n.name)).not.toContain("git-alias.md");
+  const treeOpen = await workspace.open({
+    protocolVersion: 1,
+    requestId: "tree-hidden",
+    root: state.roots[0].handle,
+    entry: all.find((n) => n.name === ".hidden.md")!.handle,
+  });
+  if (!treeOpen.ok || !treeOpen.snapshot) throw Error("tree");
+  expect(treeOpen.snapshot.explicitStandalone).toBe(true);
+  expect(treeOpen.snapshot.documentId).toBe(picked.snapshot.documentId);
+  await documents.release({
+    protocolVersion: 1,
+    requestId: "release-old-explicit",
+    handle: picked.snapshot.handle,
+  });
+  const derived = await workspace.open({
+    protocolVersion: 1,
+    requestId: "derived-hidden",
+    root: state.roots[0].handle,
+    entry: all.find((n) => n.name === "nested.md")!.handle,
+  });
+  if (!derived.ok || !derived.snapshot) throw Error("derived");
+  expect(derived.snapshot.explicitStandalone).toBe(false);
+  const assetEpoch = documents.assetEpochs()[derived.snapshot.handle];
+  await workspace.request(
+    request("hidden", { root: state.roots[0].handle, showHidden: false })
+  );
+  state = await settle();
+  expect(state.coveredHandles).not.toContain(treeOpen.snapshot.handle);
+  expect(documents.assetEpochs()[derived.snapshot.handle]).toBe(assetEpoch);
+  expect(
+    await documents.read({
+      protocolVersion: 1,
+      requestId: "read-still-open",
+      handle: derived.snapshot.handle,
+    })
+  ).toMatchObject({ ok: true, snapshot: { explicitStandalone: false } });
+  selected = join(directory, ".secret/nested.md");
+  const promoted = await documents.select({
+    protocolVersion: 1,
+    requestId: "promote-explicit",
+  });
+  expect(promoted).toMatchObject({
+    ok: true,
+    snapshot: {
+      documentId: derived.snapshot.documentId,
+      explicitStandalone: true,
+    },
+  });
+  await workspace.request(request("clear"));
+  expect(
+    await documents.read({
+      protocolVersion: 1,
+      requestId: "explicit-authority-survives",
+      handle: treeOpen.snapshot.handle,
+    })
+  ).toMatchObject({ ok: true, snapshot: { explicitStandalone: true } });
+  expect(
+    await documents.read({
+      protocolVersion: 1,
+      requestId: "derived-authority-revoked",
+      handle: derived.snapshot.handle,
+    })
+  ).toMatchObject({ ok: false });
+});
+test("serialized hidden preferences survive reauthorization and cannot revive cleared roots", async () => {
+  await workspace.dispose();
+  const prefs = createHiddenPreferences(join(directory, "app-settings"));
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents,
+    preferences: prefs,
+  });
+  await workspace.request(request("select"));
+  let state = await settle();
+  const root = state.roots[0].handle;
+  await Promise.all(
+    [true, false, true].map((showHidden) =>
+      workspace.request(request("hidden", { root, showHidden }))
+    )
+  );
+  state = await settle();
+  expect(state.roots[0].showHidden).toBe(true);
+  await workspace.request(request("clear"));
+  await workspace.request(request("select"));
+  state = await settle();
+  expect(state.roots[0].showHidden).toBe(true);
+  expect(
+    await createHiddenPreferences(join(directory, "app-settings")).get(
+      await realpath(directory)
+    )
+  ).toBe(true);
+});
+test("late preference completion after clear cannot revive a root, failed writes retain old policy", async () => {
+  await workspace.dispose();
+  let release: () => void = () => undefined;
+  let entered: () => void = () => undefined;
+  let fail = true;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  workspace = createWorkspaceService({
+    documents,
+    pickDirectory: () => Promise.resolve(selected),
+    preferences: {
+      get: () => Promise.resolve(false),
+      async set() {
+        if (fail) throw Error("disk");
+        entered();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    },
+  });
+  await workspace.request(request("select"));
+  const state = await settle(),
+    root = state.roots[0].handle;
+  expect(
+    await workspace.request(request("hidden", { root, showHidden: true }))
+  ).toMatchObject({ ok: false });
+  expect((await settle()).roots[0].showHidden).toBe(false);
+  fail = false;
+  const pending = workspace.request(
+    request("hidden", { root, showHidden: true })
+  );
+  await started;
+  await workspace.request(request("clear"));
+  release();
+  expect(await pending).toMatchObject({ ok: false, error: "INVALID_HANDLE" });
+  expect((await settle()).roots).toEqual([]);
+});
 test("real Worker finds only valid branches, canonical link dedup and explicit hidden standalone", async () => {
   for (const part of ["child", "empty", "nonmd", ".hidden", ".git", "other"])
     await mkdir(join(directory, part));

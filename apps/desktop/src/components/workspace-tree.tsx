@@ -9,12 +9,14 @@ export function WorkspaceTree({
   disabled,
   runAction,
   open,
+  setHidden,
 }: {
   folders: ReturnType<typeof createFolderWorkspace>;
   state: FolderState;
   disabled: boolean;
   runAction: (action: () => void | Promise<void>) => void | Promise<void>;
   open: (root: string, node: WorkspaceNode) => void;
+  setHidden: (root: string, showHidden: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
@@ -151,6 +153,16 @@ export function WorkspaceTree({
               >
                 {root.name}
               </h3>
+              <button
+                disabled={disabled || state.busy}
+                role="switch"
+                aria-checked={root.showHidden === true}
+                aria-label={`${root.name}：显示隐藏文件`}
+                className="hover:bg-muted focus-visible:outline-ring rounded border px-1 text-xs focus-visible:outline-2 disabled:opacity-50"
+                onClick={() => setHidden(root.handle, !root.showHidden)}
+              >
+                {root.showHidden ? "隐藏：显示" : "隐藏：不显示"}
+              </button>
               <button
                 disabled={disabled || state.busy}
                 className="hover:bg-muted rounded border px-1 text-xs disabled:opacity-50"

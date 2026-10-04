@@ -55,6 +55,7 @@ export function CommandPalette({
       type === "readingThemeInk" ||
       type === "selectDocument" ||
       type === "selectFolder" ||
+      type === "setRootHidden" ||
       type === "toggleReadingMode" ||
       type === "undoDocument" ||
       type === "redoDocument" ||

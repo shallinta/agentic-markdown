@@ -39,6 +39,7 @@ interface Identity {
   revision: number;
 }
 interface Grant extends SingleFileAuthorization {
+  explicitStandalone?: boolean;
   handle: string;
   path: string;
   identityKey: string;
@@ -393,6 +394,7 @@ export function createDocumentService({
     };
     return {
       handle: grant.handle,
+      explicitStandalone: grant.explicitStandalone === true,
       ...identity,
       fileName: basename(grant.path),
       displayPath: grant.path,
@@ -475,9 +477,18 @@ export function createDocumentService({
             ...authorization,
             handle: randomUUID(),
             identityKey: `${authorization.path}:${authorization.fingerprint}`,
+            explicitStandalone: [...grants.values()].some(
+              (existing) =>
+                existing.identityKey ===
+                  `${authorization.path}:${authorization.fingerprint}` &&
+                existing.explicitStandalone
+            ),
             assetEpoch: randomUUID(),
             scope,
           };
+          // Reopening through a tree must not replace prior explicit authority
+          // with a root-dependent grant when the old handle is released.
+          if (candidate.explicitStandalone) candidate.scope = undefined;
           checkTask(task, generation);
           await scope.verify();
           const next = await snapshot(candidate, generation, task);
@@ -485,6 +496,7 @@ export function createDocumentService({
           checkTask(task, generation);
           commit(candidate, next, task, generation);
           grants.set(candidate.handle, candidate);
+          if (candidate.explicitStandalone) scope.release?.();
           watchGrant(candidate);
           return result(request.requestId, next);
         } catch (error) {
@@ -822,6 +834,7 @@ export function createDocumentService({
                 ...authorization,
                 handle: randomUUID(),
                 identityKey: `${authorization.path}:${authorization.fingerprint}`,
+                explicitStandalone: true,
                 assetEpoch: randomUUID(),
               };
               checkTask(task, generation);

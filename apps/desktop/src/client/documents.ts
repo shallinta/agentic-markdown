@@ -67,6 +67,7 @@ export type DocumentEntry = Pick<
   | "fileName"
   | "locationId"
   | "displayPath"
+  | "explicitStandalone"
   | "writeCapability"
 >;
 export interface SaveViewStatus {
@@ -132,6 +133,8 @@ export function isDocumentResponse(
     typeof s.fileName === "string" &&
     s.fileName.length > 0 &&
     s.fileName.length <= 4096 &&
+    (s.explicitStandalone === undefined ||
+      typeof s.explicitStandalone === "boolean") &&
     (s.displayPath === undefined ||
       (typeof s.displayPath === "string" && s.displayPath.length <= 32768)) &&
     (s.locationId === undefined ||
@@ -491,6 +494,7 @@ export function createDocumentController(
           ? {
               ...existing,
               handle: snapshot.handle,
+              explicitStandalone: snapshot.explicitStandalone,
               writeCapability: snapshot.writeCapability,
             }
           : snapshot;
@@ -576,6 +580,7 @@ export function createDocumentController(
                     fileName: snapshot.fileName,
                     locationId: snapshot.locationId,
                     displayPath: snapshot.displayPath,
+                    explicitStandalone: snapshot.explicitStandalone,
                     writeCapability: snapshot.writeCapability,
                   }
                 : value
@@ -588,6 +593,7 @@ export function createDocumentController(
                 fileName: snapshot.fileName,
                 locationId: snapshot.locationId,
                 displayPath: snapshot.displayPath,
+                explicitStandalone: snapshot.explicitStandalone,
                 writeCapability: snapshot.writeCapability,
               },
             ],

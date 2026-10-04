@@ -16,6 +16,7 @@ import { createNativeFileCapabilities } from "../native-files";
 import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
+import { createHiddenPreferences } from "../workspace/preferences";
 
 import { createDiscardCoordinator } from "./discard-coordinator";
 import { createLifecycleGuard } from "./lifecycle-guard";
@@ -37,6 +38,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       rpc?.send.documentCapabilityChanged({ handle }),
   });
   const workspace = createWorkspaceService({
+    preferences: createHiddenPreferences(getSettingsDir()),
     pickDirectory: () => nativeFiles.pickDirectory(),
     documents,
   });

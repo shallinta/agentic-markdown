@@ -28,6 +28,7 @@ export interface CheckForUpdatesCommand extends GenericCommand<"checkForUpdates"
 export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdateAndRestart"> {}
 
 export type Command =
+  | GenericCommand<"setRootHidden", { root: string; showHidden: boolean }>
   | GenericCommand<"readingThemePaper">
   | GenericCommand<"readingThemeInk">
   | GenericCommand<"toggleReadingMode">
@@ -78,6 +79,13 @@ export function isCommand(value: unknown): value is Command {
     return false;
   const args = input.args as Record<string, unknown>;
   const keys = Object.keys(args);
+  if (input.type === "setRootHidden")
+    return (
+      keys.length === 2 &&
+      typeof args.root === "string" &&
+      /^[a-f\d-]{36}$/i.test(args.root) &&
+      typeof args.showHidden === "boolean"
+    );
   if (input.type === "undoDocument" || input.type === "redoDocument")
     return (
       keys.length === 0 ||
@@ -120,6 +128,7 @@ export const COMMAND_META: Record<
   redoDocument: { target: "webview" },
   selectDocument: { target: "webview" },
   selectFolder: { target: "webview" },
+  setRootHidden: { target: "webview", palette: false },
   saveDocument: { target: "webview" },
   reloadDocument: { target: "webview" },
   clearDocument: { target: "webview" },
@@ -167,6 +176,7 @@ export const PRODUCT_COMMANDS: Partial<
     shortcut: "⌘O",
   },
   selectFolder: { label: "加入文件夹" },
+  setRootHidden: { label: "显示隐藏文件" },
   reloadDocument: { label: "重新读取" },
   saveDocument: {
     label: "保存当前文档",

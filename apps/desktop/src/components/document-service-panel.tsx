@@ -139,6 +139,10 @@ export function useDocumentWorkspace() {
       },
       selectDocument: controller.select,
       selectFolder: () => controller.runWorkspaceAction(folders.select),
+      setRootHidden: ({ root, showHidden }) =>
+        controller.runWorkspaceAction(() =>
+          folders.setHidden(root, showHidden)
+        ),
       reloadDocument: controller.reload,
       saveDocument: controller.save,
       clearDocument: () => controller.clear(folders.clear),
@@ -166,6 +170,8 @@ export function useDocumentWorkspace() {
         !controller.getSnapshot().frozen &&
         !controller.hasSaves(),
       selectFolder: () =>
+        controller.canSelectFolder() && !folders.getSnapshot().busy,
+      setRootHidden: () =>
         controller.canSelectFolder() && !folders.getSnapshot().busy,
       saveDocument: controller.canSave,
       undoDocument: controller.canUndo,
@@ -253,6 +259,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const [selected, setSelected] = useState<string | null>(null);
   const entries = state.entries.filter(
     (entry) =>
+      entry.explicitStandalone !== false &&
       !(
         workspace.folderState.coveredHandles.includes(entry.handle) &&
         Object.values(workspace.folderState.nodes).some((nodes) =>
@@ -286,6 +293,9 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         </button>
       </div>
       <WorkspaceTree
+        setHidden={(root, showHidden) =>
+          executeCommand({ type: "setRootHidden", args: { root, showHidden } })
+        }
         folders={workspace.folders}
         state={workspace.folderState}
         disabled={!controller.canSelectFolder()}

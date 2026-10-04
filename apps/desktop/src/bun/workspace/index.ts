@@ -27,6 +27,7 @@ import {
   visiblePath,
   type RootAuthorization,
 } from "./authorization";
+import type { HiddenPreferences } from "./preferences";
 import type { ScanFile } from "./scan";
 import { validScanBatch } from "./scan-protocol";
 import { createScanWorker } from "./worker";
@@ -52,13 +53,16 @@ export function createWorkspaceService({
   documents,
   worker = createScanWorker(),
   cacheLimit = WORKSPACE_CACHE_BYTES,
+  preferences = { get: () => Promise.resolve(false), set: () => Promise.resolve() },
 }: {
   pickDirectory: () => Promise<string | null>;
   documents: TrustedDocumentService;
   worker?: ReturnType<typeof createScanWorker>;
   cacheLimit?: number;
+  preferences?: HiddenPreferences;
 }): WorkspaceService {
   const roots: Root[] = [];
+  let preferenceTail: Promise<unknown> = Promise.resolve();
   const assetOwners = new Map<string, { root: Root; scope: AssetScope }>();
   function bindAssets(handle: string, root: Root) {
     if (assetOwners.get(handle)?.root === root) return;
@@ -152,7 +156,11 @@ export function createWorkspaceService({
   function merge(root: Root, files: ScanFile[]) {
     for (const file of files) {
       if (
-        !visiblePath(root.authorization.path, file.path) ||
+        !visiblePath(
+          root.authorization.path,
+          file.path,
+          root.meta.showHidden
+        ) ||
         root.byPath.has(file.path)
       )
         continue;
@@ -223,6 +231,7 @@ export function createWorkspaceService({
               op: "start",
               key: key(root),
               root: root.authorization,
+              showHidden: root.meta.showHidden ?? false,
             });
             if (!live(root, generation)) continue;
             root.started = true;
@@ -267,6 +276,26 @@ export function createWorkspaceService({
   const wake = () => {
     void drain();
   };
+  function restart(root: Root) {
+    queueCleanup(key(root));
+    cacheBytes -= root.bytes;
+    root.bytes = 0;
+    root.queueBytes = 0;
+    root.nodes = [];
+    root.files.clear();
+    root.byPath.clear();
+    root.started = false;
+    root.priorities = [];
+    root.meta = {
+      ...root.meta,
+      generation: root.meta.generation + 1,
+      status: "scanning",
+      errors: 0,
+      examined: 0,
+      entries: 0,
+    };
+    wake();
+  }
   async function removeAll() {
     const accepted = await documents.withWriteBarrier(() => {
       epoch++;
@@ -303,6 +332,7 @@ export function createWorkspaceService({
             return failure(value.requestId, "INVALID_HANDLE");
           if (selected === null) return state(value.requestId);
           const authorization = await authorizeRoot(selected);
+          const showHidden = await preferences.get(authorization.path);
           if (disposed || generation !== epoch)
             return failure(value.requestId, "INVALID_HANDLE");
           const existing = roots.find((root) =>
@@ -321,6 +351,7 @@ export function createWorkspaceService({
             meta: {
               handle: randomUUID(),
               name: basename(authorization.path) || "/",
+              showHidden,
               displayPath: authorization.path,
               generation: 1,
               status: "scanning",
@@ -362,6 +393,36 @@ export function createWorkspaceService({
       }
       const root = roots.find((item) => item.meta.handle === value.root);
       if (!root) return failure(value.requestId, "INVALID_HANDLE");
+      if (value.op === "hidden") {
+        const currentEpoch = epoch;
+        const task = preferenceTail.then(async () => {
+          if (
+            disposed ||
+            currentEpoch !== epoch ||
+            !root.live ||
+            !roots.includes(root)
+          )
+            return failure(value.requestId, "INVALID_HANDLE");
+          try {
+            await verifyRoot(root.authorization);
+            await preferences.set(root.authorization.path, value.showHidden!);
+            if (
+              disposed ||
+              currentEpoch !== epoch ||
+              !root.live ||
+              !roots.includes(root)
+            )
+              return failure(value.requestId, "INVALID_HANDLE");
+            root.meta.showHidden = value.showHidden!;
+            restart(root);
+            return state(value.requestId);
+          } catch {
+            return failure(value.requestId, "UNAVAILABLE");
+          }
+        });
+        preferenceTail = task.catch(() => undefined);
+        return task;
+      }
       if (value.op === "page") {
         if (
           root.meta.generation !== value.generation ||
@@ -396,22 +457,7 @@ export function createWorkspaceService({
         return failure(value.requestId, "UNAVAILABLE");
       }
       if (!root.live) return failure(value.requestId, "INVALID_HANDLE");
-      queueCleanup(key(root));
-      cacheBytes -= root.bytes;
-      root.bytes = 0;
-      root.nodes = [];
-      root.files.clear();
-      root.byPath.clear();
-      root.started = false;
-      root.meta = {
-        ...root.meta,
-        generation: root.meta.generation + 1,
-        status: "scanning",
-        errors: 0,
-        examined: 0,
-        entries: 0,
-      };
-      wake();
+      restart(root);
       return state(value.requestId);
     },
     async open(value) {
@@ -448,7 +494,8 @@ export function createWorkspaceService({
             root.authorization,
             file.path,
             file.fingerprint,
-            file.chain
+            file.chain,
+            root.meta.showHidden
           );
           if (!live(root, generation)) {
             await candidate.file.close();

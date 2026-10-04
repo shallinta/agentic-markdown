@@ -68,4 +68,6 @@
 
 ### 正式结论（2026-10-04）
 
+Git 回执：主线已提交并推送 `bee52b0d0e7af78078e949c8e55f35017e9be7cc`，ls-remote 核验远端 main 一致，提交后当时工作树干净；下方待 Git 文字保留当时历史。
+
 独立最终 verifier 复核 0 阻断，主线 typecheck、完整 lint、文档/obligations、lockfile 与 diff 检查全部 exit 0，确认 F-022b alpha.74 非离线本片受托 Agent 代验通过，非用户亲验。上述候选记录及浅色/系统、自然 IME、受控竞态的证据限制原样保留；父 F-022、完整 OBL-010/031 仍实现中，`F-022b-offline-final` 未执行、留最终人工。Git 待主线实际执行及远端核验，不预写成功。

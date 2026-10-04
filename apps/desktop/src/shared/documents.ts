@@ -75,6 +75,8 @@ export function isWriteCapability(value: unknown): value is WriteCapability {
 }
 
 export interface DocumentSnapshot {
+  /** Backend provenance; hiding a tree branch does not create a standalone root. */
+  explicitStandalone?: boolean;
   mirror?: BufferMirrorIdentity;
   handle: string;
   documentId: string;

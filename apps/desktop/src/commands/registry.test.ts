@@ -10,6 +10,22 @@ import {
 import type { DocumentRequest, DocumentResponse } from "../shared/documents";
 
 import { createCommandRegistry } from "./registry";
+test("root hidden command requires opaque root and boolean intent", () => {
+  expect(
+    isCommand({
+      type: "setRootHidden",
+      args: { root: crypto.randomUUID(), showHidden: true },
+    })
+  ).toBe(true);
+  expect(
+    isCommand({
+      type: "setRootHidden",
+      args: { root: "/path", showHidden: true },
+    })
+  ).toBe(false);
+  expect(isCommand({ type: "setRootHidden", args: {} })).toBe(false);
+  expect(COMMAND_META.setRootHidden.palette).toBe(false);
+});
 
 test("source mode is a guarded internal command, never a visible product action", () => {
   const registry = createCommandRegistry(

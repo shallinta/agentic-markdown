@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { undo } from "@codemirror/commands";
+import { undo, undoDepth } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 
 import type {
@@ -177,6 +177,43 @@ test("folder open reuses dirty mode and history and honors composition", async (
   expect(controller.canSelectFolder()).toBe(false);
   await controller.openWorkspaceEntry("root", "entry");
   expect(opens).toBe(1);
+});
+test("backend standalone provenance follows replacement handles without replacing dirty editor", async () => {
+  const { controller, transport, value, released } = setup();
+  let explicit = false;
+  const reply = (request: DocumentRequest) =>
+    Promise.resolve(
+      result(request, {
+        ...value,
+        handle: crypto.randomUUID(),
+        explicitStandalone: explicit,
+      })
+    );
+  transport.openWorkspaceDocument = reply;
+  transport.selectDocument = (request) => {
+    explicit = true;
+    return reply(request);
+  };
+  await controller.openWorkspaceEntry("root", "entry");
+  expect(controller.getSnapshot().entries[0].explicitStandalone).toBe(false);
+  const firstHandle = controller.getSnapshot().entries[0].handle;
+  let editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(
+    value.documentId,
+    editor.state.update({ changes: { from: 0, insert: "dirty" } })
+  );
+  controller.toggleReadingMode();
+  editor = controller.getEditor(value.documentId)!;
+  await controller.select();
+  expect(controller.getSnapshot().entries[0].explicitStandalone).toBe(true);
+  expect(controller.getSnapshot().entries[0].handle).not.toBe(firstHandle);
+  expect(released).toContain(firstHandle);
+  await controller.openWorkspaceEntry("root", "entry");
+  expect(controller.getSnapshot().entries[0].explicitStandalone).toBe(true);
+  expect(controller.getEditor(value.documentId)).toBe(editor);
+  expect(controller.getMode(value.documentId)).toBe("reading");
+  expect(controller.isDirty(value.documentId)).toBe(true);
+  expect(undoDepth(editor.state)).toBeGreaterThan(0);
 });
 
 test("root clear runs only after discard approval and failed root clear preserves documents", async () => {

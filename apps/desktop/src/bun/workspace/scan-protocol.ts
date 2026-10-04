@@ -25,6 +25,7 @@ export interface ScanRequest {
   key: string;
   root?: RootAuthorization;
   path?: string;
+  showHidden?: boolean;
 }
 export function validScanRequest(value: unknown): value is ScanRequest {
   if (
@@ -37,7 +38,9 @@ export function validScanRequest(value: unknown): value is ScanRequest {
     return false;
   const keys =
     value.op === "start"
-      ? ["id", "op", "key", "root"]
+      ? value.showHidden === undefined
+        ? ["id", "op", "key", "root"]
+        : ["id", "op", "key", "root", "showHidden"]
       : value.op === "prioritize"
         ? ["id", "op", "key", "path"]
         : ["id", "op", "key"];
@@ -48,6 +51,8 @@ export function validScanRequest(value: unknown): value is ScanRequest {
     return false;
   if (value.op === "start")
     return (
+      (value.showHidden === undefined ||
+        typeof value.showHidden === "boolean") &&
       record(value.root) &&
       Object.keys(value.root).length === 2 &&
       path(value.root.path) &&

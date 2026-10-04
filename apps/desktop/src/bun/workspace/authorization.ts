@@ -23,11 +23,11 @@ export const containsPath = (root: string, path: string) => {
     (tail !== ".." && !tail.startsWith("../") && !tail.startsWith("/"))
   );
 };
-export const visiblePath = (root: string, path: string) =>
+export const visiblePath = (root: string, path: string, showHidden = false) =>
   containsPath(root, path) &&
   relative(root, path)
     .split("/")
-    .every((part) => !part.startsWith("."));
+    .every((part) => part !== ".git" && (showHidden || !part.startsWith(".")));
 export async function authorizeRoot(
   selected: string
 ): Promise<RootAuthorization> {
@@ -66,10 +66,11 @@ export async function authorizeEntry(
   root: RootAuthorization,
   path: string,
   fingerprint: string,
-  chain: DirectoryIdentity[]
+  chain: DirectoryIdentity[],
+  showHidden = false
 ) {
   await verifyRoot(root);
-  if (!visiblePath(root.path, path))
+  if (!visiblePath(root.path, path, showHidden))
     throw new DocumentPathError("INVALID_HANDLE");
   const candidate = await authorizeSingleFile(path);
   try {

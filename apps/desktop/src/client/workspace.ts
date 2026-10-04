@@ -39,6 +39,8 @@ function validResponse(
         text(root.name) &&
         text(root.displayPath) &&
         integer(root.generation) &&
+        (root.showHidden === undefined ||
+          typeof root.showHidden === "boolean") &&
         Number(root.generation) > 0 &&
         integer(root.entries) &&
         integer(root.errors) &&
@@ -182,7 +184,10 @@ export function createFolderWorkspace(
     });
     tail = operation
       .catch(() => {
-        publish({ ...state, error: "文件夹操作失败，请重新扫描或重试。" });
+        publish({
+          ...state,
+          error: "文件夹或显示设置操作失败，未确认保存；请重试。",
+        });
       })
       .finally(() => {
         if (busy) publish({ ...state, busy: false });
@@ -224,6 +229,11 @@ export function createFolderWorkspace(
     select: () =>
       enqueue(async () => {
         await request({ op: "select" });
+        await refresh();
+      }, true),
+    setHidden: (root: string, showHidden: boolean) =>
+      enqueue(async () => {
+        await request({ op: "hidden", root, showHidden });
         await refresh();
       }, true),
     rescan: (root: string) =>

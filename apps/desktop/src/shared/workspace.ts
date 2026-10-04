@@ -3,6 +3,7 @@ import type { DocumentRequest, DocumentResponse } from "./documents";
 export type ScanStatus =
   "scanning" | "complete" | "partial" | "paused" | "failed";
 export interface WorkspaceRoot {
+  showHidden?: boolean;
   handle: string;
   name: string;
   displayPath: string;
@@ -21,7 +22,9 @@ export interface WorkspaceNode {
   displayPath: string;
 }
 export interface WorkspaceRequest extends DocumentRequest {
-  op: "select" | "state" | "page" | "rescan" | "prioritize" | "clear";
+  op:
+    "select" | "state" | "page" | "rescan" | "prioritize" | "clear" | "hidden";
+  showHidden?: boolean;
   root?: string;
   entry?: string;
   generation?: number;
@@ -79,11 +82,13 @@ export function validWorkspaceRequest(
   const fields =
     value.op === "page"
       ? [...common, "root", "generation", "cursor"]
-      : value.op === "rescan"
-        ? [...common, "root"]
-        : value.op === "prioritize"
-          ? [...common, "root", "entry"]
-          : common;
+      : value.op === "hidden"
+        ? [...common, "root", "showHidden"]
+        : value.op === "rescan"
+          ? [...common, "root"]
+          : value.op === "prioritize"
+            ? [...common, "root", "entry"]
+            : common;
   if (
     Object.keys(value).length !== fields.length ||
     !Object.keys(value).every((key) => fields.includes(key))
@@ -91,6 +96,7 @@ export function validWorkspaceRequest(
     return false;
   if (["select", "state", "clear"].includes(value.op as string)) return true;
   if (!uuid(value.root)) return false;
+  if (value.op === "hidden") return typeof value.showHidden === "boolean";
   if (value.op === "rescan") return true;
   if (value.op === "prioritize") return uuid(value.entry);
   return (

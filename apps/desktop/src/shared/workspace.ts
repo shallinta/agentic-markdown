@@ -41,6 +41,8 @@ export type WorkspaceResponse = { protocolVersion: 1; requestId: string } & (
       roots: WorkspaceRoot[];
       /** Existing document handles whose visible sidebar ownership is a root. */
       coveredHandles: string[];
+      /** Opaque asset-only invalidation metadata; never authorizes renderer paths. */
+      assetEpochs?: Record<string, string>;
       root?: string;
       generation?: number;
       nodes?: WorkspaceNode[];

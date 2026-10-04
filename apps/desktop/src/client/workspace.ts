@@ -50,6 +50,17 @@ function validResponse(
   )
     return false;
   if (
+    value.assetEpochs !== undefined &&
+    (!object(value.assetEpochs) ||
+      !Object.entries(value.assetEpochs).every(
+        ([handle, epoch]) =>
+          /^[a-f\d-]{36}$/i.test(handle) &&
+          typeof epoch === "string" &&
+          /^[a-f\d-]{36}$/i.test(epoch)
+      ))
+  )
+    return false;
+  if (
     new Set(value.roots.map((root: Record<string, unknown>) => root.handle))
       .size !== value.roots.length ||
     !Array.isArray(value.coveredHandles) ||
@@ -81,6 +92,7 @@ export interface FolderState {
   roots: WorkspaceRoot[];
   nodes: Record<string, WorkspaceNode[]>;
   coveredHandles: string[];
+  assetEpochs?: Record<string, string>;
   busy: boolean;
   error: string | null;
 }
@@ -154,6 +166,7 @@ export function createFolderWorkspace(
       ...state,
       roots: response.roots,
       coveredHandles: response.coveredHandles,
+      assetEpochs: response.assetEpochs,
       nodes,
       error: null,
     });

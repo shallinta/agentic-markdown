@@ -50,11 +50,35 @@ export function validImageWorkerRequest(
     value.kind !== "read-local-image" ||
     !id(value.id) ||
     !record(value.job) ||
-    !fields(value.job, ["authorization", "reference"])
+    !fields(
+      value.job,
+      value.job.assetRoot === undefined
+        ? ["authorization", "reference"]
+        : ["authorization", "reference", "assetRoot"]
+    )
   )
     return false;
   const job = value.job,
     authorization = job.authorization;
+  if (
+    job.assetRoot !== undefined &&
+    (!record(job.assetRoot) ||
+      !fields(job.assetRoot, ["path", "directories"]) ||
+      !canonicalPath(job.assetRoot.path) ||
+      !Array.isArray(job.assetRoot.directories) ||
+      job.assetRoot.directories.length < 1 ||
+      job.assetRoot.directories.length > 256 ||
+      Object.keys(job.assetRoot.directories).length !==
+        job.assetRoot.directories.length ||
+      !job.assetRoot.directories.every(
+        (d) =>
+          record(d) &&
+          fields(d, ["path", "fingerprint"]) &&
+          canonicalPath(d.path) &&
+          fingerprint(d.fingerprint)
+      ))
+  )
+    return false;
   if (
     typeof job.reference !== "string" ||
     localImageReference(job.reference) === null ||

@@ -43,6 +43,13 @@ interface Grant extends SingleFileAuthorization {
   path: string;
   identityKey: string;
   scope?: DocumentScope;
+  assetScope?: AssetScope;
+  assetEpoch?: string;
+}
+export interface AssetScope {
+  readonly path: string;
+  readonly directories: SingleFileAuthorization["directories"];
+  verify(): Promise<void>;
 }
 export interface DocumentScope {
   verify(): Promise<void>;
@@ -54,7 +61,14 @@ export interface TrustedDocumentService extends DocumentService {
     authorize: () => Promise<SingleFileAuthorization>,
     scope: DocumentScope
   ): Promise<DocumentResponse>;
-  locations(): { handle: string; path: string; documentId?: string }[];
+  locations(): {
+    handle: string;
+    path: string;
+    fingerprint: string;
+    documentId?: string;
+  }[];
+  setAssetScope(handle: string, scope: AssetScope | undefined): void;
+  assetEpochs(): Record<string, string>;
   revokeScope(scope: DocumentScope): void;
 }
 const uuidPattern =
@@ -137,6 +151,7 @@ export function createDocumentService({
   capability: checkCapability = checkWriteCapability,
   onCapabilityChanged = () => undefined,
   onTiming,
+  imageReader,
 }: {
   pickFile: () => Promise<string | null>;
   authorize?: typeof authorizeSingleFile;
@@ -144,6 +159,7 @@ export function createDocumentService({
   write?: (input: AtomicSaveInput) => Promise<AtomicSaveResult>;
   capability?: typeof checkWriteCapability;
   onCapabilityChanged?: (handle: string) => void;
+  imageReader?: Pick<ReturnType<typeof createImageReader>, "read" | "dispose">;
   onTiming?: (
     phase: "pickerMs" | "authorizeMs" | "diskReadMs" | "decodeAnalyzeMs",
     ms: number
@@ -172,7 +188,7 @@ export function createDocumentService({
     })();
   };
   const grants = new Map<string, Grant>();
-  const images = createImageReader();
+  const images = imageReader ?? createImageReader();
   let imageJobs = 0;
   const mirrors = createBufferMirrors();
   const capabilityJobs = new Map<string, Promise<WriteCapability>>();
@@ -411,8 +427,23 @@ export function createDocumentService({
       [...grants.values()].map((grant) => ({
         handle: grant.handle,
         path: grant.path,
+        fingerprint: grant.fingerprint,
         documentId: identities.get(grant.identityKey)?.documentId,
       })),
+    setAssetScope(handle, scope) {
+      const grant = grants.get(handle);
+      if (grant && grant.assetScope !== scope) {
+        grant.assetScope = scope;
+        grant.assetEpoch = randomUUID();
+      }
+    },
+    assetEpochs: () =>
+      Object.fromEntries(
+        [...grants.values()].map((grant) => [
+          grant.handle,
+          (grant.assetEpoch ??= randomUUID()),
+        ])
+      ),
     revokeScope(scope) {
       for (const [handle, grant] of grants)
         if (grant.scope === scope) {
@@ -444,6 +475,7 @@ export function createDocumentService({
             ...authorization,
             handle: randomUUID(),
             identityKey: `${authorization.path}:${authorization.fingerprint}`,
+            assetEpoch: randomUUID(),
             scope,
           };
           checkTask(task, generation);
@@ -475,6 +507,8 @@ export function createDocumentService({
       if (!grant || disposed || saving || writeBarrier)
         return { ...envelope, ok: false, error: "UNAVAILABLE" };
       const identityKey = grant.identityKey;
+      const assetScope = grant.assetScope,
+        assetEpoch = grant.assetEpoch;
       if (imageJobs >= 9) return { ...envelope, ok: false, error: "BUSY" };
       imageJobs++;
       const stillCurrent = () =>
@@ -482,10 +516,13 @@ export function createDocumentService({
         generation === epoch &&
         grants.get(request.handle) === grant &&
         grant.identityKey === identityKey &&
+        grant.assetScope === assetScope &&
+        grant.assetEpoch === assetEpoch &&
         !saving &&
         !writeBarrier;
       try {
         const verifyCurrent = async () => {
+          await assetScope?.verify();
           const file = await open(
             grant.path,
             constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -508,6 +545,14 @@ export function createDocumentService({
         const result = await images.read({
           authorization,
           reference: request.reference,
+          ...(assetScope
+            ? {
+                assetRoot: {
+                  path: assetScope.path,
+                  directories: assetScope.directories,
+                },
+              }
+            : {}),
         });
         await verifyCurrent();
         return { ...envelope, ...result };
@@ -707,6 +752,7 @@ export function createDocumentService({
           if (owned.identityKey === oldKey) {
             owned.fingerprint = written.fingerprint;
             owned.identityKey = newKey;
+            owned.assetEpoch = randomUUID();
             watchGrant(owned);
           }
         return {
@@ -776,6 +822,7 @@ export function createDocumentService({
                 ...authorization,
                 handle: randomUUID(),
                 identityKey: `${authorization.path}:${authorization.fingerprint}`,
+                assetEpoch: randomUUID(),
               };
               checkTask(task, generation);
               const next = await snapshot(candidate, generation, task);

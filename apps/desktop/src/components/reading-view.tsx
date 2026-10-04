@@ -32,6 +32,7 @@ export function ReadingView({
   frozen,
   theme,
   readLocalImage,
+  assetEpoch,
 }: {
   controller: ReturnType<typeof createDocumentController>;
   canonical: ReturnType<typeof createDocumentCanonical>;
@@ -39,6 +40,7 @@ export function ReadingView({
   frozen: boolean;
   theme: ReadingThemeId;
   readLocalImage?: ImageTransport;
+  assetEpoch?: string;
 }) {
   const state = useSyncExternalStore(
     canonical.subscribe,
@@ -54,7 +56,7 @@ export function ReadingView({
       ? documents.snapshot
       : undefined;
   const handle = entry?.handle;
-  const imageGeneration = `${documentId}:${entry?.revision}:${entry?.hash}:${editor.revision}`;
+  const imageGeneration = `${documentId}:${entry?.revision}:${entry?.hash}:${editor.revision}:${assetEpoch ?? ""}`;
   const images = useMemo(
     () =>
       handle && readLocalImage

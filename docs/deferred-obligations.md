@@ -1,6 +1,10 @@
 # 迁出能力承接登记
 
-## 当前结论：F-025a 非离线本片已代验（2026-10-04）
+## 当前结论：F-022b 非离线本片已代验（2026-10-04）
+
+[F-022b](iterations/F-022b-directory-reading-images.md) alpha.74 非离线本片于 2026-10-04 受托 Agent 代验通过，非用户亲验；独立最终 verifier 0 阻断，主线收尾检查通过。实际目录覆盖/子根吸收扩权、跨根隔离、隐藏独立文件例外及状态保持见唯一迭代；验证限制保留。父 F-022 / OBL-010/031 仍实现中，F-022b-offline-final 留最终人工。Git 待主线实际核验。
+
+## 前轮结论：F-025a 非离线本片已代验（2026-10-04，历史）
 
 [F-025a](iterations/F-025a-safe-folder-workspace.md) alpha.73 非离线本片于 2026-10-04 受托 Agent 代验通过，非用户亲验；独立 verifier 最终 0 阻断，增量 33 项 / 208 断言及主线收尾检查通过。实际多根覆盖、派生打开保存、状态保持和设置隔离/正常退出证据见唯一迭代，alpha.71/.72 失败保留历史。单击仅选择，非最终预览；父 F-025 与 OBL-004/007/008/015/023/039 完整责任仍实现中，F-025a-offline-final 留最终人工，不断网。Git 待主线实际核验。
 
@@ -92,7 +96,7 @@ OBL-065 的当前编辑/源码/安全源码保存链路已有 [F-013b 受托窗�
 | OBL-007 | F-004 / G-03、G-12、G-13 | F-025 | 目录根 opaque capability 与派生句柄生命周期；移除根撤销全部派生授权；真实卷语义去重 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
 | OBL-008 | F-004 / W-18、G-12 | F-025 | 首次目录扫描即不递归目录 symlink；文件 symlink 仅授权内普通文件，越界/失效/循环排除；F-026 消费同一过滤结果并验证文件树展示，不重复实现授权规则 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
 | OBL-009 | F-004 / G-12、G-13 | F-015 | 写入前复核目标及父目录，防路径替换，大小写/Unicode 碰撞按真实卷语义 | 已验收 | [F-015a](./iterations/F-015a-manual-save.md) | 2026-09-22 用户明确确认 F-015a 验收通过；见迭代第 7 节，安全及卷边界不变。 |
-| OBL-010 | F-004 / G-12、G-13 | F-022 | 资产授权与 realpath 越界检查，不继承未授权 scope | 实现中 | [F-022a](./iterations/F-022a-local-reading-images.md) | 2026-10-04 alpha.69 非离线本片受托Agent代验通过，非用户亲验，独立双轴0阻断；局部承接单独文档 PNG/JPEG 只读资产，目录根等后续范围开放；子项 F-022a-offline-final 留最终人工，不执行断网，完整义务不关闭。 |
+| OBL-010 | F-004 / G-12、G-13 | F-022 | 资产授权与 realpath 越界检查，不继承未授权 scope | 实现中 | [F-022a](./iterations/F-022a-local-reading-images.md)、[F-022b](./iterations/F-022b-directory-reading-images.md) | F-022b alpha.74 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中。F-022b-offline-final 留最终人工。 2026-10-04 alpha.69 非离线本片受托Agent代验通过，非用户亲验，独立双轴0阻断；局部承接单独文档 PNG/JPEG 只读资产，目录根等后续范围开放；子项 F-022a-offline-final 留最终人工，不执行断网，完整义务不关闭。 |
 | OBL-011 | F-004 / G-13 | F-027 | 可靠外部身份跟随，保留 documentId，无法可靠识别时不猜测 | 待承接 | — | — |
 | OBL-012 | F-005 / Q-26 | F-012 | 编辑解析任务取消、优先级、generation/revision、限并发和有界队列；过期结果拒绝。F-012g 承接当前控制器生命周期回归，统一调度与完整取消证据仍开放，不冒充全部受 L3 阻塞 | 实现中 | [F-012g](./iterations/F-012g-editor-lifecycle-regression.md)、[F-012i](./iterations/F-012i-parser-lifecycle-probe.md)、[F-012j](./iterations/F-012j-latest-parser-work.md) | 2026-09-27 用户总体验收本批切片范围通过；先前历史验收保持，完整余项仍开放，不关闭整项，证据见对应唯一迭代当前结论。 F-012i 当前解析调度/销毁取消实测alpha.32 已于 2026-09-27 授权 Agent 代验通过（本片范围）；不改变生产调度策略或关闭完整责任。 2026-09-28 F-012j 已选、alpha.40 于 2026-09-28 用户总体验收本片范围通过，仅局部承接，完整余项开放。 |
 | OBL-013 | F-005 / Q-26 | F-019 | 阅读解析任务取消、优先级、限流和结果版本隔离 | 实现中 | [F-019a](./iterations/F-019a-canonical-commonmark-foundation.md)、[F-019b](./iterations/F-019b-current-document-canonical-parsing.md) | 2026-10-01 alpha.55本片获用户总体验收；2026-10-03 F-019b alpha.58当前文档管线获授权Agent代验通过，独立复核无阻断，非用户亲验；运行中取消实操未捕获，由受控测试覆盖。完整阅读任务及多消费者优先级等责任保留，OBL-021延期，不关闭整项。 |
@@ -113,7 +117,7 @@ OBL-065 的当前编辑/源码/安全源码保存链路已有 [F-013b 受托窗�
 | OBL-028 | F-007 / U-01 | F-013 | 当前 CommonMark 基础源码高亮外观接入，不因切换外观重解析；统一等宽/字号/常规字重、仅颜色语法；未来扩展外观由 OBL-069 保留 | 已验收 | [F-013a](./iterations/F-013a-source-mode-foundation.md) | 2026-09-26 用户确认 alpha.21 验收通过，见迭代第 8 节；仅关闭本片基础外观范围，未来扩展归 OBL-069，父功能未完成。 |
 | OBL-029 | F-007 / U-01 | F-021 | 独立阅读主题与 App 外观边界，不误以外壳主题替代正文主题 | 实现中 | [F-021b](./iterations/F-021b-window-reading-themes.md) | 2026-10-04 alpha.66 非离线本片由受托Agent代验通过，双轴最终复核无阻断，非用户亲验；用户禁止继续断网，稳定子项 [F-021b-offline-final](./iterations/F-021b-window-reading-themes.md#最终人工待验f-021b-offline-final2026-10-04) 留最终统一人工确认，仍未验收、不阻塞本片交付和后续。窗口恢复留 F-037、副区后续接入，完整义务不关闭。 |
 | OBL-030 | F-008 / G-14、G-16 | F-020 | 富内容威胁语料、净化/CSP/协议；任何模式首次引入富内容前复验 Electrobun 2.0.1 的新窗/下载限制，解决仍存在的缺口；1.18.1 绕过为历史证据，升级不等于修复验收 | 实现中 | [F-020a](./iterations/F-020a-rich-content-security-foundation.md)、[F-020b](./iterations/F-020b-safe-commonmark-reading.md) | 2026-10-01 alpha.56本片用户总体验收通过，既有未实操与退出未归因历史保留；2026-10-03 F-020b alpha.62安全阅读消费者局部获授权Agent代验通过，非用户亲验。不先修原生或运行下载PoC，不把静态风险当入口可利用，完整义务保持开放。 |
-| OBL-031 | F-008 / G-14、G-16 | F-022 | 本地/远程资源、SVG 等不可信资产的执行/网络/授权边界与恶意语料 | 实现中 | [F-022a](./iterations/F-022a-local-reading-images.md) | 2026-10-04 alpha.69 非离线本片受托Agent代验通过，非用户亲验，独立双轴0阻断；本地 PNG/JPEG 阅读边界局部承接，远程/SVG/其他格式、编辑消费者及完整缓存留后续；F-022a-offline-final 留最终人工，完整义务不关闭。 |
+| OBL-031 | F-008 / G-14、G-16 | F-022 | 本地/远程资源、SVG 等不可信资产的执行/网络/授权边界与恶意语料 | 实现中 | [F-022a](./iterations/F-022a-local-reading-images.md)、[F-022b](./iterations/F-022b-directory-reading-images.md) | F-022b alpha.74 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中。F-022b-offline-final 留最终人工。 2026-10-04 alpha.69 非离线本片受托Agent代验通过，非用户亲验，独立双轴0阻断；本地 PNG/JPEG 阅读边界局部承接，远程/SVG/其他格式、编辑消费者及完整缓存留后续；F-022a-offline-final 留最终人工，完整义务不关闭。 |
 | OBL-032 | F-008 / G-14、G-16 | F-023 | 原始 HTML 与未知围栏安全降级，frame/脚本禁止与恶意语料 | 实现中 | [F-023a](./iterations/F-023a-safe-reading-html.md) | 2026-10-04 alpha.70非离线本片受托Agent代验通过、非用户亲验，两路独立最终0阻断；独立完整阅读 HTML 零属性呈现局部承接，行内/资源属性/编辑/未知围栏余项开放；F-023a-offline-final 留最终人工，不断网，完整义务不关闭。 |
 | OBL-033 | F-004、F-008 / G-03、G-26、W-04 | F-029 | 根集合/树/最近项持久数据独立版本、幂等可恢复迁移、备份提交与未来版本拒绝；恢复授权，失效时按需重授权，不复制正文、不启动全量遍历 | 待承接 | — | — |
 | OBL-034 | F-003、F-008 / G-04、G-26、M-14 | F-037 | 完整 session schema 版本、幂等可恢复迁移、备份提交与未来版本拒绝；跨重启文档稳定身份与会话关联 | 待承接 | — | — |

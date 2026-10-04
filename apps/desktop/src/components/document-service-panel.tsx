@@ -626,6 +626,9 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
             {controller.getMode(snapshot.documentId) === "reading" ? (
               <ReadingView
                 readLocalImage={readLocalImage}
+                assetEpoch={
+                  workspace.folderState.assetEpochs?.[snapshot.handle]
+                }
                 theme={workspace.readingTheme}
                 controller={controller}
                 canonical={workspace.canonical}

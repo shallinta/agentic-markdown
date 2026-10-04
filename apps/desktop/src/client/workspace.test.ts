@@ -4,6 +4,32 @@ import type { WorkspaceRoot, WorkspaceNode } from "../shared/workspace";
 
 import { createFolderWorkspace } from "./workspace";
 
+test("asset epochs are metadata only and malformed epochs cannot enter state", async () => {
+  const handle = crypto.randomUUID();
+  let epoch: string = crypto.randomUUID();
+  const client = createFolderWorkspace((request) =>
+    Promise.resolve({
+      protocolVersion: 1,
+      requestId: request.requestId,
+      ok: true,
+      roots: [],
+      coveredHandles: [],
+      cacheBytes: 0,
+      assetEpochs: { [handle]: epoch },
+    })
+  );
+  await client.refresh();
+  expect(client.getSnapshot().assetEpochs?.[handle]).toBe(epoch);
+  const next = crypto.randomUUID();
+  epoch = next;
+  await client.refresh();
+  expect(client.getSnapshot().assetEpochs?.[handle]).toBe(next);
+  epoch = "not-an-epoch";
+  await client.refresh().catch(() => undefined);
+  expect(client.getSnapshot().assetEpochs?.[handle]).toBe(next);
+  client.dispose();
+});
+
 test("workspace pages incrementally merge, generation and root removal discard derived nodes", async () => {
   let root: WorkspaceRoot = {
     handle: "root",

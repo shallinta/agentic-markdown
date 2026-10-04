@@ -19,6 +19,10 @@ import {
 export interface ImageJob {
   authorization: Omit<SingleFileAuthorization, "file">;
   reference: string;
+  assetRoot?: {
+    path: string;
+    directories: SingleFileAuthorization["directories"];
+  };
 }
 export async function readLocalImage(
   job: ImageJob,
@@ -29,8 +33,11 @@ export async function readLocalImage(
   try {
     const ref = localImageReference(job.reference);
     if (ref === null) throw Error();
-    const root = dirname(job.authorization.path);
-    const target = await canonicalizeSelectedPath(`${root}/${ref}`);
+    const source = dirname(job.authorization.path);
+    const root = job.assetRoot?.path ?? source;
+    const directories =
+      job.assetRoot?.directories ?? job.authorization.directories;
+    const target = await canonicalizeSelectedPath(`${source}/${ref}`);
     const parts = relative(root, target).split("/");
     if (
       !parts.length ||
@@ -50,12 +57,10 @@ export async function readLocalImage(
     descriptors.push(fd);
     let path = "/";
     const verifyDirectory = () => {
-      const expected = job.authorization.directories.find(
-        (d) => d.path === path
-      );
+      const expected = directories.find((d) => d.path === path);
       if (
         fileFingerprint(fstatSync(fd, { bigint: true })) !==
-          expected?.fingerprint
+        expected?.fingerprint
       )
         throw Error();
     };
@@ -110,7 +115,7 @@ export async function readLocalImage(
       after.nlink !== 1n
     )
       throw Error();
-    if ((await canonicalizeSelectedPath(`${root}/${ref}`)) !== target)
+    if ((await canonicalizeSelectedPath(`${source}/${ref}`)) !== target)
       throw Error();
     const { lstat } = await import("node:fs/promises");
     if (
@@ -118,7 +123,11 @@ export async function readLocalImage(
       fileFingerprint(before)
     )
       throw Error();
-    for (const dir of [...job.authorization.directories, ...chain])
+    for (const dir of [
+      ...job.authorization.directories,
+      ...directories,
+      ...chain,
+    ])
       if (
         fileFingerprint(await lstat(dir.path, { bigint: true })) !==
         dir.fingerprint

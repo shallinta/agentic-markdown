@@ -12,7 +12,11 @@ import {
   type WorkspaceRoot,
   type WorkspaceService,
 } from "../../shared/workspace";
-import type { TrustedDocumentService, DocumentScope } from "../documents";
+import type {
+  TrustedDocumentService,
+  DocumentScope,
+  AssetScope,
+} from "../documents";
 import { DocumentPathError } from "../documents/path-authorization";
 
 import {
@@ -55,6 +59,42 @@ export function createWorkspaceService({
   cacheLimit?: number;
 }): WorkspaceService {
   const roots: Root[] = [];
+  const assetOwners = new Map<string, { root: Root; scope: AssetScope }>();
+  function bindAssets(handle: string, root: Root) {
+    if (assetOwners.get(handle)?.root === root) return;
+    const scope: AssetScope = {
+      path: root.authorization.path,
+      directories: root.authorization.directories.map((directory) => ({
+        ...directory,
+      })),
+      async verify() {
+        if (disposed || !root.live || !roots.includes(root))
+          throw new DocumentPathError("INVALID_HANDLE");
+        await verifyRoot(root.authorization);
+        if (disposed || !root.live || !roots.includes(root))
+          throw new DocumentPathError("INVALID_HANDLE");
+      },
+    };
+    assetOwners.set(handle, { root, scope });
+    documents.setAssetScope(handle, scope);
+  }
+  function syncAssets() {
+    const locations = documents.locations();
+    const active = new Set(locations.map((file) => file.handle));
+    for (const handle of assetOwners.keys())
+      if (!active.has(handle)) assetOwners.delete(handle);
+    for (const file of locations) {
+      if (assetOwners.has(file.handle)) continue;
+      for (const root of roots) {
+        const node = root.byPath.get(file.path);
+        const scanned = node && root.files.get(node.handle);
+        if (scanned?.fingerprint === file.fingerprint) {
+          bindAssets(file.handle, root);
+          break;
+        }
+      }
+    }
+  }
   let selecting = false,
     disposed = false,
     epoch = 0,
@@ -67,20 +107,24 @@ export function createWorkspaceService({
     if (workerKeys.has(value) && !cleanup.includes(value)) cleanup.push(value);
   };
   const key = (root: Root) => `${root.meta.handle}:${root.meta.generation}`;
-  const state = (id: string): WorkspaceResponse => ({
-    protocolVersion: 1,
-    requestId: id,
-    ok: true,
-    roots: roots.map((root) => ({ ...root.meta })),
-    cacheBytes,
-    queueBytes: roots.reduce((sum, root) => sum + root.queueBytes, 0),
-    coveredHandles: documents
-      .locations()
-      .filter((file) =>
-        roots.some((root) => root.byPath.get(file.path)?.kind === "file")
-      )
-      .map((file) => file.handle),
-  });
+  const state = (id: string): WorkspaceResponse => {
+    syncAssets();
+    return {
+      protocolVersion: 1,
+      requestId: id,
+      ok: true,
+      roots: roots.map((root) => ({ ...root.meta })),
+      cacheBytes,
+      assetEpochs: documents.assetEpochs(),
+      queueBytes: roots.reduce((sum, root) => sum + root.queueBytes, 0),
+      coveredHandles: documents
+        .locations()
+        .filter((file) =>
+          roots.some((root) => root.byPath.get(file.path)?.kind === "file")
+        )
+        .map((file) => file.handle),
+    };
+  };
   const failure = (
     id: string,
     error: "INVALID_REQUEST" | "INVALID_HANDLE" | "UNAVAILABLE" | "BUSY"
@@ -151,6 +195,7 @@ export function createWorkspaceService({
       cacheBytes += bytes;
       root.meta.entries = root.nodes.length;
     }
+    syncAssets();
   }
   async function drain() {
     if (running || disposed) return;
@@ -231,6 +276,9 @@ export function createWorkspaceService({
         root.scopes.clear();
       }
       roots.length = 0;
+      for (const handle of assetOwners.keys())
+        documents.setAssetScope(handle, undefined);
+      assetOwners.clear();
       return Promise.resolve(true);
     });
     wake();
@@ -292,6 +340,8 @@ export function createWorkspaceService({
             queueBytes: 0,
           };
           for (const child of covered) {
+            for (const [handle, owner] of assetOwners)
+              if (owner.root === child) bindAssets(handle, root);
             // The new parent retains every still-open derived grant's authority.
             for (const owner of child.scopes) {
               owner.root = root;
@@ -409,6 +459,7 @@ export function createWorkspaceService({
         owner
       );
       if (!response.ok || !response.snapshot) owner.root.scopes.delete(owner);
+      else bindAssets(response.snapshot.handle, owner.root);
       return response;
     },
     async dispose() {

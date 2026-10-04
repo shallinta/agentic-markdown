@@ -10,6 +10,32 @@ const success = {
   height: 2,
   identity: "a".repeat(64),
 };
+test("new authorization pools discard both negative and positive caches", async () => {
+  let allowed = false,
+    calls = 0;
+  const transport = (request: { requestId: string }) => {
+    calls++;
+    return Promise.resolve({
+      protocolVersion: 1,
+      requestId: request.requestId,
+      ...(allowed ? success : { ok: false, error: "UNAVAILABLE" }),
+    });
+  };
+  const before = createLocalImages("same-handle", transport);
+  expect((await before.load("../assets/a.png")).ok).toBe(false);
+  await before.load("../assets/a.png");
+  expect(calls).toBe(1);
+  before.dispose();
+  allowed = true;
+  const expanded = createLocalImages("same-handle", transport);
+  expect((await expanded.load("../assets/a.png")).ok).toBe(true);
+  expanded.dispose();
+  allowed = false;
+  const revoked = createLocalImages("same-handle", transport);
+  expect((await revoked.load("../assets/a.png")).ok).toBe(false);
+  expect(calls).toBe(3);
+  revoked.dispose();
+});
 
 test("generation coalesces references and preserves cached identity", async () => {
   let calls = 0;

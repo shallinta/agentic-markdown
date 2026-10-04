@@ -23,6 +23,30 @@ const request = {
     },
   },
 };
+test("asset scope is optional but any supplied scope has an exact bounded runtime schema", () => {
+  const assetRoot = {
+    path: "/tmp",
+    directories: request.job.authorization.directories,
+  };
+  const scoped = { ...request, job: { ...request.job, assetRoot } };
+  expect(validImageWorkerRequest(scoped)).toBe(true);
+  for (const invalid of [
+    null,
+    {},
+    { path: "/tmp" },
+    { ...assetRoot, extra: true },
+    { ...assetRoot, path: "/tmp/../other" },
+    { ...assetRoot, directories: [] },
+    { ...assetRoot, directories: new Array(2) },
+    { ...assetRoot, directories: [{ path: "/tmp", fingerprint: "forged" }] },
+  ])
+    expect(
+      validImageWorkerRequest({
+        ...request,
+        job: { ...request.job, assetRoot: invalid },
+      })
+    ).toBe(false);
+});
 test("malformed worker messages never reach filesystem reader", async () => {
   let reads = 0;
   const read = () => {

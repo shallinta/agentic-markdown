@@ -121,6 +121,9 @@ export type DocumentResponse = {
 );
 
 export interface DocumentService {
+  readLocalImage(
+    request: unknown
+  ): Promise<import("./local-images").LocalImageResponse>;
   checkWriteCapability(request: unknown): Promise<WriteCapabilityResponse>;
   waitForSaves(request: unknown): Promise<DocumentSavesSettledResponse>;
   save(request: unknown): Promise<SaveDocumentResponse>;

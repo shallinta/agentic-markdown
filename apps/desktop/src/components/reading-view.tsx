@@ -9,6 +9,7 @@ import {
 
 import type { createDocumentCanonical } from "@/client/document-canonical";
 import type { createDocumentController } from "@/client/documents";
+import { createLocalImages, type ImageTransport } from "@/client/local-images";
 import { rawText } from "@/client/raw-buffer";
 import {
   captureReadingNodes,
@@ -30,18 +31,40 @@ export function ReadingView({
   documentId,
   frozen,
   theme,
+  readLocalImage,
 }: {
   controller: ReturnType<typeof createDocumentController>;
   canonical: ReturnType<typeof createDocumentCanonical>;
   documentId: string;
   frozen: boolean;
   theme: ReadingThemeId;
+  readLocalImage?: ImageTransport;
 }) {
   const state = useSyncExternalStore(
     canonical.subscribe,
     canonical.getSnapshot
   );
   const editor = controller.getEditor(documentId)!;
+  const documents = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot
+  );
+  const entry =
+    documents.snapshot?.documentId === documentId
+      ? documents.snapshot
+      : undefined;
+  const handle = entry?.handle;
+  const imageGeneration = `${documentId}:${entry?.revision}:${entry?.hash}:${editor.revision}`;
+  const images = useMemo(
+    () =>
+      handle && readLocalImage
+        ? createLocalImages(handle, readLocalImage)
+        : undefined,
+    // A saved baseline or buffer revision invalidates the asset generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [handle, imageGeneration, readLocalImage]
+  );
+  useEffect(() => images?.retain(), [images]);
   const session = controller.getEditorFault(documentId);
   const raw = editor.state.field(rawText);
   const container = useRef<HTMLDivElement>(null);
@@ -66,9 +89,9 @@ export function ReadingView({
   const nodes = useMemo(
     () =>
       ready && state.status === "ready"
-        ? commonmarkContent(state.result.tree, raw)
+        ? commonmarkContent(state.result.tree, raw, images)
         : null,
-    [ready, state, raw]
+    [ready, state, raw, images]
   );
   useEffect(() => {
     if (!frozen) void canonical.request();
@@ -156,7 +179,7 @@ export function ReadingView({
         generation: state.result.requestId,
       },
       theme,
-      () => captureReadingNodes(content.current!)
+      () => captureReadingNodes(content.current!, true)
     );
     setThemeDomAudit(
       report.status === "pending"
@@ -164,6 +187,24 @@ export function ReadingView({
         : `${report.status === "passed" ? "通过" : "失败"} · ${report.count} 个节点`
     );
   }, [theme, diagnostic, ready, documentId, editor.revision, state, nodes]);
+  useEffect(() => {
+    if (!diagnostic || !ready || state.status !== "ready" || !content.current)
+      return;
+    const root = content.current;
+    const settled = (event: Event) => {
+      if (
+        !(event.target instanceof HTMLSpanElement) ||
+        event.target.className !== "reading-image"
+      )
+        return;
+      const report = auditReadingContent(root);
+      setAudit(
+        `${report.safe ? "通过" : "失败"} · ${report.elements} 个受控元素 · 无编辑 DOM · revision ${editor.revision}`
+      );
+    };
+    root.addEventListener("reading-image-settled", settled);
+    return () => root.removeEventListener("reading-image-settled", settled);
+  }, [diagnostic, ready, state, documentId, editor.revision, theme, nodes]);
   return (
     <>
       <p className="text-muted-foreground px-1 text-xs" role="status">
@@ -175,7 +216,8 @@ export function ReadingView({
           {ready &&
             state.status === "ready" &&
             ` · 解析请求 ${state.result.requestId}`}
-          {ready && ` · 主题 DOM 复用：${themeDomAudit}`}
+          {ready &&
+            ` · 主题 DOM 复用（稳定正文，排除异步图片子树）：${themeDomAudit}`}
         </p>
       )}
       <div

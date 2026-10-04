@@ -49,7 +49,7 @@ async function rememberDirectoryChain(
   }
 }
 
-async function canonicalizeSelectedPath(
+export async function canonicalizeSelectedPath(
   path: string,
   directories?: Map<string, DirectoryIdentity>
 ): Promise<string> {

@@ -107,6 +107,12 @@ test("document RPC delegates each request to the validated service boundary", as
     snapshot: null,
   };
   const documents: DocumentService = {
+    readLocalImage: () => Promise.resolve({
+      protocolVersion: 1,
+      requestId: "image-test",
+      ok: false,
+      error: "UNAVAILABLE",
+    }),
     checkWriteCapability: () =>
       Promise.resolve({
         protocolVersion: 1,

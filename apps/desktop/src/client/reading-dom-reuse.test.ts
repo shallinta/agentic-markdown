@@ -1,9 +1,34 @@
 import { expect, test } from "bun:test";
 
 import {
+  captureReadingNodes,
   createReadingDomReuseAudit,
   sameReadingNodes,
 } from "./reading-dom-reuse";
+
+test("image diagnostic excludes only resource descendants and still detects shell replacement", () => {
+  const outer = { parentElement: { closest: () => null } };
+  const inside = { parentElement: { closest: () => outer } };
+  let children = [outer, inside];
+  const root = {
+    ownerDocument: {
+      createTreeWalker: (_root: unknown, _mask: number, filter: { acceptNode(node: unknown): number } | null) => {
+        const accepted = children.filter(node => !filter || filter.acceptNode(node) === 1);
+        let index = 0;
+        return { nextNode: () => accepted[index++] ?? null };
+      },
+    },
+  } as unknown as HTMLElement;
+  const baseline = captureReadingNodes(root, true);
+  expect(baseline.length).toBe(2);
+  expect(captureReadingNodes(root).length).toBe(3);
+  children = [outer, { parentElement: { closest: () => outer } }];
+  expect(sameReadingNodes(baseline, captureReadingNodes(root, true))).toBe(true);
+  children = [{ parentElement: { closest: () => null } }, inside];
+  expect(sameReadingNodes(baseline, captureReadingNodes(root, true))).toBe(false);
+  children = [outer];
+  expect(sameReadingNodes(captureReadingNodes(root), captureReadingNodes(root, true))).toBe(true);
+});
 
 test("DOM reuse comparison checks every reference, count and order, not matching text", () => {
   const root = {},

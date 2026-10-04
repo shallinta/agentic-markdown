@@ -36,6 +36,14 @@ const worker = await Bun.build({
 });
 if (!worker.success)
   throw new AggregateError(worker.logs, "Save worker build failed");
+const imageWorker = await Bun.build({
+  entrypoints: [join(root, "src/bun/documents/image-worker.ts")],
+  outdir: output,
+  target: "bun",
+  naming: "image-worker.js",
+});
+if (!imageWorker.success)
+  throw new AggregateError(imageWorker.logs, "Image worker build failed");
 const perfWorker = await Bun.build({
   entrypoints: [join(root, "src/bun/perf-lab/worker.ts")],
   outdir: output,

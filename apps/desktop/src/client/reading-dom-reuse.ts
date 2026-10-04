@@ -1,6 +1,18 @@
 /** Diagnostic only: include text nodes as well as elements, in tree order. */
-export function captureReadingNodes(root: HTMLElement): readonly Node[] {
-  const walker = root.ownerDocument.createTreeWalker(root);
+export function captureReadingNodes(
+  root: HTMLElement,
+  excludeImageDescendants = false
+): readonly Node[] {
+  const walker = root.ownerDocument.createTreeWalker(
+    root,
+    0xffffffff,
+    excludeImageDescendants
+      ? {
+          acceptNode: (node) =>
+            node.parentElement?.closest(".reading-image") ? 2 : 1,
+        }
+      : null
+  );
   const nodes: Node[] = [root];
   let node: Node | null;
   while ((node = walker.nextNode())) nodes.push(node);

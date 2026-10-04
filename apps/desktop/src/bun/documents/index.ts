@@ -13,6 +13,7 @@ import {
   type SaveDocumentRequest,
   type WriteCapability,
 } from "../../shared/documents";
+import { validLocalImageRequest } from "../../shared/local-images";
 import { validMirror } from "../../shared/save-content";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
 
@@ -22,6 +23,7 @@ import {
   type AtomicSaveResult,
 } from "./atomic-save";
 import { createBufferMirrors, validateSaveContent } from "./buffer-mirror";
+import { createImageReader } from "./local-images";
 import {
   authorizeSingleFile,
   DocumentPathError,
@@ -134,6 +136,8 @@ export function createDocumentService({
   ) => void;
 }): DocumentService {
   const grants = new Map<string, Grant>();
+  const images = createImageReader();
+  let imageJobs = 0;
   const mirrors = createBufferMirrors();
   const capabilityJobs = new Map<string, Promise<WriteCapability>>();
   const capabilityVersions = new Map<string, number>();
@@ -367,6 +371,60 @@ export function createDocumentService({
   }
 
   return {
+    async readLocalImage(request) {
+      const valid = validLocalImageRequest(request);
+      const envelope = {
+        protocolVersion: 1 as const,
+        requestId: valid ? request.requestId : "",
+      };
+      if (!valid) return { ...envelope, ok: false, error: "INVALID_REQUEST" };
+      const grant = grants.get(request.handle),
+        generation = epoch;
+      if (!grant || disposed || saving || writeBarrier)
+        return { ...envelope, ok: false, error: "UNAVAILABLE" };
+      const identityKey = grant.identityKey;
+      if (imageJobs >= 9) return { ...envelope, ok: false, error: "BUSY" };
+      imageJobs++;
+      const stillCurrent = () =>
+        !disposed &&
+        generation === epoch &&
+        grants.get(request.handle) === grant &&
+        grant.identityKey === identityKey &&
+        !saving &&
+        !writeBarrier;
+      try {
+        const verifyCurrent = async () => {
+          const file = await open(
+            grant.path,
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+          );
+          try {
+            await verify({ ...grant, file });
+          } finally {
+            await file.close();
+          }
+          if (!stillCurrent()) throw Error();
+        };
+        await verifyCurrent();
+        const authorization = {
+          selectedPath: grant.selectedPath,
+          selectedParent: grant.selectedParent,
+          path: grant.path,
+          fingerprint: grant.fingerprint,
+          directories: grant.directories,
+        };
+        const result = await images.read({
+          authorization,
+          reference: request.reference,
+        });
+        await verifyCurrent();
+        return { ...envelope, ...result };
+      } catch {
+        return { ...envelope, ok: false, error: "UNAVAILABLE" };
+      } finally {
+        imageJobs--;
+      }
+    },
     async checkWriteCapability(request) {
       const valid = validate(request, true);
       const response = {
@@ -722,6 +780,7 @@ export function createDocumentService({
       writeBarrier = true;
       await saveTail;
       disposed = true;
+      images.dispose();
       epoch++;
       grants.clear();
       mirrors.clear();

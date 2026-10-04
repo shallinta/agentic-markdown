@@ -36,6 +36,18 @@ static int name(napi_env env,napi_value v,char *out) {
   return strlen(out)==len && !strchr(out,'/') && strcmp(out,".") && strcmp(out,"..");
 }
 static napi_value number(napi_env env,int value) { napi_value out; napi_create_int32(env,value,&out);return out; }
+static napi_value open_directory_at(napi_env env,napi_callback_info info) {
+  napi_value v[2]; int fd; char leaf[256];
+  if(!args(env,info,v,2)||!integer(env,v[0],&fd)||!name(env,v[1],leaf)) return fail(env);
+  int result=openat(fd,leaf,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
+  return result<0?fail(env):number(env,result);
+}
+static napi_value open_file_at(napi_env env,napi_callback_info info) {
+  napi_value v[2]; int fd; char leaf[256];
+  if(!args(env,info,v,2)||!integer(env,v[0],&fd)||!name(env,v[1],leaf)) return fail(env);
+  int result=openat(fd,leaf,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+  return result<0?fail(env):number(env,result);
+}
 static napi_value create(napi_env env,napi_callback_info info) {
   napi_value v[2];int fd;char leaf[256];
   if(!args(env,info,v,2)||!integer(env,v[0],&fd)||!name(env,v[1],leaf)) return fail(env);
@@ -87,8 +99,10 @@ static napi_value init(napi_env env,napi_value exports) {
     {"fullSync",NULL,sync_full,NULL,NULL,NULL,napi_default,NULL},
     {"replace",NULL,replace,NULL,NULL,NULL,napi_default,NULL},
     {"removeTemp",NULL,remove_temp,NULL,NULL,NULL,napi_default,NULL},
-    {"writeCapability",NULL,capability,NULL,NULL,NULL,napi_default,NULL}
+    {"writeCapability",NULL,capability,NULL,NULL,NULL,napi_default,NULL},
+    {"openDirectoryAt",NULL,open_directory_at,NULL,NULL,NULL,napi_default,NULL},
+    {"openFileAt",NULL,open_file_at,NULL,NULL,NULL,napi_default,NULL}
   };
-  napi_define_properties(env,exports,6,properties);return exports;
+  napi_define_properties(env,exports,8,properties);return exports;
 }
 NAPI_MODULE(NODE_GYP_MODULE_NAME,init)

@@ -29,11 +29,17 @@ import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
+import type { LocalImageRequest } from "@/shared/local-images";
 import { analyzeTextFidelity } from "@/shared/text-fidelity";
 
 import { MemoryEditor } from "./memory-editor";
 import { ReadingView } from "./reading-view";
 import { TextFidelityDetails } from "./text-fidelity-details";
+
+const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
+  electrobun.rpc
+    ? electrobun.rpc.request.readLocalImage(request, { maxRequestTime: 12000 })
+    : Promise.reject(new Error("RPC unavailable"));
 
 export function useDocumentWorkspace() {
   const [controller] = useState(() => {
@@ -314,7 +320,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               : controller.getMode(snapshot.documentId) === "source"
                 ? "基础源码模式 · 完整原文与基础高亮 · 手动保存 ⌘S · 单文件限 1 MiB"
                 : controller.getMode(snapshot.documentId) === "reading"
-                  ? "基础阅读模式 · 只读当前内存正文 · 图片、链接与 HTML 尚未接入"
+                  ? "阅读模式 · 只读当前内存正文 · 本地静态 PNG/JPEG · 远程图片默认不加载"
                   : "基础编辑模式 · 标题、粗体、斜体与行内代码 · 手动保存 ⌘S · 单文件限 1 MiB"
             : "打开本地 Markdown 文件，开始查看。文件只会加入当前窗口，不会加入其父目录。"}
         </p>
@@ -530,6 +536,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               )}
             {controller.getMode(snapshot.documentId) === "reading" ? (
               <ReadingView
+                readLocalImage={readLocalImage}
                 theme={workspace.readingTheme}
                 controller={controller}
                 canonical={workspace.canonical}

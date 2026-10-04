@@ -23,6 +23,10 @@ import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      readLocalImage: {
+        params: import("./local-images").LocalImageRequest;
+        response: import("./local-images").LocalImageResponse;
+      };
       perfLabStatus: {
         params: Record<string, never>;
         response: { enabled: boolean; autorun: boolean };

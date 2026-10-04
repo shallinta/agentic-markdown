@@ -65,6 +65,7 @@ export function createMainWindowRPC({
         selectDocument: (request) => documents.select(request),
         cancelDocument: (request) => documents.cancel(request),
         readDocument: (request) => documents.read(request),
+        readLocalImage: (request) => documents.readLocalImage(request),
         releaseDocument: (request) => documents.release(request),
         updateMode: () => updater.getUpdateModeSetting(),
         setUpdateMode: async ({ mode }) => {

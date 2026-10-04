@@ -1,13 +1,33 @@
 import { createElement, type ReactNode } from "react";
 
 import type { parseCanonicalMarkdown } from "../client/canonical-parser";
+import type { LocalImages } from "../client/local-images";
+import { ReadingImage } from "../components/reading-image";
+import { MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS } from "../shared/local-images";
 
 type Tree = ReturnType<typeof parseCanonicalMarkdown>;
 type Node = Tree | Tree["children"][number];
 
 /** No HTML input API, arbitrary props, URL attributes or resource-bearing elements. */
-export function commonmarkContent(tree: Tree, source: string): ReactNode {
+export function commonmarkContent(
+  tree: Tree,
+  source: string,
+  images?: LocalImages
+): ReactNode {
   let work = 0;
+  let definitionWork = 0;
+  const definitions = new Map<string, string>();
+  function collect(node: Node, depth = 0) {
+    if (++definitionWork > 100000 || depth > 128)
+      throw Error("Presentation budget");
+    if (
+      node.type === "definition" &&
+      !definitions.has(node.identifier.toUpperCase())
+    )
+      definitions.set(node.identifier.toUpperCase(), node.url);
+    if ("children" in node)
+      for (const child of node.children) collect(child, depth + 1);
+  }
   const raw = (node: Node) => {
     const from = node.position?.start.offset,
       to = node.position?.end.offset;
@@ -98,6 +118,21 @@ export function commonmarkContent(tree: Tree, source: string): ReactNode {
         );
       case "image":
       case "imageReference":
+        if (images) {
+          const reference =
+            node.type === "image"
+              ? node.url
+              : definitions.get(node.identifier.toUpperCase());
+          if (reference !== undefined)
+            return (
+              <ReadingImage
+                key={key}
+                reference={reference}
+                alt={node.alt || ""}
+                images={images}
+              />
+            );
+        }
         return (
           <span key={key} className="text-muted-foreground">
             [图片尚未加载：{node.alt || "无替代文字"}]
@@ -137,6 +172,7 @@ export function commonmarkContent(tree: Tree, source: string): ReactNode {
     }
   };
   try {
+    if (images) collect(tree);
     return tree.children.map((node, index) => {
       if (node.type === "definition") return null;
       raw(node);
@@ -180,6 +216,7 @@ const tags = new Set([
   "hr",
   "span",
   "pre",
+  "img",
 ]);
 const classes: Record<string, readonly string[]> = {
   p: ["my-3 leading-7", "text-muted-foreground text-xs"],
@@ -198,7 +235,11 @@ const classes: Record<string, readonly string[]> = {
     "break-words whitespace-pre-wrap",
   ],
   hr: ["my-5 w-full border-t"],
-  span: ["underline decoration-dotted", "text-muted-foreground"],
+  span: [
+    "underline decoration-dotted",
+    "text-muted-foreground",
+    "reading-image",
+  ],
   div: ["bg-muted my-4 rounded p-3"],
   pre: [
     "font-mono break-words whitespace-pre-wrap",
@@ -210,6 +251,31 @@ export function isControlledReadingElement(element: {
   localName: string;
   attributes: Iterable<{ name: string; value: string }>;
 }): boolean {
+  if (element.localName === "img") {
+    const attributes = new Map(
+      [...element.attributes].map(({ name, value }) => [name, value])
+    );
+    const width = Number(attributes.get("width")),
+      height = Number(attributes.get("height"));
+    const src = attributes.get("src") ?? "";
+    return (
+      element.namespaceURI === "http://www.w3.org/1999/xhtml" &&
+      [...attributes.keys()].every((name) =>
+        ["src", "alt", "width", "height", "decoding", "draggable"].includes(
+          name
+        )
+      ) &&
+      attributes.get("decoding") === "async" &&
+      attributes.get("draggable") === "false" &&
+      Number.isSafeInteger(width) &&
+      width > 0 &&
+      Number.isSafeInteger(height) &&
+      height > 0 &&
+      width * height <= MAX_IMAGE_PIXELS &&
+      src.length <= Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 23 &&
+      /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(src)
+    );
+  }
   return (
     element.namespaceURI === "http://www.w3.org/1999/xhtml" &&
     tags.has(element.localName) &&

@@ -123,6 +123,7 @@ export type DocumentResponse = {
 );
 
 export interface DocumentService {
+  observe(request: unknown): Promise<{ ok: boolean; requestId: string }>;
   readLocalImage(
     request: unknown
   ): Promise<import("./local-images").LocalImageResponse>;

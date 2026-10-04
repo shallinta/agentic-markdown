@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "exports": {
+    "./sidebar-layout": "./src/sidebar-layout.ts",
     "./server": "./src/server/index.ts"
   }
 }

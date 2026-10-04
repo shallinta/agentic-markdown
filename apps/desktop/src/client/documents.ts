@@ -20,6 +20,7 @@ import { validMirror } from "../shared/save-content";
 import { isTextFidelity } from "../shared/text-fidelity";
 import type { WorkspaceOpenRequest } from "../shared/workspace";
 
+import { createDocumentObservation } from "./document-observation";
 import {
   editorFaultSession,
   type EditorFaultSession,
@@ -38,6 +39,7 @@ import { createRawEditorState, rawText } from "./raw-buffer";
 import { incrementalSave } from "./save-channel";
 
 export interface DocumentTransport {
+  observeDocument?(request: import("../shared/document-observation").ObservationRequest): Promise<unknown>;
   openWorkspaceDocument?(request: WorkspaceOpenRequest): Promise<unknown>;
   checkDocumentWriteCapability?(
     request: DocumentHandleRequest
@@ -326,6 +328,8 @@ export function createDocumentController(
         editor.state.field(rawText) !== baseline.text)
     );
   }
+  const observation = createDocumentObservation(transport.observeDocument ? request => transport.observeDocument!(request) : undefined, () => publish({ ...state }));
+  const needsDiscard = (documentId: string) => isDirty(documentId) || observation.atRisk(documentId);
   function beginDiscard() {
     if (state.frozen || state.busy || !canLeaveEditor()) return false;
     publish({ ...state, frozen: true });
@@ -343,13 +347,13 @@ export function createDocumentController(
   }
   function protect(ids: string[], action: () => void | Promise<void>) {
     if (state.frozen || !canLeaveEditor()) return;
-    if (!saveDrainRequired && !saving.size && !ids.some(isDirty))
+    if (!saveDrainRequired && !saving.size && !ids.some(needsDiscard))
       return action();
     if (!beginDiscard()) return;
     return (async () => {
       try {
         await waitForSaves();
-        const dirtyIds = ids.filter(isDirty);
+        const dirtyIds = ids.filter(needsDiscard);
         const name =
           dirtyIds.length === 1
             ? state.tabs.find((tab) => tab.documentId === dirtyIds[0])?.fileName
@@ -358,8 +362,8 @@ export function createDocumentController(
           !dirtyIds.length ||
           (await confirmDiscard(
             name
-              ? `是否放弃“${name}”的未保存变更？放弃后无法恢复。`
-              : "是否放弃全部未保存变更？放弃后无法恢复。"
+              ? `是否放弃“${name}”的未保存变更或尚未接受外部变化的内存内容？放弃后无法恢复。`
+              : "是否放弃全部未保存变更或尚未接受外部变化的内存内容？放弃后无法恢复。"
           ))
         )
           await action();
@@ -382,6 +386,7 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
+    const previousTabs = state.tabs;
     const previousId = state.snapshot?.documentId;
     const nextId = next.snapshot?.documentId;
     // Capture before subscribers can invalidate/unmount the current reading DOM.
@@ -409,6 +414,7 @@ export function createDocumentController(
       }
     }
     state = next;
+    if (previousTabs !== next.tabs) observation.sync(next.tabs);
     listeners.forEach((listener) => listener());
   }
   async function release(handle: string) {
@@ -505,10 +511,11 @@ export function createDocumentController(
           locationKey(tab) === locationKey(snapshot) &&
           tab.documentId !== snapshot.documentId
       );
-      if (replaced && isDirty(replaced.documentId)) {
+      if (replaced) {
+        observation.replaced(replaced.documentId);
         publish({ ...state, frozen: true });
         const approved = await confirmDiscard(
-          "文件已被替换。是否放弃旧文档的未保存变更并打开新文件？"
+          "文件已被替换。是否放弃旧文档的未保存变更或内存内容并打开新文件？"
         );
         if (!approved || current !== generation) {
           if (!state.entries.some((entry) => entry.handle === snapshot.handle))
@@ -531,6 +538,7 @@ export function createDocumentController(
         uncertain.delete(replaced.documentId);
       }
       if (!select || !existing) {
+        observation.accept(active.documentId);
         saveResults.delete(active.documentId);
         uncertain.delete(active.documentId);
         scrollSnapshots.delete(active.documentId);
@@ -966,6 +974,7 @@ export function createDocumentController(
         }
       ),
     dispose: () => {
+      observation.dispose();
       if (saving.size || saveDrainRequired) {
         void waitForSaves()
           .then(clear)
@@ -973,6 +982,11 @@ export function createDocumentController(
       } else clear();
     },
     isDirty,
+    hasDiscardable: () => state.tabs.some(tab => needsDiscard(tab.documentId)),
+    externalStatus: observation.status,
+    externalMessage: observation.message,
+    applyExternalObservation: observation.apply,
+    refreshExternalObservations: observation.refresh,
     hasDirty: () => state.tabs.some((tab) => isDirty(tab.documentId)),
     waitForSaves,
     hasSaves: () => saving.size > 0,

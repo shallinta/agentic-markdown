@@ -3,6 +3,7 @@ import { constants, watch, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
+import { validObservationRequest, type ObservationBinding, type ObservationEvent } from "../../shared/document-observation";
 import {
   DOCUMENT_PROTOCOL_VERSION,
   MAX_DOCUMENT_BYTES,
@@ -24,6 +25,8 @@ import {
 } from "./atomic-save";
 import { createBufferMirrors, validateSaveContent } from "./buffer-mirror";
 import { createImageReader } from "./local-images";
+import { createObservationQueue } from "./observation-queue";
+import { observeFile } from "./observe-file";
 import {
   authorizeSingleFile,
   DocumentPathError,
@@ -151,6 +154,8 @@ export function createDocumentService({
   write = atomicSave,
   capability: checkCapability = checkWriteCapability,
   onCapabilityChanged = () => undefined,
+  onExternalChanged = () => undefined,
+  probe = observeFile,
   onTiming,
   imageReader,
 }: {
@@ -160,6 +165,8 @@ export function createDocumentService({
   write?: (input: AtomicSaveInput) => Promise<AtomicSaveResult>;
   capability?: typeof checkWriteCapability;
   onCapabilityChanged?: (handle: string) => void;
+  onExternalChanged?: (event: ObservationEvent) => void;
+  probe?: typeof observeFile;
   imageReader?: Pick<ReturnType<typeof createImageReader>, "read" | "dispose">;
   onTiming?: (
     phase: "pickerMs" | "authorizeMs" | "diskReadMs" | "decodeAnalyzeMs",
@@ -189,6 +196,34 @@ export function createDocumentService({
     })();
   };
   const grants = new Map<string, Grant>();
+  const observations = new Map<string, ObservationBinding & { last?: string }>();
+  const observationEpochs = new Map<string, { epoch: number; token: string; active: boolean }>();
+  const commits = new Map<string, { token: string; fingerprint: string; revision: number; hash: string }>();
+  let observationGeneration = 0;
+  const observationQueue = createObservationQueue(async handle => {
+    const binding = observations.get(handle), grant = grants.get(handle);
+    if (!binding || !grant) return;
+    const identity = identities.get(grant.identityKey);
+    if (identity?.documentId !== binding.documentId || identity.hash !== binding.hash || identity.revision !== binding.revision) return;
+    const fingerprint = grant.fingerprint, commit = commits.get(identity.documentId);
+    const live = () => !disposed && !saving && observations.get(handle) === binding && grants.get(handle) === grant && grant.fingerprint === fingerprint && identities.get(grant.identityKey) === identity;
+    const checked = await probe({ ...grant }, identity.hash, live).catch(() => ({ status: "unavailable" as const, hash: undefined, fingerprint: undefined }));
+    if (!live()) { observationQueue.hint(handle); return; }
+    // A recorded durable transaction is only an echo after actual identity/hash verification.
+    const selfEcho = commit && commits.get(identity.documentId)?.token === commit.token && commit.revision === identity.revision && checked.hash === commit.hash && checked.fingerprint === commit.fingerprint;
+    const status = selfEcho ? "unchanged" : checked.status;
+    if (binding.last === status) return;
+    binding.last = status;
+    const { last: _last, ...captured } = binding;
+    void _last;
+    try { onExternalChanged({ ...captured, generation: ++observationGeneration, status }); }
+    catch { binding.last = undefined; }
+  }, () => !saving && !writeBarrier && !disposed);
+  const forgetObservation = (handle: string) => { observations.delete(handle); observationQueue.remove(handle); };
+  const releaseObservation = (handle: string) => {
+    forgetObservation(handle); observationEpochs.delete(handle);
+    for (const id of commits.keys()) if (![...grants.values()].some(grant => identities.get(grant.identityKey)?.documentId === id)) commits.delete(id);
+  };
   const images = imageReader ?? createImageReader();
   let imageJobs = 0;
   const mirrors = createBufferMirrors();
@@ -209,6 +244,7 @@ export function createDocumentService({
     capabilityVersions.set(grant.handle, ++capabilityVersion);
     const attached: FSWatcher[] = [];
     const hint = () => {
+      observationQueue.hint(grant.handle);
       capabilityVersions.set(grant.handle, ++capabilityVersion);
       if (hints.has(grant.handle)) return;
       hints.set(
@@ -425,6 +461,26 @@ export function createDocumentService({
   }
 
   return {
+    observe(request) {
+      if (!validObservationRequest(request)) return Promise.resolve({ ok: false, requestId: "" });
+      const { active, requestId, ...binding } = request;
+      const grant = grants.get(binding.handle), identity = grant && identities.get(grant.identityKey);
+      if (disposed || !grant) return Promise.resolve({ ok: false, requestId });
+      const prior = observationEpochs.get(binding.handle);
+      if (prior && (binding.watchEpoch < prior.epoch || (binding.watchEpoch === prior.epoch && (binding.watchToken !== prior.token || (!prior.active && active))))) return Promise.resolve({ ok: false, requestId });
+      if (!active) {
+        observationEpochs.set(binding.handle, { epoch: binding.watchEpoch, token: binding.watchToken, active: false });
+        forgetObservation(binding.handle);
+        return Promise.resolve({ ok: true, requestId });
+      }
+      if (disposed || !grant || identity?.documentId !== binding.documentId || identity.revision !== binding.revision || identity.hash !== binding.hash) return Promise.resolve({ ok: false, requestId });
+      observationEpochs.set(binding.handle, { epoch: binding.watchEpoch, token: binding.watchToken, active: true });
+      const old = observations.get(binding.handle);
+      if (old?.watchEpoch !== binding.watchEpoch || old.watchToken !== binding.watchToken || old.revision !== binding.revision || old.hash !== binding.hash) observations.set(binding.handle, binding);
+      else old.last = undefined; // An explicit retry must report a freshly verified state, not only its ACK.
+      observationQueue.add(binding.handle);
+      return Promise.resolve({ ok: true, requestId });
+    },
     locations: () =>
       [...grants.values()].map((grant) => ({
         handle: grant.handle,
@@ -450,6 +506,7 @@ export function createDocumentService({
       for (const [handle, grant] of grants)
         if (grant.scope === scope) {
           grants.delete(handle);
+          releaseObservation(handle);
           mirrors.release(handle);
           unwatch(handle);
           if (running?.handle === handle) cancel(running);
@@ -760,12 +817,14 @@ export function createDocumentService({
         };
         identities.delete(oldKey);
         identities.set(newKey, nextIdentity);
+        commits.set(identity.documentId, { token: randomUUID(), fingerprint: written.fingerprint, revision: nextIdentity.revision, hash: written.hash });
         for (const owned of grants.values())
           if (owned.identityKey === oldKey) {
             owned.fingerprint = written.fingerprint;
             owned.identityKey = newKey;
             owned.assetEpoch = randomUUID();
             watchGrant(owned);
+            observationQueue.hint(owned.handle);
           }
         return {
           protocolVersion: 1,
@@ -900,6 +959,7 @@ export function createDocumentService({
           const code = codeOf(error);
           if (code === "FILE_CHANGED") {
             grants.delete(grant.handle);
+            releaseObservation(grant.handle);
             mirrors.release(grant.handle);
             unwatch(grant.handle);
             grant.scope?.release?.();
@@ -926,6 +986,7 @@ export function createDocumentService({
         return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
       grants.get(request.handle)?.scope?.release?.();
       grants.delete(request.handle);
+      releaseObservation(request.handle);
       mirrors.release(request.handle);
       unwatch(request.handle);
       if (running?.handle === request.handle) cancel(running);
@@ -939,6 +1000,10 @@ export function createDocumentService({
       writeBarrier = true;
       await saveTail;
       disposed = true;
+      observationQueue.dispose();
+      observations.clear();
+      observationEpochs.clear();
+      commits.clear();
       images.dispose();
       epoch++;
       for (const grant of grants.values()) grant.scope?.release?.();

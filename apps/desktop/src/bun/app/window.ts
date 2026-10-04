@@ -41,6 +41,8 @@ async function getMainViewUrl(): Promise<string> {
 }
 
 export interface ManagedMainWindow {
+  getSidebar: WindowStatePersistence["getSidebar"];
+  saveSidebar: WindowStatePersistence["saveSidebar"];
   window: BrowserWindow;
   saveZoom: WindowStatePersistence["saveZoom"];
   flushState: WindowStatePersistence["flush"];
@@ -84,6 +86,7 @@ export async function createMainWindow({
   onWindowCreated?.(window);
 
   const statePersistence = attachWindowStates(window, {
+    sidebar: windowState.sidebar,
     isMaximized: getWindowMaximized(windowState),
     isFullScreen: getWindowFullScreen(windowState),
     zoom: savedZoom,
@@ -91,6 +94,8 @@ export async function createMainWindow({
   });
   registerMenuActions(window, executeCommand);
   return {
+    getSidebar: statePersistence.getSidebar,
+    saveSidebar: statePersistence.saveSidebar,
     window,
     saveZoom: (zoom) => statePersistence.saveZoom(zoom),
     flushState: () => statePersistence.flush(),

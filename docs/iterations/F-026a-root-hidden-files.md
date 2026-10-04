@@ -97,4 +97,6 @@ UI fixture 脚本为 `scripts/create-hidden-workspace-fixture.ts`，样本 `/var
 
 ### 正式结论（2026-10-04）
 
+Git 回执：主线已提交并推送 `9f26ab027a46af40c5c6759357eb7420baf07e66`，远端 main 经 ls-remote 核验一致，提交后当时工作树干净。下方待核验文字保留历史。
+
 独立最终 verifier 读回复核 0 阻断，主线 session `51865` 完整 lint、docs/obligations、lockfile、diff 检查均 exit 0；主线确认 F-026a alpha.76 非离线本片受托 Agent 代验通过，非用户亲验。保留 alpha.75 错误 partial、显式授权降级修复及自然 IME/实际迟回竞态未实操限制。父 F-026 尚未完整完成，OBL-008 主承接仍为 F-025、协作余项开放，`F-026a-offline-final` 留最终人工未执行；Git 待实际提交推送核验。

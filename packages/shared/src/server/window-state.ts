@@ -1,3 +1,5 @@
+import { isSidebarLayout, type SidebarLayout } from "../sidebar-layout";
+
 import { getWindowStatePath } from "./paths";
 import { createSettingsStore, isSettingsObject } from "./settings-store";
 
@@ -9,6 +11,7 @@ export interface WindowFrame {
 }
 
 export interface WindowState {
+  sidebar?: SidebarLayout;
   frame?: WindowFrame;
   isMaximized?: boolean;
   isFullScreen?: boolean;
@@ -66,6 +69,7 @@ function windowStore() {
   return createSettingsStore<WindowState>(getWindowStatePath(), (value) => {
     if (!isSettingsObject(value)) return {};
     const state: WindowState = {};
+    if (isSidebarLayout(value.sidebar)) state.sidebar = { ...value.sidebar };
     if (isWindowFrame(value.frame)) state.frame = value.frame;
     if (typeof value.isMaximized === "boolean")
       state.isMaximized = value.isMaximized;
@@ -108,4 +112,8 @@ export async function saveWindowFullScreen(
 
 export async function saveWindowZoom(zoom: number): Promise<void> {
   await updateWindowState((state) => ({ ...state, zoom }));
+}
+export async function saveWindowSidebar(sidebar: SidebarLayout): Promise<void> {
+  if (!isSidebarLayout(sidebar)) throw Error("INVALID_SIDEBAR_LAYOUT");
+  await updateWindowState((state) => ({ ...state, sidebar: { ...sidebar } }));
 }

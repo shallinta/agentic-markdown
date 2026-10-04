@@ -23,6 +23,18 @@ import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      observeDocument: { params: import("./document-observation").ObservationRequest; response: { ok: boolean; requestId: string } };
+      getSidebarLayout: {
+        params: Record<string, never>;
+        response: {
+          ok: boolean;
+          layout?: import("@agentic-markdown/shared/sidebar-layout").SidebarLayout;
+        };
+      };
+      saveSidebarLayout: {
+        params: import("@agentic-markdown/shared/sidebar-layout").SidebarLayout;
+        response: { ok: boolean };
+      };
       workspaceRequest: {
         params: import("./workspace").WorkspaceRequest;
         response: import("./workspace").WorkspaceResponse;
@@ -97,6 +109,7 @@ export interface DesktopRPCType {
     messages: {
       finishDiscard: { requestId: string };
       documentCapabilityChanged: { handle: string };
+      documentExternalChanged: import("./document-observation").ObservationEvent;
       updateStatusChanged: UpdateStatusChangedPayload;
       executeCommand: Command;
       fullScreenChanged: { fullScreen: boolean };

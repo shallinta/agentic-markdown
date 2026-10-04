@@ -113,7 +113,7 @@ export function createDiscardGuard() {
           if (current.released || participant !== target) return denied;
           const approved =
             !target.hasDirty() ||
-            (await ask("是否放弃全部未保存变更？放弃后无法恢复。"));
+            (await ask("是否放弃全部未保存变更或尚未接受外部变化的内存内容？放弃后无法恢复。"));
           if (!approved || current.released || participant !== target) {
             if (active === current) release(current.id);
             return denied;

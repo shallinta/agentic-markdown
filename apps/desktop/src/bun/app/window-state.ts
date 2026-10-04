@@ -3,8 +3,13 @@ import {
   saveWindowFullScreen,
   saveWindowMaximized,
   saveWindowZoom,
+  saveWindowSidebar,
   type WindowFrame,
 } from "@agentic-markdown/shared/server";
+import {
+  isSidebarLayout,
+  type SidebarLayout,
+} from "@agentic-markdown/shared/sidebar-layout";
 import { app, type BrowserWindow } from "electrobun/bun";
 
 const SAVE_DEBOUNCE_MS = 300;
@@ -14,6 +19,7 @@ interface WindowStatePersistenceDependencies {
   saveFullScreen(isFullScreen: boolean): Promise<void>;
   saveMaximized(isMaximized: boolean): Promise<void>;
   saveZoom(zoom: number): Promise<void>;
+  saveSidebar?(layout: SidebarLayout): Promise<void>;
 }
 
 const DEFAULT_DEPENDENCIES: WindowStatePersistenceDependencies = {
@@ -21,14 +27,18 @@ const DEFAULT_DEPENDENCIES: WindowStatePersistenceDependencies = {
   saveFullScreen: saveWindowFullScreen,
   saveMaximized: saveWindowMaximized,
   saveZoom: saveWindowZoom,
+  saveSidebar: saveWindowSidebar,
 };
 
 export interface WindowStatePersistence {
+  getSidebar(this: void): SidebarLayout | undefined;
+  saveSidebar(this: void, layout: SidebarLayout): Promise<void>;
   saveZoom(zoom: number): void;
   flush(): Promise<void>;
 }
 
 interface WindowStateOptions {
+  sidebar?: SidebarLayout;
   isMaximized?: boolean;
   isFullScreen?: boolean;
   zoom?: number;
@@ -41,6 +51,10 @@ export function createWindowStatePersistence(
   dependencies: WindowStatePersistenceDependencies = DEFAULT_DEPENDENCIES
 ): WindowStatePersistence {
   let desiredZoom = options.zoom ?? 1;
+  let sidebar = options.sidebar && { ...options.sidebar };
+  let sidebarTimer: ReturnType<typeof setTimeout> | undefined;
+  let sidebarPending = false;
+  const sidebarWaiters: { resolve(): void; reject(error: unknown): void }[] = [];
   let frameTimer: ReturnType<typeof setTimeout> | undefined;
   let zoomTimer: ReturnType<typeof setTimeout> | undefined;
   let frameWritePending = false;
@@ -70,6 +84,20 @@ export function createWindowStatePersistence(
     zoomWritePending = false;
     const zoom = desiredZoom;
     enqueue(() => dependencies.saveZoom(zoom));
+  };
+  const persistSidebar = (): void => {
+    sidebarPending = false;
+    const value = { ...sidebar! },
+      waiters = sidebarWaiters.splice(0);
+    enqueue(async () => {
+      try {
+        await (dependencies.saveSidebar ?? saveWindowSidebar)(value);
+        waiters.forEach((waiter) => waiter.resolve());
+      } catch (error) {
+        waiters.forEach((waiter) => waiter.reject(error));
+        throw error;
+      }
+    });
   };
 
   const scheduleFrameSave = (): void => {
@@ -105,6 +133,18 @@ export function createWindowStatePersistence(
   });
 
   return {
+    getSidebar: () => sidebar && { ...sidebar },
+    saveSidebar(layout) {
+      if (!isSidebarLayout(layout))
+        return Promise.reject(Error("INVALID_SIDEBAR_LAYOUT"));
+      sidebar = { ...layout };
+      sidebarPending = true;
+      clearTimeout(sidebarTimer);
+      sidebarTimer = setTimeout(persistSidebar, SAVE_DEBOUNCE_MS);
+      return new Promise<void>((resolve, reject) => {
+        sidebarWaiters.push({ resolve, reject });
+      });
+    },
     saveZoom(zoom) {
       desiredZoom = zoom;
       zoomWritePending = true;
@@ -114,8 +154,10 @@ export function createWindowStatePersistence(
     async flush() {
       clearTimeout(frameTimer);
       clearTimeout(zoomTimer);
+      clearTimeout(sidebarTimer);
       if (frameWritePending) persistFrame();
       if (zoomWritePending) persistZoom();
+      if (sidebarPending) persistSidebar();
       await writeQueue;
       if (writeError) {
         const error = writeError;

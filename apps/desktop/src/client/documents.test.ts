@@ -128,7 +128,7 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function setup() {
+function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
   const value = snapshot();
   const released: string[] = [];
   const cancelled: string[] = [];
@@ -149,7 +149,7 @@ function setup() {
     transport,
     released,
     cancelled,
-    controller: createDocumentController(transport),
+    controller: createDocumentController(transport, confirmDiscard),
   };
 }
 
@@ -721,7 +721,8 @@ test("version regression, identity mismatch and malformed replies are rejected",
 });
 
 test("standalone list accumulates lightweight leaves, switches by handle and deduplicates canonical location", async () => {
-  const { controller, transport, value, released } = setup();
+  const confirmations: string[] = [];
+  const { controller, transport, value, released } = setup(message => { confirmations.push(message); return Promise.resolve(true); });
   value.locationId = crypto.randomUUID();
   await controller.select();
   const second = {
@@ -744,6 +745,7 @@ test("standalone list accumulates lightweight leaves, switches by handle and ded
   await controller.select();
   expect(controller.getSnapshot().entries).toHaveLength(2);
   expect(controller.getSnapshot().entries[0]?.handle).toBe(replaced.handle);
+  expect(confirmations).toHaveLength(1);
   await controller.clear();
   expect(controller.getSnapshot().entries).toEqual([]);
   expect(released).toEqual([value.handle, replaced.handle, second.handle]);

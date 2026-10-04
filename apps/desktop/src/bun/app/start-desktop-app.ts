@@ -33,6 +33,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   let rpc: MainWindowRPC | null = null;
   const nativeFiles = createNativeFileCapabilities();
   const documents = createDocumentService({
+    onExternalChanged: event => rpc?.send.documentExternalChanged(event),
     pickFile: () => nativeFiles.pickFile(),
     onCapabilityChanged: (handle) =>
       rpc?.send.documentCapabilityChanged({ handle }),
@@ -122,6 +123,13 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     });
     await locale.initialize();
     rpc = createMainWindowRPC({
+      sidebar: {
+        get: () => mainWindow?.getSidebar(),
+        save: (layout) =>
+          mainWindow
+            ? mainWindow.saveSidebar(layout)
+            : Promise.reject(Error("WINDOW_NOT_READY")),
+      },
       documents,
       workspace,
       executeCommand: (command) => executeCommand(command, getMainWindow()),

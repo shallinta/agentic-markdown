@@ -24,6 +24,52 @@ function createDependencies() {
   } as never;
 }
 
+test("sidebar RPC validates exact metadata and waits for persistence acknowledgement", async () => {
+  let writes = 0;
+  const deps = {
+    ...(createDependencies() as object),
+    sidebar: {
+      get: () => ({ visible: false, expandedWidth: 340 }),
+      save: () => {
+        writes++;
+        return Promise.resolve();
+      },
+    },
+  };
+  const rpc = createMainWindowRPC(deps as never) as unknown as {
+    handlers: {
+      requests: {
+        getSidebarLayout(value: unknown): unknown;
+        saveSidebarLayout(value: unknown): Promise<unknown>;
+      };
+    };
+  };
+  const handlers = rpc.handlers.requests;
+  expect(handlers.getSidebarLayout({})).toEqual({
+    ok: true,
+    layout: { visible: false, expandedWidth: 340 },
+  });
+  expect(handlers.getSidebarLayout({ path: "no" })).toEqual({ ok: false });
+  for (const value of [
+    null,
+    [],
+    {},
+    { visible: true, expandedWidth: 0 },
+    { visible: true, expandedWidth: Infinity },
+    { visible: true, expandedWidth: 300, path: "no" },
+  ])
+    expect(await handlers.saveSidebarLayout(value)).toEqual({ ok: false });
+  expect(writes).toBe(0);
+  expect(
+    await handlers.saveSidebarLayout({ visible: true, expandedWidth: 300 })
+  ).toEqual({ ok: true });
+  expect(writes).toBe(1);
+  deps.sidebar.save = () => Promise.reject(Error());
+  expect(
+    await handlers.saveSidebarLayout({ visible: false, expandedWidth: 300 })
+  ).toEqual({ ok: false });
+});
+
 test("command availability RPC validates state before updating native menu", () => {
   registerMenuActions({} as never, () => undefined);
   const rpc = createMainWindowRPC(createDependencies()) as unknown as {
@@ -108,6 +154,7 @@ test("document RPC delegates each request to the validated service boundary", as
     snapshot: null,
   };
   const documents: DocumentService = {
+    observe: () => Promise.resolve({ ok: true, requestId: "" }),
     readLocalImage: () =>
       Promise.resolve({
         protocolVersion: 1,

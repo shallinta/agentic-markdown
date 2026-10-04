@@ -1,3 +1,7 @@
+import {
+  isSidebarLayout,
+  type SidebarLayout,
+} from "@agentic-markdown/shared/sidebar-layout";
 import { BrowserView, Utils, type BrowserWindow } from "electrobun/bun";
 
 import type { Command } from "../../shared/commands";
@@ -13,6 +17,10 @@ export type MainWindowRPC = ReturnType<
 >;
 
 export interface MainWindowRPCDependencies {
+  sidebar?: {
+    get(): SidebarLayout | undefined;
+    save(layout: SidebarLayout): Promise<void>;
+  };
   documents: DocumentService;
   workspace?: WorkspaceService;
   executeCommand: (command: Command) => void;
@@ -25,6 +33,7 @@ const MAX_REQUEST_TIME_MS = 5 * 60_000 + 10_000;
 
 export function createMainWindowRPC({
   documents,
+  sidebar,
   workspace,
   executeCommand,
   getMainWindow,
@@ -42,6 +51,26 @@ export function createMainWindowRPC({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        getSidebarLayout: (request) => {
+          if (
+            !request ||
+            typeof request !== "object" ||
+            Array.isArray(request) ||
+            Object.keys(request).length ||
+            !sidebar
+          )
+            return { ok: false };
+          return { ok: true, layout: sidebar.get() };
+        },
+        saveSidebarLayout: async (request) => {
+          if (!sidebar || !isSidebarLayout(request)) return { ok: false };
+          try {
+            await sidebar.save(request);
+            return { ok: true };
+          } catch {
+            return { ok: false };
+          }
+        },
         workspaceRequest: (request) =>
           workspace
             ? workspace.request(request)
@@ -81,6 +110,7 @@ export function createMainWindowRPC({
         },
         checkDocumentWriteCapability: (request) =>
           documents.checkWriteCapability(request),
+        observeDocument: request => documents.observe(request),
         saveDocument: (request) => documents.save(request),
         waitForDocumentSaves: (request) => documents.waitForSaves(request),
         selectDocument: (request) => documents.select(request),

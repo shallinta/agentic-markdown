@@ -8,6 +8,7 @@ import {
   loadWindowState,
   saveWindowFrame,
   saveWindowZoom,
+  saveWindowSidebar,
 } from "./window-state";
 
 const ORIGINAL_APP_HOME = process.env.AGENTIC_MARKDOWN_HOME;
@@ -29,6 +30,28 @@ async function useTemporaryAppHome(): Promise<void> {
 }
 
 describe("window state persistence", () => {
+  test("sidebar merges atomically with window fields and rejects invalid metadata", async () => {
+    await useTemporaryAppHome();
+    const frame = { x: 1, y: 2, width: 900, height: 700 };
+    await Promise.all([
+      saveWindowFrame(frame),
+      saveWindowZoom(1.5),
+      saveWindowSidebar({ visible: false, expandedWidth: 370 }),
+    ]);
+    expect(await loadWindowState()).toEqual({
+      frame,
+      zoom: 1.5,
+      isMaximized: false,
+      isFullScreen: false,
+      sidebar: { visible: false, expandedWidth: 370 },
+    });
+    // Bun's async rejects matcher is declared void.
+    // eslint-disable-next-line @typescript-eslint/await-thenable
+    await expect(
+      saveWindowSidebar({ visible: true, expandedWidth: NaN })
+    ).rejects.toThrow();
+    expect((await loadWindowState()).sidebar?.expandedWidth).toBe(370);
+  });
   test("treats malformed persisted JSON as empty state", async () => {
     await useTemporaryAppHome();
     await Bun.write(getWindowStatePath(), "{not-json");

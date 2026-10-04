@@ -43,11 +43,12 @@ const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
     ? electrobun.rpc.request.readLocalImage(request, { maxRequestTime: 12000 })
     : Promise.reject(new Error("RPC unavailable"));
 
-export function useDocumentWorkspace() {
+export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   const [controller] = useState(() => {
     const rpc = electrobun.rpc;
     const unavailable = () => Promise.reject(new Error("RPC unavailable"));
     const transport: DocumentTransport = {
+      observeDocument: request => rpc ? rpc.request.observeDocument(request, { maxRequestTime: 4000 }) : unavailable(),
       openWorkspaceDocument: (request) =>
         rpc ? rpc.request.openWorkspaceDocument(request) : unavailable(),
       checkDocumentWriteCapability: (request) =>
@@ -196,8 +197,10 @@ export function useDocumentWorkspace() {
   useEffect(() => folders.subscribe(notifyCommands), [folders, notifyCommands]);
   useEffect(
     () =>
-      discardGuard.register(canonicalDiscardParticipant(controller, canonical)),
-    [controller, canonical]
+      discardGuard.register(
+        canonicalDiscardParticipant(controller, canonical, beforeDiscard, controller.hasDiscardable)
+      ),
+    [controller, canonical, beforeDiscard]
   );
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) =>
@@ -214,6 +217,7 @@ export function useDocumentWorkspace() {
   useEffect(() => {
     const refresh = () => {
       void controller.refreshWriteCapability();
+      controller.refreshExternalObservations();
     };
     const changed = (value: unknown) => {
       if (
@@ -226,11 +230,13 @@ export function useDocumentWorkspace() {
         void controller.refreshWriteCapability(value.handle, true);
     };
     electrobun.rpc?.addMessageListener("documentCapabilityChanged", changed);
+    electrobun.rpc?.addMessageListener("documentExternalChanged", controller.applyExternalObservation);
     window.addEventListener("focus", refresh);
-    const timer = setInterval(refresh, 3000);
+    const timer = setInterval(() => { void controller.refreshWriteCapability(); }, 3000);
     return () => {
       clearInterval(timer);
       window.removeEventListener("focus", refresh);
+      electrobun.rpc?.removeMessageListener("documentExternalChanged", controller.applyExternalObservation);
       electrobun.rpc?.removeMessageListener(
         "documentCapabilityChanged",
         changed
@@ -558,6 +564,9 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         <p className="text-destructive text-sm" role="alert">
           {state.error}
         </p>
+      )}
+      {snapshot && controller.externalMessage(snapshot.documentId) && (
+        <p role="status" className="text-muted-foreground text-sm">{controller.externalMessage(snapshot.documentId)}</p>
       )}
       {state.stale && (
         <p className="text-sm">

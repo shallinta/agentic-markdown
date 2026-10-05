@@ -1,6 +1,54 @@
 # AGENTS.md
 
-## 当前推进：F-028b 内部候选接受与结果确认（2026-10-05）
+## 当前推进：F-026c 统一多根文件树（2026-10-05）
+
+正式结论：F-026c alpha.92 非离线本片已通过。用户自然Space必要路径亲验通过，其余为受托Agent代验；最终独立verifier 0剩余阻断，复跑18 tests / 168 assertions / 4文件 / 213毫秒及检查通过，主线确认正式通过。Git待主线实际执行，不预写成功。父F-026、完整义务、F-026c-offline-final及已记录未实操边界保持开放，历史候选/失败记录不删除。
+
+最新用户亲验：alpha.92 点击目录名后直接自然 Space，正文无变化、文件无变化、目录无变化；必要自然Space复验已通过。结合其他Agent代验，本片非离线验收完成候选，待最终verifier确认；尚不写整片最终通过或Git成功。仅该自然路径为用户亲验，其他为受托代验；自然IME、只读新路径等未实操边界、完整父功能/义务与最终离线人工保持开放。下方“等待自然Space”现为历史。
+
+当前待用户必要复验：独立最终verifier未发现代码阻断，但自然键盘Space已明确为必要复验，不能降为可选；F-026c仍未整体验收、不得Git。主线已重启同alpha.92包（exec38227 / PID82645），加入alpha/off展开，cover108字节clean唯一编辑标签且编辑器焦点，树cover selected、section折叠、诊断停止无记录、侧栏26.4。保留该真实现场，等待用户点击alpha目录名后自然Space；不保存或代写用户结论。主线typecheck、全lint、文档/义务及diff检查均通过。下一推荐F-027b仅规划，不实施；下方无运行现场是前次正常退出时的历史。
+
+alpha.92 收尾补证：源码范围选择后，隐藏按钮鼠标/Space/Enter切换保持正文clean及按钮焦点；重扫按钮保留焦点，Space/Enter后AX无变化，不据此断言每次generation变更。same/cover往返恢复范围，回编辑仍同选区clean；两clean标签下⌘Q正常退出，PID81870不存在，cover磁盘hash原样。当前无alpha.92运行现场；自然IME、用户自然键盘及只读新路径未复验，保留限制，整片待独立最终判断，未自批、不得Git。下方此前“尚未退出”保留为历史。
+
+alpha.92 当前检查点：本机 alpha.91 已证实树获得焦点时 DOM 选区仍留在同一 editor；窄适配仅释放受控可编辑 DOM 选区，保护输入法/冻结/只读且不改模型。alpha.92（hash `ym1df8795dlv`、exec1792 / PID81870）真实目录名→Space 保持根焦点及 cover clean；编辑模式范围选区跨树/标签恢复、准确替换、撤销/重做再撤销回 clean，以及源码模式同范围往返均有局部实证。当前 alpha 展开/off，cover 源码 clean 且范围保留，same 另一 clean 标签，未保存；尚未 alpha.92 退出或用户自然键盘复验，独立最终复核待结论，整片未验收、不得 Git。alpha.91 clean 文档已正常退出、PID80857 消失；详细版本/测试/失败边界见唯一迭代。以下均保留历史，不代表当前运行现场。
+
+alpha.90 最新失败检查点：主线构建并实测目录文字点击后 Space，cover 由 clean 变 dirty、焦点进入 editor，树行 mousedown 候选无效。已仅撤回该候选 WorkspaceTreeItem 组件/测试及接线，保留根按钮修复等其余 F-026c 工作，版本仍 alpha.90；下一个代码包由主线用 alpha.91。当前 alpha.90 / Bun 79772 / exec 86165 现场由主线管理，未宣布解决，未验收、不得 Git。下一步只核查 DOM selection 与原生路由、评估公开 API 最小方案，禁止继续猜测补丁；下方候选通过测试不代表运行成功。
+
+最新执行检查点：用户另已授权切新版时放弃测试空格，主线实际 super+Q 弹全部未保存确认、点击放弃后 App quit，PID 73345 消失，cover 磁盘 hash 原样。旧 trace 仅已读部分落档，未读字段随退出不可再读；当前不再保留旧 dirty 运行现场。树行主键 down 候选实现/测试进行中，未动全局 Space 或正文，仅待证试验；自然输入问题尚未确认修复，整片未验收、不得 Git。下方用户反馈与现场保留要求为当时历史。
+
+最新用户反馈：用户确认“显示隐藏文件功能正常”；另亲验鼠标点击 alpha 目录名后直接 Space，正文首行出现空格并 dirty。这是自然键盘已复现，不再仅列“工具问题待确认”；目录不展开本身符合 Space 仅选择规则，正文被改才是缺陷。主线同目录文本路径也复现正文由用户 3 空格变 4 空格，正在读取诊断。保留用户 dirty，不保存、不撤销、不退出；与已处理的根按钮路径区分，禁止全局吞 Space，F-026c 未验收、不得 Git。
+
+最新现场重建检查点（alpha.89）：旧 PID 63894 已不存在，发现另一空欢迎窗口（launcher 73037 / Bun 73041、无诊断、侧栏 20.016），原因及旧退出方式未知；旧 trace 内存不可再读，未知字段/总数不补造。该空窗口 super+Q 返回 App quit 且两进程消失，仅补本次空窗口退出证据，不覆盖旧两文档或 clean 文档退出。随后显式隔离 HOME 与 fault lab 重启同 alpha.89 包，exec 89564 / Bun PID 73345；欢迎页宽度 26.4、诊断停止无记录。已加入 alpha、打开 cover 108 字节 clean 唯一编辑标签，隐藏 on→off 后 switch 焦点、根 selected。当前 alpha 展开/off，same、cover 可见，section 折叠；保留现场供用户自然 Space 对照，不再工具 Space。未保存、未验收、不得 Git，下方旧现场为历史。
+
+06:18 后 alpha.89 最新检查点：已实际加入 `/tmp/agentic-f026c-empty.bQYDP4` 空目录，顶层根显示“扫描完成 · 没有可显示的 Markdown 文档”，Return 收起/展开保持原两标签及正文。当前 beta 展开/off、alpha 展开/on、section 折叠、空根展开 selected；.secret active 101 字节可编辑 clean，焦点编辑器，PID 63894、原停止 trace 未动。loose 期间再次显示权限确认中后恢复可编辑 clean，仅记录结果不推因。空根补证完成，普通退出仍留末尾，自然 Space 待用户；busy 竞态/失效回退仅测试证据。未保存/退出、未验收、不得 Git，下方旧现场为历史。
+
+alpha.89 最新有效节点对照：独立 loose.md 已打开为唯一 clean 编辑标签（77 字节）；选择 loose 后 beta 重扫仍保持 loose selected，焦点在重扫按钮。隐藏 off→on 保持选择/clean 文档且焦点在 switch，Return on→off 成功并保持 switch 焦点。当前 beta 展开/off、loose selected/active clean、focus switch，PID 63894；补齐普通操作的有效独立节点对照，不扩大至所有消费者。Space 未重试仍待用户，真实 busy 移焦/重入未实操；诊断未重采，仍原 alpha.89 停止 trace（前4条部分已读，总数未知）。未验收、不得 Git，下方为早先检查点。
+
+alpha.89 最新检查点：包 `/tmp/agentic-markdown-alpha89.dgInQI/Agentic Markdown-canary.app`、hash `2d8ogwd77wxqh`，PID 63894 / exec 38564。beta 的 same 被选中后坐标重扫，焦点实际保持在重扫按钮；选择回 beta 根、叶 AX 重建。独立 planner 核查本根 generation 换代使旧 handle 失效，回退根符合既定失效清理，不径称缺陷或按同路径重绑定；待以其他有效节点对照验证选择保持。当前 beta 展开/off selected、焦点 HTML、无文档或 dirty；停止 trace 仅前 4 条部分字段读回，总数与后段未知。独立 Spec 9/73、Standards 14/89 无阻断，包内 745/19380 通过不代替整体验收；Space 独立待验，未验收、不得 Git。旧 alpha.88 已重绑后正常退出，PID 62075 消失，下方为历史。
+
+alpha.88 最新指针检查点：PID 62075 仅加入 beta（两个子文件）、无打开文档或 dirty；选择 same 后坐标点击重扫仍使 beta 根 selected/focused。完整 8 条新 trace 已滚读且停止保留：root-button pointerdown/mousedown → tree-item focusin → root-button click，未见按钮 focusin；无编辑器仍复现，不支持本次按下前已预聚焦的解释，但不是确定根因、不解决 Space。当前 beta 展开/off，未改代码/版本、未验收、不得 Git；下方欢迎页及旧包状态为历史。
+
+最新切包检查点：alpha.88 `/tmp/agentic-markdown-alpha88.Ff5n4o/Agentic Markdown-canary.app`（hash `thfhqyfemf0d`）已启动，PID 62075、exec 60055；同隔离 HOME、editor fault lab 开启，真实欢迎页空树、宽度 26.4，诊断停止无记录。旧 alpha.87 已确认仅放弃 Agent 临时空格并退出，PID 53272 不存在、cover 磁盘 hash 未变；旧 4 条 trace 已完整落档，内存随退出丢弃。新包仅增加 pointerdown/mousedown 诊断，独立两轴各 4/42 无阻断；首次构建 MissingDeveloperId 失败，按已有跳过签名开关重试成功。源码/包内各 742/19353 通过，详见唯一迭代。新版 pointer 尚未实测、未修复生产、未验收、不得 Git；下一步 beta 最小复现，历史状态不当作新版实证。
+
+05:39 最新检查点：alpha.87 主线以新重扫采集替换内存 Space16，旧 Space 仅已读字段落档，未完整导出、未知字段不补造。当前完整读回的新重扫 4 条已停止（末条视口），根 focusin 早于 root-button click，但不单凭次序确定系统/应用根因，也不解释 Space。当前 alpha 收起/on、beta 展开/off 且 selected、焦点 HTML，四标签 cover dirty、另三篇 clean。未改代码/版本、未保存或退出，未验收、不得 Git；下方旧快照与现场均为历史。
+
+05:29 最新检查点：alpha.87 对 beta 重扫按钮中心坐标点击两次，均使 beta 根 selected/focused，与此前 AX 点击结果一致；独立按钮不改变根选择的约束尚未满足，原因未定，不归因工具/框架或 generation 回退。当前 alpha 收起/on、beta 展开/off 且 selected/focused、四标签 cover active dirty、Space16 停止快照保留、固定深色 26.4。仅 Phase 1 证据对照，未修改生产；不保存/退出，自然 Space 仍待用户且不重复工具路径，整片未验收、不得 Git。下方旧现场保留历史。
+
+05:19 后最新补证：beta 磁盘新增临时 rescan-0519.md 后树未立即显示，点击根重扫后出现并打开核对 clean 54 字节；关闭该 clean 标签无弹窗，再回原 cover 编辑 dirty。当前四标签保留，树选择新 rescan 叶，alpha 收起/on、beta 展开/off；该临时文件留磁盘，Space16 停止快照未动。只证明重扫后新目录状态可见，不证明 UI generation 数值、按钮焦点保持或失效焦点回退。未保存正文/退出，自然 Space 及其他剩余待验开放，未验收、不得 Git；下方旧现场保留历史。
+
+05:09 后最新补证：loose 经树切到 beta/same 再返回，XYZ 选区、临时标记和 dirty 保持，撤销/重做及再次撤销至 clean 已实证，仅限该路径。当前 active cover 编辑 dirty、另三篇 clean、焦点 cover 编辑器；树选择 loose，alpha 收起/on、beta 展开/off、固定深色 26.4，最新 Space16 停止快照未动。未保存或退出，自然 Space 及其他剩余待验开放，整片未验收、不得 Git；下方旧检查点保留历史。
+
+续接检查点（04:39 后）：当前 alpha.87 / PID 53272，路径 `/tmp/agentic-markdown-alpha87.OUBm3x/Agentic Markdown-canary.app`。多根/独立叶及侧栏显隐状态保持已有实证；一次分步 Space 重试仍使正文新增空格、焦点转入 editor，开关保持 on。当前新 Space 16 条停止快照已替换 Enter 13 条，视口末条 seq16；alpha 收起/on、beta 展开/off、loose 顶层，四标签中 active cover dirty 含本次额外空格，另三篇 clean。正文不保存、快照不清空；不再循环同一工具路径、不盲修或推断根因。真实自然键盘 Space 列必要人工确认，属于非离线待验，不并入 offline-final，也不放行整片 Git；其余待验可继续，F-026c 未验收。
+
+[F-026c](docs/iterations/F-026c-unified-workspace-tree.md) alpha.87 opt-in诊断的原 Space 16 条、首次无效 Enter 14 条、有效分步 Enter 13 条及最新分步 Space 16 条分别记录，不混用同编号或借旧序列补新字段；详细证据见唯一迭代。不是正式产品功能或生产修复。源码741/19336、包内741/19337及两轴9/71保留，capture prevented不是终态，trusted不证明自然键盘来源。Space实际目标差异及此前失焦仍待解释，完整父/OBL、离线最终人工及F-028c撤销历史待用户保持，未验收、不得Git。
+
+分步 Enter 已取得有效对照，随后仅一次分步 Space 重试复现工具路径异常；AX 仅作事前焦点检查，不能覆盖实际 trace。不再重复该路径，不修改生产交互，保留当前停止快照和未保存正文。
+
+04:59 后补证：浅色树/根按钮/选中项可辨，跟随系统当前深色画面已见但未实测系统主题动态变化；最终恢复固定深色。四标签、cover 编辑 dirty、alpha 收起/on、beta 展开/off、loose 顶层及 26.4 宽度保持，当前焦点 HTML；Space 16 条停止快照未动，未退出。重扫点击后 AX 无变化不证明 generation 换代或焦点通过，其他待验与不得 Git 保持。
+
+## 前轮：F-028b 内部候选接受与结果确认（2026-10-05）
+
+F-028b 已由主线实际提交推送 `3ef744de93d7eae34707fc9ff10441d1ed192946`，ls-remote 核验远端 main 同 SHA，当时 git status 为空。下方待 Git 状态保留为提交前历史；本片非离线内部服务受托代验范围、F-028c 待用户决定及父项/离线开放状态不变。
 
 [F-028b](docs/iterations/F-028b-external-refresh-acceptance.md) alpha.84 非离线内部服务本片经独立最终 verifier 核对 0 阻断，主线确认受托 Agent 代验通过，非用户亲验；Git 待执行。仅接受/查询并更新内存基线，不写磁盘、不等同 durable 保存；无 UI/RPC，不宣称自动刷新。无主承接/延期 OBL，完整父功能及 F-028b-offline-final 留最终人工保持开放，不断网。
 

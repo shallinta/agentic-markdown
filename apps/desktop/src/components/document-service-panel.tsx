@@ -33,6 +33,7 @@ import { PRODUCT_COMMANDS } from "@/shared/commands";
 import type { LocalImageRequest } from "@/shared/local-images";
 import { analyzeTextFidelity } from "@/shared/text-fidelity";
 
+import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
 import { ReadingView } from "./reading-view";
 import { TextFidelityDetails } from "./text-fidelity-details";
@@ -48,7 +49,10 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     const rpc = electrobun.rpc;
     const unavailable = () => Promise.reject(new Error("RPC unavailable"));
     const transport: DocumentTransport = {
-      observeDocument: request => rpc ? rpc.request.observeDocument(request, { maxRequestTime: 4000 }) : unavailable(),
+      observeDocument: (request) =>
+        rpc
+          ? rpc.request.observeDocument(request, { maxRequestTime: 4000 })
+          : unavailable(),
       openWorkspaceDocument: (request) =>
         rpc ? rpc.request.openWorkspaceDocument(request) : unavailable(),
       checkDocumentWriteCapability: (request) =>
@@ -198,7 +202,12 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   useEffect(
     () =>
       discardGuard.register(
-        canonicalDiscardParticipant(controller, canonical, beforeDiscard, controller.hasDiscardable)
+        canonicalDiscardParticipant(
+          controller,
+          canonical,
+          beforeDiscard,
+          controller.hasDiscardable
+        )
       ),
     [controller, canonical, beforeDiscard]
   );
@@ -230,13 +239,21 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         void controller.refreshWriteCapability(value.handle, true);
     };
     electrobun.rpc?.addMessageListener("documentCapabilityChanged", changed);
-    electrobun.rpc?.addMessageListener("documentExternalChanged", controller.applyExternalObservation);
+    electrobun.rpc?.addMessageListener(
+      "documentExternalChanged",
+      controller.applyExternalObservation
+    );
     window.addEventListener("focus", refresh);
-    const timer = setInterval(() => { void controller.refreshWriteCapability(); }, 3000);
+    const timer = setInterval(() => {
+      void controller.refreshWriteCapability();
+    }, 3000);
     return () => {
       clearInterval(timer);
       window.removeEventListener("focus", refresh);
-      electrobun.rpc?.removeMessageListener("documentExternalChanged", controller.applyExternalObservation);
+      electrobun.rpc?.removeMessageListener(
+        "documentExternalChanged",
+        controller.applyExternalObservation
+      );
       electrobun.rpc?.removeMessageListener(
         "documentCapabilityChanged",
         changed
@@ -262,23 +279,9 @@ type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
 export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
-  const [selected, setSelected] = useState<string | null>(null);
-  const entries = state.entries.filter(
-    (entry) =>
-      entry.explicitStandalone !== false &&
-      !(
-        workspace.folderState.coveredHandles.includes(entry.handle) &&
-        Object.values(workspace.folderState.nodes).some((nodes) =>
-          nodes.some(
-            (node) =>
-              node.kind === "file" && node.displayPath === entry.displayPath
-          )
-        )
-      )
-  );
   return (
     <nav
-      aria-label="独立 Markdown 文件"
+      aria-label="工作区文件树"
       className="flex size-full min-w-0 flex-col gap-3 px-3 pt-16 pb-4"
     >
       <div className="flex items-center justify-between gap-2">
@@ -304,7 +307,13 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         }
         folders={workspace.folders}
         state={workspace.folderState}
+        entries={state.entries}
+        activeHandle={state.snapshot?.handle}
+        openStandalone={(entry) => {
+          void controller.activate(entry);
+        }}
         disabled={!controller.canSelectFolder()}
+        standaloneDisabled={state.frozen}
         runAction={controller.runWorkspaceAction}
         open={(root, node) => {
           const existing = state.entries.find(
@@ -314,36 +323,6 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
           else void controller.openWorkspaceEntry(root, node.handle);
         }}
       />
-      {entries.length === 0 ? (
-        <p className="text-muted-foreground text-xs">打开的文件将在这里显示</p>
-      ) : (
-        <ul className="min-h-0 overflow-auto">
-          {entries.map((entry) => (
-            <li key={entry.locationId ?? entry.documentId}>
-              <button
-                disabled={state.frozen}
-                title={entry.displayPath ?? entry.fileName}
-                aria-current={
-                  state.snapshot?.handle === entry.handle ? "page" : undefined
-                }
-                className="hover:bg-muted aria-pressed:bg-muted aria-[current=page]:bg-muted w-full truncate rounded px-2 py-2 text-left text-sm disabled:opacity-50"
-                aria-pressed={selected === entry.handle}
-                onClick={() => setSelected(entry.handle)}
-                onDoubleClick={() => void controller.activate(entry)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    void controller.activate(entry);
-                  }
-                }}
-              >
-                {entry.fileName}
-                {documentCapabilitySuffix(entry.writeCapability)}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </nav>
   );
 }
@@ -448,6 +427,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         }
       ).__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__ === true && (
         <div className="flex flex-wrap gap-2" aria-label="编辑故障实验">
+          <FocusTraceLab />
           <button
             className={buttonClass}
             disabled={!snapshot || state.busy || state.frozen}
@@ -566,7 +546,9 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         </p>
       )}
       {snapshot && controller.externalMessage(snapshot.documentId) && (
-        <p role="status" className="text-muted-foreground text-sm">{controller.externalMessage(snapshot.documentId)}</p>
+        <p role="status" className="text-muted-foreground text-sm">
+          {controller.externalMessage(snapshot.documentId)}
+        </p>
       )}
       {state.stale && (
         <p className="text-sm">

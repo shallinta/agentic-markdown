@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createFolderWorkspace } from "../../client/workspace";
 import type {
   WorkspaceResponse,
   WorkspaceNode,
@@ -84,6 +85,98 @@ async function nodes(root: WorkspaceRoot) {
   }
   return result;
 }
+test("existing client rescan runs the real candidate RPC and atomically retains unchanged handles", async () => {
+  await writeFile(join(directory, "keep.md"), "keep");
+  await writeFile(join(directory, "remove.md"), "remove");
+  const client = createFolderWorkspace((value) => workspace.request(value));
+  await client.select();
+  await settle();
+  await client.refresh();
+  const root = client.getSnapshot().roots[0];
+  const initial = client.getSnapshot().nodes[root.handle];
+  const keep = initial.find((node) => node.name === "keep.md")!;
+  await rm(join(directory, "remove.md"));
+  await writeFile(join(directory, "new.md"), "new");
+  const observed: string[][] = [];
+  client.subscribe(() =>
+    observed.push(
+      client
+        .getSnapshot()
+        .nodes[root.handle].map((node) => node.name)
+        .sort()
+    )
+  );
+  await client.rescan(root.handle);
+  const current = client.getSnapshot();
+  expect(current.roots[0].generation).toBe(root.generation + 1);
+  expect(
+    current.nodes[root.handle].find((node) => node.name === "keep.md")!.handle
+  ).toBe(keep.handle);
+  expect(current.nodes[root.handle].map((node) => node.name).sort()).toEqual([
+    "keep.md",
+    "new.md",
+  ]);
+  expect(
+    observed.every(
+      (names) =>
+        JSON.stringify(names) === '["keep.md","remove.md"]' ||
+        JSON.stringify(names) === '["keep.md","new.md"]'
+    )
+  ).toBe(true);
+  expect(current.error).toBeNull();
+  client.dispose();
+});
+
+test("strict rescan RPC issues before commit, queries without replay and validates opaque fields", async () => {
+  await writeFile(join(directory, "a.md"), "a");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  await writeFile(join(directory, "b.md"), "b");
+  const prepared = good(
+    await workspace.request(request("prepareRescan", { root: root.handle }))
+  );
+  expect(prepared.operation).toBeDefined();
+  expect((await settle()).roots[0].generation).toBe(root.generation);
+  for (const extra of [
+    { operation: { session: "path", sequence: 1 } },
+    { operation: prepared.operation, root: root.handle },
+    { operation: { ...prepared.operation, sequence: 1.5 } },
+  ]) {
+    expect(
+      await workspace.request(request("acceptRescan", extra))
+    ).toMatchObject({ ok: false, error: "INVALID_REQUEST" });
+  }
+  const accepted = good(
+    await workspace.request(
+      request("acceptRescan", { operation: prepared.operation })
+    )
+  );
+  expect(accepted.receipt).toEqual({
+    status: "committed",
+    root: root.handle,
+    generation: root.generation + 1,
+  });
+  const queried = good(
+    await workspace.request(
+      request("queryRescan", { operation: prepared.operation })
+    )
+  );
+  expect(queried.receipt).toEqual(accepted.receipt);
+  expect(
+    good(
+      await workspace.request(
+        request("acceptRescan", { operation: prepared.operation })
+      )
+    ).receipt
+  ).toEqual(accepted.receipt);
+  expect((await settle()).roots[0].generation).toBe(root.generation + 1);
+  expect(
+    await workspace.request(
+      request("prepareRescan", { root: root.handle, path: directory })
+    )
+  ).toMatchObject({ ok: false, error: "INVALID_REQUEST" });
+});
+
 test("root-local open barrier includes committed document late receipt and always releases on throw", async () => {
   await workspace.dispose();
   await mkdir(join(directory, "one"));

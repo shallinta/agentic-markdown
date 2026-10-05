@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## 本片通过：F-027d 完整目录安全重扫与原子更新（2026-10-05）
+
+[F-027d](iterations/F-027d-atomic-folder-rescan.md)alpha.96非离线本片已受托Agent代验通过，最终独立verifier 0剩余阻断、主线确认，非用户亲验；源码/包内各777项及真实WK证据保留，Git待实际执行：complete根现有重扫接候选/接受，所有refresh统一完整分页暂存后原子发布；noncomplete保留恢复途径，无自动watch/正文刷新，不绕过F-028c，不新增全局编辑冻结。实际重扫、失败恢复及编辑状态回归已验证；未实操边界与alpha.95未知toast保留。OBL-005/016局部、011延期，父/离线开放。前轮F-027c已提交推送`d80171040089facd4950790814eeeb69cff34012`，远端main同SHA、当时干净；权限测试历史未归因观察保留。
+
 ## 本片通过：F-027c 内部目录候选安全接受（2026-10-05）
 
 [F-027c](iterations/F-027c-directory-candidate-acceptance.md)alpha.94 非离线内部服务本片已由受托Agent代验通过，非用户亲验；最终独立verifier 0剩余阻断、主线确认。源码/包内各767项及真实WK启动/退出smoke证据保留，Git待主线实际执行。原候选完整metadata复扫一致后同步CAS服务树并记录有界幂等回执；无RPC/UI/watch，不改打开正文/基线/历史或rescan/hidden。前端分页一致性拆至F-027d、之后再watch；OBL-005/016局部、OBL-011延期，父/离线开放。F-027b已提交推送`de027433f1d350d0a4adc0ee6086434fbde602b1`，远端main同SHA，当时干净；首轮权限红未归因观察保留。

@@ -122,6 +122,71 @@ test("save exact raw snapshot updates only baseline; edits made during save rema
   expect(controller.isDirty(baseline.documentId)).toBe(true);
 });
 
+test("metadata rescan settles saves then unfreezes before long scan and refuses failed preflight", async () => {
+  const { controller, transport, edit } = await setup();
+  edit("saved");
+  await controller.save();
+  const barrier = deferred<void>(),
+    scan = deferred<void>();
+  let settlements = 0,
+    scans = 0;
+  transport.waitForDocumentSaves = async (request) => {
+    settlements++;
+    await barrier.promise;
+    return { ...request, settled: true };
+  };
+  const operation = controller.runMetadataRescan(async () => {
+    scans++;
+    await scan.promise;
+  });
+  await waitCaptured(() => settlements === 1);
+  expect(controller.getSnapshot().frozen).toBe(true);
+  expect(scans).toBe(0);
+  barrier.resolve();
+  await waitCaptured(() => scans === 1);
+  expect(controller.getSnapshot().frozen).toBe(false);
+  edit("typing while metadata pending");
+  expect(
+    controller.isDirty(controller.getSnapshot().snapshot!.documentId)
+  ).toBe(true);
+  await controller.save();
+  expect(controller.getSnapshot().frozen).toBe(false);
+  scan.resolve();
+  await operation;
+  transport.waitForDocumentSaves = () =>
+    Promise.reject(Error("settlement unavailable"));
+  await controller.runMetadataRescan(() => {
+    scans++;
+  });
+  expect(scans).toBe(1);
+  expect(controller.getSnapshot().frozen).toBe(false);
+});
+
+test("metadata preflight rechecks composition and disposal before long action", async () => {
+  for (const dispose of [false, true]) {
+    const { controller, transport, edit } = await setup();
+    edit("saved");
+    await controller.save();
+    const gate = deferred<void>();
+    let entered = false,
+      scans = 0;
+    transport.waitForDocumentSaves = async (request) => {
+      entered = true;
+      await gate.promise;
+      return { ...request, settled: true };
+    };
+    const pending = controller.runMetadataRescan(() => {
+      scans++;
+    });
+    await waitCaptured(() => entered);
+    if (dispose) controller.dispose();
+    else controller.setInteractionCheck(() => false);
+    gate.resolve();
+    await pending;
+    expect(scans).toBe(0);
+  }
+});
+
 test("completed save restores workspace availability but mutations still await backend settlement", async () => {
   const { controller, transport, edit } = await setup();
   edit("saved");

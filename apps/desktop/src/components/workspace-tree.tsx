@@ -23,6 +23,7 @@ export function WorkspaceTree({
   disabled,
   standaloneDisabled,
   runAction,
+  runRescan,
   open,
   openStandalone,
   setHidden,
@@ -34,6 +35,7 @@ export function WorkspaceTree({
   disabled: boolean;
   standaloneDisabled: boolean;
   runAction: (action: () => void | Promise<void>) => void | Promise<void>;
+  runRescan: (action: () => void | Promise<void>) => void | Promise<void>;
   open: (root: string, node: WorkspaceNode) => void;
   openStandalone: (entry: DocumentEntry) => void;
   setHidden: (root: string, showHidden: boolean) => void;
@@ -282,7 +284,7 @@ export function WorkspaceTree({
                         disabled,
                         () => folders.getSnapshot().busy,
                         () => {
-                          void runAction(() =>
+                          void runRescan(() =>
                             folders.rescan(item.root.handle)
                           )?.catch(() => undefined);
                         }

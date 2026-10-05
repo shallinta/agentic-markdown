@@ -315,6 +315,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         disabled={!controller.canSelectFolder()}
         standaloneDisabled={state.frozen}
         runAction={controller.runWorkspaceAction}
+        runRescan={controller.runMetadataRescan}
         open={(root, node) => {
           const existing = state.entries.find(
             (entry) => entry.displayPath === node.displayPath

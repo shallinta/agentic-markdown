@@ -301,6 +301,8 @@ export function createDocumentController(
   const uncertain = new Set<string>();
   // A rejected/expired RPC does not prove the backend write has stopped.
   let saveDrainRequired = false;
+  let metadataEpoch = 0;
+  let metadataDisposed = false;
   const waitForSaves = async () => {
     await Promise.all([...saving.values()]);
     if (!saveDrainRequired) return;
@@ -636,6 +638,7 @@ export function createDocumentController(
     }
   }
   function clear() {
+    metadataEpoch++;
     ++generation;
     cancelPending();
     const previous = state.entries;
@@ -913,6 +916,15 @@ export function createDocumentController(
       // the backend barrier before changing root ownership or scan generations.
       return protect([], action);
     },
+    runMetadataRescan: async (action: () => void | Promise<void>) => {
+      if (metadataDisposed || !controller.canSelectFolder()) return;
+      const expected = metadataEpoch;
+      let ready = false;
+      // The save settlement barrier must finish and unfreeze before the long
+      // metadata task. Other workspace ownership operations retain protect().
+      await protect([], () => { ready = true; });
+      if (ready && expected === metadataEpoch && controller.canSelectFolder()) await action();
+    },
     openWorkspaceEntry: (root: string, entry: string) => {
       if (!controller.canSelectFolder() || !transport.openWorkspaceDocument)
         return;
@@ -974,6 +986,8 @@ export function createDocumentController(
         }
       ),
     dispose: () => {
+      metadataDisposed = true;
+      metadataEpoch++;
       observation.dispose();
       if (saving.size || saveDrainRequired) {
         void waitForSaves()

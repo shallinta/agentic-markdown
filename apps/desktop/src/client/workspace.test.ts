@@ -30,7 +30,7 @@ test("asset epochs are metadata only and malformed epochs cannot enter state", a
   client.dispose();
 });
 
-test("workspace pages incrementally merge, generation and root removal discard derived nodes", async () => {
+test("workspace refresh stages complete captured pages and generation changes replace derived nodes atomically", async () => {
   let root: WorkspaceRoot = {
     handle: "root",
     name: "目录",
@@ -117,15 +117,17 @@ test("refresh calls coalesce and clear fences a late state response", async () =
     release = resolve;
   });
   let calls = 0;
+  let cleared = false;
   const client = createFolderWorkspace(async (request) => {
     calls++;
+    if (request.op === "clear") cleared = true;
     if (request.op === "state") await gate;
     return {
       protocolVersion: 1,
       requestId: request.requestId,
       ok: true,
       roots: [],
-      coveredHandles: request.op === "state" ? ["stale"] : [],
+      coveredHandles: cleared ? [] : ["stale"],
       cacheBytes: 0,
     };
   });
@@ -136,7 +138,7 @@ test("refresh calls coalesce and clear fences a late state response", async () =
   release();
   await first;
   await clearing;
-  expect(calls).toBe(2);
+  expect(calls).toBe(3);
   expect(client.getSnapshot().coveredHandles).toEqual([]);
 });
 
@@ -167,5 +169,5 @@ test("invalid page metadata is rejected without caching supplied nodes", async (
   expect(await client.refresh().catch((error) => error instanceof Error)).toBe(
     true
   );
-  expect(client.getSnapshot().nodes.root).toEqual([]);
+  expect(client.getSnapshot().nodes.root).toBeUndefined();
 });

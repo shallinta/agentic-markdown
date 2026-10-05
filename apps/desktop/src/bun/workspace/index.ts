@@ -121,8 +121,8 @@ export function createWorkspaceService({
     if (workerKeys.has(value) && !cleanup.includes(value)) cleanup.push(value);
   };
   const key = (root: Root) => `${root.meta.handle}:${root.meta.generation}`;
-  const state = (id: string): WorkspaceResponse => {
-    syncAssets();
+  const state = (id: string, sync = true): WorkspaceResponse => {
+    if (sync) syncAssets();
     return {
       protocolVersion: 1,
       requestId: id,
@@ -398,6 +398,24 @@ export function createWorkspaceService({
     async request(value) {
       if (!validWorkspaceRequest(value)) return failure("", "INVALID_REQUEST");
       if (disposed) return failure(value.requestId, "UNAVAILABLE");
+      if (value.op === "prepareRescan") {
+        const candidate = await reconciliation.prepare(value.root!);
+        if (!candidate.ok)
+          return failure(
+            value.requestId,
+            candidate.reason === "BUSY" ? "BUSY" : "UNAVAILABLE"
+          );
+        const operation = reconciliation.issue(candidate.summary.token);
+        if (!operation) return failure(value.requestId, "BUSY");
+        return { ...state(value.requestId, false), operation };
+      }
+      if (value.op === "acceptRescan" || value.op === "queryRescan") {
+        const receipt =
+          value.op === "acceptRescan"
+            ? await reconciliation.accept(value.operation!)
+            : reconciliation.query(value.operation!);
+        return { ...state(value.requestId, false), receipt };
+      }
       if (value.op === "state") return state(value.requestId);
       if (value.op === "clear")
         return (await removeAll())

@@ -1,9 +1,11 @@
 import { join } from "node:path";
 
+import { createDirectoryWatch } from "./directory-watch";
 import { createScan, SCAN_QUEUE_BYTES } from "./scan";
 import { validScanRequest } from "./scan-protocol";
 
 const scans = new Map<string, ReturnType<typeof createScan>>();
+let watching: ReturnType<typeof createDirectoryWatch> | undefined;
 self.onmessage = async (event: MessageEvent<unknown>) => {
   if (!validScanRequest(event.data)) {
     const input = event.data;
@@ -19,6 +21,40 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
   }
   const { id, op, key, root, path, showHidden } = event.data;
   try {
+    if (
+      op === "watchStart" ||
+      op === "watchClose" ||
+      op === "watchTick" ||
+      op === "watchDispose"
+    ) {
+      const nativePath = join(import.meta.dir, "save-primitives.node");
+      if (op === "watchDispose") {
+        watching?.close();
+        watching = undefined;
+      } else if (op === "watchStart") {
+        watching ??= createDirectoryWatch(nativePath);
+        watching.add(key, root!, showHidden ?? false);
+      } else if (op === "watchClose") {
+        watching?.remove(key);
+        if (watching?.bytes() === 0) {
+          watching.close();
+          watching = undefined;
+        }
+      }
+      const queued = [...scans.values()].reduce(
+        (sum, scan) => sum + scan.queueBytes(),
+        0
+      );
+      const result =
+        op === "watchTick"
+          ? ((await watching?.tick(
+              Math.max(0, SCAN_QUEUE_BYTES - queued),
+              event.data.budget
+            )) ?? { roots: [], bytes: 0, queueBytes: 0 })
+          : { bytes: watching?.bytes() ?? 0 };
+      self.postMessage({ id, ok: true, result });
+      return;
+    }
     if (op === "start") {
       scans.get(key)?.close();
       if (scans.size >= 32 && !scans.has(key)) throw Error();
@@ -37,7 +73,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
     else if (op !== "next") throw Error();
     const otherBytes = [...scans].reduce(
       (sum, [other, scan]) => sum + (other === key ? 0 : scan.queueBytes()),
-      0
+      watching?.queueBytes() ?? 0
     );
     const result =
       op === "next"

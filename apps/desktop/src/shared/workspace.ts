@@ -3,6 +3,7 @@ import type { DocumentRequest, DocumentResponse } from "./documents";
 export type ScanStatus =
   "scanning" | "complete" | "partial" | "paused" | "failed";
 export interface WorkspaceRoot {
+  observation?: "establishing" | "watching" | "limited" | "unavailable";
   showHidden?: boolean;
   handle: string;
   name: string;

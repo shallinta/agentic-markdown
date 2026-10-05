@@ -1,5 +1,10 @@
 # Agentic Markdown 产品能力总账
 
+## 本片通过：F-027e 安全目录自动观察（2026-10-05）
+
+[F-027e](iterations/F-027e-descriptor-directory-watch.md) alpha.97 非离线本片经最终独立 verifier 确认 0 阻断、主线确认受托 Agent 代验通过，非用户亲验，Git 待实际执行。目录自动增删、隐藏策略、Root 身份受限/恢复及编辑状态保持已有真实 WK 证据；仅更新树，不刷新正文/基线/历史。预算与清理故障等有受控测试，EV_ERROR 仅源码分支核对、未实际注入。完整父 F-027、OBL-005/016、延期 OBL-011、F-028c 和 offline-final 开放，旧失败与未实测边界保留。前轮 F-027d 已提交推送 `a6355381d8e22a32b5bb413c3c8ad07c77e30cbc`，远端同 SHA、当时干净；下方旧检查点保留历史。
+
+
 ## 本片通过：F-027d 完整目录安全重扫与原子更新（2026-10-05）
 
 [F-027d](iterations/F-027d-atomic-folder-rescan.md)alpha.96非离线本片已受托Agent代验通过，最终独立verifier 0剩余阻断、主线确认，非用户亲验；源码/包内各777项及真实WK证据保留，Git待实际执行：complete根现有重扫接候选/接受，所有refresh统一完整分页暂存后原子发布；noncomplete保留恢复途径，无自动watch/正文刷新，不绕过F-028c，不新增全局编辑冻结。实际重扫、失败恢复及编辑状态回归已验证；未实操边界与alpha.95未知toast保留。OBL-005/016局部、011延期，父/离线开放。前轮F-027c已提交推送`d80171040089facd4950790814eeeb69cff34012`，远端main同SHA、当时干净；权限测试历史未归因观察保留。
@@ -955,8 +960,8 @@ F-010 执行边界（2026-09-22）：用户确认读取保真方案并授权推�
 | G-05 | 同文档串行写队列 | 数据正确性 | MVP；每文档有序提交、自动保存可合并、手动保存为 durable 屏障，跨文档限并发并行，基线不符不提交 | 已确认 · MVP |
 | G-06 | 原子保存 | 文档应用基线 | MVP 门禁；同目录安全 temp→按策略持久化→原子 replace，提交前复核 revision/hash，失败保留原文件且不退化为直接覆盖；当前原生路线为 Node-API，FFI 稳定后才评估 Future 实验性开关，非本轮交付 | 已确认 · MVP 门禁 |
 | G-07 | Durability / fsync 策略 | 文件安全 | MVP 分级；手动保存等强持久化才成功，自动保存原子写且可合并/批量同步，明确 written/durable；关闭不新发保存，已开始写入先收尾再按 X-23 判断；M0 benchmark 具体调用 | 已确认 · M0/MVP |
-| G-08 | 外部文件监听 | Obsidian、FSNotes、QOwnNotes | MVP；监听所有授权根/独立文件/预览文档，事件仅作提示并以 hash 复核，溢出/中断后渐进 rescan | 已确认 · MVP |
-| G-09 | watcher 去抖与自身写抑制 | 文件型 App | MVP；transaction token + expected revision/hash，短窗合并后复核；禁止固定时段无条件忽略路径事件 | 已确认 · MVP |
+| G-08 | 外部文件监听 | Obsidian、FSNotes、QOwnNotes | MVP；监听所有授权根/独立文件/预览文档，事件仅作提示并以 hash 复核，溢出/中断后渐进 rescan；F-027e alpha.97 安全目录树观察非离线局部已受托代验，不自动刷新正文，完整范围仍开放 | 已确认 · MVP；局部已验 |
+| G-09 | watcher 去抖与自身写抑制 | 文件型 App | MVP；transaction token + expected revision/hash，短窗合并后复核；禁止固定时段无条件忽略路径事件；F-027e alpha.97 目录 hint 合并/候选复核局部已代验，不代表完整正文写抑制完成 | 已确认 · MVP；局部已验 |
 | G-10 | 外部删除/重命名处理 | 文件型 App | MVP；可靠 rename 保持 `documentId` 并更新当前路径/引用，模糊则删+增且新增项获得新身份；删除后保留原 buffer 进入 missing，只能关闭、经 W-11 复制当前内容或重建原路径 | 已确认 · MVP |
 | G-11 | Dirty/Save 状态机 | 文档应用基线 | MVP；版本化表达 clean/modified/queued/writing/written/durable/conflicted/failed/missing，统一驱动标签提示及 X-23 关闭/退出判断 | 已确认 · MVP |
 | G-12 | 路径规范化与越界防护 | 安全基线 | MVP 门禁；主进程 realpath + 分量/卷语义校验，范围外 symlink 不继承授权，操作前复核目标/父目录防替换 | 已确认 · MVP 门禁 |

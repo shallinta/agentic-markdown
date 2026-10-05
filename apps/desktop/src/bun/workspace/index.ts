@@ -11,6 +11,7 @@ import {
   type WorkspaceResponse,
   type WorkspaceRoot,
   type WorkspaceService,
+  type DirectoryOperation,
 } from "../../shared/workspace";
 import type {
   TrustedDocumentService,
@@ -27,6 +28,7 @@ import {
   visiblePath,
   type RootAuthorization,
 } from "./authorization";
+import { createAutomaticObservation } from "./automatic-observation";
 import type { HiddenPreferences } from "./preferences";
 import { createReconciliation } from "./reconciliation";
 import type { ScanFile } from "./scan";
@@ -60,6 +62,7 @@ export function createWorkspaceService({
   documents,
   worker = createScanWorker(),
   cacheLimit = WORKSPACE_CACHE_BYTES,
+  manualLeaseMs = 30_000,
   preferences = {
     get: () => Promise.resolve(false),
     set: () => Promise.resolve(),
@@ -69,6 +72,8 @@ export function createWorkspaceService({
   documents: TrustedDocumentService;
   worker?: ReturnType<typeof createScanWorker>;
   cacheLimit?: number;
+  /** Bounded lifetime for an issued but never accepted manual operation. */
+  manualLeaseMs?: number;
   preferences?: HiddenPreferences;
 }): TrustedWorkspaceService {
   const roots: Root[] = [];
@@ -110,6 +115,7 @@ export function createWorkspaceService({
     }
   }
   let selecting = false,
+    workerStopped = false,
     disposed = false,
     epoch = 0,
     running = false,
@@ -154,6 +160,10 @@ export function createWorkspaceService({
     root.meta.generation === generation &&
     roots.includes(root);
   const openingRoots = new Map<Root, number>();
+  const manualCandidates = new Map<
+    string,
+    { operation?: DirectoryOperation; token?: string; expires: number }
+  >();
   const reconciliation = createReconciliation({
     getRoot(handle) {
       const root = roots.find((item) => item.meta.handle === handle);
@@ -169,7 +179,7 @@ export function createWorkspaceService({
           }
         : undefined;
     },
-    usedBytes: () => cacheBytes,
+    usedBytes: () => cacheBytes + observation.bytes(),
     limit: cacheLimit,
     worker,
     wake: () => wake(),
@@ -204,8 +214,43 @@ export function createWorkspaceService({
       return true;
     },
   });
+  const observation = createAutomaticObservation({
+    list: () => roots.filter((root) => root.live),
+    call: (request) => worker.call(request),
+    reconciliation,
+    wake: () => wake(),
+    budget: () => cacheLimit - cacheBytes - reconciliation.bytes(),
+    terminate: () => {
+      workerStopped = true;
+      reconciliation.invalidate();
+      for (const root of roots) {
+        root.meta.observation = "unavailable";
+        if (root.meta.status === "scanning") root.meta.status = "failed";
+      }
+      worker.dispose();
+    },
+    canStart: () => {
+      for (const [handle, record] of manualCandidates) {
+        if (!record.operation) continue;
+        const receipt = reconciliation.query(record.operation);
+        if (receipt.status === "committed" || receipt.status === "rejected")
+          manualCandidates.delete(handle);
+        else if (
+          receipt.status === "unknown" ||
+          (receipt.status === "issued" && Date.now() >= record.expires)
+        ) {
+          // Fence before releasing the slot: a late accept cannot commit.
+          if (record.token) reconciliation.release(record.token);
+          manualCandidates.delete(handle);
+        }
+      }
+      return manualCandidates.size === 0;
+    },
+  });
   let candidateTurn = true;
   const invalidate = (root: Root) => {
+    manualCandidates.delete(root.meta.handle);
+    observation.cancel(root.meta.handle, true);
     reconciliation.invalidate(root.meta.handle);
     queueCleanup(key(root));
     root.live = false;
@@ -252,9 +297,12 @@ export function createWorkspaceService({
       const bytes =
         Buffer.byteLength(JSON.stringify(additions)) +
         Buffer.byteLength(JSON.stringify(file));
-      if (cacheBytes + reconciliation.bytes() + bytes > cacheLimit)
+      if (
+        cacheBytes + observation.bytes() + reconciliation.bytes() + bytes >
+        cacheLimit
+      )
         reconciliation.invalidate(undefined, true);
-      if (cacheBytes + bytes > cacheLimit) {
+      if (cacheBytes + observation.bytes() + bytes > cacheLimit) {
         root.meta.status = "paused";
         queueCleanup(key(root));
         return;
@@ -274,13 +322,29 @@ export function createWorkspaceService({
     if (running || disposed) return;
     running = true;
     try {
-      while (!disposed || cleanup.length || reconciliation.hasWork()) {
+      let observationTurn = true;
+      while (
+        !disposed ||
+        cleanup.length ||
+        reconciliation.hasWork() ||
+        observation.hasCleanup()
+      ) {
         const stale = cleanup.shift();
         if (stale) {
           await worker.call({ op: "close", key: stale }).catch(() => undefined);
           workerKeys.delete(stale);
           continue;
         }
+        if (
+          observation.hasWork() &&
+          (observation.hasCleanup() || observationTurn)
+        ) {
+          observationTurn = false;
+          await observation.step();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          continue;
+        }
+        observationTurn = true;
         const scheduled = Array.from(
           { length: roots.length },
           (_, index) => roots[(turn + index) % roots.length]
@@ -292,7 +356,10 @@ export function createWorkspaceService({
           await new Promise((resolve) => setTimeout(resolve, 0));
           continue;
         }
-        if (!root) break;
+        if (!root) {
+          if (observation.hasWork()) continue;
+          break;
+        }
         candidateTurn = true;
         turn = (roots.indexOf(root) + 1) % roots.length;
         const generation = root.meta.generation;
@@ -349,6 +416,8 @@ export function createWorkspaceService({
     void drain();
   };
   function restart(root: Root) {
+    manualCandidates.delete(root.meta.handle);
+    observation.cancel(root.meta.handle, true);
     reconciliation.invalidate(root.meta.handle);
     queueCleanup(key(root));
     cacheBytes -= root.bytes;
@@ -398,15 +467,68 @@ export function createWorkspaceService({
     async request(value) {
       if (!validWorkspaceRequest(value)) return failure("", "INVALID_REQUEST");
       if (disposed) return failure(value.requestId, "UNAVAILABLE");
+      if (
+        workerStopped &&
+        !["state", "page", "queryRescan", "clear"].includes(value.op)
+      )
+        return failure(value.requestId, "UNAVAILABLE");
       if (value.op === "prepareRescan") {
+        const previous = manualCandidates.get(value.root!);
+        if (!previous && manualCandidates.size)
+          return failure(value.requestId, "BUSY");
+        if (previous) {
+          if (!previous.operation) return failure(value.requestId, "BUSY");
+          const receipt = reconciliation.query(previous.operation);
+          if (receipt.status === "pending")
+            return failure(value.requestId, "BUSY");
+          if (
+            receipt.status === "issued" &&
+            Date.now() < previous.expires &&
+            previous.token &&
+            reconciliation.get(previous.token)
+          )
+            return {
+              ...state(value.requestId, false),
+              operation: { ...previous.operation },
+            };
+          if (previous.token) reconciliation.release(previous.token);
+          manualCandidates.delete(value.root!);
+        }
+        const record: {
+          operation?: DirectoryOperation;
+          token?: string;
+          expires: number;
+        } = { expires: Date.now() + manualLeaseMs };
+        manualCandidates.set(value.root!, record);
+        const preempted = observation.preempt();
+        observation.cancel(value.root!);
+        await observation.settle();
+        if (preempted)
+          while (reconciliation.hasWork() && !disposed)
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        if (disposed || manualCandidates.get(value.root!) !== record)
+          return failure(value.requestId, "INVALID_HANDLE");
         const candidate = await reconciliation.prepare(value.root!);
-        if (!candidate.ok)
+        if (manualCandidates.get(value.root!) !== record) {
+          if (candidate.ok) reconciliation.release(candidate.summary.token);
+          return failure(value.requestId, "INVALID_HANDLE");
+        }
+        if (!candidate.ok) {
+          manualCandidates.delete(value.root!);
           return failure(
             value.requestId,
             candidate.reason === "BUSY" ? "BUSY" : "UNAVAILABLE"
           );
+        }
         const operation = reconciliation.issue(candidate.summary.token);
-        if (!operation) return failure(value.requestId, "BUSY");
+        if (!operation) {
+          reconciliation.release(candidate.summary.token);
+          manualCandidates.delete(value.root!);
+          return failure(value.requestId, "BUSY");
+        }
+        record.operation = operation;
+        record.token = candidate.summary.token;
+        record.expires = Date.now() + manualLeaseMs;
         return { ...state(value.requestId, false), operation };
       }
       if (value.op === "acceptRescan" || value.op === "queryRescan") {
@@ -414,6 +536,13 @@ export function createWorkspaceService({
           value.op === "acceptRescan"
             ? await reconciliation.accept(value.operation!)
             : reconciliation.query(value.operation!);
+        if (receipt.status === "committed" || receipt.status === "rejected")
+          for (const [handle, record] of manualCandidates)
+            if (
+              record.operation?.sequence === value.operation!.sequence &&
+              record.operation.session === value.operation!.session
+            )
+              manualCandidates.delete(handle);
         return { ...state(value.requestId, false), receipt };
       }
       if (value.op === "state") return state(value.requestId);
@@ -493,6 +622,7 @@ export function createWorkspaceService({
       const root = roots.find((item) => item.meta.handle === value.root);
       if (!root) return failure(value.requestId, "INVALID_HANDLE");
       if (value.op === "hidden") {
+        observation.cancel(root.meta.handle, true);
         const currentEpoch = epoch;
         const task = preferenceTail.then(async () => {
           if (
@@ -616,6 +746,7 @@ export function createWorkspaceService({
       }
     },
     async dispose() {
+      observation.dispose();
       reconciliation.dispose();
       await removeAll();
       disposed = true;

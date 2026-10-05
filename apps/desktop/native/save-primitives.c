@@ -148,6 +148,8 @@ static napi_value capability(napi_env env,napi_callback_info info) {
     return number(env,(errno==EACCES||errno==EPERM||errno==EROFS)?1:2);
   return number(env,0);
 }
+#include "directory-watch.h"
+
 static napi_value init(napi_env env,napi_value exports) {
   napi_property_descriptor properties[]={
     {"createTemp",NULL,create,NULL,NULL,NULL,napi_default,NULL},
@@ -164,6 +166,8 @@ static napi_value init(napi_env env,napi_value exports) {
     {"scanStat",NULL,scan_stat,NULL,NULL,NULL,napi_default,NULL},
     {"scanReadlink",NULL,scan_readlink,NULL,NULL,NULL,napi_default,NULL}
   };
-  napi_define_properties(env,exports,13,properties);return exports;
+  napi_define_properties(env,exports,13,properties);
+  if(!install_directory_watch(env,exports)) return fail(env);
+  return exports;
 }
 NAPI_MODULE(NODE_GYP_MODULE_NAME,init)

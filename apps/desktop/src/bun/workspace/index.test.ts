@@ -27,6 +27,7 @@ import { createDocumentService } from "../documents";
 import { authorizeRoot } from "./authorization";
 import { createHiddenPreferences } from "./preferences";
 import { createScan } from "./scan";
+import { createScanWorker } from "./worker";
 
 import { createWorkspaceService } from ".";
 
@@ -85,6 +86,50 @@ async function nodes(root: WorkspaceRoot) {
   }
   return result;
 }
+test("automatic directory changes publish stable metadata without manual rescan and stop after dispose", async () => {
+  await mkdir(join(directory, "empty"));
+  await writeFile(join(directory, "keep.md"), "keep");
+  await workspace.request(request("select"));
+  const initial = (await settle()).roots[0];
+  const original = (await nodes(initial)).find(
+    (node) => node.name === "keep.md"
+  )!;
+  async function until(
+    predicate: (root: WorkspaceRoot, entries: WorkspaceNode[]) => boolean
+  ) {
+    for (let i = 0; i < 180; i++) {
+      const root = good(await workspace.request(request("state"))).roots[0];
+      try {
+        const entries = await nodes(root);
+        if (predicate(root, entries)) return { root, entries };
+      } catch {
+        /* concurrent generation, retry current snapshot */
+      }
+      await Bun.sleep(30);
+    }
+    throw Error("automatic observation did not converge");
+  }
+  await until((root) => root.observation === "watching");
+  await writeFile(join(directory, "empty/new.md"), "new");
+  const added = await until(
+    (root, entries) =>
+      root.generation > initial.generation &&
+      entries.some((node) => node.name === "new.md")
+  );
+  expect(added.entries.find((node) => node.name === "keep.md")?.handle).toBe(
+    original.handle
+  );
+  await rm(join(directory, "empty/new.md"));
+  const removed = await until(
+    (_root, entries) => !entries.some((node) => node.name === "new.md")
+  );
+  await Bun.sleep(800);
+  expect(
+    good(await workspace.request(request("state"))).roots[0].generation
+  ).toBe(removed.root.generation);
+  await workspace.dispose();
+  expect((await workspace.request(request("state"))).ok).toBe(false);
+}, 15000);
 test("existing client rescan runs the real candidate RPC and atomically retains unchanged handles", async () => {
   await writeFile(join(directory, "keep.md"), "keep");
   await writeFile(join(directory, "remove.md"), "remove");
@@ -126,6 +171,41 @@ test("existing client rescan runs the real candidate RPC and atomically retains 
   expect(current.error).toBeNull();
   client.dispose();
 });
+
+test("lost issued manual response expires only after fencing its candidate and allows other root observation", async () => {
+  await workspace.dispose();
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents,
+    manualLeaseMs: 20,
+  });
+  await mkdir(join(directory, "a"));
+  await mkdir(join(directory, "b"));
+  selected = join(directory, "a");
+  await workspace.request(request("select"));
+  selected = join(directory, "b");
+  await workspace.request(request("select"));
+  const roots = (await settle()).roots;
+  const operation = good(
+    await workspace.request(request("prepareRescan", { root: roots[0].handle }))
+  ).operation!;
+  // The client never receives/accepts the issued response in this scenario.
+  await writeFile(join(directory, "b/new.md"), "new");
+  let updated = false;
+  for (let i = 0; i < 150; i++) {
+    const root = good(await workspace.request(request("state"))).roots[1];
+    if (root.entries === 1) {
+      updated = true;
+      break;
+    }
+    await Bun.sleep(30);
+  }
+  expect(updated).toBe(true);
+  const stale = good(
+    await workspace.request(request("acceptRescan", { operation }))
+  );
+  expect(stale.receipt?.status).toBe("rejected");
+}, 10000);
 
 test("strict rescan RPC issues before commit, queries without replay and validates opaque fields", async () => {
   await writeFile(join(directory, "a.md"), "a");
@@ -176,6 +256,98 @@ test("strict rescan RPC issues before commit, queries without replay and validat
     )
   ).toMatchObject({ ok: false, error: "INVALID_REQUEST" });
 });
+
+test("manual issue budget failure releases its prepared candidate for another root", async () => {
+  await workspace.dispose();
+  await mkdir(join(directory, "a"));
+  await mkdir(join(directory, "b"));
+  const authorization = await authorizeRoot(join(directory, "a"));
+  const summarySize = Buffer.byteLength(
+    JSON.stringify({
+      token: "0".repeat(36),
+      root: "0".repeat(36),
+      generation: 1,
+      added: 0,
+      removed: 0,
+      replaced: 0,
+      retainedHandles: [],
+    })
+  );
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents,
+    cacheLimit:
+      512 +
+      Buffer.byteLength(JSON.stringify(authorization)) +
+      2 * summarySize +
+      256 +
+      128,
+  });
+  selected = join(directory, "a");
+  await workspace.request(request("select"));
+  selected = join(directory, "b");
+  await workspace.request(request("select"));
+  const roots = (await settle()).roots;
+  const failed = await workspace.request(
+    request("prepareRescan", { root: roots[0].handle })
+  );
+  expect(failed).toMatchObject({ ok: false, error: "BUSY" });
+  await Bun.sleep(10);
+  const next = await workspace.reconciliation.prepare(roots[1].handle);
+  expect(next.ok).toBe(true);
+  if (next.ok) workspace.reconciliation.release(next.summary.token);
+});
+
+test("unconfirmed watcher shutdown terminates the Worker and reports restart instead of manual recovery", async () => {
+  await workspace.dispose();
+  const worker = createScanWorker();
+  let stops = 0,
+    closes = 0;
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents,
+    worker: {
+      call(message) {
+        if (message.op === "watchClose") {
+          closes++;
+          return Promise.reject(Error("controlled close failure"));
+        }
+        if (message.op === "watchDispose")
+          return Promise.reject(Error("controlled shutdown failure"));
+        return worker.call(message);
+      },
+      dispose() {
+        stops++;
+        worker.dispose();
+      },
+    },
+  });
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  for (let i = 0; i < 100; i++) {
+    if (
+      good(await workspace.request(request("state"))).roots[0].observation ===
+      "watching"
+    )
+      break;
+    await Bun.sleep(20);
+  }
+  expect(
+    good(await workspace.request(request("state"))).roots[0].observation
+  ).toBe("watching");
+  await workspace.request(
+    request("hidden", { root: root.handle, showHidden: true })
+  );
+  for (let i = 0; i < 150 && !stops; i++) await Bun.sleep(20);
+  expect(stops).toBe(1);
+  expect(closes).toBe(3);
+  expect(
+    good(await workspace.request(request("state"))).roots[0].observation
+  ).toBe("unavailable");
+  expect(
+    await workspace.request(request("rescan", { root: root.handle }))
+  ).toMatchObject({ ok: false, error: "UNAVAILABLE" });
+}, 10000);
 
 test("root-local open barrier includes committed document late receipt and always releases on throw", async () => {
   await workspace.dispose();

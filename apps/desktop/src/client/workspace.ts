@@ -77,6 +77,11 @@ function validResponse(
         integer(root.generation) &&
         (root.showHidden === undefined ||
           typeof root.showHidden === "boolean") &&
+        (root.observation === undefined ||
+          (typeof root.observation === "string" &&
+            ["establishing", "watching", "limited", "unavailable"].includes(
+              root.observation
+            ))) &&
         Number(root.generation) > 0 &&
         integer(root.entries) &&
         integer(root.errors) &&

@@ -1,6 +1,6 @@
 {
   "name": "@agentic-markdown/desktop",
-  "version": "0.1.0-alpha.96",
+  "version": "0.1.0-alpha.97",
   "scripts": {
     "start": "bun run build:view && electrobun dev",
     "prepare:sdk": "electrobun prepare",

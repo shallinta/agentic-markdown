@@ -26,23 +26,60 @@ export interface ScanBatch {
   paused: boolean;
   queueBytes: number;
 }
-interface Native {
+export interface DirectoryNative {
   openDirectoryAt(fd: number, name: string): number;
+}
+interface Native extends DirectoryNative {
   scanOpen(fd: number): object;
   scanBatch(cursor: object, limit: number): { names: string[]; done: boolean };
   scanClose(cursor: object): void;
   scanStat(fd: number, name: string): { kind: string; fingerprint: string };
   scanReadlink(fd: number, name: string): string;
 }
-interface PendingDirectory {
+export interface PendingDirectory {
   path: string;
   chain: DirectoryIdentity[];
+}
+export function openDirectoryDescriptor(
+  root: RootAuthorization,
+  directory: PendingDirectory,
+  native: DirectoryNative
+) {
+  let fd = openSync(
+    "/",
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
+  );
+  try {
+    const identities = [...root.directories, ...directory.chain];
+    let path = "/";
+    if (
+      fileFingerprint(fstatSync(fd, { bigint: true })) !==
+      identities.find((d) => d.path === path)?.fingerprint
+    )
+      throw Error();
+    for (const part of directory.path.split("/").filter(Boolean)) {
+      const next = native.openDirectoryAt(fd, part);
+      closeSync(fd);
+      fd = next;
+      path = join(path, part);
+      if (
+        fileFingerprint(fstatSync(fd, { bigint: true })) !==
+        identities.find((d) => d.path === path)?.fingerprint
+      )
+        throw Error();
+    }
+    return fd;
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
 }
 /** One owned cursor per session; all filtered entries consume batch capacity. */
 export function createScan(
   root: RootAuthorization,
   nativePath: string,
-  showHidden = false
+  showHidden = false,
+  onDirectory?: (directory: PendingDirectory) => void
 ) {
   const native = createRequire(import.meta.url)(nativePath) as Native;
   const pending: PendingDirectory[] = [{ path: root.path, chain: [] }];
@@ -69,38 +106,12 @@ export function createScan(
     queuedBytes = 0;
   };
   function directoryDescriptor(directory: PendingDirectory) {
-    let fd = openSync(
-      "/",
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
-    );
-    try {
-      const identities = [...root.directories, ...directory.chain];
-      let path = "/";
-      if (
-        fileFingerprint(fstatSync(fd, { bigint: true })) !==
-        identities.find((d) => d.path === path)?.fingerprint
-      )
-        throw Error();
-      for (const part of directory.path.split("/").filter(Boolean)) {
-        const next = native.openDirectoryAt(fd, part);
-        closeSync(fd);
-        fd = next;
-        path = join(path, part);
-        if (
-          fileFingerprint(fstatSync(fd, { bigint: true })) !==
-          identities.find((d) => d.path === path)?.fingerprint
-        )
-          throw Error();
-      }
-      return fd;
-    } catch (error) {
-      closeSync(fd);
-      throw error;
-    }
+    return openDirectoryDescriptor(root, directory, native);
   }
   function openDirectory(directory: PendingDirectory) {
     const fd = directoryDescriptor(directory);
     try {
+      onDirectory?.(directory);
       current = { directory, fd, cursor: native.scanOpen(fd) };
     } catch (error) {
       closeSync(fd);

@@ -306,6 +306,8 @@ export function WorkspaceTree({
                       failed: "扫描失败，请重新扫描",
                     }[item.root.status]
                   }
+                  {item.root.observation &&
+                    ` · ${{ establishing: "正在建立自动观察", watching: "自动观察中", limited: "自动观察受限，请手动重新扫描", unavailable: "目录后台已停止，请重新启动应用" }[item.root.observation]}`}
                   {item.root.status === "complete" &&
                   !state.nodes[item.root.handle]?.length
                     ? " · 没有可显示的 Markdown 文档"

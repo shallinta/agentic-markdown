@@ -84,6 +84,165 @@ async function nodes(root: WorkspaceRoot) {
   }
   return result;
 }
+test("root-local open barrier includes committed document late receipt and always releases on throw", async () => {
+  await workspace.dispose();
+  await mkdir(join(directory, "one"));
+  await mkdir(join(directory, "two"));
+  selected = join(directory, "one");
+  let entered = Promise.withResolvers<void>(),
+    resume = Promise.withResolvers<void>();
+  let throwing = false;
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents: {
+      ...documents,
+      async openAuthorized(...args) {
+        const result = throwing
+          ? undefined
+          : await documents.openAuthorized(...args);
+        entered.resolve();
+        await resume.promise;
+        if (throwing) throw Error("controlled open failure");
+        return result!;
+      },
+    },
+  });
+  await writeFile(join(directory, "one/a.md"), "a");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0],
+    entry = (await nodes(root))[0];
+  selected = join(directory, "two");
+  await workspace.request(request("select"));
+  const other = (await settle()).roots.find(
+    (item) => item.handle !== root.handle
+  )!;
+  for (const fail of [false, true]) {
+    throwing = fail;
+    entered = Promise.withResolvers<void>();
+    resume = Promise.withResolvers<void>();
+    const opening = workspace.open({
+      protocolVersion: 1,
+      requestId: `blocked-${fail}`,
+      root: root.handle,
+      entry: entry.handle,
+    });
+    // Attach rejection before releasing the controlled operation.
+    const outcome = opening.then(
+      (value) => value,
+      (error) => error as Error
+    );
+    await entered.promise;
+    const candidate = await workspace.reconciliation.prepare(root.handle);
+    if (!candidate.ok) throw Error(candidate.reason);
+    expect(
+      await workspace.reconciliation.accept(
+        workspace.reconciliation.issue(candidate.summary.token)!
+      )
+    ).toEqual({ status: "rejected", reason: "BUSY" });
+    expect((await settle()).roots[0].generation).toBe(root.generation);
+    const otherCandidate = await workspace.reconciliation.prepare(other.handle);
+    if (!otherCandidate.ok) throw Error(otherCandidate.reason);
+    expect(
+      await workspace.reconciliation.accept(
+        workspace.reconciliation.issue(otherCandidate.summary.token)!
+      )
+    ).toMatchObject({ status: "committed" });
+    resume.resolve();
+    const result = await outcome;
+    if (fail) expect(result).toBeInstanceOf(Error);
+    else expect(result).toMatchObject({ ok: true });
+  }
+  const candidate = await workspace.reconciliation.prepare(root.handle);
+  if (!candidate.ok) throw Error(candidate.reason);
+  expect(
+    await workspace.reconciliation.accept(
+      workspace.reconciliation.issue(candidate.summary.token)!
+    )
+  ).toMatchObject({ status: "committed" });
+});
+
+test("internal acceptance publishes stable identities once without changing opened scopes or assets", async () => {
+  await writeFile(join(directory, "keep.md"), "# keep");
+  await writeFile(join(directory, "gone.md"), "# gone");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const original = await nodes(root);
+  const keep = original.find((n) => n.name === "keep.md")!;
+  const opened = await workspace.open({
+    protocolVersion: 1,
+    requestId: "accept-open",
+    root: root.handle,
+    entry: keep.handle,
+  });
+  if (!opened.ok || !opened.snapshot) throw Error("open");
+  const locations = documents.locations(),
+    assets = documents.assetEpochs();
+  await rm(join(directory, "gone.md"));
+  await writeFile(join(directory, "new.md"), "# new");
+  const candidate = await workspace.reconciliation.prepare(root.handle);
+  if (!candidate.ok) throw Error(candidate.reason);
+  const op = workspace.reconciliation.issue(candidate.summary.token)!;
+  expect(await workspace.reconciliation.accept(op)).toEqual({
+    status: "committed",
+    root: root.handle,
+    generation: root.generation + 1,
+  });
+  expect(documents.locations()).toEqual(locations);
+  expect(documents.assetEpochs()).toEqual(assets);
+  const current = (await settle()).roots[0];
+  const entries = await nodes(current);
+  expect(entries.find((n) => n.name === "keep.md")!.handle).toBe(keep.handle);
+  expect(entries.map((n) => n.name).sort()).toEqual(["keep.md", "new.md"]);
+  expect(
+    await documents.read({
+      protocolVersion: 1,
+      requestId: "after-accept",
+      handle: opened.snapshot.handle,
+    })
+  ).toMatchObject({
+    ok: true,
+    snapshot: { documentId: opened.snapshot.documentId, text: "# keep" },
+  });
+  await workspace.request(request("rescan", { root: root.handle }));
+  const after = (await settle()).roots[0];
+  expect(await workspace.reconciliation.accept(op)).toMatchObject({
+    status: "committed",
+    generation: current.generation,
+  });
+  expect((await settle()).roots[0].generation).toBe(after.generation);
+});
+
+test("internal acceptance refuses changed inventory and accepts a complete empty candidate", async () => {
+  await writeFile(join(directory, "a.md"), "a");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const first = await workspace.reconciliation.prepare(root.handle);
+  if (!first.ok) throw Error(first.reason);
+  await writeFile(join(directory, "b.md"), "b");
+  expect(
+    await workspace.reconciliation.accept(
+      workspace.reconciliation.issue(first.summary.token)!
+    )
+  ).toMatchObject({ status: "rejected" });
+  expect((await settle()).roots[0].generation).toBe(root.generation);
+  await rm(join(directory, "a.md"));
+  await rm(join(directory, "b.md"));
+  let empty = await workspace.reconciliation.prepare(root.handle);
+  for (let i = 0; !empty.ok && empty.reason === "BUSY" && i < 100; i++) {
+    await Bun.sleep(2);
+    empty = await workspace.reconciliation.prepare(root.handle);
+  }
+  if (!empty.ok) throw Error(empty.reason);
+  expect(
+    await workspace.reconciliation.accept(
+      workspace.reconciliation.issue(empty.summary.token)!
+    )
+  ).toMatchObject({ status: "committed" });
+  const current = (await settle()).roots[0];
+  expect(current.entries).toBe(0);
+  expect(current.generation).toBe(root.generation + 1);
+});
+
 test("trusted reconciliation scans real changes without publishing tree or document state", async () => {
   await mkdir(join(directory, "nested"));
   await writeFile(join(directory, "nested/keep.md"), "# keep");
@@ -142,6 +301,22 @@ test("trusted candidates reject initial scans and preserve multi-page baseline a
   if (!result.ok) throw Error(result.reason);
   expect(result.summary.retainedHandles).toHaveLength(136);
   expect(await nodes(root)).toEqual(original);
+  expect(
+    await workspace.reconciliation.accept(
+      workspace.reconciliation.issue(result.summary.token)!
+    )
+  ).toMatchObject({ status: "committed" });
+  const acceptedRoot = (await settle()).roots[0];
+  const acceptedNodes = await nodes(acceptedRoot);
+  expect(acceptedNodes).toEqual(original);
+  const directoryNode = acceptedNodes.find(
+    (node) => node.kind === "directory"
+  )!;
+  expect(
+    acceptedNodes
+      .filter((node) => node.kind === "file")
+      .every((node) => node.parent === directoryNode.handle)
+  ).toBe(true);
   workspace.reconciliation.release(result.summary.token);
   await rename(join(directory, "nested"), join(directory, "old-nested"));
   await mkdir(join(directory, "nested"));
@@ -155,6 +330,21 @@ test("trusted candidates reject initial scans and preserve multi-page baseline a
       expect(retry.summary.replaced).toBe(136);
       expect(retry.summary.retainedHandles).toHaveLength(0);
       observedReplacement = true;
+      expect(
+        await workspace.reconciliation.accept(
+          workspace.reconciliation.issue(retry.summary.token)!
+        )
+      ).toMatchObject({ status: "committed" });
+      const replaced = await nodes((await settle()).roots[0]);
+      const oldHandles = new Set(original.map((node) => node.handle));
+      expect(replaced.every((node) => !oldHandles.has(node.handle))).toBe(true);
+      const parents = new Set([
+        root.handle,
+        ...replaced
+          .filter((node) => node.kind === "directory")
+          .map((node) => node.handle),
+      ]);
+      expect(replaced.every((node) => parents.has(node.parent))).toBe(true);
       workspace.reconciliation.release(retry.summary.token);
       break;
     }
@@ -728,79 +918,99 @@ test("candidate batches yield to a simultaneous root scan on the same Worker", a
   expect(nexts.indexOf(otherKey)).toBeLessThan(nexts.lastIndexOf(candidateKey));
 });
 
-test("owner drain serializes pending candidate invalidation with rescan, hidden, clear and disposal", async () => {
-  for (const action of ["rescan", "hidden", "clear", "dispose"] as const) {
-    await workspace.dispose();
-    let rootKey = "",
-      candidateKey = "",
-      active = 0,
-      maximum = 0;
-    let delivered: ((value: unknown) => void) | undefined;
-    const closed: string[] = [];
-    const empty = {
-      files: [],
-      examined: 0,
-      errors: 0,
-      done: true,
-      paused: false,
-      queueBytes: 0,
-    };
-    workspace = createWorkspaceService({
-      pickDirectory: () => Promise.resolve(directory),
-      documents,
-      worker: {
-        async call(message) {
-          active++;
-          maximum = Math.max(maximum, active);
-          try {
-            if (message.op === "start" && !rootKey)
-              rootKey = String(message.key).split(":")[0];
-            if (
-              message.op === "next" &&
-              !String(message.key).startsWith(rootKey)
-            ) {
-              candidateKey = String(message.key);
-              return await new Promise((resolve) => {
-                delivered = resolve;
-              });
+test("owner drain serializes pending candidate and acceptance invalidation with rescan, hidden, clear and disposal", async () => {
+  for (const phase of ["prepare", "accept"] as const) {
+    for (const action of ["rescan", "hidden", "clear", "dispose"] as const) {
+      await workspace.dispose();
+      let rootKey = "",
+        candidateKey = "",
+        active = 0,
+        maximum = 0,
+        hold = phase === "prepare";
+      let delivered: ((value: unknown) => void) | undefined;
+      const closed: string[] = [];
+      const empty = {
+        files: [],
+        examined: 0,
+        errors: 0,
+        done: true,
+        paused: false,
+        queueBytes: 0,
+      };
+      workspace = createWorkspaceService({
+        pickDirectory: () => Promise.resolve(directory),
+        documents,
+        worker: {
+          async call(message) {
+            active++;
+            maximum = Math.max(maximum, active);
+            try {
+              if (message.op === "start" && !rootKey)
+                rootKey = String(message.key).split(":")[0];
+              if (
+                message.op === "next" &&
+                !String(message.key).startsWith(rootKey) &&
+                hold
+              ) {
+                candidateKey = String(message.key);
+                return await new Promise((resolve) => {
+                  delivered = resolve;
+                });
+              }
+              if (message.op === "close") closed.push(String(message.key));
+              return empty;
+            } finally {
+              active--;
             }
-            if (message.op === "close") closed.push(String(message.key));
-            return empty;
-          } finally {
-            active--;
-          }
+          },
+          dispose() {
+            return undefined;
+          },
         },
-        dispose() {
-          return undefined;
-        },
-      },
-    });
-    await workspace.request(request("select"));
-    const root = (await settle()).roots[0];
-    const pending = workspace.reconciliation.prepare(root.handle);
-    for (let i = 0; !delivered && i < 100; i++) await Bun.sleep(1);
-    expect(delivered).toBeDefined();
-    const operation =
-      action === "dispose"
-        ? workspace.dispose()
-        : workspace.request(
-            request(
-              action,
-              action === "clear"
-                ? {}
-                : action === "hidden"
-                  ? { root: root.handle, showHidden: true }
-                  : { root: root.handle }
-            )
-          );
-    // Let asynchronous root verification/hidden preference reach invalidation.
-    await Bun.sleep(5);
-    delivered!(empty);
-    await operation;
-    expect(await pending).toEqual({ ok: false, reason: "INVALIDATED" });
-    expect(maximum).toBe(1);
-    expect(closed).toContain(candidateKey);
-    if (action !== "dispose") await settle();
+      });
+      await workspace.request(request("select"));
+      const root = (await settle()).roots[0];
+      const prepared =
+        phase === "accept"
+          ? await workspace.reconciliation.prepare(root.handle)
+          : undefined;
+      if (prepared && !prepared.ok) throw Error(prepared.reason);
+      hold = true;
+      const pending = prepared?.ok
+        ? workspace.reconciliation.accept(
+            workspace.reconciliation.issue(prepared.summary.token)!
+          )
+        : workspace.reconciliation.prepare(root.handle);
+      for (let i = 0; !delivered && i < 100; i++) await Bun.sleep(1);
+      expect(delivered).toBeDefined();
+      const operation =
+        action === "dispose"
+          ? workspace.dispose()
+          : workspace.request(
+              request(
+                action,
+                action === "clear"
+                  ? {}
+                  : action === "hidden"
+                    ? { root: root.handle, showHidden: true }
+                    : { root: root.handle }
+              )
+            );
+      // Let asynchronous root verification/hidden preference reach invalidation.
+      await Bun.sleep(5);
+      delivered!(empty);
+      await operation;
+      expect(await pending).toEqual(
+        phase === "prepare"
+          ? { ok: false, reason: "INVALIDATED" }
+          : { status: "rejected", reason: "INVALIDATED" }
+      );
+      expect(maximum).toBe(1);
+      for (let i = 0; !closed.includes(candidateKey) && i < 100; i++)
+        await Bun.sleep(1);
+      expect(closed).toContain(candidateKey);
+      if (action !== "dispose") await settle();
+    }
   }
 });
 test("clear closes a worker session whose start reply is still pending", async () => {

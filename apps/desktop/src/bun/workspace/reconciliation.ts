@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { dirname, extname, join, relative } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 
 import type { WorkspaceNode } from "../../shared/workspace";
 
@@ -8,6 +8,11 @@ import {
   visiblePath,
   type RootAuthorization,
 } from "./authorization";
+import {
+  createDirectoryAcceptanceLedger,
+  type DirectoryOperation,
+  type DirectoryAcceptanceResult,
+} from "./directory-acceptance";
 import type { ScanFile } from "./scan";
 import { validScanBatch } from "./scan-protocol";
 import type { createScanWorker } from "./worker";
@@ -41,7 +46,21 @@ interface Proof {
   identity: string;
   handle?: string;
 }
-type RootBinding = Omit<ReconciliationRoot, "nodes" | "files">;
+export type RootBinding = Omit<ReconciliationRoot, "nodes" | "files">;
+export interface DirectoryPublication {
+  nodes: WorkspaceNode[];
+  byPath: Map<string, WorkspaceNode>;
+  files: Map<string, ScanFile>;
+  bytes: number;
+  generation: number;
+  examined: number;
+}
+interface Acceptance {
+  proofs: Map<string, Proof>;
+  files: Map<string, ScanFile>;
+  examined: number;
+  resolve: (result: DirectoryAcceptanceResult) => void;
+}
 interface Job {
   root: RootBinding;
   token: string;
@@ -54,6 +73,7 @@ interface Job {
   result?: ReconciliationResult;
   promise: Promise<ReconciliationResult>;
   resolve: (result: ReconciliationResult) => void;
+  acceptance?: Acceptance;
 }
 const copy = (result: ReconciliationResult): ReconciliationResult =>
   result.ok
@@ -119,15 +139,21 @@ export function createReconciliation({
   limit,
   worker,
   wake,
+  publish,
 }: {
   getRoot: (handle: string) => ReconciliationRoot | undefined;
   usedBytes: () => number;
   limit: number;
   worker: ReturnType<typeof createScanWorker>;
   wake: () => void;
+  publish?: (
+    binding: RootBinding,
+    publication: DirectoryPublication
+  ) => boolean | "busy";
 }) {
   let job: Job | undefined;
   let disposed = false;
+  const ledger = createDirectoryAcceptanceLedger();
   const binding = (value: Job) => {
     const root = getRoot(value.root.handle);
     return (
@@ -135,7 +161,7 @@ export function createReconciliation({
       root?.lifetime === value.root.lifetime &&
       root.generation === value.root.generation &&
       root.showHidden === value.root.showHidden &&
-      usedBytes() + value.bytes <= limit
+      usedBytes() + value.bytes + ledger.bytes() <= limit
     );
   };
   const fail = (
@@ -143,16 +169,64 @@ export function createReconciliation({
     reason: Extract<ReconciliationResult, { ok: false }>["reason"]
   ) => {
     value.result = { ok: false, reason };
+    if (value.acceptance) {
+      value.acceptance.resolve({ status: "rejected", reason });
+      value.acceptance.proofs.clear();
+      value.acceptance.files.clear();
+      value.acceptance = undefined;
+    }
     value.baseline.clear();
     value.candidate.clear();
     value.bytes = 0;
     value.close = true;
   };
   const reserve = (value: Job, bytes: number) => {
-    if (usedBytes() + value.bytes + bytes > limit) throw Error("budget");
+    if (usedBytes() + value.bytes + ledger.bytes() + bytes > limit)
+      throw Error("budget");
     value.bytes += bytes;
   };
   return {
+    issue(token: string): DirectoryOperation | undefined {
+      if (
+        !publish ||
+        !job?.result?.ok ||
+        job.token !== token ||
+        job.acceptance ||
+        !binding(job)
+      )
+        return undefined;
+      return ledger.issue(token, limit - usedBytes() - job.bytes);
+    },
+    accept(operation: DirectoryOperation): Promise<DirectoryAcceptanceResult> {
+      const identity = operation && {
+        session: operation.session,
+        sequence: operation.sequence,
+      };
+      return ledger.run(operation, (token) => {
+        if (
+          !publish ||
+          !job?.result?.ok ||
+          job.token !== token ||
+          job.close ||
+          !binding(job)
+        )
+          return Promise.resolve({ status: "rejected", reason: "INVALIDATED" });
+        const deferred = Promise.withResolvers<DirectoryAcceptanceResult>();
+        job.acceptance = {
+          proofs: new Map(),
+          files: new Map(),
+          examined: 0,
+          resolve: (result) => {
+            ledger.recordResult(identity, result);
+            deferred.resolve(result);
+          },
+        };
+        job.key = `${randomUUID()}:1`;
+        wake();
+        return deferred.promise;
+      });
+    },
+    query: (operation: DirectoryOperation) => ledger.query(operation),
     prepare(handle: string): Promise<ReconciliationResult> {
       if (disposed)
         return Promise.resolve({ ok: false, reason: "INVALIDATED" });
@@ -230,14 +304,15 @@ export function createReconciliation({
         wake();
       }
     },
-    invalidate(handle?: string) {
+    invalidate(handle?: string, trimReceipts = false) {
       if (job && (!handle || job.root.handle === handle)) {
         fail(job, "INVALIDATED");
         wake();
       }
+      if (trimReceipts) ledger.clear();
     },
-    bytes: () => job?.bytes ?? 0,
-    hasWork: () => !!job && (!job.result || job.close),
+    bytes: () => (job?.bytes ?? 0) + ledger.bytes(),
+    hasWork: () => !!job && (!job.result || job.close || !!job.acceptance),
     async step() {
       const value = job;
       if (!value) return;
@@ -253,7 +328,8 @@ export function createReconciliation({
         if (job === value) job = undefined;
         return;
       }
-      if (value.result) return;
+      if (value.result && !value.acceptance) return;
+      let committing = false;
       try {
         if (!value.started) {
           value.started = true;
@@ -274,11 +350,113 @@ export function createReconciliation({
           fail(value, "FAILED");
           return;
         }
-        for (const file of batch.files)
-          addProofs(value.candidate, value.root, file, (bytes) =>
-            reserve(value, bytes)
+        const accepting = value.acceptance;
+        for (const file of batch.files) {
+          addProofs(
+            accepting?.proofs ?? value.candidate,
+            value.root,
+            file,
+            (bytes) => reserve(value, bytes)
           );
+          if (accepting && !accepting.files.has(file.path)) {
+            reserve(value, 2 * Buffer.byteLength(JSON.stringify(file)) + 128);
+            accepting.files.set(file.path, structuredClone(file));
+          }
+        }
+        if (accepting) accepting.examined += batch.examined;
         if (!batch.done) return;
+        if (accepting) {
+          if (
+            accepting.proofs.size !== value.candidate.size ||
+            [...value.candidate].some(([path, proof]) => {
+              const current = accepting.proofs.get(path);
+              return (
+                current?.kind !== proof.kind ||
+                current.identity !== proof.identity
+              );
+            })
+          ) {
+            fail(value, "INVALIDATED");
+            return;
+          }
+          const publication: DirectoryPublication = {
+            nodes: [],
+            byPath: new Map(),
+            files: new Map(),
+            bytes: 0,
+            generation: value.root.generation + 1,
+            examined: accepting.examined,
+          };
+          if (!Number.isSafeInteger(publication.generation))
+            throw Error("generation");
+          for (const [path, proof] of value.candidate) {
+            const previous = value.baseline.get(path);
+            const retained =
+              previous?.kind === proof.kind &&
+              previous.identity === proof.identity;
+            const parentPath = dirname(path);
+            const parent =
+              parentPath === value.root.authorization.path
+                ? value.root.handle
+                : publication.byPath.get(parentPath)?.handle;
+            if (!parent) throw Error("missing parent");
+            const node: WorkspaceNode = {
+              handle: retained ? previous.handle! : randomUUID(),
+              parent,
+              kind: proof.kind,
+              name: basename(path),
+              displayPath: path,
+            };
+            const metadata =
+              proof.kind === "file" ? accepting.files.get(path) : undefined;
+            if (proof.kind === "file" && !metadata) throw Error("missing file");
+            const bytes =
+              2 * Buffer.byteLength(JSON.stringify([node, metadata])) + 256;
+            reserve(value, bytes);
+            publication.bytes += bytes;
+            publication.nodes.push(node);
+            publication.byPath.set(path, node);
+            if (metadata) publication.files.set(node.handle, metadata);
+          }
+          const receipt: DirectoryAcceptanceResult = {
+            status: "committed",
+            root: value.root.handle,
+            generation: publication.generation,
+          };
+          await worker.call({ op: "close", key: value.key });
+          value.started = false;
+          if (
+            !binding(value) ||
+            value.close ||
+            value.acceptance !== accepting
+          ) {
+            fail(value, "INVALIDATED");
+            return;
+          }
+          await verifyRoot(value.root.authorization);
+          if (
+            !binding(value) ||
+            value.close ||
+            value.acceptance !== accepting
+          ) {
+            fail(value, "INVALIDATED");
+            return;
+          }
+          // No asynchronous boundary between the final binding check and CAS.
+          committing = true;
+          const committed = publish!(value.root, publication);
+          accepting.resolve(
+            committed === true
+              ? receipt
+              : {
+                  status: "rejected",
+                  reason: committed === "busy" ? "BUSY" : "INVALIDATED",
+                }
+          );
+          value.acceptance = undefined;
+          if (job === value) job = undefined;
+          return;
+        }
         await verifyRoot(value.root.authorization);
         if (!binding(value) || value.close) {
           fail(value, "INVALIDATED");
@@ -315,6 +493,12 @@ export function createReconciliation({
         value.result = { ok: true, summary };
         value.resolve(copy(value.result));
       } catch (error) {
+        if (committing) {
+          value.acceptance?.resolve({ status: "unknown" });
+          value.acceptance = undefined;
+          if (job === value) job = undefined;
+          return;
+        }
         fail(
           value,
           error instanceof Error && error.message === "budget"
@@ -329,6 +513,7 @@ export function createReconciliation({
         fail(job, "INVALIDATED");
         wake();
       }
+      ledger.clear();
     },
   };
 }

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { authorizeRoot, type RootAuthorization } from "./authorization";
 import {
   createReconciliation,
+  type DirectoryPublication,
   type ReconciliationRoot,
 } from "./reconciliation";
 import type { ScanBatch, ScanFile } from "./scan";
@@ -40,7 +41,8 @@ const batch = (
 function fixture(
   initial = [file("keep.md")],
   batches = [batch(initial)],
-  limit = 1_000_000
+  limit = 1_000_000,
+  publicationHook?: (publication: DirectoryPublication) => void
 ) {
   const handle = randomUUID();
   const nodes = initial.map((f) => ({
@@ -84,6 +86,17 @@ function fixture(
     usedBytes: () => used,
     limit,
     worker,
+    publish(binding, publication) {
+      if (root?.generation !== binding.generation) return false;
+      root = {
+        ...root,
+        nodes: publication.nodes,
+        files: publication.files,
+        generation: publication.generation,
+      };
+      publicationHook?.(publication);
+      return true;
+    },
     wake() {
       return undefined;
     },
@@ -109,6 +122,101 @@ function fixture(
     },
   };
 }
+
+test("acceptance rescans exact inventory, preserves stable handles and commits once with immutable operation identity", async () => {
+  const inventory = [file("keep.md"), file("new.md")];
+  const f = fixture(undefined, [batch(inventory), batch(inventory)]);
+  const preparing = f.service.prepare(f.handle);
+  await f.drain();
+  const candidate = await preparing;
+  if (!candidate.ok) throw Error(candidate.reason);
+  const op = f.service.issue(candidate.summary.token)!;
+  const original = { ...op };
+  const accepting = f.service.accept(op);
+  op.sequence = 999;
+  await Promise.resolve();
+  await f.drain();
+  expect(await accepting).toEqual({
+    status: "committed",
+    root: f.handle,
+    generation: 2,
+  });
+  expect(f.root()!.nodes[0].handle).toBe(f.nodes[0].handle);
+  expect(f.root()!.nodes).toHaveLength(2);
+  const calls = f.calls.length;
+  f.service.release(candidate.summary.token);
+  f.service.invalidate();
+  expect(f.service.query(original)).toMatchObject({ status: "committed" });
+  expect(await f.service.accept(original)).toMatchObject({
+    status: "committed",
+  });
+  expect(f.calls).toHaveLength(calls);
+});
+
+test("changed, partial and canceled acceptance never replace current tree; post-mutation exception is unknown", async () => {
+  for (const later of [
+    batch([file("changed.md")]),
+    batch([], { paused: true }),
+    batch([], { errors: 1 }),
+  ]) {
+    const f = fixture(undefined, [batch([file("keep.md")]), later]);
+    const preparing = f.service.prepare(f.handle);
+    await f.drain();
+    const candidate = await preparing;
+    if (!candidate.ok) throw Error(candidate.reason);
+    const accepting = f.service.accept(
+      f.service.issue(candidate.summary.token)!
+    );
+    await Promise.resolve();
+    await f.drain();
+    expect(await accepting).toMatchObject({ status: "rejected" });
+    expect(f.root()!.generation).toBe(1);
+    expect(f.root()!.nodes).toBe(f.nodes);
+  }
+  const f = fixture(
+    undefined,
+    [batch([file("keep.md")]), batch([file("keep.md")])],
+    undefined,
+    () => {
+      throw Error("after mutation");
+    }
+  );
+  const preparing = f.service.prepare(f.handle);
+  await f.drain();
+  const candidate = await preparing;
+  if (!candidate.ok) throw Error(candidate.reason);
+  const op = f.service.issue(candidate.summary.token)!;
+  const accepting = f.service.accept(op);
+  await Promise.resolve();
+  await f.drain();
+  expect(await accepting).toEqual({ status: "unknown" });
+  expect(f.root()!.generation).toBe(2);
+  expect(await f.service.accept(op)).toEqual({ status: "unknown" });
+  expect(f.root()!.generation).toBe(2);
+});
+
+test("acceptance release and combined publication budget reject without changing the baseline", async () => {
+  for (const release of [true, false]) {
+    const f = fixture(undefined, [
+      batch([file("keep.md")]),
+      batch([file("keep.md")]),
+    ]);
+    const preparing = f.service.prepare(f.handle);
+    await f.drain();
+    const candidate = await preparing;
+    if (!candidate.ok) throw Error(candidate.reason);
+    const op = f.service.issue(candidate.summary.token)!;
+    const accepting = f.service.accept(op);
+    await Promise.resolve();
+    if (release) f.service.release(candidate.summary.token);
+    else f.setUsed(1_000_000 - f.service.bytes() - 1);
+    await f.drain();
+    expect(await accepting).toMatchObject({ status: "rejected" });
+    expect(f.root()!.generation).toBe(1);
+    expect(f.root()!.nodes).toBe(f.nodes);
+    expect(await f.service.accept(op)).toMatchObject({ status: "rejected" });
+  }
+});
 
 test("private candidate joins duplicate requests, reports complete diff, and never mutates baseline", async () => {
   const f = fixture(

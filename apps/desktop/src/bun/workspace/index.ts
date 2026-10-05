@@ -52,7 +52,7 @@ interface Owner extends DocumentScope {
 export interface TrustedWorkspaceService extends WorkspaceService {
   reconciliation: Pick<
     ReturnType<typeof createReconciliation>,
-    "prepare" | "get" | "release"
+    "prepare" | "get" | "release" | "issue" | "accept" | "query"
   >;
 }
 export function createWorkspaceService({
@@ -153,6 +153,7 @@ export function createWorkspaceService({
     root.live &&
     root.meta.generation === generation &&
     roots.includes(root);
+  const openingRoots = new Map<Root, number>();
   const reconciliation = createReconciliation({
     getRoot(handle) {
       const root = roots.find((item) => item.meta.handle === handle);
@@ -172,6 +173,36 @@ export function createWorkspaceService({
     limit: cacheLimit,
     worker,
     wake: () => wake(),
+    publish(binding, publication) {
+      const root = roots.find((item) => item.meta.handle === binding.handle);
+      if (root && openingRoots.has(root)) return "busy";
+      if (
+        disposed ||
+        root !== binding.lifetime ||
+        !root.live ||
+        root.meta.status !== "complete" ||
+        root.meta.generation !== binding.generation ||
+        (root.meta.showHidden ?? false) !== binding.showHidden
+      )
+        return false;
+      cacheBytes += publication.bytes - root.bytes;
+      root.bytes = publication.bytes;
+      root.nodes = publication.nodes;
+      root.byPath = publication.byPath;
+      root.files = publication.files;
+      root.meta = {
+        ...root.meta,
+        generation: publication.generation,
+        entries: publication.nodes.length,
+        examined: publication.examined,
+        errors: 0,
+        status: "complete",
+      };
+      root.started = false;
+      root.priorities = [];
+      root.queueBytes = 0;
+      return true;
+    },
   });
   let candidateTurn = true;
   const invalidate = (root: Root) => {
@@ -222,7 +253,7 @@ export function createWorkspaceService({
         Buffer.byteLength(JSON.stringify(additions)) +
         Buffer.byteLength(JSON.stringify(file));
       if (cacheBytes + reconciliation.bytes() + bytes > cacheLimit)
-        reconciliation.invalidate();
+        reconciliation.invalidate(undefined, true);
       if (cacheBytes + bytes > cacheLimit) {
         root.meta.status = "paused";
         queueCleanup(key(root));
@@ -360,6 +391,9 @@ export function createWorkspaceService({
       prepare: (handle) => reconciliation.prepare(handle),
       get: (token) => reconciliation.get(token),
       release: (token) => reconciliation.release(token),
+      issue: (token) => reconciliation.issue(token),
+      accept: (operation) => reconciliation.accept(operation),
+      query: (operation) => reconciliation.query(operation),
     },
     async request(value) {
       if (!validWorkspaceRequest(value)) return failure("", "INVALID_REQUEST");
@@ -519,42 +553,49 @@ export function createWorkspaceService({
       if (disposed || !root || !file)
         return { ...envelope, ok: false, error: "INVALID_HANDLE" };
       const generation = root.meta.generation;
-      const owner: Owner = {
-        root,
-        release() {
-          this.root.scopes.delete(this);
-        },
-        async verify() {
-          if (disposed || !this.root.live || !roots.includes(this.root))
-            throw new DocumentPathError("INVALID_HANDLE");
-          await verifyRoot(this.root.authorization);
-          if (!this.root.live) throw new DocumentPathError("INVALID_HANDLE");
-        },
-      };
-      root.scopes.add(owner);
-      const response = await documents.openAuthorized(
-        envelope,
-        async () => {
-          if (!live(root, generation) || root.files.get(value.entry) !== file)
-            throw new DocumentPathError("INVALID_HANDLE");
-          const candidate = await authorizeEntry(
-            root.authorization,
-            file.path,
-            file.fingerprint,
-            file.chain,
-            root.meta.showHidden
-          );
-          if (!live(root, generation)) {
-            await candidate.file.close();
-            throw new DocumentPathError("INVALID_HANDLE");
-          }
-          return candidate;
-        },
-        owner
-      );
-      if (!response.ok || !response.snapshot) owner.root.scopes.delete(owner);
-      else bindAssets(response.snapshot.handle, owner.root);
-      return response;
+      openingRoots.set(root, (openingRoots.get(root) ?? 0) + 1);
+      try {
+        const owner: Owner = {
+          root,
+          release() {
+            this.root.scopes.delete(this);
+          },
+          async verify() {
+            if (disposed || !this.root.live || !roots.includes(this.root))
+              throw new DocumentPathError("INVALID_HANDLE");
+            await verifyRoot(this.root.authorization);
+            if (!this.root.live) throw new DocumentPathError("INVALID_HANDLE");
+          },
+        };
+        root.scopes.add(owner);
+        const response = await documents.openAuthorized(
+          envelope,
+          async () => {
+            if (!live(root, generation) || root.files.get(value.entry) !== file)
+              throw new DocumentPathError("INVALID_HANDLE");
+            const candidate = await authorizeEntry(
+              root.authorization,
+              file.path,
+              file.fingerprint,
+              file.chain,
+              root.meta.showHidden
+            );
+            if (!live(root, generation)) {
+              await candidate.file.close();
+              throw new DocumentPathError("INVALID_HANDLE");
+            }
+            return candidate;
+          },
+          owner
+        );
+        if (!response.ok || !response.snapshot) owner.root.scopes.delete(owner);
+        else bindAssets(response.snapshot.handle, owner.root);
+        return response;
+      } finally {
+        const count = openingRoots.get(root)! - 1;
+        if (count) openingRoots.set(root, count);
+        else openingRoots.delete(root);
+      }
     },
     async dispose() {
       reconciliation.dispose();

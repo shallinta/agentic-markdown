@@ -1,6 +1,10 @@
 # 迁出能力承接登记
 
-## 当前推进：F-027b 目录核对候选基础（2026-10-05）
+## 本片通过：F-027c 内部目录候选安全接受（2026-10-05）
+
+[F-027c](iterations/F-027c-directory-candidate-acceptance.md)alpha.94 非离线内部服务本片已由受托Agent代验通过，非用户亲验；最终独立verifier 0剩余阻断、主线确认。源码/包内各767项及真实WK启动/退出smoke证据保留，Git待主线实际执行。原候选完整metadata复扫一致后同步CAS服务树并记录有界幂等回执；无RPC/UI/watch，不改打开正文/基线/历史或rescan/hidden。前端分页一致性拆至F-027d、之后再watch；OBL-005/016局部、OBL-011延期，父/离线开放。F-027b已提交推送`de027433f1d350d0a4adc0ee6086434fbde602b1`，远端main同SHA，当时干净；首轮权限红未归因观察保留。
+
+## 前轮通过：F-027b 目录核对候选基础（2026-10-05）
 
 正式结论：F-027b alpha.93非离线内部服务本片已受托Agent代验通过，非用户亲验；最终独立verifier 0本片阻断，主线确认。首轮权限测试红保留未归因非阻断观察，不声明已修或绝对无关，后续复现须采时序独立诊断。Git待主线实际执行。无接受发布/UI/RPC/watch；父F-027、完整OBL-005/016、延期OBL-011及F-027b-offline-final继续开放。下方待验检查点保留历史。
 
@@ -145,7 +149,7 @@ OBL-065 的当前编辑/源码/安全源码保存链路已有 [F-013b 受托窗�
 | OBL-002 | F-003 / G-01、G-02、G-04 | F-015 | write 服务接入与运行时载荷、权限、版本复核；稳定错误 | 已验收 | [F-015a](./iterations/F-015a-manual-save.md) | 2026-09-22 用户明确确认 F-015a 验收通过；见迭代第 7 节。 |
 | OBL-003 | F-003 / Q-27、Q-28 | F-018 | 实测 1/10/50MB RPC 延迟、CPU、复制与内存，比较全量/二进制/chunk/patch；样本规模非性能门槛。F-018a 上行与 F-018b 全文下行实验已验收；F-018c 承接超长行自有装饰局部保护。严格单向、实际复制、逐行换行/token 及完整大文档保护余项仍开放，不以不可用指标冒充完成 | 实现中 | [F-018a](./iterations/F-018a-large-document-probe.md)、[F-018b](./iterations/F-018b-downlink-transfer-probe.md)、[F-018c](./iterations/F-018c-long-line-local-protection.md)、[F-018d](./iterations/F-018d-long-line-view-probe.md)、[F-018e](./iterations/F-018e-transport-observability.md)、[F-018f](./iterations/F-018f-long-line-rendering-protection.md)、[F-018g](./iterations/F-018g-dense-line-performance.md)、[F-018h](./iterations/F-018h-responsive-dense-line-editing.md)、[F-018i](./iterations/F-018i-large-document-open-interaction.md)、[F-018j](./iterations/F-018j-responsive-multiline-editing.md) | 2026-09-27 用户总体验收本批切片范围通过；先前历史验收保持，完整余项仍开放，不关闭整项，证据见对应唯一迭代当前结论。 F-018d 真实 EditorView 长行交互与 F-018e 传输观测alpha.32 已于 2026-09-27 授权 Agent 代验通过（本片范围）；不以研究补证关闭完整责任。 F-018f 用户已确认保持软换行并授权开始源码 token 保护，alpha.33 于 2026-09-28 本片范围获用户总体验收通过，完整余项仍开放。 2026-09-28 F-018g alpha.34 诊断能力与有限归因证据于 2026-09-28 用户授权 Agent 代验通过；未交付生产优化、完整性能仍未解决，不关闭完整责任。 [F-018h](./iterations/F-018h-responsive-dense-line-editing.md) 局部承接输入响应优化：alpha.38 于 2026-09-28 用户总体验收本片范围通过；Text identity/requestId 非保存 revision，完整余项保持开放。 2026-09-28 F-018i alpha.43 真实磁盘观测与BOM正确性修复于2026-09-28用户总体验收本片范围通过；无提速结论，完整余项开放。 2026-09-28 F-018j alpha.47于2026-09-28用户总体验收本片范围通过；仅多行大文档解析路径选择，完整余项开放。 |
 | OBL-004 | F-003 / G-01、G-02 | F-025 | scan 受控服务、请求大小和授权校验 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
-| OBL-005 | F-003 / G-01、G-02、G-04 | F-027 | watch 受控服务与 identity/revision/hash 防陈旧提交 | 实现中 | [F-027a](./iterations/F-027a-open-document-external-changes.md)、[F-027b](./iterations/F-027b-controlled-directory-reconciliation.md) | F-027a已代验；F-027b alpha.93内部候选身份/代次隔离非离线局部已受托代验，无发布/UI/watch。完整义务及各片offline-final开放；首次权限红未归因观察保留。 |
+| OBL-005 | F-003 / G-01、G-02、G-04 | F-027 | watch 受控服务与 identity/revision/hash 防陈旧提交 | 实现中 | [F-027a](./iterations/F-027a-open-document-external-changes.md)、[F-027b](./iterations/F-027b-controlled-directory-reconciliation.md)、[F-027c](./iterations/F-027c-directory-candidate-acceptance.md) | F-027a/b非离线局部已代验；F-027c内部安全接受/CASalpha.94非离线局部已受托代验通过，Git待执行，无UI/watch。完整义务及各片offline-final开放，首次权限红未归因观察保留。 |
 | OBL-006 | F-003 / G-01、G-02 | F-064 | search/index 受控服务、运行时校验和稳定错误 | 待承接 | — | — |
 | OBL-007 | F-004 / G-03、G-12、G-13 | F-025 | 目录根 opaque capability 与派生句柄生命周期；移除根撤销全部派生授权；真实卷语义去重 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
 | OBL-008 | F-004 / W-18、G-12 | F-025 | 首次目录扫描即不递归目录 symlink；文件 symlink 仅授权内普通文件，越界/失效/循环排除；F-026 消费同一过滤结果并验证文件树展示，不重复实现授权规则 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
@@ -156,7 +160,7 @@ OBL-065 的当前编辑/源码/安全源码保存链路已有 [F-013b 受托窗�
 | OBL-013 | F-005 / Q-26 | F-019 | 阅读解析任务取消、优先级、限流和结果版本隔离 | 实现中 | [F-019a](./iterations/F-019a-canonical-commonmark-foundation.md)、[F-019b](./iterations/F-019b-current-document-canonical-parsing.md) | 2026-10-01 alpha.55本片获用户总体验收；2026-10-03 F-019b alpha.58当前文档管线获授权Agent代验通过，独立复核无阻断，非用户亲验；运行中取消实操未捕获，由受控测试覆盖。完整阅读任务及多消费者优先级等责任保留，OBL-021延期，不关闭整项。 |
 | OBL-014 | F-005 / Q-26 | F-024 | 重模块加载/渲染的取消、限流、优先级和过期提交隔离 | 待承接 | — | — |
 | OBL-015 | F-005 / Q-26 | F-025 | 目录扫描取消、优先级、有界调度与 latest-wins | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
-| OBL-016 | F-005 / Q-26 | F-027 | watch 合并调度、取消、限流及 generation/revision 隔离 | 实现中 | [F-027a](./iterations/F-027a-open-document-external-changes.md)、[F-027b](./iterations/F-027b-controlled-directory-reconciliation.md) | F-027a已代验；F-027b alpha.93共享Worker串行候选/合并/有界失效非离线局部已受托代验；完整watch仍开放，F-027b-offline-final留最终人工。 |
+| OBL-016 | F-005 / Q-26 | F-027 | watch 合并调度、取消、限流及 generation/revision 隔离 | 实现中 | [F-027a](./iterations/F-027a-open-document-external-changes.md)、[F-027b](./iterations/F-027b-controlled-directory-reconciliation.md)、[F-027c](./iterations/F-027c-directory-candidate-acceptance.md) | F-027a/b非离线局部已代验；F-027c有界接受/回执及共享调度alpha.94非离线局部已受托代验通过，Git待执行。完整watch及各片offline-final仍开放。 |
 | OBL-017 | F-005 / Q-26 | F-063 | Quick Open 连续查询取消、优先级、有界调度与过期结果隔离 | 待承接 | — | — |
 | OBL-018 | F-005 / Q-26 | F-064 | 搜索/索引任务取消、优先级、有界调度和过期结果隔离 | 待承接 | — | — |
 | OBL-019 | F-005 / Q-26 | F-070 | 前台/扫描/索引/恢复任务联合优先级与背压收敛 | 待承接 | — | — |

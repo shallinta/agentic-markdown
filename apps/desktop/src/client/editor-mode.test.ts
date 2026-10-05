@@ -2,16 +2,62 @@ import { expect, test } from "bun:test";
 
 import { undo, redo } from "@codemirror/commands";
 import { syntaxTree, highlightingFor } from "@codemirror/language";
-import { EditorSelection, Transaction } from "@codemirror/state";
+import {
+  EditorSelection,
+  Transaction,
+  type EditorState,
+} from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 
 import {
   getEditorMode,
+  safeSourceEffects,
   sourceHighlightStyle,
   switchEditorMode,
 } from "./editor-mode";
 import { createRawEditorState, rawText } from "./raw-buffer";
 import { sourceColorDecorations } from "./source-highlighting";
+
+const styleRules = (state: EditorState) =>
+  state
+    .facet(EditorView.styleModule)
+    .map((module) => module.getRules())
+    .join("\n");
+
+test("source line presentation stays scoped and weaker than selection highlighting", () => {
+  const editing = createRawEditorState("first\n\n" + "wrapped ".repeat(80));
+  const source = editing.update({ effects: switchEditorMode("source") }).state;
+  const styles = styleRules(source);
+  expect(styles).toContain(".cm-gutters");
+  expect(styles).toContain(".cm-activeLine");
+  expect(styles).toContain(".cm-activeLineGutter");
+  expect(styles).toContain("var(--foreground) 5%");
+  expect(styles).toContain("var(--foreground) 8%");
+  expect(styles).toContain("var(--foreground) 20%");
+  expect(source.doc).toBe(editing.doc);
+  expect(source.doc.lines).toBe(3);
+  expect(source.doc.lineAt(source.doc.length).number).toBe(3);
+  expect(styleRules(editing)).not.toContain(".cm-activeLineGutter");
+  const returned = source.update({
+    effects: switchEditorMode("editing"),
+  }).state;
+  expect(styleRules(returned)).not.toContain(".cm-activeLineGutter");
+  expect(returned.doc).toBe(editing.doc);
+});
+
+test("fault isolation never loads ordinary source line presentation", () => {
+  const isolated = createRawEditorState("safe", undefined, true);
+  expect(styleRules(isolated)).not.toContain(".cm-activeLineGutter");
+  const source = createRawEditorState("ordinary").update({
+    effects: switchEditorMode("source"),
+  }).state;
+  const safe = source.update({ effects: safeSourceEffects() }).state;
+  expect(getEditorMode(safe)).toBe("source");
+  expect(styleRules(safe)).not.toContain(".cm-activeLineGutter");
+  expect(safe.doc).toBe(source.doc);
+  expect(safe.selection).toBe(source.selection);
+});
 
 test("source highlighting changes only color, leaving all Markdown uniformly typeset", () => {
   for (const spec of sourceHighlightStyle.specs) {

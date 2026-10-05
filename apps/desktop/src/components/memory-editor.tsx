@@ -7,6 +7,7 @@ import {
   editorFaultSession,
   type EditorFaultSession,
 } from "@/client/editor-fault";
+import { syncCurrentEditorState } from "@/client/editor-view-sync";
 import { routeHistoryInput } from "@/client/history-input";
 import {
   editorOffset,
@@ -177,9 +178,10 @@ export function MemoryEditor({
   }, [controller, documentId]);
   useLayoutEffect(() => {
     const view = viewRef.current;
-    if (!view || !editor) return;
-    if (view.state !== editor.state) view.setState(editor.state);
-    const fault = editor.state.field(editorFaultSession);
+    if (!view) return;
+    const current = syncCurrentEditorState(view, controller, documentId);
+    if (!current) return;
+    const fault = current.field(editorFaultSession);
     if (faultSessionRef.current !== fault) {
       if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
       faultSessionRef.current = fault;

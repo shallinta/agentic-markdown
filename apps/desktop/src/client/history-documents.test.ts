@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 
 import { isolateHistory } from "@codemirror/commands";
+import { EditorView } from "@codemirror/view";
 
+import { createCommandRegistry } from "../commands/registry";
 import {
   isWriteCapability,
   type DocumentSnapshot,
@@ -10,6 +12,7 @@ import {
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
 import { createDocumentController, type DocumentTransport } from "./documents";
+import { syncCurrentEditorState } from "./editor-view-sync";
 import { rawText } from "./raw-buffer";
 import { savedReply } from "./save-test-helper";
 
@@ -67,6 +70,112 @@ async function setup(capabilityTimeoutMs?: number) {
     },
   };
 }
+test("cross-tab history command changes content without reporting a command failure at controller seam", async () => {
+  const { a, controller: c, edit, openB } = await setup();
+  const failures: string[] = [];
+  const registry = createCommandRegistry(
+    () => {
+      throw Error("unexpected forwarding");
+    },
+    () => failures.push("命令执行失败，请重试。")
+  );
+  registry.registerCommandHandlers(
+    {
+      undoDocument: () => {
+        c.runHistory("undo");
+      },
+      redoDocument: () => {
+        c.runHistory("redo");
+      },
+    },
+    { undoDocument: c.canUndo, redoDocument: c.canRedo }
+  );
+  edit("TEMP");
+  await openB();
+  c.activateTab(a.documentId);
+  registry.executeCommand({ type: "undoDocument", args: {} });
+  await Promise.resolve();
+  expect(c.getEditor(a.documentId)!.state.field(rawText)).toBe(a.text);
+  expect(failures).toEqual([]);
+  await openB();
+  c.activateTab(a.documentId);
+  registry.executeCommand({ type: "redoDocument", args: {} });
+  await Promise.resolve();
+  expect(c.getEditor(a.documentId)!.state.field(rawText)).toBe(a.text + "TEMP");
+  expect(failures).toEqual([]);
+});
+
+test("mount viewport transaction is not replaced by render-captured editor state", async () => {
+  const { a, controller: c, edit, openB } = await setup();
+  edit("TEMP");
+  await openB();
+  c.activateTab(a.documentId);
+  const capturedEditor = c.getEditor(a.documentId)!;
+  let viewState = capturedEditor.state;
+  let notifications = 0;
+  const unsubscribe = c.subscribe(() => {
+    notifications++;
+  });
+  // Actual CM effect used by MemoryEditor's first layout effect for a restored viewport.
+  const restore = viewState.update({
+    effects: EditorView.scrollIntoView(0, { y: "start" }),
+  });
+  expect(c.updateEditor(a.documentId, restore)).toBe(true);
+  viewState = restore.state;
+  expect(notifications).toBe(0);
+  expect(viewState).toBe(c.getEditor(a.documentId)!.state);
+  // Production second-effect seam reads the current owner, not capturedEditor.
+  let replacements = 0;
+  const current = syncCurrentEditorState(
+    {
+      get state() {
+        return viewState;
+      },
+      setState(state) {
+        replacements++;
+        viewState = state;
+      },
+    },
+    c,
+    a.documentId
+  );
+  unsubscribe();
+  expect(viewState).toBe(c.getEditor(a.documentId)!.state);
+  expect(current).toBe(restore.state);
+  expect(replacements).toBe(0);
+});
+
+test("diagnostic mount without viewport restoration keeps captured state current", async () => {
+  const { a, controller: c, edit, openB } = await setup();
+  edit("TEMP");
+  await openB();
+  c.activateTab(a.documentId);
+  const capturedEditor = c.getEditor(a.documentId)!;
+  const viewState = capturedEditor.state;
+  expect(viewState).toBe(c.getEditor(a.documentId)!.state);
+});
+test("view synchronization adopts latest owner state and ignores released documents", async () => {
+  const { a, controller: c, edit } = await setup();
+  let state = c.getEditor(a.documentId)!.state;
+  let replacements = 0;
+  const view = {
+    get state() {
+      return state;
+    },
+    setState(next: typeof state) {
+      replacements++;
+      state = next;
+    },
+  };
+  edit("latest");
+  expect(syncCurrentEditorState(view, c, a.documentId)).toBe(
+    c.getEditor(a.documentId)!.state
+  );
+  expect(replacements).toBe(1);
+  expect(state.field(rawText)).toBe(a.text + "latest");
+  expect(syncCurrentEditorState(view, c, "not-open")).toBeUndefined();
+  expect(replacements).toBe(1);
+});
 test("readonly refresh preserves dirty raw bytes, selection and history while blocking all mutations", async () => {
   const { a, controller: c, transport, edit } = await setup();
   edit("修改");

@@ -1,6 +1,11 @@
 import { HighlightStyle } from "@codemirror/language";
 import { Compartment, Facet, type EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import {
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  lineNumbers,
+} from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 
 import { editorFaultSession, reportEditorFault } from "./editor-fault";
@@ -58,6 +63,24 @@ const safe = Facet.define<boolean, boolean>({
 const sourcePresentation = [
   mode.of("source"),
   protectedSourceHighlighting(sourceHighlightStyle),
+  lineNumbers(),
+  highlightActiveLine(),
+  highlightActiveLineGutter(),
+  EditorView.theme({
+    ".cm-gutters": {
+      backgroundColor: "var(--background)",
+      color: "var(--muted-foreground)",
+      borderRight: "1px solid var(--border)",
+    },
+    ".cm-activeLine": {
+      backgroundColor: "color-mix(in oklab, var(--foreground) 5%, transparent)",
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor:
+        "color-mix(in oklab, var(--foreground) 8%, var(--background))",
+      color: "var(--foreground)",
+    },
+  }),
 ];
 export const createEditorModeExtensions = (isolated = false) => [
   editorFaultSession,

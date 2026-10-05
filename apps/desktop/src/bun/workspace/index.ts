@@ -28,6 +28,7 @@ import {
   type RootAuthorization,
 } from "./authorization";
 import type { HiddenPreferences } from "./preferences";
+import { createReconciliation } from "./reconciliation";
 import type { ScanFile } from "./scan";
 import { validScanBatch } from "./scan-protocol";
 import { createScanWorker } from "./worker";
@@ -48,19 +49,28 @@ interface Root {
 interface Owner extends DocumentScope {
   root: Root;
 }
+export interface TrustedWorkspaceService extends WorkspaceService {
+  reconciliation: Pick<
+    ReturnType<typeof createReconciliation>,
+    "prepare" | "get" | "release"
+  >;
+}
 export function createWorkspaceService({
   pickDirectory,
   documents,
   worker = createScanWorker(),
   cacheLimit = WORKSPACE_CACHE_BYTES,
-  preferences = { get: () => Promise.resolve(false), set: () => Promise.resolve() },
+  preferences = {
+    get: () => Promise.resolve(false),
+    set: () => Promise.resolve(),
+  },
 }: {
   pickDirectory: () => Promise<string | null>;
   documents: TrustedDocumentService;
   worker?: ReturnType<typeof createScanWorker>;
   cacheLimit?: number;
   preferences?: HiddenPreferences;
-}): WorkspaceService {
+}): TrustedWorkspaceService {
   const roots: Root[] = [];
   let preferenceTail: Promise<unknown> = Promise.resolve();
   const assetOwners = new Map<string, { root: Root; scope: AssetScope }>();
@@ -143,7 +153,29 @@ export function createWorkspaceService({
     root.live &&
     root.meta.generation === generation &&
     roots.includes(root);
+  const reconciliation = createReconciliation({
+    getRoot(handle) {
+      const root = roots.find((item) => item.meta.handle === handle);
+      return !disposed && root?.live && root.meta.status === "complete"
+        ? {
+            lifetime: root,
+            handle,
+            generation: root.meta.generation,
+            showHidden: root.meta.showHidden ?? false,
+            authorization: root.authorization,
+            nodes: root.nodes,
+            files: root.files,
+          }
+        : undefined;
+    },
+    usedBytes: () => cacheBytes,
+    limit: cacheLimit,
+    worker,
+    wake: () => wake(),
+  });
+  let candidateTurn = true;
   const invalidate = (root: Root) => {
+    reconciliation.invalidate(root.meta.handle);
     queueCleanup(key(root));
     root.live = false;
     cacheBytes -= root.bytes;
@@ -189,6 +221,8 @@ export function createWorkspaceService({
       const bytes =
         Buffer.byteLength(JSON.stringify(additions)) +
         Buffer.byteLength(JSON.stringify(file));
+      if (cacheBytes + reconciliation.bytes() + bytes > cacheLimit)
+        reconciliation.invalidate();
       if (cacheBytes + bytes > cacheLimit) {
         root.meta.status = "paused";
         queueCleanup(key(root));
@@ -209,7 +243,7 @@ export function createWorkspaceService({
     if (running || disposed) return;
     running = true;
     try {
-      while (!disposed || cleanup.length) {
+      while (!disposed || cleanup.length || reconciliation.hasWork()) {
         const stale = cleanup.shift();
         if (stale) {
           await worker.call({ op: "close", key: stale }).catch(() => undefined);
@@ -221,7 +255,14 @@ export function createWorkspaceService({
           (_, index) => roots[(turn + index) % roots.length]
         );
         const root = scheduled.find((item) => item.meta.status === "scanning");
+        if (reconciliation.hasWork() && (candidateTurn || !root)) {
+          candidateTurn = false;
+          await reconciliation.step();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          continue;
+        }
         if (!root) break;
+        candidateTurn = true;
         turn = (roots.indexOf(root) + 1) % roots.length;
         const generation = root.meta.generation;
         try {
@@ -277,6 +318,7 @@ export function createWorkspaceService({
     void drain();
   };
   function restart(root: Root) {
+    reconciliation.invalidate(root.meta.handle);
     queueCleanup(key(root));
     cacheBytes -= root.bytes;
     root.bytes = 0;
@@ -314,6 +356,11 @@ export function createWorkspaceService({
     return accepted;
   }
   return {
+    reconciliation: {
+      prepare: (handle) => reconciliation.prepare(handle),
+      get: (token) => reconciliation.get(token),
+      release: (token) => reconciliation.release(token),
+    },
     async request(value) {
       if (!validWorkspaceRequest(value)) return failure("", "INVALID_REQUEST");
       if (disposed) return failure(value.requestId, "UNAVAILABLE");
@@ -510,6 +557,7 @@ export function createWorkspaceService({
       return response;
     },
     async dispose() {
+      reconciliation.dispose();
       await removeAll();
       disposed = true;
       epoch++;

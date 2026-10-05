@@ -84,6 +84,89 @@ async function nodes(root: WorkspaceRoot) {
   }
   return result;
 }
+test("trusted reconciliation scans real changes without publishing tree or document state", async () => {
+  await mkdir(join(directory, "nested"));
+  await writeFile(join(directory, "nested/keep.md"), "# keep");
+  await writeFile(join(directory, "gone.md"), "# gone");
+  await writeFile(join(directory, "replace.md"), "# before");
+  await workspace.request(request("select"));
+  const before = await settle(),
+    root = before.roots[0],
+    original = await nodes(root);
+  const keep = original.find((node) => node.name === "keep.md")!;
+  const opened = await workspace.open({
+    protocolVersion: 1,
+    requestId: "candidate-open",
+    root: root.handle,
+    entry: keep.handle,
+  });
+  if (!opened.ok || !opened.snapshot) throw Error("open");
+  const locations = documents.locations();
+  const assets = documents.assetEpochs();
+  await rm(join(directory, "gone.md"));
+  await rename(join(directory, "replace.md"), join(directory, "replace.bak"));
+  await writeFile(join(directory, "replace.md"), "# after");
+  await writeFile(join(directory, "new.md"), "# new");
+  const result = await workspace.reconciliation.prepare(root.handle);
+  if (!result.ok) throw Error(result.reason);
+  expect(result.summary).toMatchObject({ added: 1, removed: 1, replaced: 1 });
+  expect(result.summary.retainedHandles.sort()).toEqual(
+    original
+      .filter((node) => node.name === "keep.md" || node.name === "nested")
+      .map((node) => node.handle)
+      .sort()
+  );
+  expect((await settle()).roots).toEqual(before.roots);
+  expect(await nodes(root)).toEqual(original);
+  expect(documents.locations()).toEqual(locations);
+  expect(documents.assetEpochs()).toEqual(assets);
+  // Existing explicit rescan retains its old semantics and invalidates the candidate.
+  await workspace.request(request("rescan", { root: root.handle }));
+  expect(workspace.reconciliation.get(result.summary.token)).toBeUndefined();
+  const current = await settle();
+  expect(current.roots[0].generation).toBe(root.generation + 1);
+});
+
+test("trusted candidates reject initial scans and preserve multi-page baseline and identity chain", async () => {
+  await mkdir(join(directory, "nested"));
+  for (let i = 0; i < 135; i++)
+    await writeFile(join(directory, `nested/file-${i}.md`), "body");
+  const selectedState = good(await workspace.request(request("select")));
+  expect(
+    await workspace.reconciliation.prepare(selectedState.roots[0].handle)
+  ).toEqual({ ok: false, reason: "NOT_READY" });
+  const before = await settle(),
+    root = before.roots[0],
+    original = await nodes(root);
+  const result = await workspace.reconciliation.prepare(root.handle);
+  if (!result.ok) throw Error(result.reason);
+  expect(result.summary.retainedHandles).toHaveLength(136);
+  expect(await nodes(root)).toEqual(original);
+  workspace.reconciliation.release(result.summary.token);
+  await rename(join(directory, "nested"), join(directory, "old-nested"));
+  await mkdir(join(directory, "nested"));
+  for (let i = 0; i < 135; i++)
+    await writeFile(join(directory, `nested/file-${i}.md`), "body");
+  let observedReplacement = false;
+  // Cleanup is deliberately drained before requesting a new private task.
+  for (let i = 0; i < 100; i++) {
+    const retry = await workspace.reconciliation.prepare(root.handle);
+    if (retry.ok) {
+      expect(retry.summary.replaced).toBe(136);
+      expect(retry.summary.retainedHandles).toHaveLength(0);
+      observedReplacement = true;
+      workspace.reconciliation.release(retry.summary.token);
+      break;
+    }
+    expect(retry.reason).toBe("BUSY");
+    await Bun.sleep(2);
+  }
+  expect(observedReplacement).toBe(true);
+  await workspace.request(
+    request("hidden", { root: root.handle, showHidden: true })
+  );
+  expect(workspace.reconciliation.get(result.summary.token)).toBeUndefined();
+});
 test("hidden toggle shares scan/link/open policy and preserves explicit provenance across handles", async () => {
   await mkdir(join(directory, ".secret"));
   await mkdir(join(directory, ".git"));
@@ -575,6 +658,150 @@ test("late batches cannot repopulate cleared roots", async () => {
   });
   await Bun.sleep(3);
   expect(good(await workspace.request(request("state"))).roots).toEqual([]);
+});
+test("candidate batches yield to a simultaneous root scan on the same Worker", async () => {
+  await workspace.dispose();
+  const paths = [join(directory, "A"), join(directory, "B")];
+  await mkdir(paths[0]);
+  await mkdir(paths[1]);
+  selected = paths[0];
+  let firstKey = "",
+    candidateKey = "",
+    otherKey = "",
+    active = 0,
+    maximum = 0;
+  let resume: (() => void) | undefined;
+  const count = new Map<string, number>(),
+    nexts: string[] = [];
+  const empty = {
+    files: [],
+    examined: 0,
+    errors: 0,
+    done: true,
+    paused: false,
+    queueBytes: 0,
+  };
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents,
+    worker: {
+      async call(message) {
+        active++;
+        maximum = Math.max(maximum, active);
+        const key = String(message.key);
+        try {
+          if (message.op === "start") {
+            if (!firstKey) firstKey = key;
+            else if (!candidateKey) candidateKey = key;
+            else otherKey = key;
+          }
+          if (message.op !== "next") return empty;
+          nexts.push(key);
+          const n = (count.get(key) ?? 0) + 1;
+          count.set(key, n);
+          if (key === candidateKey && n === 1)
+            await new Promise<void>((resolve) => {
+              resume = resolve;
+            });
+          return { ...empty, done: key === firstKey || n >= 3 };
+        } finally {
+          active--;
+        }
+      },
+      dispose() {
+        return undefined;
+      },
+    },
+  });
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const pending = workspace.reconciliation.prepare(root.handle);
+  for (let i = 0; !resume && i < 100; i++) await Bun.sleep(1);
+  expect(resume).toBeDefined();
+  selected = paths[1];
+  await workspace.request(request("select"));
+  resume!();
+  expect((await pending).ok).toBe(true);
+  await settle();
+  expect(maximum).toBe(1);
+  expect(nexts.indexOf(otherKey)).toBeGreaterThan(nexts.indexOf(candidateKey));
+  expect(nexts.indexOf(otherKey)).toBeLessThan(nexts.lastIndexOf(candidateKey));
+});
+
+test("owner drain serializes pending candidate invalidation with rescan, hidden, clear and disposal", async () => {
+  for (const action of ["rescan", "hidden", "clear", "dispose"] as const) {
+    await workspace.dispose();
+    let rootKey = "",
+      candidateKey = "",
+      active = 0,
+      maximum = 0;
+    let delivered: ((value: unknown) => void) | undefined;
+    const closed: string[] = [];
+    const empty = {
+      files: [],
+      examined: 0,
+      errors: 0,
+      done: true,
+      paused: false,
+      queueBytes: 0,
+    };
+    workspace = createWorkspaceService({
+      pickDirectory: () => Promise.resolve(directory),
+      documents,
+      worker: {
+        async call(message) {
+          active++;
+          maximum = Math.max(maximum, active);
+          try {
+            if (message.op === "start" && !rootKey)
+              rootKey = String(message.key).split(":")[0];
+            if (
+              message.op === "next" &&
+              !String(message.key).startsWith(rootKey)
+            ) {
+              candidateKey = String(message.key);
+              return await new Promise((resolve) => {
+                delivered = resolve;
+              });
+            }
+            if (message.op === "close") closed.push(String(message.key));
+            return empty;
+          } finally {
+            active--;
+          }
+        },
+        dispose() {
+          return undefined;
+        },
+      },
+    });
+    await workspace.request(request("select"));
+    const root = (await settle()).roots[0];
+    const pending = workspace.reconciliation.prepare(root.handle);
+    for (let i = 0; !delivered && i < 100; i++) await Bun.sleep(1);
+    expect(delivered).toBeDefined();
+    const operation =
+      action === "dispose"
+        ? workspace.dispose()
+        : workspace.request(
+            request(
+              action,
+              action === "clear"
+                ? {}
+                : action === "hidden"
+                  ? { root: root.handle, showHidden: true }
+                  : { root: root.handle }
+            )
+          );
+    // Let asynchronous root verification/hidden preference reach invalidation.
+    await Bun.sleep(5);
+    delivered!(empty);
+    await operation;
+    expect(await pending).toEqual({ ok: false, reason: "INVALIDATED" });
+    expect(maximum).toBe(1);
+    expect(closed).toContain(candidateKey);
+    if (action !== "dispose") await settle();
+  }
 });
 test("clear closes a worker session whose start reply is still pending", async () => {
   await workspace.dispose();

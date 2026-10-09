@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 本片通过：F-043a 普通源码全局软换行（2026-10-10）
+
+[F-043a](docs/iterations/F-043a-source-line-wrapping.md) alpha.102 非离线本片受托 Agent 代验通过，独立 Spec/Standards 均 0 阻断、主线确认，非用户亲验；Git 待主线实际执行。实际换行/横滚/长行中段位置、选区历史/跨标签、编辑阅读与安全隔离、Option+Tab/Space、重启 off 偏好及退出确认已记录；普通 Tab 跳过、自然 IME/动态系统外观/离线未实测边界保留。PID 57664 与 58509 均正常退出，三个 fixture hash 与 baseline 一致，未保存正文；无当前运行现场。源码/包内各 820/20092 通过，完整 OBL-058、父及 offline-final 开放。F-044a 已提交推送 `76aaf555837057eda60c990f4394d128b1e5c5c5`，远端 main 一致、编写本轮方案前当时工作树干净。下方旧 Git 待执行保留历史。
+
 ## 本片通过：F-044a 源码逻辑行号与当前行（2026-10-06）
 
 [F-044a](docs/iterations/F-044a-source-line-navigation.md) alpha.101 非离线本片经最终独立 verifier 确认 0 剩余阻断、主线确认受托 Agent 代验通过，非用户亲验，Git 待实际执行。809 项全量及源码行号/软折行/跨模式与跨标签选区历史/主题/安全降级/正常退出已记录；修复实际发现的 viewport 旧状态回退，临时命令诊断已删除，不归因旧未知 toast。父、完整 OBL-059、F-044a-offline-final 开放，未实测边界见唯一迭代。前轮 F-027e 已提交推送 `e9dbd7d133f9a454510c697e962ec47a7483a655`，远端一致、当时干净；下方旧检查点保留历史。

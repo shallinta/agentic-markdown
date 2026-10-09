@@ -34,6 +34,8 @@ import {
   restartParserForFaultTest,
   pauseEditorParser,
   resumeEditorParser,
+  getSourceWrapping,
+  sourceWrappingEffect,
 } from "./editor-mode";
 import { createRawEditorState, rawText } from "./raw-buffer";
 import { incrementalSave } from "./save-channel";
@@ -319,6 +321,7 @@ export function createDocumentController(
     saveDrainRequired = false;
   };
   let canLeaveEditor = () => true;
+  let sourceWrapping = true;
   let editorInputBlocked = false;
   function isDirty(documentId: string) {
     const editor = editors.get(documentId);
@@ -559,8 +562,12 @@ export function createDocumentController(
             previousMode &&
             !previousFault?.fault &&
             getEditorMode(previousMode) === "source"
-              ? nextEditor.update({ effects: switchEditorMode("source") }).state
-              : nextEditor,
+              ? nextEditor.update({
+                  effects: switchEditorMode("source", sourceWrapping),
+                }).state
+              : nextEditor.update({
+                  effects: sourceWrappingEffect(nextEditor, sourceWrapping),
+                }).state,
           revision: 0,
         });
         onTiming?.("stateCreateMs", performance.now() - stateStart);
@@ -714,6 +721,7 @@ export function createDocumentController(
   }
   let historyDispatch: ((transaction: Transaction) => void) | undefined;
   let captureScroll: (() => StateEffect<unknown>) | undefined;
+  let scheduleWrapping: (() => void) | undefined;
   const canToggleSourceMode = () =>
     !!state.snapshot &&
     editors.has(state.snapshot.documentId) &&
@@ -741,6 +749,49 @@ export function createDocumentController(
     );
   };
   const controller = {
+    setSourceWrapping: (enabled: boolean) => {
+      if (typeof enabled !== "boolean" || metadataDisposed) return;
+      sourceWrapping = enabled;
+      if (state.frozen || state.busy || !canLeaveEditor()) return;
+      const id = state.snapshot?.documentId;
+      const editor = id && editors.get(id);
+      if (
+        !editor || isSafeSource(editor.state) ||
+        getSourceWrapping(editor.state) === enabled
+      ) return;
+      // Hidden cached states keep their old geometry until their view is restored.
+      if (scheduleWrapping) scheduleWrapping();
+      else controller.applySourceWrapping(id, editor.state);
+    },
+    needsSourceWrapping: (documentId: string) => {
+      const editor = editors.get(documentId);
+      return (
+        !metadataDisposed && documentId === state.snapshot?.documentId &&
+        !!editor && !isSafeSource(editor.state) &&
+        getSourceWrapping(editor.state) !== sourceWrapping
+      );
+    },
+    applySourceWrapping: (
+      documentId: string,
+      expected: EditorState,
+      scroll?: StateEffect<unknown>
+    ) => {
+      const editor = editors.get(documentId);
+      if (
+        !controller.needsSourceWrapping(documentId) || editor?.state !== expected ||
+        state.frozen || state.busy || !canLeaveEditor()
+      ) return false;
+      const effects: StateEffect<unknown>[] = [
+        sourceWrappingEffect(expected, sourceWrapping),
+      ];
+      if (scroll && getEditorMode(expected) === "source") effects.push(scroll);
+      const transaction = expected.update({
+        effects, annotations: Transaction.addToHistory.of(false),
+      });
+      if (historyDispatch) historyDispatch(transaction);
+      else controller.updateEditor(documentId, transaction);
+      return editors.get(documentId)?.state === transaction.state;
+    },
     isSafeSource: (documentId: string) => {
       const editor = editors.get(documentId);
       return !!editor && isSafeSource(editor.state);
@@ -854,10 +905,11 @@ export function createDocumentController(
       if (previous !== "source") sourceReturn.set(documentId, previous);
       const scroll = captureScroll?.();
       const effect = switchEditorMode(
-        getEditorMode(editor.state) === "editing" ? "source" : "editing"
+        getEditorMode(editor.state) === "editing" ? "source" : "editing",
+        sourceWrapping
       );
       const transaction = editor.state.update({
-        effects: scroll ? [effect, scroll] : effect,
+        effects: scroll ? [...effect, scroll] : effect,
         annotations: Transaction.addToHistory.of(false),
       });
       if (historyDispatch) historyDispatch(transaction);
@@ -893,7 +945,13 @@ export function createDocumentController(
     setHistoryDispatch: (dispatch?: (transaction: Transaction) => void) => {
       historyDispatch = dispatch;
     },
-    notifyInteraction: () => publish({ ...state }),
+    setWrappingScheduler: (schedule?: () => void) => {
+      scheduleWrapping = schedule;
+    },
+    notifyInteraction: () => {
+      controller.setSourceWrapping(sourceWrapping);
+      publish({ ...state });
+    },
     getSnapshot: () => state,
     subscribe(this: void, listener: () => void) {
       listeners.add(listener);

@@ -56,6 +56,23 @@ export const sourceHighlightStyle = HighlightStyle.define([
   },
 ]);
 const presentation = new Compartment();
+const wrapping = new Compartment();
+const wrappingPreference = Facet.define<boolean, boolean>({
+  combine: (values) => values[0] ?? true,
+});
+const wrapExtension = (mode: EditorMode, enabled: boolean) => [
+  wrappingPreference.of(enabled),
+  mode === "editing" || enabled ? EditorView.lineWrapping : [],
+];
+export const getSourceWrapping = (state: EditorState) =>
+  state.facet(wrappingPreference);
+export const sourceWrappingEffect = (state: EditorState, enabled: boolean) =>
+  wrapping.reconfigure(
+    wrapExtension(
+      isSafeSource(state) ? "editing" : getEditorMode(state),
+      enabled
+    )
+  );
 const parserLanguage = new Compartment();
 const safe = Facet.define<boolean, boolean>({
   combine: (values) => values.some(Boolean),
@@ -83,6 +100,7 @@ const sourcePresentation = [
   }),
 ];
 export const createEditorModeExtensions = (isolated = false) => [
+  wrapping.of(wrapExtension("editing", true)),
   editorFaultSession,
   EditorView.exceptionSink.compute([editorFaultSession], (state) => {
     const session = state.field(editorFaultSession);
@@ -100,13 +118,16 @@ export const pauseEditorParser = () => parserLanguage.reconfigure([]);
 export const resumeEditorParser = (state: EditorState) =>
   parserLanguage.reconfigure(isSafeSource(state) ? [] : editingMarkdown);
 export const safeSourceEffects = () => [
+  wrapping.reconfigure(wrapExtension("editing", true)),
   parserLanguage.reconfigure([]),
   presentation.reconfigure([mode.of("source"), safe.of(true)]),
 ];
 export const restartParserForFaultTest = () =>
   parserLanguage.reconfigure(createEditingMarkdown());
 export const getEditorMode = (state: EditorState) => state.facet(mode);
-export const switchEditorMode = (next: EditorMode) =>
+export const switchEditorMode = (next: EditorMode, sourceWrap = true) => [
+  wrapping.reconfigure(wrapExtension(next, sourceWrap)),
   presentation.reconfigure(
     next === "source" ? sourcePresentation : livePresentation
-  );
+  ),
+];

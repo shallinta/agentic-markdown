@@ -154,7 +154,6 @@ export function createRawEditorState(
       createEditorModeExtensions(isolated),
       writePermission.of(EditorState.readOnly.of(false)),
       keymap.of(defaultKeymap),
-      EditorView.lineWrapping,
       // Native DOM selection is hidden while the tab button owns focus. Draw
       // the saved CM range without stealing keyboard focus on tab activation.
       drawSelection(),

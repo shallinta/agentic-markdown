@@ -28,6 +28,7 @@ import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { createFolderWorkspace } from "@/client/workspace";
 import { useCommands, useRegisterCommands } from "@/commands";
+import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
 import type { LocalImageRequest } from "@/shared/local-images";
@@ -107,6 +108,16 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     controller.subscribe,
     controller.getSnapshot
   );
+  const wrapping = useSourceWrapping();
+  useEffect(() => {
+    controller.setSourceWrapping(wrapping.enabled);
+  }, [
+    controller,
+    wrapping.enabled,
+    state.busy,
+    state.frozen,
+    state.snapshot?.documentId,
+  ]);
   const [canonical] = useState(() =>
     createDocumentCanonical(controller, () => new CurrentCanonicalWorker())
   );

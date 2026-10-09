@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useCommands } from "@/commands";
+import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { useUpdateMode } from "@/hooks/use-update-mode";
 import type { UpdateMode } from "@/shared/updates";
 
@@ -70,6 +71,7 @@ function RowLabel({ title, hint }: { title: string; hint?: string }) {
 }
 
 export function GeneralPage() {
+  const wrapping = useSourceWrapping();
   const { t } = useTranslation("settings");
   const { t: tCommon } = useTranslation("common");
   const { theme, setTheme } = useTheme();
@@ -89,6 +91,39 @@ export function GeneralPage() {
   return (
     <SettingsPage title={t("general")} className="overflow-y-auto">
       <div className="flex flex-col gap-7 pb-2">
+        <SettingsSection title="编辑器">
+          <SettingsRow
+            label={
+              <RowLabel
+                title="源码自动换行"
+                hint="仅普通源码模式；关闭后长行可横向滚动。"
+              />
+            }
+          >
+            <input
+              type="checkbox"
+              aria-label="源码自动换行"
+              checked={wrapping.enabled}
+              disabled={wrapping.isSaving}
+              onChange={(event) => {
+                void wrapping.change(event.target.checked);
+              }}
+            />
+          </SettingsRow>
+          {wrapping.error && (
+            <div role="status" className="text-destructive text-sm">
+              {wrapping.error}
+              <button
+                type="button"
+                onClick={() => {
+                  void wrapping.retry();
+                }}
+              >
+                重新读取
+              </button>
+            </div>
+          )}
+        </SettingsSection>
         <SettingsSection title={t("appearance")}>
           <SettingsRow
             label={<RowLabel title={t("theme.title")} hint={t("theme.hint")} />}

@@ -12,6 +12,7 @@ import {
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
 import { createDocumentController, type DocumentTransport } from "./documents";
+import { getSourceWrapping } from "./editor-mode";
 import { syncCurrentEditorState } from "./editor-view-sync";
 import { rawText } from "./raw-buffer";
 import { savedReply } from "./save-test-helper";
@@ -175,6 +176,80 @@ test("view synchronization adopts latest owner state and ignores released docume
   expect(state.field(rawText)).toBe(a.text + "latest");
   expect(syncCurrentEditorState(view, c, "not-open")).toBeUndefined();
   expect(replacements).toBe(1);
+});
+
+test("global source wrap updates existing and new documents without text revision or history changes", async () => {
+  const { a, b, controller: c, edit, openB } = await setup();
+  c.toggleSourceMode();
+  edit("TEMP");
+  const previous = c.getEditor(a.documentId)!;
+  c.setSourceWrapping(false);
+  const current = c.getEditor(a.documentId)!;
+  expect(getSourceWrapping(current.state)).toBe(false);
+  expect(current.state.doc).toBe(previous.state.doc);
+  expect(current.state.selection).toBe(previous.state.selection);
+  expect(current.revision).toBe(previous.revision);
+  await openB();
+  c.toggleSourceMode();
+  expect(getSourceWrapping(c.getEditor(b.documentId)!.state)).toBe(false);
+  c.activateTab(a.documentId);
+  expect(c.runHistory("undo")).toBe(true);
+  expect(c.getEditor(a.documentId)!.state.field(rawText)).toBe(a.text);
+  expect(getSourceWrapping(c.getEditor(a.documentId)!.state)).toBe(false);
+});
+
+test("source wrap waits for composition and applies only latest value without reviving disposal", async () => {
+  const { a, controller: c } = await setup();
+  c.toggleSourceMode();
+  let composing = true;
+  c.setInteractionCheck(() => !composing);
+  const original = c.getEditor(a.documentId)!.state;
+  c.setSourceWrapping(false);
+  c.setSourceWrapping(true);
+  c.setSourceWrapping(false);
+  expect(c.getEditor(a.documentId)!.state).toBe(original);
+  composing = false;
+  c.notifyInteraction();
+  expect(getSourceWrapping(c.getEditor(a.documentId)!.state)).toBe(false);
+  c.dispose();
+  c.setSourceWrapping(true);
+  c.notifyInteraction();
+  expect(c.getEditor(a.documentId)).toBeUndefined();
+});
+test("wrapping defers hidden cache and fences measured callbacks against tab, state, composition and disposal", async () => {
+  const { a, b, controller: c, openB, edit } = await setup();
+  c.toggleSourceMode();
+  await openB();
+  c.toggleSourceMode();
+  let scheduled = 0;
+  c.setWrappingScheduler(() => {
+    scheduled++;
+  });
+  c.setSourceWrapping(false);
+  const bBefore = c.getEditor(b.documentId)!.state;
+  expect(scheduled).toBe(1);
+  expect(getSourceWrapping(c.getEditor(a.documentId)!.state)).toBe(true);
+  expect(c.applySourceWrapping(b.documentId, bBefore)).toBe(true);
+  c.activateTab(a.documentId);
+  c.setSourceWrapping(false); // The mounted view asks for the latest desired value.
+  const aBefore = c.getEditor(a.documentId)!.state;
+  expect(scheduled).toBe(2);
+  expect(c.applySourceWrapping(b.documentId, bBefore)).toBe(false);
+  edit("changed after measurement");
+  expect(c.applySourceWrapping(a.documentId, aBefore)).toBe(false);
+  const latest = c.getEditor(a.documentId)!.state;
+  c.setInteractionCheck(() => false);
+  expect(c.applySourceWrapping(a.documentId, latest)).toBe(false);
+  c.setInteractionCheck(() => true);
+  c.beginDiscard();
+  expect(c.applySourceWrapping(a.documentId, latest)).toBe(false);
+  c.endDiscard();
+  expect(c.applySourceWrapping(a.documentId, latest)).toBe(true);
+  expect(getSourceWrapping(c.getEditor(a.documentId)!.state)).toBe(false);
+  c.setSourceWrapping(true);
+  const last = c.getEditor(a.documentId)!.state;
+  c.dispose();
+  expect(c.applySourceWrapping(a.documentId, last)).toBe(false);
 });
 test("readonly refresh preserves dirty raw bytes, selection and history while blocking all mutations", async () => {
   const { a, controller: c, transport, edit } = await setup();

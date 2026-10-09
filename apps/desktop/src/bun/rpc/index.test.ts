@@ -24,6 +24,39 @@ function createDependencies() {
   } as never;
 }
 
+test("source wrapping RPC requires exact boolean metadata and acknowledged persistence", async () => {
+  let enabled = true;
+  const rpc = createMainWindowRPC({
+    ...(createDependencies() as object),
+    sourceWrapping: {
+      get: () => Promise.resolve(enabled),
+      set: (value: boolean) => {
+        enabled = value;
+        return Promise.resolve();
+      },
+    },
+  } as never) as unknown as {
+    handlers: {
+      requests: {
+        getSourceWrapping(request: unknown): Promise<unknown>;
+        setSourceWrapping(request: unknown): Promise<unknown>;
+      };
+    };
+  };
+  const h = rpc.handlers.requests;
+  expect(await h.getSourceWrapping({})).toEqual({ ok: true, enabled: true });
+  expect(await h.setSourceWrapping({ enabled: false })).toEqual({
+    ok: true,
+    enabled: false,
+  });
+  expect(await h.getSourceWrapping({ extra: true })).toEqual({ ok: false });
+  expect(await h.setSourceWrapping({ enabled: "true" })).toEqual({ ok: false });
+  expect(await h.setSourceWrapping({ enabled: true, extra: true })).toEqual({
+    ok: false,
+  });
+  expect(enabled).toBe(false);
+});
+
 test("sidebar RPC validates exact metadata and waits for persistence acknowledgement", async () => {
   let writes = 0;
   const deps = {

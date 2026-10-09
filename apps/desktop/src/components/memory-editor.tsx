@@ -15,6 +15,7 @@ import {
   rawText,
   writePermission,
 } from "@/client/raw-buffer";
+import { deferWrappingUpdate } from "@/client/wrapping-measure";
 import { useCommands } from "@/commands";
 
 export function MemoryEditor({
@@ -86,6 +87,61 @@ export function MemoryEditor({
     };
     controller.setViewportCapture(captureViewport);
     const viewport = controller.getViewport(documentId);
+    let wrappingReady = !viewport;
+    const currentView = () =>
+      alive &&
+      viewRef.current === view &&
+      controller.getSnapshot().snapshot?.documentId === documentId;
+    const scheduleWrapping = () => {
+      if (
+        !currentView() ||
+        !wrappingReady ||
+        !controller.needsSourceWrapping(documentId)
+      )
+        return;
+      view.requestMeasure({
+        key: scheduleWrapping,
+        read: () => {
+          if (!currentView()) return undefined;
+          // Capture a visible character, not merely a logical line and stale pixel offset.
+          const box = view.scrollDOM.getBoundingClientRect();
+          const content = view.contentDOM.getBoundingClientRect();
+          const position = view.posAtCoords({
+            x: Math.max(box.left, content.left) + 4,
+            y: Math.max(box.top, content.top) + 4,
+          });
+          const rect = position === null ? null : view.coordsAtPos(position);
+          return {
+            state: view.state,
+            scroll:
+              position !== null && rect
+                ? EditorView.scrollIntoView(position, {
+                    y: "start",
+                    yMargin: Math.max(0, rect.top - box.top),
+                    x: "start",
+                    xMargin: Math.max(0, rect.left - box.left),
+                  })
+                : view.scrollSnapshot(),
+          };
+        },
+        write: (measured) => {
+          if (!currentView() || !measured) return;
+          deferWrappingUpdate(measured.state, {
+            current: currentView,
+            state: () => view.state,
+            remeasure: scheduleWrapping,
+            apply: () => {
+              controller.applySourceWrapping(
+                documentId,
+                measured.state,
+                measured.scroll
+              );
+            },
+          });
+        },
+      });
+    };
+    controller.setWrappingScheduler(scheduleWrapping);
     if (viewport) {
       const position = editorOffset(editor.state.field(rawText), viewport.from);
       view.dispatch({
@@ -94,6 +150,7 @@ export function MemoryEditor({
       view.requestMeasure({
         read: () => view.coordsAtPos(position),
         write: (rect) => {
+          if (!currentView()) return;
           if (rect)
             view.scrollDOM.scrollTop +=
               rect.top -
@@ -106,6 +163,8 @@ export function MemoryEditor({
                 0,
                 view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight
               );
+          wrappingReady = true;
+          scheduleWrapping();
         },
       });
     }
@@ -114,6 +173,7 @@ export function MemoryEditor({
       controller.setScrollPosition(documentId, view.scrollDOM.scrollTop);
     view.scrollDOM.addEventListener("scroll", saveScroll);
     controller.setInteractionCheck(() => !view.compositionStarted);
+    scheduleWrapping();
     const historyKey = (event: KeyboardEvent) => {
       if (
         (!event.metaKey && !event.ctrlKey) ||
@@ -141,6 +201,7 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("beforeinput", historyInput, true);
     const compositionChanged = () =>
       setTimeout(() => {
+        if (!currentView()) return;
         controller.notifyInteraction();
         recover();
       }, 0);
@@ -162,6 +223,7 @@ export function MemoryEditor({
       controller.setInteractionCheck(() => true);
       controller.setHistoryDispatch(undefined);
       controller.setScrollCapture(undefined);
+      controller.setWrappingScheduler(undefined);
       view.contentDOM.removeEventListener("keydown", historyKey, true);
       view.contentDOM.removeEventListener("beforeinput", historyInput, true);
       view.contentDOM.removeEventListener(

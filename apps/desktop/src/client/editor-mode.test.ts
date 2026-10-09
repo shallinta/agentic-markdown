@@ -13,6 +13,7 @@ import { tags } from "@lezer/highlight";
 import {
   getEditorMode,
   safeSourceEffects,
+  sourceWrappingEffect,
   sourceHighlightStyle,
   switchEditorMode,
 } from "./editor-mode";
@@ -24,6 +25,39 @@ const styleRules = (state: EditorState) =>
     .facet(EditorView.styleModule)
     .map((module) => module.getRules())
     .join("\n");
+
+const wraps = (state: EditorState) =>
+  state
+    .facet(EditorView.contentAttributes)
+    .some(
+      (attributes) =>
+        typeof attributes !== "function" &&
+        attributes.class?.includes("cm-lineWrapping")
+    );
+test("wrapping compartment only disables ordinary source and safe fallback always wraps", () => {
+  const editing = createRawEditorState("long ".repeat(100));
+  expect(wraps(editing)).toBe(true);
+  const source = editing.update({
+    effects: switchEditorMode("source", false),
+  }).state;
+  expect(wraps(source)).toBe(false);
+  const enabled = source.update({
+    effects: sourceWrappingEffect(source, true),
+  }).state;
+  expect(wraps(enabled)).toBe(true);
+  expect(
+    wraps(source.update({ effects: switchEditorMode("editing", false) }).state)
+  ).toBe(true);
+  expect(wraps(source.update({ effects: safeSourceEffects() }).state)).toBe(
+    true
+  );
+  const isolated = createRawEditorState("safe", [], true);
+  expect(
+    wraps(
+      isolated.update({ effects: sourceWrappingEffect(isolated, false) }).state
+    )
+  ).toBe(true);
+});
 
 test("source line presentation stays scoped and weaker than selection highlighting", () => {
   const editing = createRawEditorState("first\n\n" + "wrapped ".repeat(80));

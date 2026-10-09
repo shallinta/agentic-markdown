@@ -123,6 +123,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     });
     await locale.initialize();
     rpc = createMainWindowRPC({
+      sourceWrapping: (await import("../source-wrapping")).sourceWrappingStore,
       sidebar: {
         get: () => mainWindow?.getSidebar(),
         save: (layout) =>

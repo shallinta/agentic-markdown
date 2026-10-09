@@ -7,6 +7,7 @@ import { BrowserView, Utils, type BrowserWindow } from "electrobun/bun";
 import type { Command } from "../../shared/commands";
 import type { DocumentService } from "../../shared/documents";
 import type { DesktopRPCType } from "../../shared/rpc";
+import { isSourceWrappingRequest } from "../../shared/source-wrapping";
 import type { WorkspaceService } from "../../shared/workspace";
 import { setCommandAvailabilityInMenu } from "../app/menu";
 import type { LocaleController } from "../i18n/controller";
@@ -17,6 +18,10 @@ export type MainWindowRPC = ReturnType<
 >;
 
 export interface MainWindowRPCDependencies {
+  sourceWrapping?: {
+    get(): Promise<boolean>;
+    set(enabled: boolean): Promise<void>;
+  };
   sidebar?: {
     get(): SidebarLayout | undefined;
     save(layout: SidebarLayout): Promise<void>;
@@ -34,6 +39,7 @@ const MAX_REQUEST_TIME_MS = 5 * 60_000 + 10_000;
 export function createMainWindowRPC({
   documents,
   sidebar,
+  sourceWrapping,
   workspace,
   executeCommand,
   getMainWindow,
@@ -51,6 +57,31 @@ export function createMainWindowRPC({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        getSourceWrapping: async (request) => {
+          if (
+            !sourceWrapping ||
+            !request ||
+            typeof request !== "object" ||
+            Array.isArray(request) ||
+            Object.keys(request).length
+          )
+            return { ok: false };
+          try {
+            return { ok: true, enabled: await sourceWrapping.get() };
+          } catch {
+            return { ok: false };
+          }
+        },
+        setSourceWrapping: async (request) => {
+          if (!sourceWrapping || !isSourceWrappingRequest(request))
+            return { ok: false };
+          try {
+            await sourceWrapping.set(request.enabled);
+            return { ok: true, enabled: request.enabled };
+          } catch {
+            return { ok: false };
+          }
+        },
         getSidebarLayout: (request) => {
           if (
             !request ||
@@ -110,7 +141,7 @@ export function createMainWindowRPC({
         },
         checkDocumentWriteCapability: (request) =>
           documents.checkWriteCapability(request),
-        observeDocument: request => documents.observe(request),
+        observeDocument: (request) => documents.observe(request),
         saveDocument: (request) => documents.save(request),
         waitForDocumentSaves: (request) => documents.waitForSaves(request),
         selectDocument: (request) => documents.select(request),

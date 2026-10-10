@@ -191,15 +191,11 @@ export function createRawEditorState(
           },
       }),
       invertedEffects.of((transaction) => {
-        if (!transaction.docChanged) return [];
-        return [
-          restoreRaw.of(
-            inversePatch(
-              transaction.startState.field(rawText),
-              transaction.state.field(rawText)
-            )
-          ),
-        ];
+        const before = transaction.startState.field(rawText);
+        const after = transaction.state.field(rawText);
+        return before === after
+          ? []
+          : [restoreRaw.of(inversePatch(before, after))];
       }),
       extensions,
     ],

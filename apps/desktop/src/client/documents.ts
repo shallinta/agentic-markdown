@@ -1277,13 +1277,15 @@ export function createDocumentController(
       )
         return false;
       const raw = transaction.state.field(rawText);
+      const rawChanged = raw !== editor.state.field(rawText);
+      const contentChanged = transaction.docChanged || rawChanged;
       if (
-        (transaction.docChanged || raw !== editor.state.field(rawText)) &&
+        contentChanged &&
         (editorInputBlocked || !canWrite(documentId) || reading.has(documentId))
       )
         return false;
       if (
-        transaction.docChanged &&
+        contentChanged &&
         new TextEncoder().encode(raw).length > MAX_DOCUMENT_BYTES
       ) {
         publish({
@@ -1294,11 +1296,10 @@ export function createDocumentController(
       }
       editors.set(documentId, {
         state: transaction.state,
-        revision:
-          editor.revision + (raw !== editor.state.field(rawText) ? 1 : 0),
+        revision: editor.revision + (rawChanged ? 1 : 0),
       });
       if (
-        transaction.docChanged ||
+        contentChanged ||
         isSafeSource(editor.state) !== isSafeSource(transaction.state) ||
         getEditorMode(editor.state) !== getEditorMode(transaction.state)
       )

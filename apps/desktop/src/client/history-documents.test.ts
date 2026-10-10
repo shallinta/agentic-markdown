@@ -272,11 +272,11 @@ test("list input target fences write permission, focus, IME, freezing and lifecy
  c.dispose();expect(c.canRunListInput()).toBe(false);expect(calls).toBe(1);
 });
 
-test("source indentation rejects non-source, stale, readonly, frozen and composing targets", async () => {
+test("shared indentation admits editing/source and rejects stale, readonly, frozen and composing targets", async () => {
   const { a, controller: c, transport, openB } = await setup();
   let ready = true, calls = 0;
   c.setIndentationTarget({ documentId: a.documentId, ready: () => ready, run: () => { calls++; return true; } });
-  expect(c.canIndentSource()).toBe(false);
+  expect(c.canIndentSource()).toBe(true);
   c.toggleSourceMode();expect(c.runSourceIndentation(true,a.documentId)).toBe(true);
   ready=false;expect(c.canIndentSource()).toBe(false);ready=true;
   c.setInteractionCheck(()=>false);expect(c.canIndentSource()).toBe(false);c.setInteractionCheck(()=>true);

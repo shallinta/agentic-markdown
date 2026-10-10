@@ -5,6 +5,10 @@ import { EditorView } from "@codemirror/view";
 import type { Command } from "../shared/commands";
 
 const targets = new WeakMap<EditorView, (event: KeyboardEvent) => boolean>();
+/** Shared consumer predicate; source-prefixed command IDs remain compatible. */
+export function isOrdinaryIndentation(mode: string | undefined, safe: boolean) {
+  return !safe && (mode === "source" || mode === "editing");
+}
 export function registerIndentationView(
   view: EditorView,
   handler: (event: KeyboardEvent) => boolean
@@ -29,11 +33,11 @@ export function routeSourceTabFocus(
     "code" | "altKey" | "shiftKey" | "metaKey" | "ctrlKey" | "isComposing"
   >,
   view: EditorView,
-  currentOrdinarySource: boolean,
+  currentOrdinaryEditor: boolean,
   platform = typeof navigator === "undefined" ? "" : navigator.platform
 ) {
   if (
-    !currentOrdinarySource ||
+    !currentOrdinaryEditor ||
     !platform.includes("Mac") ||
     !view.hasFocus ||
     view.compositionStarted ||

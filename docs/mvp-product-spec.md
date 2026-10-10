@@ -1,5 +1,12 @@
 # Agentic Markdown MVP 产品规格
 
+## 本片通过：F-043e 编辑模式围栏内容缩进与段落 Tab（2026-10-11）
+
+[F-043e](iterations/F-043e-editing-fence-indentation.md) alpha.118非离线本片经最终独立verifier确认0剩余阻断、主线正式批准受托Agent代验通过，非用户亲验；本片编辑模式消费者已可用，Git待实际执行。源码912/26382、包内Bun仓库912/26383分别记录；真实默认编辑装饰/缩进/原子拒绝/历史/焦点出口/系统中文输入源/只读/主题/退出证据及限制见唯一。PID12145已退出，A/B磁盘原样、B644，无当前现场；工具代验非用户自然亲验。父F-043、完整OBL-058/064及F-043e-offline-final开放。
+
+实际Git收据：F-043d已提交推送`3a6213aa02867dd1a90949071b83d9a7e33294f0`，主线核验远端同SHA、当时clean；下方F-043d“Git待执行”为此前历史，不声明F-043e已提交。
+
+
 ## 本片通过：F-043d 普通源码围栏内容缩进与段落 Tab 规则（2026-10-11）
 
 [F-043d](iterations/F-043d-source-fence-indentation.md) alpha.117非离线本片经最终独立verifier确认0剩余必要阻断、主线正式确认受托Agent代验通过，非用户亲验；Git待主线实际执行。基线感知普通源码围栏内容缩进、段落Tab规则及必要lazy raw内部热路径已实现；116焦点逃逸与提示文案问题修正后，117真实WK范围/历史/只读/输入法工具路径/退出等证据见唯一迭代。源码908/26239、包内Bun仓库908/26237分别记录；PID9762已正常退出，A/B磁盘原样，无当前运行现场。工具代验非用户自然键盘亲验，未实测边界保留。OBL-058局部、OBL-064消费者协作，完整父F-043/两义务及F-043d-offline-final开放；F-041c成本保护仍待用户，不随本片交付。
@@ -449,7 +456,7 @@ L3 包含两条可以独立推进的主干：阅读与规范 Markdown、目录�
 | F-040 | 1 | 文档结构、大纲、标题与代码折叠 | R-10、R-11、R-12、E-12、S-25 | 硬前置：实际解析消费者的最小结构输出；折叠需对应模式；共享约定：F-019 / F-012 结构投影、F-030 revision 绑定位置映射；后续接入：结构/折叠可先验收，大纲/TOC UI 后续；F-046 / F-048 只需所需结构与折叠切片 | 部分待专项设计 | 三种模式共享轻量结构与折叠状态，跳转会展开祖先；大纲可定位标题，但最终呈现和跟随效果待设计。 |
 | F-041 | 2 | 文内查找与替换 | R-09、E-10 | 硬前置：本轮模式的 F-012 / F-013 / F-021 查找能力与 F-030 状态；共享约定：F-068 右上角工具栏位置约定；后续接入：各模式查询/替换分别接入，不等待材质完善 | F-041a/b 非离线通过；父实现中 | [F-041a](iterations/F-041a-source-document-search.md) alpha.112普通源码查找、[F-041b](iterations/F-041b-source-single-replacement.md) alpha.114普通源码逐项替换受托代验通过；只读可查不可替换，查找栏按钮进入替换，⌘H仍隐藏App。正文悬浮布局及逐文档状态约定保持；编辑/阅读查找、编辑替换、全部替换与完整OBL-056留后续，F-041a-offline-final和F-041b-offline-final留最终人工，不以切片完成三模式。 |
 | F-042 | 3 | Markdown 高亮与格式入口 | E-01、E-20 | 硬前置：F-006a 命令、F-012 编辑状态；富内容需对应 F-020 / F-022 安全；共享约定：F-019 方言与语料；F-012 首次即时排版装饰接入；后续接入：标记显隐/高亮与格式命令由本项追踪；首个必要切片可随 F-012 提前实现 | F-042a 本片通过；父未完成 | [F-012c](./iterations/F-012c-basic-live-formatting.md)先行排版及标记显隐状态保持；[F-042a](./iterations/F-042a-inline-format-commands.md) alpha.111 基础行内格式命令非离线受托 Agent 代验通过，最终独立复核及主线确认，Git 待实际执行，非用户亲验。其余呈现、完整高亮和格式入口、完整 OBL-057/064 与 offline-final 仍开放。 |
-| F-043 | 4 | 自动配对、补全、列表、缩进、换行与拼写 | E-04、E-05、E-06、E-07、E-13、E-14 | 硬前置：F-014 相关历史/IME、F-042 对应语法能力；共享约定：命令事务与 IME 避让；后续接入：正式编辑/源码分别验证 | F-043a/F-043b/F-043c 本片已代验；父未完成 | [F-043a](iterations/F-043a-source-line-wrapping.md) E-13 普通源码软换行、[F-043b](iterations/F-043b-contextual-pairing.md) E-04 配对及 [F-043c](iterations/F-043c-commonmark-list-continuation.md) alpha.109 E-06 CommonMark 列表续写本片受托代验通过，非用户亲验；F-043c Git 待实际执行。任务项留 F-045，补全/缩进/拼写及完整 OBL-058/064、offline-final 开放。 |
+| F-043 | 4 | 自动配对、补全、列表、缩进、换行与拼写 | E-04、E-05、E-06、E-07、E-13、E-14 | 硬前置：F-014 相关历史/IME、F-042 对应语法能力；共享约定：命令事务与 IME 避让；后续接入：正式编辑/源码分别验证 | F-043a/F-043b/F-043c/F-043d 本片已代验；F-043e 本片已代验；父未完成 | [F-043a](iterations/F-043a-source-line-wrapping.md) E-13 普通源码软换行、[F-043b](iterations/F-043b-contextual-pairing.md) E-04 配对及 [F-043c](iterations/F-043c-commonmark-list-continuation.md) alpha.109 E-06 CommonMark 列表续写本片受托代验通过，非用户亲验；F-043c Git 待实际执行。[F-043d](iterations/F-043d-source-fence-indentation.md) alpha.117普通源码顶层围栏内容缩进/段落Tab及焦点出口非离线本片受托代验通过，已提交推送3a6213aa02867dd1a90949071b83d9a7e33294f0，远端同SHA/当时clean；[F-043e](iterations/F-043e-editing-fence-indentation.md)编辑模式对应最小消费者alpha.118非离线本片经最终独立verifier0剩余阻断、主线确认受托代验通过，非用户亲验，Git待执行。任务项留F-045，完整结构缩进/补全/拼写及OBL-058/064、offline-final开放。 |
 | F-044 | 5 | 源码行号、当前行与多光标 | E-02、E-03、E-08 | 硬前置：F-013 源码、F-014 相关历史；共享约定：共享原文状态与多选区事务；后续接入：F-030 源码切换回归 | F-044a/F-044b 本片已通过；父未完成 | [F-044a](iterations/F-044a-source-line-navigation.md)行号/当前行已通过；[F-044b](iterations/F-044b-source-multiple-selections.md) alpha.103 普通源码多选区及统一命令非离线本片通过，自然 IME/Escape 用户亲验、其余受托代验，Git 待执行。安全隔离及完整 OBL-059、offline-final 开放。 |
 | F-045 | 6 | GFM 扩展包 | S-02、S-03、S-04、S-05、S-05a | 硬前置：对应解析/编辑/阅读消费者；富 DOM/链接需 F-020 安全；共享约定：F-019 / F-012 GFM 统一语义；后续接入：编辑/阅读/源码分别验收；F-054 表格、F-074 一致性 | 未讨论 | 表格、任务列表、`~~` 删除线、自动链接和 tagfilter 在三种模式语义一致；编辑模式复选框可点击，阅读保持只读。 |
 | F-046 | 7 | YAML Frontmatter | S-06 | 硬前置：F-019 对应解析、F-040 结构与折叠切片；共享约定：原文及错误容错语义；后续接入：对应编辑消费者；阅读呈现待专项设计，不等待大纲 UI | 部分待专项设计 | Frontmatter 可编辑、折叠且错误不阻塞正文；只有阅读模式是否展示待定。 |

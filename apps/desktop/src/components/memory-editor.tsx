@@ -28,6 +28,7 @@ import {
 } from "@/client/raw-buffer";
 import { planSourceIndentation } from "@/client/source-indentation";
 import {
+  isOrdinaryIndentation,
   registerIndentationView,
   routeIndentationInput,
   routeSourceTabFocus,
@@ -330,13 +331,17 @@ export function MemoryEditor({
           event,
           view,
           currentIndentationView() &&
-            controller.getMode(documentId) === "source" &&
-            !controller.isSafeSource(documentId)
+            isOrdinaryIndentation(
+              controller.getMode(documentId),
+              controller.isSafeSource(documentId)
+            )
         ) ||
           routeIndentationInput(
             event,
-            controller.getMode(documentId) === "source" &&
-              !controller.isSafeSource(documentId),
+            isOrdinaryIndentation(
+              controller.getMode(documentId),
+              controller.isSafeSource(documentId)
+            ),
             controller.canIndentSource(),
             view.compositionStarted || view.composing,
             documentId,

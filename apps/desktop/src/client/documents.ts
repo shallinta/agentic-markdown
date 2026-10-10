@@ -794,7 +794,7 @@ export function createDocumentController(
     canIndentSource: () => {
       const id = indentationTarget?.documentId, editor = id && editors.get(id);
       return !!editor && !metadataDisposed && id === state.snapshot?.documentId &&
-        !reading.has(id) && getEditorMode(editor.state) === "source" && !isSafeSource(editor.state) &&
+        !reading.has(id) && !isSafeSource(editor.state) &&
         !editor.state.field(editorFaultSession).fault && canWrite(id) && !editorInputBlocked &&
         !state.frozen && !state.busy && canLeaveEditor() && !!indentationTarget?.ready();
     },

@@ -116,3 +116,7 @@ safe E 的未保存退出取消后仍保留已确认；随后 Cmd+Z 回 clean、
 Git 待主线实际执行，不预写 SHA；父 F-044、完整 OBL-059/064、F-044b-offline-final 与未实操边界保持开放。E-04 新决定仅为后续产品规则，不包含在本片实现中。
 
 最后实际收尾：clean 下 Cmd+Q 返回 App quit，ps 核对 PID62142 无输出；两份 fixture SHA 仍与 baseline 一致，未保存正文。当前无 alpha.103 运行现场，不把旧交接现场写成仍在运行。
+
+### 2026-10-10 实际 Git 回执
+
+主线已提交并推送 `15c94f08938fba956e9fedd0f126246385251301`，`ls-remote` 核验远端 main 为同一 SHA，随后 git status 为空。上述待 Git 为提交前历史；本条收据的文档补记不声明已再次提交。验收边界、父项及 offline-final 状态不变。

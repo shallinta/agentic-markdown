@@ -7,6 +7,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useLayoutEffect, useRef } from "react";
 
+import { registerPairingView } from "@/client/contextual-pairing";
 import type { createDocumentController } from "@/client/documents";
 import {
   editorFaultSession,
@@ -102,6 +103,20 @@ export function MemoryEditor({
       alive &&
       viewRef.current === view &&
       controller.getSnapshot().snapshot?.documentId === documentId;
+    const removePairing = registerPairingView(view, () => {
+      const current = controller.getSnapshot();
+      return (
+        currentView() &&
+        view.hasFocus &&
+        controller.canWrite(documentId) &&
+        !current.frozen &&
+        !current.busy &&
+        !controller.isEditorInputBlocked() &&
+        controller.getMode(documentId) !== "reading" &&
+        !controller.isSafeSource(documentId) &&
+        !controller.getEditorFault(documentId)?.fault
+      );
+    });
     const scheduleWrapping = () => {
       if (
         !currentView() ||
@@ -259,6 +274,7 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      removePairing();
       if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
       faultSessionRef.current = null;
       recoverRef.current = undefined;

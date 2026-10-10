@@ -10,6 +10,7 @@ import {
 import { drawSelection, EditorView, keymap } from "@codemirror/view";
 
 import { largeDocumentParsing } from "./background-parsing";
+import { contextualPairing } from "./contextual-pairing";
 import { createEditorModeExtensions } from "./editor-mode";
 import { longLineProtection } from "./long-line-protection";
 
@@ -149,6 +150,7 @@ export function createRawEditorState(
         ];
       }),
       history(),
+      isolated ? [] : contextualPairing,
       longLineProtection,
       largeDocumentParsing,
       createEditorModeExtensions(isolated),

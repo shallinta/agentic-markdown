@@ -59,6 +59,13 @@ export function CommandPalette({
   const { mode: updateMode } = useUpdateMode();
   const label = (type: CommandType): string => {
     if (type === "toggleSourceMode") return "";
+    if (
+      type === "openSourceSearch" ||
+      type === "closeSourceSearch" ||
+      type === "nextSourceMatch" ||
+      type === "previousSourceMatch"
+    )
+      return "源码查找";
     if (isFormatCommand(type)) return PRODUCT_COMMANDS[type]!.label;
     if (
       type === "readingThemePaper" ||

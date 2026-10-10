@@ -28,6 +28,10 @@ export interface CheckForUpdatesCommand extends GenericCommand<"checkForUpdates"
 export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdateAndRestart"> {}
 
 export type Command =
+  | GenericCommand<"openSourceSearch">
+  | GenericCommand<"closeSourceSearch">
+  | GenericCommand<"nextSourceMatch">
+  | GenericCommand<"previousSourceMatch">
   | GenericCommand<"formatBold", { documentId: string; token?: string }>
   | GenericCommand<"formatItalic", { documentId: string; token?: string }>
   | GenericCommand<"formatCode", { documentId: string; token?: string }>
@@ -161,6 +165,10 @@ export const COMMAND_META: Record<
   CommandType,
   { target: "webview" | "bun"; palette?: false }
 > = {
+  openSourceSearch: { target: "webview", palette: false },
+  closeSourceSearch: { target: "webview", palette: false },
+  nextSourceMatch: { target: "webview", palette: false },
+  previousSourceMatch: { target: "webview", palette: false },
   formatBold: { target: "webview" },
   formatItalic: { target: "webview" },
   formatCode: { target: "webview" },

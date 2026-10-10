@@ -3,6 +3,7 @@ import {
   Transaction,
   type EditorState,
   type StateEffect,
+  type Extension,
 } from "@codemirror/state";
 
 import {
@@ -37,8 +38,9 @@ import {
   getSourceWrapping,
   sourceWrappingEffect,
 } from "./editor-mode";
-import { createRawEditorState, rawText } from "./raw-buffer";
+import { createRawEditorState, rawText, sourceSearchPresentation } from "./raw-buffer";
 import { incrementalSave } from "./save-channel";
+import { createSearchStore } from "./source-search-store";
 
 export interface DocumentTransport {
   observeDocument?(request: import("../shared/document-observation").ObservationRequest): Promise<unknown>;
@@ -190,6 +192,7 @@ export function createDocumentController(
     }
   >();
   const editors = new Map<string, { state: EditorState; revision: number }>();
+  const search = createSearchStore(id=>editors.has(id) && !metadataDisposed);
   const reading = new Set<string>();
   const sourceReturn = new Map<string, "editing" | "reading">();
   const viewports = new Map<
@@ -535,6 +538,7 @@ export function createDocumentController(
         scrollPositions.delete(replaced.documentId);
         scrollSnapshots.delete(replaced.documentId);
         editors.delete(replaced.documentId);
+        search.delete(replaced.documentId);
         reading.delete(replaced.documentId);
         sourceReturn.delete(replaced.documentId);
         viewports.delete(replaced.documentId);
@@ -653,6 +657,7 @@ export function createDocumentController(
     scrollPositions.clear();
     scrollSnapshots.clear();
     editors.clear();
+    search.clear();
     reading.clear();
     sourceReturn.clear();
     viewports.clear();
@@ -703,6 +708,7 @@ export function createDocumentController(
     scrollPositions.delete(documentId);
     scrollSnapshots.delete(documentId);
     editors.delete(documentId);
+    search.delete(documentId);
     reading.delete(documentId);
     sourceReturn.delete(documentId);
     viewports.delete(documentId);
@@ -759,6 +765,25 @@ export function createDocumentController(
     );
   };
   const controller = {
+    search,
+    /** Release only a derived view-owned extension, including during frozen teardown. */
+    releaseSearchPresentation: (
+      documentId: string,
+      session: EditorFaultSession,
+      extension: Extension,
+    ) => {
+      const editor = editors.get(documentId);
+      if (
+        editor?.state.field(editorFaultSession) !== session ||
+        sourceSearchPresentation.get(editor.state) !== extension
+      ) return undefined;
+      const transaction = editor.state.update({
+        effects: sourceSearchPresentation.reconfigure([]),
+        annotations: Transaction.addToHistory.of(false),
+      });
+      editors.set(documentId, { state: transaction.state, revision: editor.revision });
+      return transaction;
+    },
     setListInputTarget: (target?: typeof listInputTarget) => { listInputTarget = target; },
     canRunListInput: () => {
       const id=listInputTarget?.documentId, editor=id&&editors.get(id);
@@ -1085,6 +1110,7 @@ export function createDocumentController(
       ),
     dispose: () => {
       metadataDisposed = true;
+      search.clear();
       metadataEpoch++;
       observation.dispose();
       if (saving.size || saveDrainRequired) {

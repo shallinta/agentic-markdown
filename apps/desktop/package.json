@@ -1,6 +1,6 @@
 {
   "name": "@agentic-markdown/desktop",
-  "version": "0.1.0-alpha.111",
+  "version": "0.1.0-alpha.112",
   "scripts": {
     "start": "bun run build:view && electrobun dev",
     "prepare:sdk": "electrobun prepare",
@@ -18,6 +18,7 @@
     "@codemirror/commands": "6.11.1",
     "@codemirror/lang-markdown": "6.5.2",
     "@codemirror/language": "6.12.4",
+    "@codemirror/search": "6.7.2",
     "@codemirror/state": "6.7.5",
     "@codemirror/view": "6.43.12",
     "@dayflow/blossom-color-picker-react": "^1.2.1",

@@ -5,7 +5,7 @@ import {
 } from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { registerPairingView } from "@/client/contextual-pairing";
 import type { createDocumentController } from "@/client/documents";
@@ -32,6 +32,8 @@ import {
 import { deferWrappingUpdate } from "@/client/wrapping-measure";
 import { useCommands } from "@/commands";
 
+import { SourceSearch } from "./source-search";
+
 export function MemoryEditor({
   controller,
   documentId,
@@ -43,6 +45,10 @@ export function MemoryEditor({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [searchSlot, setSearchSlot] = useState<{
+    view: EditorView;
+    session: EditorFaultSession;
+  } | null>(null);
   const faultSessionRef = useRef<EditorFaultSession | null>(null);
   const recoverRef = useRef<(() => void) | undefined>(undefined);
   const editor = controller.getEditor(documentId);
@@ -401,11 +407,36 @@ export function MemoryEditor({
         ? "Markdown 源码编辑区"
         : "Markdown 编辑区"
     );
+    const searchable =
+      controller.getMode(documentId) === "source" &&
+      !controller.isSafeSource(documentId) &&
+      !fault.fault;
+    setSearchSlot((old) =>
+      searchable
+        ? old?.view === view && old.session === fault
+          ? old
+          : { view, session: fault }
+        : null
+    );
   }, [controller, documentId, editor, frozen, readOnly, inputBlocked]);
   return (
-    <div
-      ref={container}
-      className="min-h-0 flex-1 overflow-hidden rounded-md border"
-    />
+    <>
+      <div
+        ref={container}
+        className="min-h-0 flex-1 overflow-hidden rounded-md border"
+      />
+      {searchSlot?.view.dom.dataset.documentEditor === documentId &&
+        searchSlot.session === editor?.state.field(editorFaultSession) &&
+        controller.getMode(documentId) === "source" &&
+        !controller.isSafeSource(documentId) && (
+          <SourceSearch
+            key={documentId}
+            controller={controller}
+            documentId={documentId}
+            view={searchSlot.view}
+            isMounted={() => viewRef.current === searchSlot.view}
+          />
+        )}
+    </>
   );
 }

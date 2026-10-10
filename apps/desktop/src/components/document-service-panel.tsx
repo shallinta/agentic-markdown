@@ -435,7 +435,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         <p className="text-muted-foreground mt-1 text-sm">
           {snapshot
             ? controller.isSafeSource(snapshot.documentId)
-              ? "安全源码 · 解析与排版已停用 · 手动保存 ⌘S · 单文件限 1 MiB"
+              ? "安全源码 · 解析与排版已停用 · 文内查找暂不可用 · 手动保存 ⌘S · 单文件限 1 MiB"
               : controller.getMode(snapshot.documentId) === "source"
                 ? "基础源码模式 · 完整原文与基础高亮 · 手动保存 ⌘S · 单文件限 1 MiB"
                 : controller.getMode(snapshot.documentId) === "reading"

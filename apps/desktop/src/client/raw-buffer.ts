@@ -16,6 +16,8 @@ import { inlineFormatKeys } from "./inline-format-input";
 import { listInputExtension } from "./list-input";
 import { longLineProtection } from "./long-line-protection";
 
+export const sourceSearchPresentation = new Compartment();
+
 /** CM coordinates count every line separator once; raw bytes stay authoritative. */
 export function editorText(raw: string): string {
   return raw.replace(/\r\n?/g, "\n");
@@ -127,6 +129,7 @@ export function createRawEditorState(
   return EditorState.create({
     doc: editorText(raw),
     extensions: [
+      sourceSearchPresentation.of([]),
       rawText.init(() => raw),
       EditorState.transactionFilter.of((transaction) => {
         if (

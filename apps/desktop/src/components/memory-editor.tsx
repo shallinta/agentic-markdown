@@ -15,6 +15,8 @@ import {
 } from "@/client/editor-fault";
 import { syncCurrentEditorState } from "@/client/editor-view-sync";
 import { routeHistoryInput } from "@/client/history-input";
+import { listContinuationTransaction } from "@/client/list-continuation";
+import { registerListInputView, routeListInput } from "@/client/list-input";
 import {
   editorOffset,
   rawOffset,
@@ -213,6 +215,41 @@ export function MemoryEditor({
         )(view);
       },
     });
+    controller.setListInputTarget({
+      documentId,
+      ready: () =>
+        currentView() &&
+        view.hasFocus &&
+        !view.compositionStarted &&
+        !view.composing,
+      run: (soft) => {
+        if (
+          !currentView() ||
+          !view.hasFocus ||
+          view.compositionStarted ||
+          view.composing ||
+          view.state.readOnly
+        )
+          return false;
+        const transaction = listContinuationTransaction(view.state, soft);
+        view.dispatch(transaction);
+        return view.state === transaction.state;
+      },
+    });
+    const listKey = (event: KeyboardEvent) =>
+      routeListInput(
+        event,
+        controller.getMode(documentId) !== "reading" &&
+          !controller.isSafeSource(documentId),
+        controller.canRunListInput(),
+        view.compositionStarted || view.composing,
+        documentId,
+        executeCommand
+      );
+    const removeListInput = registerListInputView(
+      view,
+      (event) => currentView() && listKey(event)
+    );
     const sourceSelectionKey = (event: KeyboardEvent) => {
       routeSourceSelectionKey(
         event,
@@ -275,6 +312,7 @@ export function MemoryEditor({
     return () => {
       alive = false;
       removePairing();
+      removeListInput();
       if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
       faultSessionRef.current = null;
       recoverRef.current = undefined;
@@ -289,6 +327,7 @@ export function MemoryEditor({
       controller.setInteractionCheck(() => true);
       controller.setHistoryDispatch(undefined);
       controller.setSourceSelectionTarget(undefined);
+      controller.setListInputTarget(undefined);
       view.contentDOM.removeEventListener("keydown", sourceSelectionKey, true);
       view.contentDOM.removeEventListener(
         "mousedown",

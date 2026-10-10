@@ -62,6 +62,8 @@ export function CommandPalette({
       type === "addSourceCursorAbove" ||
       type === "addSourceCursorBelow" ||
       type === "simplifySourceSelection" ||
+      type === "continueList" ||
+      type === "listSoftBreak" ||
       type === "reloadDocument" ||
       type === "saveDocument" ||
       type === "clearDocument" ||

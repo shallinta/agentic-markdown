@@ -180,6 +180,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       simplifySourceSelection: ({ documentId }) => {
         controller.runSourceSelection("simplify", documentId);
       },
+      continueList: ({documentId}) => { controller.runListInput(false,documentId); },
+      listSoftBreak: ({documentId}) => { controller.runListInput(true,documentId); },
     },
     true,
     {
@@ -204,6 +206,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       addSourceCursorAbove: controller.canRunSourceSelection,
       addSourceCursorBelow: controller.canRunSourceSelection,
       simplifySourceSelection: controller.canRunSourceSelection,
+      continueList: controller.canRunListInput,
+      listSoftBreak: controller.canRunListInput,
       reloadDocument: () =>
         !controller.getSnapshot().busy &&
         !controller.getSnapshot().frozen &&

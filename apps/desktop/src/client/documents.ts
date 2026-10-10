@@ -727,6 +727,11 @@ export function createDocumentController(
     ready: () => boolean;
     run: (action: "above" | "below" | "simplify") => boolean;
   } | undefined;
+  let listInputTarget: {
+    documentId: string;
+    ready: () => boolean;
+    run: (soft: boolean) => boolean;
+  } | undefined;
   const canToggleSourceMode = () =>
     !!state.snapshot &&
     editors.has(state.snapshot.documentId) &&
@@ -754,6 +759,17 @@ export function createDocumentController(
     );
   };
   const controller = {
+    setListInputTarget: (target?: typeof listInputTarget) => { listInputTarget = target; },
+    canRunListInput: () => {
+      const id=listInputTarget?.documentId, editor=id&&editors.get(id);
+      return !!editor && !metadataDisposed && id===state.snapshot?.documentId &&
+        !reading.has(id) && !isSafeSource(editor.state) && !editor.state.field(editorFaultSession).fault &&
+        canWrite(id) && !editorInputBlocked && !state.frozen && !state.busy && canLeaveEditor() && !!listInputTarget?.ready();
+    },
+    runListInput: (soft:boolean,documentId:string) => {
+      if(listInputTarget?.documentId!==documentId || !controller.canRunListInput())return false;
+      return listInputTarget.run(soft);
+    },
     setSourceSelectionTarget: (target?: typeof sourceSelectionTarget) => {
       sourceSelectionTarget = target;
     },

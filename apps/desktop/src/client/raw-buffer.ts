@@ -12,6 +12,7 @@ import { drawSelection, EditorView, keymap } from "@codemirror/view";
 import { largeDocumentParsing } from "./background-parsing";
 import { contextualPairing } from "./contextual-pairing";
 import { createEditorModeExtensions } from "./editor-mode";
+import { listInputExtension } from "./list-input";
 import { longLineProtection } from "./long-line-protection";
 
 /** CM coordinates count every line separator once; raw bytes stay authoritative. */
@@ -151,6 +152,7 @@ export function createRawEditorState(
       }),
       history(),
       isolated ? [] : contextualPairing,
+      isolated ? [] : listInputExtension,
       longLineProtection,
       largeDocumentParsing,
       createEditorModeExtensions(isolated),

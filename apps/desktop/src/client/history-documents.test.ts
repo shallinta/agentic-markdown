@@ -15,6 +15,7 @@ import { analyzeTextFidelity } from "../shared/text-fidelity";
 import { createDocumentController, type DocumentTransport } from "./documents";
 import { getSourceWrapping } from "./editor-mode";
 import { syncCurrentEditorState } from "./editor-view-sync";
+import {listContinuationTransaction} from "./list-continuation";
 import { rawText } from "./raw-buffer";
 import { savedReply } from "./save-test-helper";
 
@@ -252,6 +253,25 @@ test("wrapping defers hidden cache and fences measured callbacks against tab, st
   c.dispose();
   expect(c.applySourceWrapping(a.documentId, last)).toBe(false);
 });
+test("list input target fences write permission, focus, IME, freezing and lifecycle",async()=>{
+ const {a,controller:c,transport,openB}=await setup();
+ let ready=true,calls=0;
+ c.setListInputTarget({documentId:a.documentId,ready:()=>ready,run:soft=>{
+  calls++;const state=c.getEditor(a.documentId)!.state;
+  return c.updateEditor(a.documentId,listContinuationTransaction(state,soft));
+ }});
+ expect(c.runListInput(false,a.documentId)).toBe(true);
+ ready=false;expect(c.runListInput(false,a.documentId)).toBe(false);ready=true;
+ c.setInteractionCheck(()=>false);expect(c.canRunListInput()).toBe(false);c.setInteractionCheck(()=>true);
+ c.setEditorInputBlocked(true);expect(c.canRunListInput()).toBe(false);c.setEditorInputBlocked(false);
+ c.beginDiscard();expect(c.canRunListInput()).toBe(false);c.endDiscard();
+ transport.checkDocumentWriteCapability=req=>Promise.resolve({...req,capability:{writable:false,reason:"readonly"}});
+ await c.refreshWriteCapability();expect(c.runListInput(true,a.documentId)).toBe(false);
+ await openB();expect(c.runListInput(false,a.documentId)).toBe(false);
+ c.setListInputTarget(undefined);expect(c.canRunListInput()).toBe(false);
+ c.dispose();expect(c.canRunListInput()).toBe(false);expect(calls).toBe(1);
+});
+
 test("source selection commands retain read-only selection but fence nonactive, IME, frozen and disposed targets", async () => {
   const { a, controller: c, transport, openB } = await setup();
   c.toggleSourceMode();

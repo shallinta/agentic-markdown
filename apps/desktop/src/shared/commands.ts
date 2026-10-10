@@ -32,6 +32,8 @@ export type Command =
   | GenericCommand<"closeSourceSearch">
   | GenericCommand<"nextSourceMatch">
   | GenericCommand<"previousSourceMatch">
+  | GenericCommand<"toggleSourceReplacement">
+  | GenericCommand<"replaceSourceMatch">
   | GenericCommand<"formatBold", { documentId: string; token?: string }>
   | GenericCommand<"formatItalic", { documentId: string; token?: string }>
   | GenericCommand<"formatCode", { documentId: string; token?: string }>
@@ -169,6 +171,8 @@ export const COMMAND_META: Record<
   closeSourceSearch: { target: "webview", palette: false },
   nextSourceMatch: { target: "webview", palette: false },
   previousSourceMatch: { target: "webview", palette: false },
+  toggleSourceReplacement: { target: "webview", palette: false },
+  replaceSourceMatch: { target: "webview", palette: false },
   formatBold: { target: "webview" },
   formatItalic: { target: "webview" },
   formatCode: { target: "webview" },

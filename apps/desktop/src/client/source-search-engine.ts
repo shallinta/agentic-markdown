@@ -60,10 +60,28 @@ export function createSearchEngine() {
       index = count
         ? lowerBound(Math.min(request.position, state.doc.length)) % count
         : -1;
+      if (count && request.exclude && request.exclude[0] < request.exclude[1]) {
+        const [from, to] = request.exclude;
+        let checked = 0;
+        while (
+          checked < count &&
+          pairs[index * 2] < to &&
+          pairs[index * 2 + 1] > from
+        ) {
+          index = (index + 1) % count;
+          checked++;
+        }
+        if (checked === count) index = -1;
+      }
     } else {
       if (!state || request.epoch !== epoch) throw new Error("stale search");
       if (request.kind === "navigate" && count)
-        index = (((index + request.direction) % count) + count) % count;
+        index =
+          ((((index < 0 && request.direction < 0 ? 0 : index) +
+            request.direction) %
+            count) +
+            count) %
+          count;
     }
     const ranges: number[] = [];
     let limited = false;

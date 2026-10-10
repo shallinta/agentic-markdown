@@ -11,6 +11,37 @@ import type { SearchRequest, SearchResult } from "./source-search-protocol";
 import { createSearchStore } from "./source-search-store";
 
 const wait = () => new Promise((resolve) => setTimeout(resolve, 120));
+test("synchronous replacement ticket is unavailable during navigation and query change", async () => {
+  const f = fixture();
+  f.scan();
+  expect(f.owner.ticket()).toBeNull();
+  await wait();
+  f.workers[0].reply();
+  expect(f.owner.ticket()?.range).toEqual([0, 1]);
+  const copy = f.owner.ticket()!;
+  copy.range[0] = 99;
+  expect(f.owner.ticket()?.range).toEqual([0, 1]);
+  f.owner.navigate(1);
+  expect(f.owner.ticket()).toBeNull();
+  f.workers[0].reply();
+  expect(f.owner.ticket()?.range).toEqual([2, 3]);
+  f.setSource({ ...f.source()!, queryKey: "changed before React effect" });
+  expect(f.owner.ticket()).toBeNull();
+  f.owner.cancel();
+  expect(f.owner.ticket()).toBeNull();
+  f.owner.dispose();
+});
+test("replacement fields remain document-local and close releases them", () => {
+  const store = createSearchStore();
+  store.set("a", { replacement: "$1\n字", replaceOpen: true });
+  store.set("b", { replacement: "b" });
+  store.set("a", { query: "word" });
+  expect(store.get("a").replacement).toBe("$1\n字");
+  expect(store.get("b").replaceOpen).toBe(false);
+  store.delete("a");
+  expect(store.get("a").replacement).toBe("");
+  expect(store.get("b").replacement).toBe("b");
+});
 function fixture() {
   let source: SearchSource | null = {
     session: {},

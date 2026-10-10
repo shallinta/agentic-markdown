@@ -2,6 +2,8 @@ import type { SearchOptions } from "./source-search-protocol";
 export interface SearchConditions extends SearchOptions {
   open: boolean;
   position: number | null;
+  replacement: string;
+  replaceOpen: boolean;
 }
 const empty: SearchConditions = Object.freeze({
   query: "",
@@ -9,6 +11,8 @@ const empty: SearchConditions = Object.freeze({
   wholeWord: false,
   open: false,
   position: null,
+  replacement: "",
+  replaceOpen: false,
 });
 /** Owned by one document controller, never a module singleton. */
 export function createSearchStore(

@@ -11,6 +11,7 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { createDocumentController } from "@/client/documents";
 import { editorFaultSession } from "@/client/editor-fault";
 import { rawText, sourceSearchPresentation } from "@/client/raw-buffer";
+import { prepareSourceReplacement } from "@/client/source-replacement";
 import {
   createSearchOwner,
   type SearchStatus,
@@ -19,6 +20,9 @@ import type { SearchResult } from "@/client/source-search-protocol";
 import { SEARCH_LIMIT } from "@/client/source-search-protocol";
 import {
   searchDecorations,
+  closeSearchSession,
+  watchReplacementIntent,
+  createReplacementNotice,
   routeSearchQueryKey,
 } from "@/client/source-search-view";
 import SearchWorker from "@/client/source-search.worker?worker&inline";
@@ -44,6 +48,22 @@ export function SourceSearch({
   useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const input = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
+  const replacingComposition = useRef(false);
+  const [replacementDraft, setReplacementDraft] = useState(
+    conditions.replacement
+  );
+  const [replacementNotice, setReplacementNotice] = useState("");
+  const [notice] = useState(() =>
+    createReplacementNotice(setReplacementNotice)
+  );
+  const autoPosition = useRef<{
+    text: object;
+    session: object;
+    queryKey: string;
+    position: number;
+    exclude: [number, number];
+    started?: boolean;
+  } | null>(null);
   const [draft, setDraft] = useState(conditions.query);
   const [status, setStatus] = useState<SearchStatus>("idle");
   const [result, setResult] = useState<SearchResult | null>(null);
@@ -71,7 +91,53 @@ export function SourceSearch({
     !controller.getSnapshot().busy &&
     !controller.isEditorInputBlocked() &&
     !view.compositionStarted &&
-    !composing.current;
+    !composing.current &&
+    !replacingComposition.current;
+  const canReplace = () =>
+    interaction() &&
+    controller.canWrite(documentId) &&
+    store.get(documentId).open &&
+    store.get(documentId).replaceOpen &&
+    !!owner.current?.ticket();
+  const replace = () => {
+    if (!canReplace()) return;
+    notice.clear();
+    const ticket = owner.current?.ticket();
+    if (
+      ticket?.textIdentity !== view.state.doc ||
+      ticket.session !== view.state.field(editorFaultSession)
+    )
+      return;
+    const plan = prepareSourceReplacement(
+      view.state,
+      ticket.range,
+      store.get(documentId).replacement
+    );
+    if (!plan) {
+      notice.show("无法替换：只读或结果超过 1 MiB，原文已保留。");
+      return;
+    }
+    if (
+      !canReplace() ||
+      owner.current?.ticket()?.textIdentity !== ticket.textIdentity
+    )
+      return;
+    if (plan.transaction) {
+      view.dispatch(plan.transaction);
+      if (controller.getEditor(documentId)?.state !== plan.transaction.state)
+        return;
+    }
+    owner.current?.cancel();
+    autoPosition.current = {
+      text: view.state.doc,
+      session: ticket.session,
+      queryKey: ticket.queryKey,
+      position: plan.position,
+      exclude: plan.exclude,
+    };
+    notice.clear();
+    sync.current();
+  };
   const open = () => {
     if (!interaction()) return;
     store.set(documentId, { open: true });
@@ -79,16 +145,33 @@ export function SourceSearch({
   };
   const close = () => {
     if (!interaction()) return;
-    store.set(documentId, { open: false });
-    owner.current?.cancel();
+    notice.clear();
+    closeSearchSession(store, documentId, autoPosition, () =>
+      owner.current?.cancel()
+    );
     view.focus();
   };
   useRegisterCommands(
     {
       openSourceSearch: open,
       closeSourceSearch: close,
-      nextSourceMatch: () => owner.current?.navigate(1),
-      previousSourceMatch: () => owner.current?.navigate(-1),
+      nextSourceMatch: () => {
+        notice.clear();
+        autoPosition.current = null;
+        owner.current?.navigate(1);
+      },
+      previousSourceMatch: () => {
+        notice.clear();
+        autoPosition.current = null;
+        owner.current?.navigate(-1);
+      },
+      toggleSourceReplacement: () => {
+        if (interaction())
+          store.set(documentId, {
+            replaceOpen: !store.get(documentId).replaceOpen,
+          });
+      },
+      replaceSourceMatch: replace,
     },
     true,
     {
@@ -106,10 +189,20 @@ export function SourceSearch({
         store.get(documentId).open &&
         status === "ready" &&
         !!result?.count,
+      toggleSourceReplacement: interaction,
+      replaceSourceMatch: canReplace,
     }
   );
   useLayoutEffect(() => {
     let alive = true;
+    const syncNotice = () => notice.sync(view.state.doc, store.get(documentId));
+    syncNotice();
+    const releaseNoticeWatch = store.subscribe(syncNotice);
+    const releaseIntentWatch = watchReplacementIntent(
+      store,
+      documentId,
+      autoPosition
+    );
     let marks: DecorationSet = emptyMarks;
     let lastText: object | undefined,
       lastSession: object | undefined,
@@ -153,6 +246,30 @@ export function SourceSearch({
         if (!valid()) return;
         setResult(response);
         if (response.kind === "scan") {
+          const intent = autoPosition.current;
+          autoPosition.current = null;
+          if (
+            intent?.text === view.state.doc &&
+            intent.session === view.state.field(editorFaultSession) &&
+            intent.queryKey ===
+              JSON.stringify([
+                store.get(documentId).query,
+                store.get(documentId).caseSensitive,
+                store.get(documentId).wholeWord,
+              ]) &&
+            interaction()
+          ) {
+            if (response.current)
+              view.dispatch({
+                selection: {
+                  anchor: response.current[0],
+                  head: response.current[1],
+                },
+                scrollIntoView: true,
+                annotations: Transaction.addToHistory.of(false),
+              });
+            else notice.show("替换完成，没有下一匹配项");
+          }
           if (response.current)
             store.set(documentId, { position: response.current[0] });
           viewport();
@@ -177,7 +294,10 @@ export function SourceSearch({
       (value) => {
         if (alive) {
           setStatus(value);
-          if (value === "failed") lastText = undefined;
+          if (value === "failed") {
+            lastText = undefined;
+            autoPosition.current = null;
+          }
           if (value !== "ready") {
             setResult(null);
             marks = emptyMarks;
@@ -191,6 +311,7 @@ export function SourceSearch({
       if (!alive) return;
       const c = store.get(documentId);
       if (!valid() || !c.open || !c.query) {
+        autoPosition.current = null;
         lastText = lastSession = undefined;
         lastQuery = "";
         workerOwner.cancel();
@@ -198,7 +319,14 @@ export function SourceSearch({
       }
       const signature = JSON.stringify([c.query, c.caseSensitive, c.wholeWord]);
       const session = view.state.field(editorFaultSession);
+      const intent = autoPosition.current;
+      const pendingReplacement =
+        intent?.text === view.state.doc &&
+        intent.session === session &&
+        intent.queryKey === signature;
+      if (intent && !pendingReplacement) autoPosition.current = null;
       if (
+        (pendingReplacement && !intent.started) ||
         lastText !== view.state.doc ||
         lastSession !== session ||
         lastQuery !== signature
@@ -206,7 +334,14 @@ export function SourceSearch({
         lastText = view.state.doc;
         lastSession = session;
         lastQuery = signature;
-        workerOwner.scan(c, c.position ?? view.state.selection.main.head);
+        if (pendingReplacement) intent.started = true;
+        workerOwner.scan(
+          c,
+          pendingReplacement
+            ? intent.position
+            : (c.position ?? view.state.selection.main.head),
+          pendingReplacement ? intent.exclude : undefined
+        );
       }
     };
     sync.current = synchronize;
@@ -214,8 +349,10 @@ export function SourceSearch({
       class {
         decorations = marks;
         update(update: import("@codemirror/view").ViewUpdate) {
+          if (update.selectionSet) autoPosition.current = null;
           this.decorations = update.docChanged ? emptyMarks : marks;
           if (update.docChanged) {
+            syncNotice();
             marks = emptyMarks;
             queueMicrotask(synchronize);
           } else if (update.viewportChanged) queueMicrotask(viewport);
@@ -256,6 +393,9 @@ export function SourceSearch({
     synchronize();
     return () => {
       alive = false;
+      releaseNoticeWatch();
+      releaseIntentWatch();
+      autoPosition.current = null;
       workerOwner.dispose();
       if (owner.current === workerOwner) owner.current = null;
       sync.current = () => undefined;
@@ -344,7 +484,7 @@ export function SourceSearch({
             ? "查找失败，请重试"
             : status === "ready"
               ? result?.count
-                ? `${result.index + 1} / ${result.count}${result.limited ? " · 高亮受限" : ""}`
+                ? `${result.index < 0 ? "—" : result.index + 1} / ${result.count}${result.limited ? " · 高亮受限" : ""}`
                 : "无结果"
               : "输入查找文字"}
       </span>
@@ -380,6 +520,63 @@ export function SourceSearch({
       >
         ×
       </button>
+      <button
+        aria-label={conditions.replaceOpen ? "收起替换" : "展开替换"}
+        onClick={() =>
+          executeCommand({ type: "toggleSourceReplacement", args: {} })
+        }
+      >
+        {conditions.replaceOpen ? "收起替换" : "展开替换"}
+      </button>
+      {conditions.replaceOpen && (
+        <>
+          <textarea
+            rows={1}
+            maxLength={SEARCH_LIMIT}
+            aria-label="替换为"
+            placeholder="替换为（留空删除）"
+            className="w-40 resize-none rounded border bg-transparent px-2 py-1"
+            value={replacementDraft}
+            onChange={(event) => {
+              setReplacementDraft(event.target.value);
+              if (!replacingComposition.current)
+                store.set(documentId, { replacement: event.target.value });
+            }}
+            onCompositionStart={() => {
+              replacingComposition.current = true;
+            }}
+            onCompositionEnd={(event) => {
+              replacingComposition.current = false;
+              store.set(documentId, { replacement: event.currentTarget.value });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape")
+                routeSearchQueryKey(
+                  event.nativeEvent,
+                  replacingComposition.current,
+                  executeCommand
+                );
+            }}
+          />
+          <button
+            disabled={!canReplace()}
+            title={
+              !controller.canWrite(documentId)
+                ? "只读文档不能替换"
+                : "替换当前匹配"
+            }
+            onClick={() =>
+              executeCommand({ type: "replaceSourceMatch", args: {} })
+            }
+          >
+            替换当前
+          </button>
+          <span role="status" className="text-xs">
+            {replacementNotice ||
+              (!controller.canWrite(documentId) ? "只读文档不能替换" : "")}
+          </span>
+        </>
+      )}
     </div>
   );
 }

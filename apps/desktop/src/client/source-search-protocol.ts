@@ -8,7 +8,13 @@ export interface SearchOptions {
   wholeWord: boolean;
 }
 export type SearchRequest = { epoch: string; id: number } & (
-  | { kind: "scan"; text?: string; options: SearchOptions; position: number }
+  | {
+      kind: "scan";
+      text?: string;
+      options: SearchOptions;
+      position: number;
+      exclude?: [number, number];
+    }
   | { kind: "viewport"; from: number; to: number }
   | { kind: "navigate"; direction: number }
 );
@@ -36,7 +42,7 @@ export function validSearchRequest(v: unknown): v is SearchRequest {
     return false;
   const keys =
     v.kind === "scan"
-      ? ["epoch", "id", "kind", "text", "options", "position"]
+      ? ["epoch", "id", "kind", "text", "options", "position", "exclude"]
       : v.kind === "viewport"
         ? ["epoch", "id", "kind", "from", "to"]
         : ["epoch", "id", "kind", "direction"];
@@ -46,6 +52,12 @@ export function validSearchRequest(v: unknown): v is SearchRequest {
       (v.text === undefined ||
         (typeof v.text === "string" && v.text.length <= SEARCH_LIMIT)) &&
       integer(v.position) &&
+      (v.exclude === undefined ||
+        (Array.isArray(v.exclude) &&
+          v.exclude.length === 2 &&
+          integer(v.exclude[0]) &&
+          integer(v.exclude[1]) &&
+          v.exclude[0] <= v.exclude[1])) &&
       record(v.options) &&
       Object.keys(v.options).length === 3 &&
       typeof v.options.query === "string" &&
@@ -78,7 +90,7 @@ export function validSearchResult(
     typeof v.index !== "number" ||
     v.index < -1 ||
     v.index >= v.count ||
-    (v.count === 0) !== (v.index === -1) ||
+    (v.count === 0 && v.index !== -1) ||
     typeof v.limited !== "boolean" ||
     !Array.isArray(v.ranges) ||
     v.ranges.length > SEARCH_MARK_LIMIT * 2 ||
@@ -89,7 +101,7 @@ export function validSearchResult(
   const pair = (a: unknown, b: unknown) =>
     integer(a, length) && integer(b, length) && a < b;
   if (
-    v.count === 0
+    v.index === -1
       ? v.current !== null
       : !Array.isArray(v.current) ||
         v.current.length !== 2 ||

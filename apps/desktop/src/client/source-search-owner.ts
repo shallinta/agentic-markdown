@@ -39,6 +39,7 @@ export function createSearchOwner(
   let delay: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   let count = 0;
+  let currentMatch: [number, number] | null = null;
   const latest = { scan: 0, viewport: 0, navigate: 0 };
   const matches = () => {
     const now = current();
@@ -60,6 +61,7 @@ export function createSearchOwner(
     }
     worker = undefined;
     active = pending = undefined;
+    currentMatch = null;
   };
   const fail = () => {
     terminate();
@@ -88,7 +90,16 @@ export function createSearchOwner(
             status("idle");
             return;
           }
-          if (!validSearchResult(event.data, request, source.length)) {
+          if (
+            !validSearchResult(event.data, request, source.length) ||
+            (event.data.count > 0 &&
+              event.data.current === null &&
+              !(request.kind === "scan"
+                ? request.exclude && request.exclude[0] < request.exclude[1]
+                : request.kind === "viewport" &&
+                  currentMatch === null &&
+                  count > 0))
+          ) {
             fail();
             return;
           }
@@ -96,6 +107,7 @@ export function createSearchOwner(
           active = undefined;
           count = event.data.count;
           if (latest[request.kind] === request.id) {
+            currentMatch = event.data.current ? [...event.data.current] : null;
             if (request.kind === "scan") status("ready");
             receive(event.data);
           }
@@ -112,7 +124,26 @@ export function createSearchOwner(
     }
   };
   return {
-    scan(options: SearchOptions, position: number) {
+    ticket() {
+      if (
+        disposed ||
+        !matches() ||
+        delay ||
+        active?.kind === "scan" ||
+        active?.kind === "navigate" ||
+        pending?.kind === "navigate" ||
+        !currentMatch ||
+        !source
+      )
+        return null;
+      return {
+        session: source.session,
+        textIdentity: source.textIdentity,
+        queryKey: source.queryKey,
+        range: [...currentMatch] as [number, number],
+      };
+    },
+    scan(options: SearchOptions, position: number, exclude?: [number, number]) {
       const next = current();
       if (disposed || !next) return;
       const reuse =
@@ -126,6 +157,7 @@ export function createSearchOwner(
         pending = undefined;
       }
       source = next;
+      currentMatch = null;
       epoch = crypto.randomUUID();
       const request: SearchRequest = {
         kind: "scan",
@@ -137,6 +169,7 @@ export function createSearchOwner(
           wholeWord: options.wholeWord,
         },
         position,
+        ...(exclude ? { exclude } : {}),
         ...(reuse ? {} : { text: next.raw }),
       };
       latest.scan = request.id;

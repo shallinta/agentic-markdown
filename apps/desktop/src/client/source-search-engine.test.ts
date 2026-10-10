@@ -10,6 +10,34 @@ import {
   type SearchRequest,
 } from "./source-search-protocol";
 
+test("replacement exclusion only affects automatic current, never count or explicit navigation", () => {
+  const engine = createSearchEngine();
+  const request = {
+    kind: "scan" as const,
+    epoch: "replacement",
+    id: 1,
+    text: "aa",
+    options: { query: "a", caseSensitive: true, wholeWord: false },
+    position: 2,
+    exclude: [0, 2] as [number, number],
+  };
+  const result = engine(request);
+  expect(result.count).toBe(2);
+  expect(result.current).toBeNull();
+  expect(validSearchResult(result, request, 2)).toBe(true);
+  expect(
+    engine({ kind: "navigate", epoch: request.epoch, id: 2, direction: 1 })
+      .current
+  ).toEqual([0, 1]);
+  expect(engine({ ...request, id: 3, exclude: [0, 1] }).current).toEqual([
+    1, 2,
+  ]);
+  expect(
+    engine({ ...request, id: 4, exclude: [0, 0], position: 0 }).current
+  ).toEqual([0, 1]);
+  expect(validSearchRequest({ ...request, exclude: [2, 1] })).toBe(false);
+});
+
 function scan(
   text: string,
   query: string,

@@ -15,7 +15,77 @@ import {
   sourceSearchPresentation,
 } from "./raw-buffer";
 import { createSearchEngine } from "./source-search-engine";
-import { searchDecorations, routeSearchQueryKey } from "./source-search-view";
+import { createSearchStore } from "./source-search-store";
+import {
+  searchDecorations,
+  routeSearchQueryKey,
+  closeSearchSession,
+  watchReplacementIntent,
+  createReplacementNotice,
+} from "./source-search-view";
+
+test("replacement notice survives viewport refresh but not text, conditions or explicit actions", () => {
+  let message = "";
+  const notice = createReplacementNotice((value) => {
+    message = value;
+  });
+  const text = {};
+  const conditions = {
+    query: "a",
+    caseSensitive: false,
+    wholeWord: false,
+    open: true,
+  };
+  notice.sync(text, conditions);
+  notice.show("替换完成，没有下一匹配项");
+  notice.sync(text, { ...conditions });
+  expect(message).toBe("替换完成，没有下一匹配项");
+  notice.clear(); // Shared explicit navigation / close / new replacement seam.
+  expect(message).toBe("");
+  for (const changed of [
+    { ...conditions, query: "b" },
+    { ...conditions, caseSensitive: true },
+    { ...conditions, wholeWord: true },
+    { ...conditions, open: false },
+  ]) {
+    notice.sync(text, conditions);
+    notice.show("old");
+    notice.sync(text, changed);
+    expect(message).toBe("");
+  }
+  notice.sync(text, conditions);
+  notice.show("old");
+  notice.sync({}, conditions); // Edits including undo/redo change Text identity.
+  expect(message).toBe("");
+});
+
+test("production close and condition subscription cannot revive replacement navigation", () => {
+  const store = createSearchStore();
+  store.set("a", { open: true, query: "a" });
+  const pending = {
+    queryKey: JSON.stringify(["a", false, false]),
+    position: 3,
+    exclude: [0, 3],
+    started: true,
+  };
+  const intent: { current: typeof pending | null } = { current: pending };
+  let cancelled = 0;
+  const stop = watchReplacementIntent(store, "a", intent);
+  closeSearchSession(store, "a", intent, () => {
+    cancelled++;
+  });
+  store.set("a", { open: true });
+  expect(intent.current).toBeNull();
+  expect(cancelled).toBe(1);
+  intent.current = pending;
+  store.set("a", { query: "b" });
+  store.set("a", { query: "a" });
+  expect(intent.current).toBeNull();
+  intent.current = pending;
+  store.set("b", { query: "other" });
+  expect(intent.current).toBe(pending);
+  stop();
+});
 
 test("dense current match kept within bounded viewport decorations without changing state", () => {
   const engine = createSearchEngine();

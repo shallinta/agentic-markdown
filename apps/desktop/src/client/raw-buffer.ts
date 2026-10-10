@@ -4,7 +4,6 @@ import {
   Compartment,
   StateEffect,
   StateField,
-  type ChangeSet,
   type Extension,
 } from "@codemirror/state";
 import { drawSelection, EditorView, keymap } from "@codemirror/view";
@@ -15,6 +14,8 @@ import { createEditorModeExtensions } from "./editor-mode";
 import { inlineFormatKeys } from "./inline-format-input";
 import { listInputExtension } from "./list-input";
 import { longLineProtection } from "./long-line-protection";
+import { applyRawChanges } from "./raw-changes";
+import { sourceIndentationInput } from "./source-indentation-input";
 
 export const sourceSearchPresentation = new Compartment();
 
@@ -44,35 +45,8 @@ export function editorOffset(raw: string, rawPosition: number): number {
   return offset;
 }
 
-function contextualSeparator(raw: string, offset: number): string {
-  // Prefer the current line's terminator, then the previous terminator.
-  for (let cursor = offset; cursor < raw.length; cursor++) {
-    if (raw[cursor] === "\r" && raw[cursor + 1] === "\n") return "\r\n";
-    if (raw[cursor] === "\n") return "\n";
-    if (raw[cursor] === "\r") break;
-  }
-  for (let cursor = offset - 1; cursor >= 0; cursor--) {
-    if (raw[cursor] === "\n") return raw[cursor - 1] === "\r" ? "\r\n" : "\n";
-  }
-  return "\n";
-}
-
 /** Replace changed spans only. Untouched BOM, CRLF, lone CR and EOF survive. */
-export function applyEditorChanges(raw: string, changes: ChangeSet): string {
-  const pieces: string[] = [];
-  let previous = 0;
-  changes.iterChanges((from, to, _fromB, _toB, inserted) => {
-    const start = rawOffset(raw, from);
-    const end = rawOffset(raw, to);
-    pieces.push(raw.slice(previous, start));
-    pieces.push(
-      inserted.toString().replace(/\n/g, contextualSeparator(raw, start))
-    );
-    previous = end;
-  });
-  pieces.push(raw.slice(previous));
-  return pieces.join("");
-}
+export const applyEditorChanges = applyRawChanges;
 
 interface RawPatch {
   from: number;
@@ -157,6 +131,7 @@ export function createRawEditorState(
       history(),
       isolated ? [] : contextualPairing,
       isolated ? [] : listInputExtension,
+      isolated ? [] : sourceIndentationInput,
       isolated ? [] : inlineFormatKeys,
       longLineProtection,
       largeDocumentParsing,

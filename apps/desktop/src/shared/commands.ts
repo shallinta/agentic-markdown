@@ -49,6 +49,8 @@ export type Command =
   | GenericCommand<"simplifySourceSelection", { documentId: string }>
   | GenericCommand<"continueList", { documentId: string }>
   | GenericCommand<"listSoftBreak", { documentId: string }>
+  | GenericCommand<"indentSource", { documentId: string }>
+  | GenericCommand<"dedentSource", { documentId: string }>
   | GenericCommand<"selectDocument">
   | GenericCommand<"selectFolder">
   | GenericCommand<"saveDocument">
@@ -114,6 +116,8 @@ export function isCommand(value: unknown): value is Command {
   if (
     input.type === "continueList" ||
     input.type === "listSoftBreak" ||
+    input.type === "indentSource" ||
+    input.type === "dedentSource" ||
     input.type === "addSourceCursorAbove" ||
     input.type === "addSourceCursorBelow" ||
     input.type === "simplifySourceSelection"
@@ -187,6 +191,8 @@ export const COMMAND_META: Record<
   simplifySourceSelection: { target: "webview", palette: false },
   continueList: { target: "webview", palette: false },
   listSoftBreak: { target: "webview", palette: false },
+  indentSource: { target: "webview", palette: false },
+  dedentSource: { target: "webview", palette: false },
   selectDocument: { target: "webview" },
   selectFolder: { target: "webview" },
   setRootHidden: { target: "webview", palette: false },
@@ -226,6 +232,8 @@ export const PRODUCT_COMMANDS: Partial<
   simplifySourceSelection: { label: "保留主选区", shortcut: "Escape" },
   continueList: { label: "列表续写", shortcut: "Enter" },
   listSoftBreak: { label: "列表项内换行", shortcut: "⇧Enter" },
+  indentSource: { label: "代码内容缩进", shortcut: "Tab / ⌘]" },
+  dedentSource: { label: "代码内容反缩进", shortcut: "⇧Tab / ⌘[" },
   readingThemePaper: { label: "阅读主题：纸页" },
   readingThemeInk: { label: "阅读主题：墨夜" },
   toggleReadingMode: { label: "切换编辑 / 阅读模式" },

@@ -187,6 +187,12 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       listSoftBreak: ({ documentId }) => {
         controller.runListInput(true, documentId);
       },
+      indentSource: ({ documentId }) => {
+        controller.runSourceIndentation(true, documentId);
+      },
+      dedentSource: ({ documentId }) => {
+        controller.runSourceIndentation(false, documentId);
+      },
       formatBold: ({ documentId, token }) => {
         runInlineFormat("formatBold", documentId, token);
       },
@@ -222,6 +228,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       simplifySourceSelection: controller.canRunSourceSelection,
       continueList: controller.canRunListInput,
       listSoftBreak: controller.canRunListInput,
+      indentSource: controller.canIndentSource,
+      dedentSource: controller.canIndentSource,
       reloadDocument: () =>
         !controller.getSnapshot().busy &&
         !controller.getSnapshot().frozen &&

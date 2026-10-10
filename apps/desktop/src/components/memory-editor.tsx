@@ -2,10 +2,12 @@ import {
   addCursorAbove,
   addCursorBelow,
   simplifySelection,
+  isolateHistory,
 } from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useLayoutEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { registerPairingView } from "@/client/contextual-pairing";
 import type { createDocumentController } from "@/client/documents";
@@ -24,6 +26,12 @@ import {
   rawText,
   writePermission,
 } from "@/client/raw-buffer";
+import { planSourceIndentation } from "@/client/source-indentation";
+import {
+  registerIndentationView,
+  routeIndentationInput,
+  routeSourceTabFocus,
+} from "@/client/source-indentation-input";
 import {
   guardSourceSelectionMouse,
   isOrdinarySourceSelection,
@@ -279,6 +287,62 @@ export function MemoryEditor({
       view,
       (event) => currentView() && listKey(event)
     );
+    const currentIndentationView = () =>
+      currentView() &&
+      controller.getEditor(documentId)?.state === view.state &&
+      view.state.field(editorFaultSession) === session;
+    controller.setIndentationTarget({
+      documentId,
+      ready: () =>
+        currentIndentationView() &&
+        view.hasFocus &&
+        !view.compositionStarted &&
+        !view.composing,
+      run: (more) => {
+        if (
+          !currentIndentationView() ||
+          !view.hasFocus ||
+          view.compositionStarted ||
+          view.composing ||
+          view.state.readOnly
+        )
+          return false;
+        const plan = planSourceIndentation(view.state, more);
+        if (plan.reason) {
+          toast.info(plan.reason);
+          return false;
+        }
+        if (!plan.changes?.length) return true;
+        const transaction = view.state.update({
+          changes: plan.changes,
+          annotations: isolateHistory.of("full"),
+          userEvent: "input.indent",
+        });
+        view.dispatch(transaction);
+        return view.state === transaction.state;
+      },
+    });
+    const removeIndentation = registerIndentationView(
+      view,
+      (event) =>
+        currentView() &&
+        (routeSourceTabFocus(
+          event,
+          view,
+          currentIndentationView() &&
+            controller.getMode(documentId) === "source" &&
+            !controller.isSafeSource(documentId)
+        ) ||
+          routeIndentationInput(
+            event,
+            controller.getMode(documentId) === "source" &&
+              !controller.isSafeSource(documentId),
+            controller.canIndentSource(),
+            view.compositionStarted || view.composing,
+            documentId,
+            executeCommand
+          ))
+    );
     const sourceSelectionKey = (event: KeyboardEvent) => {
       routeSourceSelectionKey(
         event,
@@ -343,6 +407,7 @@ export function MemoryEditor({
       removePairing();
       removeFormat();
       removeListInput();
+      removeIndentation();
       if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
       faultSessionRef.current = null;
       recoverRef.current = undefined;
@@ -358,6 +423,7 @@ export function MemoryEditor({
       controller.setHistoryDispatch(undefined);
       controller.setSourceSelectionTarget(undefined);
       controller.setListInputTarget(undefined);
+      controller.setIndentationTarget(undefined);
       view.contentDOM.removeEventListener("keydown", sourceSelectionKey, true);
       view.contentDOM.removeEventListener(
         "mousedown",

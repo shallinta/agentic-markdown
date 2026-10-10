@@ -738,6 +738,11 @@ export function createDocumentController(
     ready: () => boolean;
     run: (soft: boolean) => boolean;
   } | undefined;
+  let indentationTarget: {
+    documentId: string;
+    ready: () => boolean;
+    run: (more: boolean) => boolean;
+  } | undefined;
   const canToggleSourceMode = () =>
     !!state.snapshot &&
     editors.has(state.snapshot.documentId) &&
@@ -785,6 +790,18 @@ export function createDocumentController(
       return transaction;
     },
     setListInputTarget: (target?: typeof listInputTarget) => { listInputTarget = target; },
+    setIndentationTarget: (target?: typeof indentationTarget) => { indentationTarget = target; },
+    canIndentSource: () => {
+      const id = indentationTarget?.documentId, editor = id && editors.get(id);
+      return !!editor && !metadataDisposed && id === state.snapshot?.documentId &&
+        !reading.has(id) && getEditorMode(editor.state) === "source" && !isSafeSource(editor.state) &&
+        !editor.state.field(editorFaultSession).fault && canWrite(id) && !editorInputBlocked &&
+        !state.frozen && !state.busy && canLeaveEditor() && !!indentationTarget?.ready();
+    },
+    runSourceIndentation: (more: boolean, documentId: string) => {
+      if (indentationTarget?.documentId !== documentId || !controller.canIndentSource()) return false;
+      return indentationTarget.run(more);
+    },
     canRunListInput: () => {
       const id=listInputTarget?.documentId, editor=id&&editors.get(id);
       return !!editor && !metadataDisposed && id===state.snapshot?.documentId &&

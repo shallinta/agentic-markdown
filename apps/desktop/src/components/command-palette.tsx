@@ -83,6 +83,8 @@ export function CommandPalette({
       type === "simplifySourceSelection" ||
       type === "continueList" ||
       type === "listSoftBreak" ||
+      type === "indentSource" ||
+      type === "dedentSource" ||
       type === "reloadDocument" ||
       type === "saveDocument" ||
       type === "clearDocument" ||

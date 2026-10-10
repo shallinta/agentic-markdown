@@ -272,6 +272,23 @@ test("list input target fences write permission, focus, IME, freezing and lifecy
  c.dispose();expect(c.canRunListInput()).toBe(false);expect(calls).toBe(1);
 });
 
+test("source indentation rejects non-source, stale, readonly, frozen and composing targets", async () => {
+  const { a, controller: c, transport, openB } = await setup();
+  let ready = true, calls = 0;
+  c.setIndentationTarget({ documentId: a.documentId, ready: () => ready, run: () => { calls++; return true; } });
+  expect(c.canIndentSource()).toBe(false);
+  c.toggleSourceMode();expect(c.runSourceIndentation(true,a.documentId)).toBe(true);
+  ready=false;expect(c.canIndentSource()).toBe(false);ready=true;
+  c.setInteractionCheck(()=>false);expect(c.canIndentSource()).toBe(false);c.setInteractionCheck(()=>true);
+  c.setEditorInputBlocked(true);expect(c.canIndentSource()).toBe(false);c.setEditorInputBlocked(false);
+  c.beginDiscard();expect(c.canIndentSource()).toBe(false);c.endDiscard();
+  transport.checkDocumentWriteCapability=req=>Promise.resolve({...req,capability:{writable:false,reason:"readonly"}});
+  await c.refreshWriteCapability();expect(c.runSourceIndentation(false,a.documentId)).toBe(false);
+  await openB();expect(c.runSourceIndentation(true,a.documentId)).toBe(false);
+  c.setIndentationTarget(undefined);expect(c.canIndentSource()).toBe(false);
+  c.dispose();expect(c.canIndentSource()).toBe(false);expect(calls).toBe(1);
+});
+
 test("source selection commands retain read-only selection but fence nonactive, IME, frozen and disposed targets", async () => {
   const { a, controller: c, transport, openB } = await setup();
   c.toggleSourceMode();

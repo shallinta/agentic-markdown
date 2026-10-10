@@ -13,6 +13,14 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { captureHistoryTarget } from "@/client/history-target";
+import { FORMAT_UNAVAILABLE } from "@/client/inline-format";
+import {
+  canFormat,
+  captureFormatTarget,
+  isFormatCommand,
+  releaseFormatTarget,
+  type FormatCapture,
+} from "@/client/inline-format-input";
 import { restorePaletteFocus } from "@/client/palette-focus";
 import { useCommands } from "@/commands";
 import { useUpdateStatus } from "@/components/update-status-provider";
@@ -42,6 +50,7 @@ export function CommandPalette({
   const { executeCommand, isCommandEnabled } = useCommands();
   const previousFocus = useRef<HTMLElement | null>(null);
   const pendingCommand = useRef<CommandType | null>(null);
+  const [formatTarget, setFormatTarget] = useState<FormatCapture | undefined>();
   const [historyTarget, setHistoryTarget] = useState<string | undefined>(
     undefined
   );
@@ -50,6 +59,7 @@ export function CommandPalette({
   const { mode: updateMode } = useUpdateMode();
   const label = (type: CommandType): string => {
     if (type === "toggleSourceMode") return "";
+    if (isFormatCommand(type)) return PRODUCT_COMMANDS[type]!.label;
     if (
       type === "readingThemePaper" ||
       type === "readingThemeInk" ||
@@ -83,6 +93,11 @@ export function CommandPalette({
 
   const run = (type: CommandType) => {
     if (!isCommandEnabled(type)) return;
+    if (
+      isFormatCommand(type) &&
+      (!formatTarget || !canFormat(type, formatTarget))
+    )
+      return;
     pendingCommand.current = type;
     onOpenChange(false);
   };
@@ -101,6 +116,7 @@ export function CommandPalette({
               : null;
           pendingCommand.current = null;
           setHistoryTarget(captureHistoryTarget());
+          setFormatTarget(captureFormatTarget());
         },
         onCloseAutoFocus: (event) => {
           event.preventDefault();
@@ -109,7 +125,13 @@ export function CommandPalette({
           const type = pendingCommand.current;
           pendingCommand.current = null;
           // Close focus restoration finishes before a command opens a new UI.
-          if (type === "undoDocument" || type === "redoDocument") {
+          if (type && isFormatCommand(type)) {
+            const target = formatTarget;
+            queueMicrotask(() => {
+              if (target) executeCommand({ type, args: target });
+              releaseFormatTarget(target?.token);
+            });
+          } else if (type === "undoDocument" || type === "redoDocument") {
             const documentId = historyTarget;
             if (documentId)
               queueMicrotask(() =>
@@ -119,6 +141,8 @@ export function CommandPalette({
             queueMicrotask(() =>
               executeCommand({ type, args: {} } as AppCommand)
             );
+          if (!type || !isFormatCommand(type))
+            releaseFormatTarget(formatTarget?.token);
         },
       }}
     >
@@ -132,12 +156,20 @@ export function CommandPalette({
               value={label(type)}
               disabled={
                 !isCommandEnabled(type) ||
+                (isFormatCommand(type) &&
+                  (!formatTarget || !canFormat(type, formatTarget))) ||
                 ((type === "undoDocument" || type === "redoDocument") &&
                   !historyTarget)
               }
               onSelect={() => run(type)}
             >
               {label(type)}
+              {isFormatCommand(type) &&
+                (!formatTarget || !canFormat(type, formatTarget)) && (
+                  <span className="text-muted-foreground ml-2 text-xs">
+                    {FORMAT_UNAVAILABLE}
+                  </span>
+                )}
               {PRODUCT_COMMANDS[type]?.shortcut && (
                 <CommandShortcut>
                   {PRODUCT_COMMANDS[type]?.shortcut}

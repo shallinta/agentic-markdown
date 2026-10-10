@@ -12,6 +12,7 @@ import { drawSelection, EditorView, keymap } from "@codemirror/view";
 import { largeDocumentParsing } from "./background-parsing";
 import { contextualPairing } from "./contextual-pairing";
 import { createEditorModeExtensions } from "./editor-mode";
+import { inlineFormatKeys } from "./inline-format-input";
 import { listInputExtension } from "./list-input";
 import { longLineProtection } from "./long-line-protection";
 
@@ -153,6 +154,7 @@ export function createRawEditorState(
       history(),
       isolated ? [] : contextualPairing,
       isolated ? [] : listInputExtension,
+      isolated ? [] : inlineFormatKeys,
       longLineProtection,
       largeDocumentParsing,
       createEditorModeExtensions(isolated),

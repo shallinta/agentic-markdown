@@ -15,6 +15,7 @@ import {
 } from "@/client/editor-fault";
 import { syncCurrentEditorState } from "@/client/editor-view-sync";
 import { routeHistoryInput } from "@/client/history-input";
+import { registerFormatView } from "@/client/inline-format-input";
 import { listContinuationTransaction } from "@/client/list-continuation";
 import { registerListInputView, routeListInput } from "@/client/list-input";
 import {
@@ -119,6 +120,28 @@ export function MemoryEditor({
         !controller.getEditorFault(documentId)?.fault
       );
     });
+    const removeFormat = registerFormatView(
+      view,
+      documentId,
+      () => {
+        const current = controller.getSnapshot();
+        return (
+          currentView() &&
+          controller.canWrite(documentId) &&
+          !current.frozen &&
+          !current.busy &&
+          !controller.isEditorInputBlocked() &&
+          controller.getMode(documentId) !== "reading" &&
+          !controller.isSafeSource(documentId) &&
+          !controller.getEditorFault(documentId)?.fault
+        );
+      },
+      () =>
+        currentView() &&
+        controller.getMode(documentId) !== "reading" &&
+        !controller.isSafeSource(documentId),
+      executeCommand
+    );
     const scheduleWrapping = () => {
       if (
         !currentView() ||
@@ -312,6 +335,7 @@ export function MemoryEditor({
     return () => {
       alive = false;
       removePairing();
+      removeFormat();
       removeListInput();
       if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
       faultSessionRef.current = null;

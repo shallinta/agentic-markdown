@@ -22,6 +22,7 @@ import {
   type DocumentTransport,
 } from "@/client/documents";
 import { isExternalTextTarget } from "@/client/history-target";
+import { runInlineFormat } from "@/client/inline-format-input";
 import { longLineProtection } from "@/client/long-line-protection";
 import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
@@ -180,8 +181,21 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       simplifySourceSelection: ({ documentId }) => {
         controller.runSourceSelection("simplify", documentId);
       },
-      continueList: ({documentId}) => { controller.runListInput(false,documentId); },
-      listSoftBreak: ({documentId}) => { controller.runListInput(true,documentId); },
+      continueList: ({ documentId }) => {
+        controller.runListInput(false, documentId);
+      },
+      listSoftBreak: ({ documentId }) => {
+        controller.runListInput(true, documentId);
+      },
+      formatBold: ({ documentId, token }) => {
+        runInlineFormat("formatBold", documentId, token);
+      },
+      formatItalic: ({ documentId, token }) => {
+        runInlineFormat("formatItalic", documentId, token);
+      },
+      formatCode: ({ documentId, token }) => {
+        runInlineFormat("formatCode", documentId, token);
+      },
     },
     true,
     {

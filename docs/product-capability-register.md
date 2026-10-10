@@ -736,7 +736,7 @@ F-010 执行边界（2026-09-22）：用户确认读取保真方案并授权推�
 | E-02 | 行号 | Source 编辑器 | 源码模式默认开启逻辑行号；软换行续行不重复编号；使用 CM6 gutter，仅渲染视口 | 已确认 · MVP |
 | E-03 | 当前行高亮 | Source 编辑器 | 仅源码模式使用轻量 CM6 active-line decoration，并同步强调 gutter 行号；编辑模式关闭 | 已确认 · MVP |
 | E-04 | 自动配对括号/引号 | Typora、CM6 | 编辑/普通源码共用已批准 CM6 公开单事务窄适配；五类 ASCII 配对、选区包裹、已有闭合符跳过、IME composition 避让及统一历史；普通同类引号跳过，转义时正常插入。F-043b alpha.104 非离线本片受托代验通过，安全源码隔离、完整父与离线开放 | 已确认 · MVP |
-| E-05 | 自动补全 Markdown 标记 | Typora、Zettlr | 保守情境规则；选区包裹强调/代码；链接与围栏明确输入时补齐；普通标点不激进改写；单步撤销 | 已确认 · MVP |
+| E-05 | 自动补全 Markdown 标记 | Typora、Zettlr | 保守情境规则；选区包裹强调/代码；链接与围栏明确输入时补齐；普通标点不激进改写；单步撤销。[F-042a](iterations/F-042a-inline-format-commands.md) 仅显式行内格式命令局部消费者，alpha.111 本片受托代验通过，不代表全部自动补全完成 | 已确认 · MVP |
 | E-06 | 列表自动续写 | Typora、Obsidian | 编辑/源码均支持；有序递增并连续后项自动顺延（2026-10-10 用户选择 1B）；任务新项未完成、保留嵌套与无序标记；空项退出；Shift+Enter 软换行。F-043c alpha.109 CommonMark 本片受托代验通过，任务项留 F-045，完整能力未关闭 | 已确认 · MVP · 部分完成 |
 | E-07 | 智能缩进 / 反缩进 | 全部 | 编辑/源码统一；列表、引用、围栏代码、多行选区结构化处理；普通段落无目标时消费按键、保持焦点且不改内容 | 已确认 · MVP |
 | E-08 | 多光标 / 多选区 | Inkdrop、Notable、CM6 | 源码模式使用 CM6 原生 selection model；编辑模式单光标；多选区变更作为统一 transaction 撤销 | 已确认 · MVP（仅源码） |
@@ -751,7 +751,7 @@ F-010 执行边界（2026-09-22）：用户确认读取保真方案并授权推�
 | E-17 | Typewriter Mode | Typora、MarkText | 持续输入时光标稳定在固定垂直区域；与 Focus Mode 独立且可组合；细节后续设计 | 已确认 · P1 |
 | E-18 | Hemingway Mode | ghostwriter | 以禁用 Backspace/Delete 为参考基线；其他编辑限制后续确认 | 已确认 · P1 |
 | E-19 | Vim 键位 | Obsidian、Zettlr | 仅源码模式；CM6 Vim 扩展按需加载；关闭时不影响普通编辑路径 | 已确认 · P1 |
-| E-20 | 格式工具栏 | Typora、MarkText、HackMD | MVP 快捷键/菜单 + 必要结构情境控件；P1 可选浮动工具栏；统一调用文本 transaction | 已确认 · MVP/P1 |
+| E-20 | 格式工具栏 | Typora、MarkText、HackMD | MVP 快捷键/菜单 + 必要结构情境控件；P1 可选浮动工具栏；统一调用文本 transaction。[F-042a](iterations/F-042a-inline-format-commands.md) alpha.111 三类行内命令/现有面板非离线受托代验通过，Git 待实际执行；完整 F-042/义务/离线开放，不含浮动工具栏或原生菜单 | 已确认 · MVP/P1 |
 | E-21 | 命令面板 | Obsidian、VS Code | 统一 command registry；搜索、快捷键展示、键盘执行；按当前上下文判断可用性 | 已确认 · MVP |
 | E-22 | Slash 命令 | Novel、Notion 类 | 仅编辑模式空白行/行首触发；复用 command registry；只修改 Markdown，不引入块数据库 | 已确认 · P1 |
 | E-23 | 自定义快捷键 | Obsidian、Zettlr | MVP 固定 macOS 映射；P1 支持修改/清除/恢复默认、冲突检测与系统保留键保护 | 已确认 · P1 |

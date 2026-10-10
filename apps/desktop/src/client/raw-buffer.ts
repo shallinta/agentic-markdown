@@ -153,7 +153,14 @@ export function createRawEditorState(
       largeDocumentParsing,
       createEditorModeExtensions(isolated),
       writePermission.of(EditorState.readOnly.of(false)),
-      keymap.of(defaultKeymap),
+      // Source cursor commands are routed through the unified registry by the view.
+      keymap.of(
+        defaultKeymap.filter(
+          (binding) =>
+            binding.key !== "Mod-Alt-ArrowUp" &&
+            binding.key !== "Mod-Alt-ArrowDown"
+        )
+      ),
       // Native DOM selection is hidden while the tab button owns focus. Draw
       // the saved CM range without stealing keyboard focus on tab activation.
       drawSelection(),

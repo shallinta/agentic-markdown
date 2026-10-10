@@ -35,6 +35,9 @@ export type Command =
   | GenericCommand<"toggleSourceMode">
   | GenericCommand<"undoDocument", { documentId?: string }>
   | GenericCommand<"redoDocument", { documentId?: string }>
+  | GenericCommand<"addSourceCursorAbove", { documentId: string }>
+  | GenericCommand<"addSourceCursorBelow", { documentId: string }>
+  | GenericCommand<"simplifySourceSelection", { documentId: string }>
   | GenericCommand<"selectDocument">
   | GenericCommand<"selectFolder">
   | GenericCommand<"saveDocument">
@@ -79,6 +82,10 @@ export function isCommand(value: unknown): value is Command {
     return false;
   const args = input.args as Record<string, unknown>;
   const keys = Object.keys(args);
+  if (input.type === "addSourceCursorAbove" || input.type === "addSourceCursorBelow" || input.type === "simplifySourceSelection")
+    return keys.length === 1 && keys[0] === "documentId" &&
+      typeof args.documentId === "string" &&
+      /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(args.documentId);
   if (input.type === "setRootHidden")
     return (
       keys.length === 2 &&
@@ -126,6 +133,9 @@ export const COMMAND_META: Record<
   toggleSourceMode: { target: "webview", palette: false },
   undoDocument: { target: "webview" },
   redoDocument: { target: "webview" },
+  addSourceCursorAbove: { target: "webview", palette: false },
+  addSourceCursorBelow: { target: "webview", palette: false },
+  simplifySourceSelection: { target: "webview", palette: false },
   selectDocument: { target: "webview" },
   selectFolder: { target: "webview" },
   setRootHidden: { target: "webview", palette: false },
@@ -157,6 +167,9 @@ export const PRODUCT_COMMANDS: Partial<
     }
   >
 > = {
+  addSourceCursorAbove: { label: "向上添加光标", shortcut: "⌘⌥↑" },
+  addSourceCursorBelow: { label: "向下添加光标", shortcut: "⌘⌥↓" },
+  simplifySourceSelection: { label: "保留主选区", shortcut: "Escape" },
   readingThemePaper: { label: "阅读主题：纸页" },
   readingThemeInk: { label: "阅读主题：墨夜" },
   toggleReadingMode: { label: "切换编辑 / 阅读模式" },

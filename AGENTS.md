@@ -1,5 +1,23 @@
 # AGENTS.md
 
+## 本片通过：F-044b 普通源码多选区（2026-10-10）
+
+正式结论：alpha.103 非离线本片经独立 Spec/Standards 0 阻断、主线确认通过。自然中文 IME 与非候选 Escape 为用户亲验，其余为受托 Agent 代验；旧工具差异未归因历史保留，不宣称根因已修。Git 待实际执行；父、完整 OBL-059/064 与 offline-final 继续开放。下方待验及旧现场为历史，详细证据见唯一迭代。
+
+最终 clean Cmd+Q 正常退出，PID62142 不存在，两 fixture SHA 与 baseline 一致，没有保存正文；当前无 alpha.103 运行现场。
+
+最新补证：用户验后 AX clean；主线双空光标故障后回焦/typeText 写入位置与预期不同，已 undo、保留未归因。重新打开后双范围故障瞬间截图仅主 BBB、回焦 AX 仍 BBB，pressKey k 仅替换 BBB，undo 回 clean/BBB 范围。两路径不混用，不称异常已修；最终 verifier 仍在判断，整片未最终通过、不得 Git。详细路径见唯一迭代，下方“用户后 dirty 未知”为此前历史。
+
+最新用户亲验：用户明确确认本片自然中文 IME 候选确认/取消，以及非候选状态 Escape 验收通过；仅这部分记用户亲验，其余仍为 Agent 代验。等待最终独立结论及主线总体验收，不预写通过或 Git；旧批量 Escape 差异保留未归因。用户操作后正文 dirty 状态尚未读回，不再称当前现场 clean。另 E-04 已确认普通同类引号跳过、转义时正常插入，F-043b 尚未实现，不扩入本片；详见 MVP 决定补记。
+
+最新现场：alpha.103 safe E 的退出取消后保留已实证，随后 undo clean、⌘Q 正常退出，PID61602 消失，两 fixture SHA 与 baseline 一致。主线同隔离 HOME/fault lab 重启 exec15559 / PID62142，重新打开 cursors 616 字节 clean 唯一普通源码标签，逻辑 3/4 行双光标截图确认，wrap ON、固定深色。保留该现场供用户必要自然中文 IME 与 Escape 复验，不再代操作或保存；尚未总体验收，不得 Git。下方旧现场为历史。
+
+alpha.103 已构建成功（hash `dg8n08eh8xrx`），包内 Bun 仓库测试 827/20169，通过而不混同源码 827/20168。真实 WK 已局部验证键盘/⌘点击双位置、分行粘贴/复制与历史；首次批量 Escape 与随后分步结果不一致，保留未归因记录。当前 PID61602、cursors 唯一源码 clean、未保存；自然中文 IME 及其他必需项仍待验，整片未验收、不得 Git。下方构建进行中为历史。
+
+最新检查点：安全源码 Escape 范围修正后独立 Spec/Standards 均 0 代码阻断；主线最终源码 827 项 / 20168 断言 / 133 文件通过。alpha.103 已由主线递增，构建 session34900 进行中，尚无成功包；真实 WK 与自然中文 IME 必要项待验，不列可用、不得 Git。下方“未构建”指此前检查点，未改变父及离线开放范围。
+
+[F-044b](docs/iterations/F-044b-source-multiple-selections.md) 最小方案已获主线批准，普通源码 CM 多选区、统一选择命令与模式/历史隔离已实现，定向及 typecheck/lint 通过，待独立两轴审查与真实 WK 验收；未构建、未验收，不得 Git。自然中文 IME 为必要非离线待验，受控事件不代替自然输入。父 F-044、完整 OBL-059/064 与 offline-final 开放，E-04 引号边界及 F-028c 未决不扩入。前轮 F-043a 已提交推送 `e1361e17a8a9d18081cfa3e92b3a0edfd9ed02f6`，远端核验一致；下方旧待 Git 为历史。
+
 ## 本片通过：F-043a 普通源码全局软换行（2026-10-10）
 
 [F-043a](docs/iterations/F-043a-source-line-wrapping.md) alpha.102 非离线本片受托 Agent 代验通过，独立 Spec/Standards 均 0 阻断、主线确认，非用户亲验；Git 待主线实际执行。实际换行/横滚/长行中段位置、选区历史/跨标签、编辑阅读与安全隔离、Option+Tab/Space、重启 off 偏好及退出确认已记录；普通 Tab 跳过、自然 IME/动态系统外观/离线未实测边界保留。PID 57664 与 58509 均正常退出，三个 fixture hash 与 baseline 一致，未保存正文；无当前运行现场。源码/包内各 820/20092 通过，完整 OBL-058、父及 offline-final 开放。F-044a 已提交推送 `76aaf555837057eda60c990f4394d128b1e5c5c5`，远端 main 一致、编写本轮方案前当时工作树干净。下方旧 Git 待执行保留历史。

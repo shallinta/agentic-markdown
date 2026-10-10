@@ -171,6 +171,15 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         if (documentId || !isExternalTextTarget(document.activeElement))
           controller.runHistory("redo", documentId);
       },
+      addSourceCursorAbove: ({ documentId }) => {
+        controller.runSourceSelection("above", documentId);
+      },
+      addSourceCursorBelow: ({ documentId }) => {
+        controller.runSourceSelection("below", documentId);
+      },
+      simplifySourceSelection: ({ documentId }) => {
+        controller.runSourceSelection("simplify", documentId);
+      },
     },
     true,
     {
@@ -192,6 +201,9 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       saveDocument: controller.canSave,
       undoDocument: controller.canUndo,
       redoDocument: controller.canRedo,
+      addSourceCursorAbove: controller.canRunSourceSelection,
+      addSourceCursorBelow: controller.canRunSourceSelection,
+      simplifySourceSelection: controller.canRunSourceSelection,
       reloadDocument: () =>
         !controller.getSnapshot().busy &&
         !controller.getSnapshot().frozen &&

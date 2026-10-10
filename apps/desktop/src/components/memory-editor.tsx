@@ -1,3 +1,8 @@
+import {
+  addCursorAbove,
+  addCursorBelow,
+  simplifySelection,
+} from "@codemirror/commands";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useLayoutEffect, useRef } from "react";
@@ -15,6 +20,11 @@ import {
   rawText,
   writePermission,
 } from "@/client/raw-buffer";
+import {
+  guardSourceSelectionMouse,
+  isOrdinarySourceSelection,
+  routeSourceSelectionKey,
+} from "@/client/source-selection-input";
 import { deferWrappingUpdate } from "@/client/wrapping-measure";
 import { useCommands } from "@/commands";
 
@@ -173,6 +183,46 @@ export function MemoryEditor({
       controller.setScrollPosition(documentId, view.scrollDOM.scrollTop);
     view.scrollDOM.addEventListener("scroll", saveScroll);
     controller.setInteractionCheck(() => !view.compositionStarted);
+    controller.setSourceSelectionTarget({
+      documentId,
+      ready: () => currentView() && !view.compositionStarted && view.hasFocus,
+      run: (action) => {
+        if (!currentView() || !view.hasFocus || view.compositionStarted)
+          return false;
+        return (
+          action === "above"
+            ? addCursorAbove
+            : action === "below"
+              ? addCursorBelow
+              : simplifySelection
+        )(view);
+      },
+    });
+    const sourceSelectionKey = (event: KeyboardEvent) => {
+      routeSourceSelectionKey(
+        event,
+        isOrdinarySourceSelection(
+          controller.getMode(documentId),
+          controller.isSafeSource(documentId)
+        ),
+        controller.canRunSourceSelection(),
+        documentId,
+        executeCommand,
+        view.compositionStarted
+      );
+    };
+    const sourceSelectionMouse = (event: MouseEvent) => {
+      guardSourceSelectionMouse(
+        event,
+        isOrdinarySourceSelection(
+          controller.getMode(documentId),
+          controller.isSafeSource(documentId)
+        ),
+        currentView() && controller.canSelectSource(documentId)
+      );
+    };
+    view.contentDOM.addEventListener("keydown", sourceSelectionKey, true);
+    view.contentDOM.addEventListener("mousedown", sourceSelectionMouse, true);
     scheduleWrapping();
     const historyKey = (event: KeyboardEvent) => {
       if (
@@ -222,6 +272,13 @@ export function MemoryEditor({
       );
       controller.setInteractionCheck(() => true);
       controller.setHistoryDispatch(undefined);
+      controller.setSourceSelectionTarget(undefined);
+      view.contentDOM.removeEventListener("keydown", sourceSelectionKey, true);
+      view.contentDOM.removeEventListener(
+        "mousedown",
+        sourceSelectionMouse,
+        true
+      );
       controller.setScrollCapture(undefined);
       controller.setWrappingScheduler(undefined);
       view.contentDOM.removeEventListener("keydown", historyKey, true);

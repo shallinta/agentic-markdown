@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import { isolateHistory } from "@codemirror/commands";
+import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import { createCommandRegistry } from "../commands/registry";
@@ -251,6 +252,82 @@ test("wrapping defers hidden cache and fences measured callbacks against tab, st
   c.dispose();
   expect(c.applySourceWrapping(a.documentId, last)).toBe(false);
 });
+test("source selection commands retain read-only selection but fence nonactive, IME, frozen and disposed targets", async () => {
+  const { a, controller: c, transport, openB } = await setup();
+  c.toggleSourceMode();
+  let calls = 0,
+    ready = true;
+  c.setSourceSelectionTarget({
+    documentId: a.documentId,
+    ready: () => ready,
+    run: () => {
+      calls++;
+      return true;
+    },
+  });
+  expect(c.runSourceSelection("above", a.documentId)).toBe(true);
+  transport.checkDocumentWriteCapability = (req) =>
+    Promise.resolve({
+      ...req,
+      capability: { writable: false, reason: "readonly" },
+    });
+  await c.refreshWriteCapability();
+  expect(c.canWrite(a.documentId)).toBe(false);
+  expect(c.runSourceSelection("below", a.documentId)).toBe(true);
+  const state = c.getEditor(a.documentId)!.state;
+  expect(
+    c.updateEditor(
+      a.documentId,
+      state.update({ changes: { from: 0, insert: "forbidden" } })
+    )
+  ).toBe(false);
+  c.setInteractionCheck(() => false);
+  expect(c.runSourceSelection("above", a.documentId)).toBe(false);
+  c.setInteractionCheck(() => true);
+  c.beginDiscard();
+  expect(c.runSourceSelection("above", a.documentId)).toBe(false);
+  c.endDiscard();
+  ready = false;
+  expect(c.runSourceSelection("above", a.documentId)).toBe(false);
+  ready = true;
+  await openB();
+  expect(c.runSourceSelection("above", a.documentId)).toBe(false);
+  c.dispose();
+  expect(c.runSourceSelection("above", a.documentId)).toBe(false);
+  expect(calls).toBe(2);
+});
+
+test("controller source to editing and reading keeps main range across later undo", async () => {
+  for (const returnReading of [false, true]) {
+    const { a, controller: c } = await setup();
+    if (returnReading) c.toggleReadingMode();
+    c.toggleSourceMode();
+    let state = c.getEditor(a.documentId)!.state;
+    c.updateEditor(
+      a.documentId,
+      state.update({
+        selection: EditorSelection.create(
+          [EditorSelection.cursor(1), EditorSelection.cursor(3)],
+          1
+        ),
+      })
+    );
+    state = c.getEditor(a.documentId)!.state;
+    c.updateEditor(
+      a.documentId,
+      state.update(state.replaceSelection("TEMP"), { userEvent: "input.type" })
+    );
+    expect(c.getEditor(a.documentId)!.state.selection.ranges).toHaveLength(2);
+    c.toggleSourceMode();
+    expect(c.getMode(a.documentId)).toBe(returnReading ? "reading" : "editing");
+    expect(c.getEditor(a.documentId)!.state.selection.ranges).toHaveLength(1);
+    if (returnReading) c.toggleReadingMode();
+    expect(c.runHistory("undo")).toBe(true);
+    expect(c.getEditor(a.documentId)!.state.field(rawText)).toBe(a.text);
+    expect(c.getEditor(a.documentId)!.state.selection.ranges).toHaveLength(1);
+  }
+});
+
 test("readonly refresh preserves dirty raw bytes, selection and history while blocking all mutations", async () => {
   const { a, controller: c, transport, edit } = await setup();
   edit("修改");

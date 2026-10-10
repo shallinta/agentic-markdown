@@ -1,5 +1,5 @@
 import { HighlightStyle } from "@codemirror/language";
-import { Compartment, Facet, type EditorState } from "@codemirror/state";
+import { Compartment, Facet, EditorState } from "@codemirror/state";
 import {
   EditorView,
   highlightActiveLine,
@@ -79,6 +79,7 @@ const safe = Facet.define<boolean, boolean>({
 });
 const sourcePresentation = [
   mode.of("source"),
+  EditorState.allowMultipleSelections.of(true),
   protectedSourceHighlighting(sourceHighlightStyle),
   lineNumbers(),
   highlightActiveLine(),

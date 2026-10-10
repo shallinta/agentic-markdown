@@ -59,6 +59,9 @@ export function CommandPalette({
       type === "toggleReadingMode" ||
       type === "undoDocument" ||
       type === "redoDocument" ||
+      type === "addSourceCursorAbove" ||
+      type === "addSourceCursorBelow" ||
+      type === "simplifySourceSelection" ||
       type === "reloadDocument" ||
       type === "saveDocument" ||
       type === "clearDocument" ||

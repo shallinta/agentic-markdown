@@ -722,6 +722,11 @@ export function createDocumentController(
   let historyDispatch: ((transaction: Transaction) => void) | undefined;
   let captureScroll: (() => StateEffect<unknown>) | undefined;
   let scheduleWrapping: (() => void) | undefined;
+  let sourceSelectionTarget: {
+    documentId: string;
+    ready: () => boolean;
+    run: (action: "above" | "below" | "simplify") => boolean;
+  } | undefined;
   const canToggleSourceMode = () =>
     !!state.snapshot &&
     editors.has(state.snapshot.documentId) &&
@@ -749,6 +754,23 @@ export function createDocumentController(
     );
   };
   const controller = {
+    setSourceSelectionTarget: (target?: typeof sourceSelectionTarget) => {
+      sourceSelectionTarget = target;
+    },
+    canSelectSource: (documentId = state.snapshot?.documentId) => {
+      const editor = documentId && editors.get(documentId);
+      return !metadataDisposed && !!editor &&
+        documentId === state.snapshot?.documentId &&
+        getEditorMode(editor.state) === "source" && !isSafeSource(editor.state) &&
+        !editor.state.field(editorFaultSession).fault &&
+        !state.frozen && !state.busy && canLeaveEditor();
+    },
+    canRunSourceSelection: () => !!sourceSelectionTarget &&
+      controller.canSelectSource(sourceSelectionTarget.documentId) && sourceSelectionTarget.ready(),
+    runSourceSelection: (action: "above" | "below" | "simplify", documentId: string) => {
+      if (sourceSelectionTarget?.documentId !== documentId || !controller.canRunSourceSelection()) return false;
+      return sourceSelectionTarget.run(action);
+    },
     setSourceWrapping: (enabled: boolean) => {
       if (typeof enabled !== "boolean" || metadataDisposed) return;
       sourceWrapping = enabled;
@@ -824,6 +846,7 @@ export function createDocumentController(
         }
         const transaction = editor.state.update({
           effects,
+          selection: editor.state.selection.asSingle(),
           annotations: Transaction.addToHistory.of(false),
         });
         if (state.snapshot?.documentId === documentId && historyDispatch)
@@ -910,6 +933,7 @@ export function createDocumentController(
       );
       const transaction = editor.state.update({
         effects: scroll ? [...effect, scroll] : effect,
+        selection: editor.state.selection.asSingle(),
         annotations: Transaction.addToHistory.of(false),
       });
       if (historyDispatch) historyDispatch(transaction);

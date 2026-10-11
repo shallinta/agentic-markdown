@@ -12,6 +12,7 @@ import type { SyntaxNode } from "@lezer/common";
 
 import { planListIndentation } from "./list-indentation";
 import { longLineProtection } from "./long-line-protection";
+import { planQuoteIndentation } from "./quote-indentation";
 
 export const INDENT_UNAVAILABLE = "选区需完整位于已解析的顶层代码围栏内容中";
 export const INDENT_BOUNDARY_CHANGE = "反缩进会改变代码围栏边界，未修改内容";
@@ -78,6 +79,8 @@ export function planSourceIndentation(
 ): IndentationPlan {
   const reject = () => ({ reason: INDENT_UNAVAILABLE });
   if (state.readOnly) return reject();
+  const quote = planQuoteIndentation(state, more);
+  if (quote) return quote;
   const list = planListIndentation(state, more);
   if (list) return list;
   const tree = syntaxTree(state),

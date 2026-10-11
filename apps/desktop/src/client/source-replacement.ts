@@ -4,6 +4,27 @@ import { EditorState, Transaction } from "@codemirror/state";
 import { MAX_DOCUMENT_BYTES } from "../shared/documents";
 
 import { applyEditorChanges, rawText } from "./raw-buffer";
+import { prepareAllChanges } from "./source-replace-all";
+import type { ReplaceAllResult } from "./source-replace-all-protocol";
+
+export function prepareReplaceAll(
+  state: EditorState,
+  raw: string,
+  replacement: string,
+  plan: Extract<ReplaceAllResult, { kind: "plan" }>
+) {
+  if (state.field(rawText) !== raw) return null;
+  const changes = prepareAllChanges(state, raw, replacement, plan);
+  return changes
+    ? state.update({
+        changes,
+        annotations: [
+          Transaction.userEvent.of("input.replace"),
+          isolateHistory.of("full"),
+        ],
+      })
+    : null;
+}
 
 /** One literal edit through the same raw/history filters as normal typing. */
 export function prepareSourceReplacement(

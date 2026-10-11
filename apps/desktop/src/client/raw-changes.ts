@@ -1,11 +1,14 @@
-import type { ChangeSet } from "@codemirror/state";
+import type { ChangeSet, Text } from "@codemirror/state";
 
 /** Monotonic CM-to-raw traversal; no document-sized index on ordinary typing. */
-export function applyRawChanges(raw: string, changes: ChangeSet): string {
+export function visitRawChanges(
+  raw: string,
+  changes: ChangeSet,
+  visit: (from: number, to: number, insert: Text, separator: string) => void
+): void {
   let cursor = 0,
     logical = 0,
-    previousSeparator = "\n",
-    previous = 0;
+    previousSeparator = "\n";
   let nextStop = -1,
     nextSeparator = "";
   const offset = (target: number) => {
@@ -41,15 +44,24 @@ export function applyRawChanges(raw: string, changes: ChangeSet): string {
     // A lone CR ends the forward search, matching the original EOL policy.
     return nextSeparator || previousSeparator;
   };
-  const pieces: string[] = [];
   changes.iterChanges((from, to, _fromB, _toB, inserted) => {
-    const start = offset(from),
-      text = inserted.toString();
-    const insertion =
-      inserted.lines > 1 ? text.replace(/\n/g, separator(start)) : text;
+    const start = offset(from);
+    const ending = inserted.lines > 1 ? separator(start) : "\n";
     // Resolve the insertion's context before advancing beyond the removed span.
     const end = offset(to);
-    pieces.push(raw.slice(previous, start), insertion);
+    visit(start, end, inserted, ending);
+  });
+}
+
+export function applyRawChanges(raw: string, changes: ChangeSet): string {
+  const pieces: string[] = [];
+  let previous = 0;
+  visitRawChanges(raw, changes, (start, end, inserted, separator) => {
+    const text = inserted.toString();
+    pieces.push(
+      raw.slice(previous, start),
+      inserted.lines > 1 ? text.replace(/\n/g, separator) : text
+    );
     previous = end;
   });
   pieces.push(raw.slice(previous));

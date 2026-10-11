@@ -11,7 +11,16 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { createDocumentController } from "@/client/documents";
 import { editorFaultSession } from "@/client/editor-fault";
 import { rawText, sourceSearchPresentation } from "@/client/raw-buffer";
-import { prepareSourceReplacement } from "@/client/source-replacement";
+import {
+  createReplaceAllOwner,
+  sameAllSource,
+  type AllSource,
+} from "@/client/source-replace-all-owner";
+import AllWorker from "@/client/source-replace-all.worker?worker&inline";
+import {
+  prepareSourceReplacement,
+  prepareReplaceAll,
+} from "@/client/source-replacement";
 import {
   createSearchOwner,
   type SearchStatus,
@@ -68,6 +77,14 @@ export function SourceSearch({
   const [status, setStatus] = useState<SearchStatus>("idle");
   const [result, setResult] = useState<SearchResult | null>(null);
   const owner = useRef<ReturnType<typeof createSearchOwner> | null>(null);
+  const allOwner = useRef<ReturnType<typeof createReplaceAllOwner> | null>(
+    null
+  );
+  const [allStatus, setAllStatus] = useState<"idle" | "running" | "failed">(
+    "idle"
+  );
+  const [allMessage, setAllMessage] = useState("");
+  const allMessageSource = useRef<AllSource | null>(null);
   const sync = useRef<() => void>(() => undefined);
   const { executeCommand } = useCommands();
   const controllerText = controller.getEditor(documentId)?.state.doc;
@@ -99,8 +116,40 @@ export function SourceSearch({
     store.get(documentId).open &&
     store.get(documentId).replaceOpen &&
     !!owner.current?.ticket();
+  const allSource = (): AllSource | null => {
+    const c = store.get(documentId);
+    if (
+      !interaction() ||
+      !controller.canWrite(documentId) ||
+      !c.open ||
+      !c.replaceOpen ||
+      controller.getEditor(documentId)?.state.field(rawText) !==
+        view.state.field(rawText)
+    )
+      return null;
+    return {
+      session: view.state.field(editorFaultSession),
+      text: view.state.doc,
+      raw: view.state.field(rawText),
+      length: view.state.doc.length,
+      options: {
+        query: c.query,
+        caseSensitive: c.caseSensitive,
+        wholeWord: c.wholeWord,
+      },
+      replacement: c.replacement,
+    };
+  };
+  const canReplaceAll = () =>
+    !!allSource() &&
+    status === "ready" &&
+    !!result?.count &&
+    !allOwner.current?.running();
   const replace = () => {
     if (!canReplace()) return;
+    allOwner.current?.cancel();
+    allMessageSource.current = null;
+    setAllMessage("");
     notice.clear();
     const ticket = owner.current?.ticket();
     if (
@@ -172,6 +221,14 @@ export function SourceSearch({
           });
       },
       replaceSourceMatch: replace,
+      replaceAllSourceMatches: () => {
+        if (!canReplaceAll()) return;
+        notice.clear();
+        autoPosition.current = null;
+        allMessageSource.current = null;
+        setAllMessage("");
+        allOwner.current?.start();
+      },
     },
     true,
     {
@@ -191,10 +248,66 @@ export function SourceSearch({
         !!result?.count,
       toggleSourceReplacement: interaction,
       replaceSourceMatch: canReplace,
+      replaceAllSourceMatches: canReplaceAll,
     }
   );
   useLayoutEffect(() => {
     let alive = true;
+    setAllStatus("idle");
+    setAllMessage("");
+    allMessageSource.current = null;
+    const all = createReplaceAllOwner(
+      () => new AllWorker(),
+      () => (alive ? allSource() : null),
+      (response, source) => {
+        if (!alive || !sameAllSource(source, allSource())) return;
+        if (response.kind === "rejected") {
+          allMessageSource.current = source;
+          setAllMessage(
+            response.reason === "cost"
+              ? "本次全部替换开销过高，内容未修改"
+              : "替换结果超过 1 MiB，内容未修改"
+          );
+          return;
+        }
+        if (response.kind === "plan") {
+          const transaction = prepareReplaceAll(
+            view.state,
+            source.raw,
+            source.replacement,
+            response
+          );
+          if (!transaction || !sameAllSource(source, allSource())) {
+            allMessageSource.current = allSource();
+            setAllMessage("全部替换未能安全完成，内容未修改");
+            return;
+          }
+          view.dispatch(transaction);
+          if (controller.getEditor(documentId)?.state !== transaction.state)
+            return;
+        }
+        allMessageSource.current = allSource();
+        setAllMessage(
+          `匹配 ${response.matched} 处，实际改变 ${response.changed} 处`
+        );
+      },
+      (value) => {
+        if (alive) setAllStatus(value);
+      }
+    );
+    allOwner.current = all;
+    const observeAll = () => {
+      all.observe();
+      if (
+        allMessageSource.current &&
+        !sameAllSource(allMessageSource.current, allSource())
+      ) {
+        allMessageSource.current = null;
+        setAllMessage("");
+      }
+    };
+    const releaseAllStore = store.subscribe(observeAll);
+    const releaseAllController = controller.subscribe(observeAll);
     const syncNotice = () => notice.sync(view.state.doc, store.get(documentId));
     syncNotice();
     const releaseNoticeWatch = store.subscribe(syncNotice);
@@ -349,6 +462,7 @@ export function SourceSearch({
       class {
         decorations = marks;
         update(update: import("@codemirror/view").ViewUpdate) {
+          observeAll();
           if (update.selectionSet) autoPosition.current = null;
           this.decorations = update.docChanged ? emptyMarks : marks;
           if (update.docChanged) {
@@ -362,6 +476,12 @@ export function SourceSearch({
     );
     const extension = [
       plugin,
+      EditorView.domEventHandlers({
+        compositionstart: () => {
+          all.cancel();
+          return false;
+        },
+      }),
       Prec.high(
         keymap.of([
           {
@@ -393,6 +513,11 @@ export function SourceSearch({
     synchronize();
     return () => {
       alive = false;
+      releaseAllStore();
+      releaseAllController();
+      all.dispose();
+      allMessageSource.current = null;
+      if (allOwner.current === all) allOwner.current = null;
       releaseNoticeWatch();
       releaseIntentWatch();
       autoPosition.current = null;
@@ -444,6 +569,7 @@ export function SourceSearch({
         }}
         onCompositionStart={() => {
           composing.current = true;
+          allOwner.current?.cancel();
         }}
         onCompositionEnd={(event) => {
           composing.current = false;
@@ -544,6 +670,7 @@ export function SourceSearch({
             }}
             onCompositionStart={() => {
               replacingComposition.current = true;
+              allOwner.current?.cancel();
             }}
             onCompositionEnd={(event) => {
               replacingComposition.current = false;
@@ -571,8 +698,26 @@ export function SourceSearch({
           >
             替换当前
           </button>
+          <button
+            disabled={!canReplaceAll()}
+            title={
+              !controller.canWrite(documentId)
+                ? "只读文档不能替换"
+                : "全部替换（一次撤销）"
+            }
+            onClick={() =>
+              executeCommand({ type: "replaceAllSourceMatches", args: {} })
+            }
+          >
+            全部替换
+          </button>
           <span role="status" className="text-xs">
-            {replacementNotice ||
+            {(allStatus === "running"
+              ? "正在准备全部替换…"
+              : allStatus === "failed"
+                ? "全部替换失败，请重试"
+                : allMessage) ||
+              replacementNotice ||
               (!controller.canWrite(documentId) ? "只读文档不能替换" : "")}
           </span>
         </>

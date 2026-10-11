@@ -65,7 +65,8 @@ export function CommandPalette({
       type === "nextSourceMatch" ||
       type === "previousSourceMatch" ||
       type === "toggleSourceReplacement" ||
-      type === "replaceSourceMatch"
+      type === "replaceSourceMatch" ||
+      type === "replaceAllSourceMatches"
     )
       return "源码查找";
     if (isFormatCommand(type)) return PRODUCT_COMMANDS[type]!.label;

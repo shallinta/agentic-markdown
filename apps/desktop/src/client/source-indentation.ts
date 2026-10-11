@@ -10,6 +10,7 @@ import {
 } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
+import { planListIndentation } from "./list-indentation";
 import { longLineProtection } from "./long-line-protection";
 
 export const INDENT_UNAVAILABLE = "选区需完整位于已解析的顶层代码围栏内容中";
@@ -77,6 +78,8 @@ export function planSourceIndentation(
 ): IndentationPlan {
   const reject = () => ({ reason: INDENT_UNAVAILABLE });
   if (state.readOnly) return reject();
+  const list = planListIndentation(state, more);
+  if (list) return list;
   const tree = syntaxTree(state),
     protection = state.field(longLineProtection);
   const numbers = new Set<number>(),

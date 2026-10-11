@@ -30,7 +30,7 @@
     },
     "apps/desktop": {
       "name": "@agentic-markdown/desktop",
-      "version": "0.1.0-alpha.118",
+      "version": "0.1.0-alpha.119",
       "dependencies": {
         "@agentic-markdown/shared": "workspace:*",
         "@agentic-markdown/ui": "workspace:*",

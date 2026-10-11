@@ -122,7 +122,6 @@ test("whole operation rejects structural/mixed/readonly/protected selections", (
     ["```\nx\n```", [[0, 6]]],
     ["```\nx\n```\nplain", [[4], [10]]],
     ["> ```\n> x\n> ```", [[8]]],
-    ["- hi", [[3]]],
     ["```\nx", [[4]]],
     ["```\n" + "x".repeat(10001) + "\n```", [[4]]],
   ] as [string, number[][]][]) {

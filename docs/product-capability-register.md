@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## E-05 本片通过：F-043i（2026-10-12）
+
+[F-043i](iterations/F-043i-selected-inline-code-completion.md) alpha.124 非空单行合法选区输入反引号的保守包裹已实现，非离线有限片经独立最终复核及主线确认受托Agent代验通过，非用户亲验。完整E-05及OBL-058/064和最终离线保持开放，不扩围栏内部Enter；组合输入实测及其它证据限制见唯一迭代。
+
 ## E-20 当前菜单切片（2026-10-12）
 
 [F-042b](iterations/F-042b-native-inline-format-menu.md) alpha.123 原生粗体/斜体/行内代码菜单非离线本片经独立最终复核及主线确认受托代验通过，非用户亲验；F-042a其余范围与完整父/义务不变。前轮F-043h已推送`2d69b91284767a01f8ca631ebf541fe65d76f109`并核远端一致，下方待Git为历史。

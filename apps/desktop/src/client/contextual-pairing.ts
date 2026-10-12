@@ -1,9 +1,12 @@
+import { isolateHistory } from "@codemirror/commands";
 import {
   EditorSelection,
   type EditorState,
   type Transaction,
 } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+
+import { planInlineFormat } from "./inline-format";
 
 const pairs: Readonly<Record<string, string>> = {
   "(": ")",
@@ -12,23 +15,40 @@ const pairs: Readonly<Record<string, string>> = {
   "'": "'",
   '"': '"',
 };
-const guards = new WeakMap<EditorView, () => boolean>();
-export function registerPairingView(view: EditorView, allowed: () => boolean) {
-  guards.set(view, allowed);
+const guards = new WeakMap<
+  EditorView,
+  { allowed: () => boolean; selectedCode: () => boolean }
+>();
+export function registerPairingView(
+  view: EditorView,
+  allowed: () => boolean,
+  selectedCode: () => boolean = () => false
+) {
+  const registration = { allowed, selectedCode };
+  guards.set(view, registration);
   return () => {
-    guards.delete(view);
+    if (guards.get(view) === registration) guards.delete(view);
   };
+}
+
+export function selectedCodeTransaction(state: EditorState) {
+  const plan = planInlineFormat(state, "code", "wrap-only");
+  return (
+    plan &&
+    state.update({
+      ...plan,
+      userEvent: "input.type",
+      scrollIntoView: true,
+      annotations: isolateHistory.of("full"),
+    })
+  );
 }
 
 export function pairingTransaction(
   state: EditorState,
   text: string
 ): Transaction | undefined {
-  if (
-    text.length !== 1 ||
-    !(text in pairs || ")]}".includes(text))
-  )
-    return;
+  if (text.length !== 1 || !(text in pairs || ")]}".includes(text))) return;
   const close = pairs[text];
   const quote = text === "'" || text === '"';
   return state.update(
@@ -78,7 +98,7 @@ export function handlePairingInput(
   text: string
 ) {
   if (
-    !guards.get(view)?.() ||
+    !guards.get(view)?.allowed() ||
     view.compositionStarted ||
     view.composing ||
     view.state.readOnly ||
@@ -86,7 +106,11 @@ export function handlePairingInput(
     to !== view.state.selection.main.to
   )
     return false;
-  const transaction = pairingTransaction(view.state, text);
+  if (text === "`" && !guards.get(view)?.selectedCode()) return false;
+  const transaction =
+    text === "`"
+      ? selectedCodeTransaction(view.state)
+      : pairingTransaction(view.state, text);
   if (!transaction) return false;
   view.dispatch(transaction);
   return view.state === transaction.state;

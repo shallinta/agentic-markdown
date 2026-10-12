@@ -128,20 +128,27 @@ export function MemoryEditor({
       alive &&
       viewRef.current === view &&
       controller.getSnapshot().snapshot?.documentId === documentId;
-    const removePairing = registerPairingView(view, () => {
-      const current = controller.getSnapshot();
-      return (
+    const removePairing = registerPairingView(
+      view,
+      () => {
+        const current = controller.getSnapshot();
+        return (
+          currentView() &&
+          view.hasFocus &&
+          controller.canWrite(documentId) &&
+          !current.frozen &&
+          !current.busy &&
+          !controller.isEditorInputBlocked() &&
+          controller.getMode(documentId) !== "reading" &&
+          !controller.isSafeSource(documentId) &&
+          !controller.getEditorFault(documentId)?.fault
+        );
+      },
+      () =>
         currentView() &&
-        view.hasFocus &&
-        controller.canWrite(documentId) &&
-        !current.frozen &&
-        !current.busy &&
-        !controller.isEditorInputBlocked() &&
-        controller.getMode(documentId) !== "reading" &&
-        !controller.isSafeSource(documentId) &&
-        !controller.getEditorFault(documentId)?.fault
-      );
-    });
+        controller.getEditor(documentId)?.state === view.state &&
+        view.state.field(editorFaultSession) === session
+    );
     const removeFormat = registerFormatView(
       view,
       documentId,

@@ -6,6 +6,7 @@ import type { SyntaxNode } from "@lezer/common";
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
 
 export type InlineFormat = "bold" | "italic" | "code";
+export type InlineFormatIntent = "toggle" | "wrap-only";
 const names = {
   bold: "StrongEmphasis",
   italic: "Emphasis",
@@ -31,8 +32,17 @@ function ancestors(node: SyntaxNode | null) {
 }
 
 /** Plans only the current selections; it never advances EditorState or history. */
-function computeInlineFormat(state: EditorState, kind: InlineFormat) {
-  if (state.readOnly) return undefined;
+function computeInlineFormat(
+  state: EditorState,
+  kind: InlineFormat,
+  intent: InlineFormatIntent
+) {
+  if (
+    state.readOnly ||
+    (intent === "wrap-only" &&
+      state.selection.ranges.some((range) => range.empty))
+  )
+    return undefined;
   const tree = syntaxTree(state),
     plans: Plan[] = [];
   const protectedSpans = state.field(longLineProtection);
@@ -89,6 +99,7 @@ function computeInlineFormat(state: EditorState, kind: InlineFormat) {
       return undefined;
     const same = path.find((n) => n.name === names[kind] && range.to <= n.to);
     if (same) {
+      if (intent === "wrap-only") return undefined;
       const first = same.firstChild,
         last = same.lastChild;
       const mark = kind === "code" ? "CodeMark" : "EmphasisMark";
@@ -289,11 +300,12 @@ function computeInlineFormat(state: EditorState, kind: InlineFormat) {
 type FormatPlan = ReturnType<typeof computeInlineFormat>;
 const cache = new WeakMap<
   EditorState,
-  { tree: ReturnType<typeof syntaxTree>; plans: Map<InlineFormat, FormatPlan> }
+  { tree: ReturnType<typeof syntaxTree>; plans: Map<string, FormatPlan> }
 >();
 export function planInlineFormat(
   state: EditorState,
-  kind: InlineFormat
+  kind: InlineFormat,
+  intent: InlineFormatIntent = "toggle"
 ): FormatPlan {
   const tree = syntaxTree(state);
   let entry = cache.get(state);
@@ -301,9 +313,10 @@ export function planInlineFormat(
     entry = { tree, plans: new Map() };
     cache.set(state, entry);
   }
-  if (!entry.plans.has(kind))
-    entry.plans.set(kind, computeInlineFormat(state, kind));
-  return entry.plans.get(kind);
+  const key = `${kind}:${intent}`;
+  if (!entry.plans.has(key))
+    entry.plans.set(key, computeInlineFormat(state, kind, intent));
+  return entry.plans.get(key);
 }
 
 export function inlineFormatTransaction(

@@ -17,14 +17,14 @@ const pairs: Readonly<Record<string, string>> = {
 };
 const guards = new WeakMap<
   EditorView,
-  { allowed: () => boolean; selectedCode: () => boolean }
+  { allowed: () => boolean; selectedInline: () => boolean }
 >();
 export function registerPairingView(
   view: EditorView,
   allowed: () => boolean,
-  selectedCode: () => boolean = () => false
+  selectedInline: () => boolean = () => false
 ) {
-  const registration = { allowed, selectedCode };
+  const registration = { allowed, selectedInline };
   guards.set(view, registration);
   return () => {
     if (guards.get(view) === registration) guards.delete(view);
@@ -32,7 +32,14 @@ export function registerPairingView(
 }
 
 export function selectedCodeTransaction(state: EditorState) {
-  const plan = planInlineFormat(state, "code", "wrap-only");
+  return selectedInlineTransaction(state, "code");
+}
+
+export function selectedInlineTransaction(
+  state: EditorState,
+  kind: "code" | "italic"
+) {
+  const plan = planInlineFormat(state, kind, "wrap-only");
   return (
     plan &&
     state.update({
@@ -106,11 +113,12 @@ export function handlePairingInput(
     to !== view.state.selection.main.to
   )
     return false;
-  if (text === "`" && !guards.get(view)?.selectedCode()) return false;
-  const transaction =
-    text === "`"
-      ? selectedCodeTransaction(view.state)
-      : pairingTransaction(view.state, text);
+  const selectedKind =
+    text === "`" ? "code" : text === "*" ? "italic" : undefined;
+  if (selectedKind && !guards.get(view)?.selectedInline()) return false;
+  const transaction = selectedKind
+    ? selectedInlineTransaction(view.state, selectedKind)
+    : pairingTransaction(view.state, text);
   if (!transaction) return false;
   view.dispatch(transaction);
   return view.state === transaction.state;

@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## E-05 本片通过：F-043j（2026-10-12）
+
+[F-043j](iterations/F-043j-selected-emphasis-completion.md) alpha.125 非空单行合法选区输入单星号斜体包裹已交付，非离线有限片经独立最终Spec/Standards各0必要阻断及主线批准受托Agent代验通过，非用户亲验。无下划线、空光标配对或粗体升级；不支持时回到可能替换所选文字的普通输入。完整E-05、OBL及最终离线保持开放，实测限制见唯一迭代。
+
 ## E-05 本片通过：F-043i（2026-10-12）
 
 [F-043i](iterations/F-043i-selected-inline-code-completion.md) alpha.124 非空单行合法选区输入反引号的保守包裹已实现，非离线有限片经独立最终复核及主线确认受托Agent代验通过，非用户亲验。完整E-05及OBL-058/064和最终离线保持开放，不扩围栏内部Enter；组合输入实测及其它证据限制见唯一迭代。

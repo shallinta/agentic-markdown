@@ -829,7 +829,7 @@ F-010 执行边界（2026-09-22）：用户确认读取保真方案并授权推�
 | S-01a | GFM 首方扩展包 | GitHub | `ExtendedMarkdownPreset` 组件；完整、内置、可版本化；统一注册解析/渲染/编辑/索引/测试 | 已确认 · M0/MVP |
 | S-02 | GFM 表格 | Typora、Obsidian、GitHub | `GFMExtension` 组成部分；三模式共享结构语义；与已确认的 E-26 表格编辑规则联测 | 已确认 · MVP |
 | S-03 | GFM 任务列表 | 全部 | `GFMExtension` 组成部分；编辑可点击、阅读只读、源码原文；统一撤销事务 | 已确认 · MVP |
-| S-04 | GFM 删除线 | GFM 产品 | `GFMExtension` 组成部分；App profile 仅接受 `~~`；单 `~` 保留给下标；编辑按焦点显隐 | 已确认 · MVP（兼容例外） |
+| S-04 | GFM 删除线 | GFM 产品 | `GFMExtension` 组成部分；App profile 仅接受 `~~`；单 `~` 保留给下标；编辑按焦点显隐。F-045a alpha.126三模式非离线有限片已受托代验并推送7dea000；完整GFM及最终离线开放 | 已确认 · MVP（兼容例外）· 本片已代验 |
 | S-05 | GFM 扩展自动链接 | GFM 产品 | `GFMExtension` 组成部分；按规范识别裸 URL/邮箱；导航仍执行协议安全策略 | 已确认 · MVP |
 | S-05a | GFM tagfilter | GitHub | `GFMExtension` 组成部分；按规范过滤会改变 HTML 解析上下文的危险原始标签；不替代完整渲染安全策略 | 已确认 · MVP |
 | S-06 | YAML Frontmatter | Obsidian、Zettlr、Typora | 原子 `FrontmatterExtension` 加入 Preset；编辑可折叠原文；错误不阻塞；阅读呈现待定 | 已确认 · MVP（阅读待定） |

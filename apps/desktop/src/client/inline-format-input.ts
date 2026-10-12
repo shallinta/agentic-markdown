@@ -1,8 +1,9 @@
 import { Prec, type EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
-import type { Command } from "../shared/commands";
+import type { Command, NativeFormatMenu } from "../shared/commands";
 
+import { editorFaultSession } from "./editor-fault";
 import {
   inlineFormatTransaction,
   planInlineFormat,
@@ -32,6 +33,165 @@ export interface FormatCapture {
 let current: Target | undefined;
 let captured: { target: Target; state: EditorState; token: string } | undefined;
 const targets = new WeakMap<EditorView, Target>();
+let nativeCapture:
+  | {
+      target: Target;
+      state: EditorState;
+      session: object;
+      menu: NativeFormatMenu;
+      valid: () => boolean;
+    }
+  | undefined;
+let nativeSnapshot: NativeFormatMenu | null = null;
+const nativeListeners = new Set<() => void>();
+let nativeNotificationPending = false;
+function notifyNativeMenu() {
+  if (nativeNotificationPending) return;
+  nativeNotificationPending = true;
+  queueMicrotask(() => {
+    nativeNotificationPending = false;
+    for (const listener of nativeListeners) listener();
+  });
+}
+const nativeRefreshers = new WeakMap<EditorView, () => void>();
+export const getNativeFormatMenu = () => nativeSnapshot;
+export function subscribeNativeFormatMenu(listener: () => void) {
+  nativeListeners.add(listener);
+  return () => {
+    nativeListeners.delete(listener);
+  };
+}
+function clearNativeFormat() {
+  nativeCapture = undefined;
+  if (nativeSnapshot === null) return;
+  nativeSnapshot = null;
+  notifyNativeMenu();
+}
+
+/** Strict, short-lived native menu authorization; never uses palette capture. */
+export function bindNativeFormatMenu(
+  view: EditorView,
+  currentState: () => EditorState | undefined,
+  subscribe: (listener: () => void) => () => void
+) {
+  let alive = true,
+    composing = false;
+  const target = targets.get(view);
+  const session = view.state.field(editorFaultSession);
+  const invalidate = () => {
+    if (nativeCapture?.target === target) clearNativeFormat();
+  };
+  const refresh = () => {
+    if (
+      !alive ||
+      !target ||
+      !view.hasFocus ||
+      composing ||
+      !ready(target) ||
+      !target.ordinary() ||
+      currentState() !== view.state ||
+      view.state.field(editorFaultSession) !== session ||
+      session.fault
+    ) {
+      invalidate();
+      return;
+    }
+    if (nativeCapture?.target === target && nativeCapture.state === view.state)
+      return;
+    invalidate();
+    const menu: NativeFormatMenu = {
+      documentId: target.documentId,
+      token: crypto.randomUUID(),
+      bold: !!planInlineFormat(view.state, "bold"),
+      italic: !!planInlineFormat(view.state, "italic"),
+      code: !!planInlineFormat(view.state, "code"),
+    };
+    nativeCapture = {
+      target,
+      state: view.state,
+      session,
+      menu,
+      valid: () =>
+        alive &&
+        !composing &&
+        currentState() === view.state &&
+        view.state.field(editorFaultSession) === session &&
+        !session.fault,
+    };
+    nativeSnapshot = Object.freeze(menu);
+    notifyNativeMenu();
+  };
+  nativeRefreshers.set(view, refresh);
+  const changed = () => {
+    invalidate();
+    refresh();
+  };
+  const start = () => {
+    composing = true;
+    invalidate();
+  };
+  const end = () => {
+    composing = false;
+    refresh();
+  };
+  const remove = subscribe(changed);
+  const doc = view.contentDOM.ownerDocument;
+  const win = doc.defaultView;
+  view.contentDOM.addEventListener("focus", refresh);
+  view.contentDOM.addEventListener("blur", invalidate);
+  view.contentDOM.addEventListener("compositionstart", start, true);
+  view.contentDOM.addEventListener("compositionend", end, true);
+  win?.addEventListener("blur", invalidate);
+  win?.addEventListener("focus", refresh);
+  refresh();
+  return () => {
+    alive = false;
+    invalidate();
+    remove();
+    if (nativeRefreshers.get(view) === refresh) nativeRefreshers.delete(view);
+    view.contentDOM.removeEventListener("focus", refresh);
+    view.contentDOM.removeEventListener("blur", invalidate);
+    view.contentDOM.removeEventListener("compositionstart", start, true);
+    view.contentDOM.removeEventListener("compositionend", end, true);
+    win?.removeEventListener("blur", invalidate);
+    win?.removeEventListener("focus", refresh);
+  };
+}
+export function runNativeInlineFormat(
+  type: FormatCommand,
+  documentId: string,
+  token: string
+) {
+  const capture = nativeCapture;
+  if (capture?.menu.token !== token || capture.menu.documentId !== documentId)
+    return false;
+  clearNativeFormat(); // Consume before callbacks/dispatch, including failed execution.
+  const { target, state, session } = capture;
+  if (
+    !capture.valid() ||
+    !target.view.hasFocus ||
+    !ready(target) ||
+    !target.ordinary() ||
+    target.view.state !== state ||
+    state.field(editorFaultSession) !== session ||
+    state.field(editorFaultSession).fault
+  )
+    return false;
+  const tx = inlineFormatTransaction(state, formatKinds[type]);
+  if (!tx) return false;
+  // Publication above may synchronously change permission/state.
+  if (
+    !capture.valid() ||
+    !target.view.hasFocus ||
+    !ready(target) ||
+    target.view.state !== state
+  )
+    return false;
+  target.view.dispatch(tx);
+  if (target.view.state !== tx.state) return false;
+  target.view.focus();
+  return true;
+}
 
 export function registerFormatView(
   view: EditorView,
@@ -44,6 +204,7 @@ export function registerFormatView(
   current = target;
   targets.set(view, target);
   return () => {
+    if (nativeCapture?.target === target) clearNativeFormat();
     if (current === target) current = undefined;
     if (targets.get(view) === target) targets.delete(view);
     if (captured?.target === target) captured = undefined;
@@ -136,6 +297,9 @@ export function handleFormatKey(event: KeyboardEvent, view: EditorView) {
     target.execute({ type, args: { documentId: target.documentId } });
   return true;
 }
-export const inlineFormatKeys = Prec.high(
-  EditorView.domEventHandlers({ keydown: handleFormatKey })
-);
+export const inlineFormatKeys = Prec.high([
+  EditorView.domEventHandlers({ keydown: handleFormatKey }),
+  EditorView.updateListener.of((update) =>
+    nativeRefreshers.get(update.view)?.()
+  ),
+]);

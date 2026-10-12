@@ -1,5 +1,9 @@
 # Agentic Markdown MVP 产品规格
 
+## 当前候选：F-042b 原生格式菜单（2026-10-12）
+
+[F-042b](iterations/F-042b-native-inline-format-menu.md)仅把已交付的三类行内格式接入原生菜单；使用绑定精确编辑状态的单次票据，任何失效或失焦拒绝，不改变既有快捷键/格式语义。alpha.123 非离线本片经独立最终复核及主线确认受托代验通过，非用户亲验；完整父与义务开放。
+
 ## 本片通过：F-043h 文档末尾围栏补齐（2026-10-12）
 
 [F-043h](iterations/F-043h-explicit-fence-completion.md)普通编辑/源码仅EOF独立顶层未闭开围栏行末、单空光标Enter时补齐；其他场景保留原Enter。alpha.122非离线有限片经真实WK受托Agent代验及最终独立两轴0必要阻断、主线正式批准通过，非用户亲验；不涉及代码块内部换行专项，完整E-05及父/义务、offline-final开放。

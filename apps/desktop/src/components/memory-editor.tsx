@@ -21,7 +21,10 @@ import {
   isCurrentFenceCompletion,
 } from "@/client/fence-completion";
 import { routeHistoryInput } from "@/client/history-input";
-import { registerFormatView } from "@/client/inline-format-input";
+import {
+  registerFormatView,
+  bindNativeFormatMenu,
+} from "@/client/inline-format-input";
 import { listContinuationTransaction } from "@/client/list-continuation";
 import { registerListInputView, routeListInput } from "@/client/list-input";
 import {
@@ -160,6 +163,12 @@ export function MemoryEditor({
         controller.getMode(documentId) !== "reading" &&
         !controller.isSafeSource(documentId),
       executeCommand
+    );
+    const removeNativeFormat = bindNativeFormatMenu(
+      view,
+      () =>
+        currentView() ? controller.getEditor(documentId)?.state : undefined,
+      controller.subscribe
     );
     const scheduleWrapping = () => {
       if (
@@ -425,6 +434,7 @@ export function MemoryEditor({
       alive = false;
       removePairing();
       removeFormat();
+      removeNativeFormat();
       removeListInput();
       removeIndentation();
       if (faultSessionRef.current) faultSessionRef.current.notify = undefined;

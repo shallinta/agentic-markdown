@@ -35,9 +35,18 @@ export type Command =
   | GenericCommand<"toggleSourceReplacement">
   | GenericCommand<"replaceSourceMatch">
   | GenericCommand<"replaceAllSourceMatches">
-  | GenericCommand<"formatBold", { documentId: string; token?: string }>
-  | GenericCommand<"formatItalic", { documentId: string; token?: string }>
-  | GenericCommand<"formatCode", { documentId: string; token?: string }>
+  | GenericCommand<
+      "formatBold",
+      { documentId: string; token?: string; nativeToken?: string }
+    >
+  | GenericCommand<
+      "formatItalic",
+      { documentId: string; token?: string; nativeToken?: string }
+    >
+  | GenericCommand<
+      "formatCode",
+      { documentId: string; token?: string; nativeToken?: string }
+    >
   | GenericCommand<"setRootHidden", { root: string; showHidden: boolean }>
   | GenericCommand<"readingThemePaper">
   | GenericCommand<"readingThemeInk">
@@ -104,11 +113,14 @@ export function isCommand(value: unknown): value is Command {
     return (
       (keys.length === 1 ||
         (keys.length === 2 &&
-          typeof args.token === "string" &&
+          typeof (args.token ?? args.nativeToken) === "string" &&
           /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
-            args.token
+            (args.token ?? args.nativeToken) as string
           ))) &&
-      keys.every((key) => key === "documentId" || key === "token") &&
+      keys.every(
+        (key) =>
+          key === "documentId" || key === "token" || key === "nativeToken"
+      ) &&
       typeof args.documentId === "string" &&
       /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(
         args.documentId
@@ -302,6 +314,31 @@ const AVAILABILITY_KEYS = [
 export interface CommandAvailabilityMessage {
   protocolVersion: 1;
   availability: CommandAvailability;
+  nativeFormat?: NativeFormatMenu | null;
+}
+
+export interface NativeFormatMenu {
+  documentId: string;
+  token: string;
+  bold: boolean;
+  italic: boolean;
+  code: boolean;
+}
+export function isNativeFormatMenu(value: unknown): value is NativeFormatMenu {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  const uuid =
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+  return (
+    Object.keys(v).length === 5 &&
+    typeof v.documentId === "string" &&
+    uuid.test(v.documentId) &&
+    typeof v.token === "string" &&
+    uuid.test(v.token) &&
+    typeof v.bold === "boolean" &&
+    typeof v.italic === "boolean" &&
+    typeof v.code === "boolean"
+  );
 }
 
 export function isCommandAvailabilityMessage(
@@ -311,7 +348,14 @@ export function isCommandAvailabilityMessage(
   const input = value as Record<string, unknown>;
   if (
     input.protocolVersion !== 1 ||
-    Object.keys(input).length !== 2 ||
+    !Object.prototype.hasOwnProperty.call(input, "protocolVersion") ||
+    !Object.prototype.hasOwnProperty.call(input, "availability") ||
+    !(
+      Object.keys(input).length === 2 ||
+      (Object.keys(input).length === 3 &&
+        Object.prototype.hasOwnProperty.call(input, "nativeFormat") &&
+        (input.nativeFormat === null || isNativeFormatMenu(input.nativeFormat)))
+    ) ||
     typeof input.availability !== "object" ||
     input.availability === null
   )

@@ -8,6 +8,7 @@ import {
   DOCUMENT_COMMAND_TYPES,
   PRODUCT_COMMANDS,
   isCommandAvailabilityMessage,
+  type NativeFormatMenu,
   type Command,
   type CommandAvailability,
   type DocumentCommandType,
@@ -22,6 +23,7 @@ const REPOSITORY_URL = "https://github.com/shallinta/agentic-markdown";
 
 let currentUpdateMode: UpdateMode = "automatic";
 let currentUpdateReady = false;
+let nativeFormat: NativeFormatMenu | null = null;
 let commandAvailability: CommandAvailability = {
   selectFolder: false,
   undoDocument: false,
@@ -36,12 +38,17 @@ let commandAvailability: CommandAvailability = {
 
 export function setCommandAvailabilityInMenu(value: unknown): void {
   if (!isCommandAvailabilityMessage(value)) return;
-  if (
+  const next = value.nativeFormat ? { ...value.nativeFormat } : null;
+  const unchanged =
+    !!nativeFormat?.bold === !!next?.bold &&
+    !!nativeFormat?.italic === !!next?.italic &&
+    !!nativeFormat?.code === !!next?.code &&
     (Object.keys(commandAvailability) as (keyof CommandAvailability)[]).every(
       (type) => commandAvailability[type] === value.availability[type]
-    )
-  )
-    return;
+    );
+  // Cache every new authorization, but rebuild only for visible availability.
+  nativeFormat = next;
+  if (unchanged) return;
   commandAvailability = { ...value.availability };
   ApplicationMenu.setApplicationMenu(
     buildMenu(currentUpdateReady, currentUpdateMode)
@@ -138,6 +145,18 @@ function buildMenu(
         },
         { label: t("menu:edit.delete"), role: "delete" },
         { label: t("menu:edit.selectAll"), role: "selectAll" },
+        { type: "divider" },
+        ...(["formatBold", "formatItalic", "formatCode"] as const).map(
+          (type, index) => ({
+            label: PRODUCT_COMMANDS[type]!.label,
+            action: type,
+            enabled:
+              !!nativeFormat &&
+              [nativeFormat.bold, nativeFormat.italic, nativeFormat.code][
+                index
+              ],
+          })
+        ),
       ],
     },
     {
@@ -258,6 +277,7 @@ export function registerMenuActions(
   executeCommand: (command: Command, window: BrowserWindow) => void
 ) {
   currentUpdateReady = false;
+  nativeFormat = null;
   commandAvailability = {
     selectFolder: false,
     undoDocument: false,
@@ -273,7 +293,33 @@ export function registerMenuActions(
     buildMenu(currentUpdateReady, currentUpdateMode)
   );
   ApplicationMenu.on("application-menu-clicked", (event) => {
-    const { action } = (event as { data: { action: string } }).data;
+    const { action } = (event as { data: { action: string; data?: unknown } })
+      .data;
+    if (
+      action === "formatBold" ||
+      action === "formatItalic" ||
+      action === "formatCode"
+    ) {
+      const ticket = nativeFormat ? { ...nativeFormat } : null;
+      if (
+        !ticket ||
+        !(action === "formatBold"
+          ? ticket.bold
+          : action === "formatItalic"
+            ? ticket.italic
+            : ticket.code)
+      )
+        return;
+      // Snapshot at click. A delayed command must retain this exact ticket.
+      executeCommand(
+        {
+          type: action,
+          args: { documentId: ticket.documentId, nativeToken: ticket.token },
+        },
+        window
+      );
+      return;
+    }
     const command = MENU_ACTION_COMMANDS[action];
     if (
       (action === "undoDocument" || action === "redoDocument") &&

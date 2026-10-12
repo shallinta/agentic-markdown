@@ -13,6 +13,10 @@ import {
 import { toast } from "sonner";
 
 import { isExternalTextTarget } from "@/client/history-target";
+import {
+  getNativeFormatMenu,
+  subscribeNativeFormatMenu,
+} from "@/client/inline-format-input";
 import { electrobun } from "@/lib/electrobun";
 import { type CommandAvailability, type CommandType } from "@/shared/commands";
 
@@ -41,6 +45,11 @@ export function CommandProvider({ children }: { children: ReactNode }) {
     registry.getSnapshot
   );
   const selectDocument = registry.isCommandEnabled("selectDocument");
+  const nativeFormat = useSyncExternalStore(
+    subscribeNativeFormatMenu,
+    getNativeFormatMenu,
+    getNativeFormatMenu
+  );
   const selectFolder = registry.isCommandEnabled("selectFolder");
   const reloadDocument = registry.isCommandEnabled("reloadDocument");
   const saveDocument = registry.isCommandEnabled("saveDocument");
@@ -75,6 +84,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
     electrobun.rpc?.send.commandAvailabilityChanged({
       protocolVersion: 1,
       availability,
+      nativeFormat,
     });
   }, [
     selectFolder,
@@ -86,6 +96,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
     undoDocument,
     redoDocument,
     documentHistory,
+    nativeFormat,
   ]);
   useEffect(
     () => () => {

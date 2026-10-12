@@ -22,7 +22,10 @@ import {
   type DocumentTransport,
 } from "@/client/documents";
 import { isExternalTextTarget } from "@/client/history-target";
-import { runInlineFormat } from "@/client/inline-format-input";
+import {
+  runInlineFormat,
+  runNativeInlineFormat,
+} from "@/client/inline-format-input";
 import { longLineProtection } from "@/client/long-line-protection";
 import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
@@ -193,14 +196,20 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       dedentSource: ({ documentId }) => {
         controller.runSourceIndentation(false, documentId);
       },
-      formatBold: ({ documentId, token }) => {
-        runInlineFormat("formatBold", documentId, token);
+      formatBold: ({ documentId, token, nativeToken }) => {
+        if (nativeToken !== undefined)
+          runNativeInlineFormat("formatBold", documentId, nativeToken);
+        else runInlineFormat("formatBold", documentId, token);
       },
-      formatItalic: ({ documentId, token }) => {
-        runInlineFormat("formatItalic", documentId, token);
+      formatItalic: ({ documentId, token, nativeToken }) => {
+        if (nativeToken !== undefined)
+          runNativeInlineFormat("formatItalic", documentId, nativeToken);
+        else runInlineFormat("formatItalic", documentId, token);
       },
-      formatCode: ({ documentId, token }) => {
-        runInlineFormat("formatCode", documentId, token);
+      formatCode: ({ documentId, token, nativeToken }) => {
+        if (nativeToken !== undefined)
+          runNativeInlineFormat("formatCode", documentId, nativeToken);
+        else runInlineFormat("formatCode", documentId, token);
       },
     },
     true,

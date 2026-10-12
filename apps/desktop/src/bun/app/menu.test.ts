@@ -6,7 +6,7 @@ import {
 } from "../test-electrobun-mock";
 
 let applicationMenuListener:
-  ((event: { data: { action: string } }) => void) | undefined;
+  ((event: { data: { action: string; data?: unknown } }) => void) | undefined;
 
 await mock.module("electrobun/bun", () => ({
   ...electrobunBunMock,
@@ -14,7 +14,7 @@ await mock.module("electrobun/bun", () => ({
     ...electrobunBunMock.ApplicationMenu,
     on: (
       _event: string,
-      listener: (event: { data: { action: string } }) => void
+      listener: (event: { data: { action: string; data?: unknown } }) => void
     ) => {
       applicationMenuListener = listener;
     },
@@ -22,6 +22,84 @@ await mock.module("electrobun/bun", () => ({
 }));
 
 const menuModule = await import("./menu");
+
+test("native menu snapshots click-time authorization without rebuilding on ticket-only changes", () => {
+  const execute = mock(() => undefined);
+  menuModule.registerMenuActions({} as never, execute);
+  const availability = {
+    selectDocument: false,
+    selectFolder: false,
+    saveDocument: false,
+    reloadDocument: false,
+    clearDocument: false,
+    closeDocument: false,
+    undoDocument: false,
+    redoDocument: false,
+    documentHistory: false,
+  };
+  const ticket = {
+    documentId: crypto.randomUUID(),
+    token: crypto.randomUUID(),
+    bold: true,
+    italic: false,
+    code: true,
+  };
+  menuModule.setCommandAvailabilityInMenu({
+    protocolVersion: 1,
+    availability,
+    nativeFormat: ticket,
+  });
+  const items = (
+    menus[menus.length - 1] as {
+      submenu: {
+        action?: string;
+        data?: unknown;
+        accelerator?: string;
+        enabled?: boolean;
+        label?: string;
+      }[];
+    }[]
+  )[2].submenu;
+  expect(
+    items
+      .filter((item) => item.action?.startsWith("format"))
+      .map((item) => [item.label, item.enabled, item.accelerator])
+  ).toEqual([
+    ["切换粗体", true, undefined],
+    ["切换斜体", false, undefined],
+    ["切换行内代码", true, undefined],
+  ]);
+  expect(
+    items.find((item) => item.action === "formatBold")?.data
+  ).toBeUndefined();
+  const count = menus.length;
+  let next = ticket;
+  for (let i = 0; i < 100; i++) {
+    next = { ...ticket, token: crypto.randomUUID() };
+    menuModule.setCommandAvailabilityInMenu({
+      protocolVersion: 1,
+      availability,
+      nativeFormat: next,
+    });
+  }
+  expect(menus).toHaveLength(count);
+  applicationMenuListener?.({ data: { action: "formatBold", data: ticket } });
+  expect(execute).toHaveBeenCalledWith(
+    {
+      type: "formatBold",
+      args: { documentId: next.documentId, nativeToken: next.token },
+    },
+    {}
+  );
+  menuModule.setCommandAvailabilityInMenu({
+    protocolVersion: 1,
+    availability,
+    nativeFormat: null,
+  });
+  applicationMenuListener?.({ data: { action: "formatBold" } });
+  applicationMenuListener?.({ data: { action: "formatBold", data: ticket } });
+  expect(execute).toHaveBeenCalledTimes(1);
+});
 
 test("provides an update-mode menu synchronizer", () => {
   expect(

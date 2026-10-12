@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## E-20 当前菜单切片（2026-10-12）
+
+[F-042b](iterations/F-042b-native-inline-format-menu.md) alpha.123 原生粗体/斜体/行内代码菜单非离线本片经独立最终复核及主线确认受托代验通过，非用户亲验；F-042a其余范围与完整父/义务不变。前轮F-043h已推送`2d69b91284767a01f8ca631ebf541fe65d76f109`并核远端一致，下方待Git为历史。
+
 ## E-05 当前切片选择（2026-10-12）
 
 [F-043h](iterations/F-043h-explicit-fence-completion.md)EOF独立顶层开围栏的单空光标Enter补齐，不吞并后续正文，其他情况保留原Enter。alpha.122非离线有限片真实WK受托Agent代验、最终独立两轴0必要阻断及主线批准通过，非用户亲验；Git待执行。完整E-05/父/义务与offline-final开放。F-043g已实际推送b7d83d8并核远端一致，下方待Git为历史。

@@ -16,6 +16,10 @@ import {
   type EditorFaultSession,
 } from "@/client/editor-fault";
 import { syncCurrentEditorState } from "@/client/editor-view-sync";
+import {
+  fenceCompletionTransaction,
+  isCurrentFenceCompletion,
+} from "@/client/fence-completion";
 import { routeHistoryInput } from "@/client/history-input";
 import { registerFormatView } from "@/client/inline-format-input";
 import { listContinuationTransaction } from "@/client/list-continuation";
@@ -269,7 +273,17 @@ export function MemoryEditor({
           view.state.readOnly
         )
           return false;
-        const transaction = listContinuationTransaction(view.state, soft);
+        const completion = isCurrentFenceCompletion(
+          view.state,
+          controller.getEditor(documentId)?.state,
+          session,
+          controller.getMode(documentId) !== "reading" &&
+            !controller.isSafeSource(documentId)
+        )
+          ? fenceCompletionTransaction(view.state, soft)
+          : undefined;
+        const transaction =
+          completion ?? listContinuationTransaction(view.state, soft);
         view.dispatch(transaction);
         return view.state === transaction.state;
       },

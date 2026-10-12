@@ -1,18 +1,23 @@
-import { commonmarkLanguage } from "@codemirror/lang-markdown";
 import { NodeProp, NodeType, NodeSet, Tree, TreeBuffer } from "@lezer/common";
 
-/** Only the fixed CommonMark grammar is supported, not arbitrary mounted parsers. */
+import { MARKDOWN_GRAMMAR } from "../shared/markdown-profile";
+
+import { markdownGrammar } from "./markdown-grammar";
+
+/** Only the fixed first-party profile is supported, not arbitrary mounted parsers. */
 export interface MarkdownTreeWire {
+  config: typeof MARKDOWN_GRAMMAR;
   type: number;
   length: number;
   positions: number[];
   contextHash?: number;
   children: (MarkdownTreeWire | { buffer: Uint16Array; length: number })[];
 }
-const parser = commonmarkLanguage.parser;
+const parser = markdownGrammar;
 if (!("nodeSet" in parser) || !(parser.nodeSet instanceof NodeSet))
   throw new Error("CommonMark node set unavailable");
 const nodeSet = parser.nodeSet;
+/** Trusted fixed-parser output only. The stamp is not arbitrary-tree provenance. */
 export function encodeMarkdownTree(tree: Tree): MarkdownTreeWire {
   // Unknown per-node props must fail explicitly instead of silently losing semantics.
   const contextHash = tree.prop(NodeProp.contextHash);
@@ -26,6 +31,7 @@ export function encodeMarkdownTree(tree: Tree): MarkdownTreeWire {
   if (tree.propValues.some(([id]) => !known.some(([other]) => other === id)))
     throw new Error("Unsupported Markdown tree property");
   return {
+    config: MARKDOWN_GRAMMAR,
     type: tree.type.id,
     length: tree.length,
     positions: [...tree.positions],
@@ -38,6 +44,9 @@ export function encodeMarkdownTree(tree: Tree): MarkdownTreeWire {
   };
 }
 export function decodeMarkdownTree(wire: MarkdownTreeWire): Tree {
+  // Check grammar before reading node ids, even when old ids happen to be valid.
+  if (wire?.config !== MARKDOWN_GRAMMAR)
+    throw new Error("Invalid Markdown grammar");
   const type = wire.type === 0 ? NodeType.none : nodeSet.types[wire.type];
   if (
     !type ||
@@ -61,9 +70,14 @@ export function decodeMarkdownTree(wire: MarkdownTreeWire): Tree {
   );
 }
 export interface MarkdownParseRequest {
+  config: typeof MARKDOWN_GRAMMAR;
   requestId: number;
   text: string;
 }
 export type MarkdownParseResponse =
-  | { requestId: number; tree: MarkdownTreeWire }
-  | { requestId: number; error: true };
+  | {
+      config: typeof MARKDOWN_GRAMMAR;
+      requestId: number;
+      tree: MarkdownTreeWire;
+    }
+  | { config: typeof MARKDOWN_GRAMMAR; requestId: number; error: true };

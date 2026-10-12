@@ -1,9 +1,9 @@
-import { commonmarkLanguage } from "@codemirror/lang-markdown";
 import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { type EditorState, type Text } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
+import { markdownGrammar } from "./markdown-grammar";
 import type { IndentationPlan } from "./source-indentation";
 
 export const LIST_INDENT_UNAVAILABLE =
@@ -276,7 +276,7 @@ export function planListIndentation(
     const end = changes.mapPos(window.to, 1);
     const local = next.sliceString(start, end);
     const bom = local.startsWith("\ufeff") ? 1 : 0;
-    const parsed = commonmarkLanguage.parser.parse(local.slice(bom));
+    const parsed = markdownGrammar.parse(local.slice(bom));
     const offset = start + bom;
     const actual = new Map<number, SyntaxNode>();
     walk(parsed.topNode, (node) => {

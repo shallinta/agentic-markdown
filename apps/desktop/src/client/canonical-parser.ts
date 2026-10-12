@@ -1,9 +1,14 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
+import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+
+const extensions = [gfmStrikethrough({ singleTilde: false })];
+const mdastExtensions = [gfmStrikethroughFromMarkdown()];
 
 /** Internal mdast, raw UTF-16 positions; never HTML or a public plugin schema. */
 export function parseCanonicalMarkdown(text: string) {
   const bom = text.startsWith("\uFEFF") ? 1 : 0;
-  const tree = fromMarkdown(text.slice(bom));
+  const tree = fromMarkdown(text.slice(bom), { extensions, mdastExtensions });
   if (bom) {
     const pending = [tree as typeof tree | (typeof tree.children)[number]];
     while (pending.length) {

@@ -26,6 +26,7 @@ export const sourceHighlightStyle = HighlightStyle.define([
       tags.heading,
       tags.strong,
       tags.emphasis,
+      tags.strikethrough,
       tags.quote,
       tags.list,
       tags.content,

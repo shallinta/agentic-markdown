@@ -8,6 +8,8 @@ import {
   type TreeFragment,
 } from "@lezer/common";
 
+import { MARKDOWN_GRAMMAR } from "../shared/markdown-profile";
+
 import { needsBackgroundParsing } from "./background-parsing";
 import {
   editorFaultSession,
@@ -209,6 +211,7 @@ export class MarkdownParseSession {
             !running ||
             !event.data ||
             typeof event.data !== "object" ||
+            event.data.config !== MARKDOWN_GRAMMAR ||
             event.data.requestId !== running.id
           ) {
             this.fail();
@@ -253,6 +256,7 @@ export class MarkdownParseSession {
       // A hung worker is a parser fault, not a successful parse or synchronous fallback.
       this.timer = setTimeout(() => this.fail(), 30_000);
       this.worker.postMessage({
+        config: MARKDOWN_GRAMMAR,
         requestId: this.running.id,
         text: this.running.doc.toString(),
       });

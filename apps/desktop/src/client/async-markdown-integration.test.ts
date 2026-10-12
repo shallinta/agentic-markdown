@@ -51,6 +51,7 @@ class ControlledWorker implements MarkdownWorker {
     this.onmessage?.(
       new MessageEvent("message", {
         data: {
+          config: request.config,
           requestId: request.requestId,
           tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
         },
@@ -179,6 +180,7 @@ test("pending session disposal plus controller safe-source and close refuse late
     callback?.(
       new MessageEvent("message", {
         data: {
+          config: request.config,
           requestId: request.requestId,
           tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
         },
@@ -190,7 +192,11 @@ test("pending session disposal plus controller safe-source and close refuse late
     await f.controller.closeTab(f.snapshot.documentId);
     callback?.(
       new MessageEvent("message", {
-        data: { requestId: request.requestId, error: true },
+        data: {
+          config: request.config,
+          requestId: request.requestId,
+          error: true,
+        },
       })
     );
     expect(f.controller.getEditor(f.snapshot.documentId)).toBeUndefined();

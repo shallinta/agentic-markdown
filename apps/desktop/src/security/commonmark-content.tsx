@@ -115,6 +115,8 @@ export function commonmarkContent(
         return <em key={key}>{children()}</em>;
       case "strong":
         return <strong key={key}>{children()}</strong>;
+      case "delete":
+        return <del key={key}>{children()}</del>;
       case "inlineCode":
         return (
           <code key={key} className="bg-muted rounded px-1 font-mono">
@@ -253,6 +255,7 @@ const tags = new Set([
   "li",
   "em",
   "strong",
+  "del",
   "code",
   "br",
   "hr",

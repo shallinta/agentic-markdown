@@ -1,5 +1,7 @@
+import { MARKDOWN_GRAMMAR } from "./markdown-profile";
+
 /** Fixed synthetic examples only; not a user-document protocol. */
-export const CANONICAL_CONFIG = "commonmark-core-1";
+export const CANONICAL_CONFIG = MARKDOWN_GRAMMAR;
 interface CanonicalSample {
   id: string;
   label: string;

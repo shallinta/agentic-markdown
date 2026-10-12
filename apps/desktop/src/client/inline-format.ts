@@ -1,9 +1,9 @@
-import { commonmarkLanguage } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
 import { EditorSelection, type EditorState } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
+import { markdownGrammar } from "./markdown-grammar";
 
 export type InlineFormat = "bold" | "italic" | "code";
 export type InlineFormatIntent = "toggle" | "wrap-only";
@@ -79,7 +79,7 @@ function computeInlineFormat(
     }
     if (
       path.some((n) =>
-        /^(FencedCode|CodeBlock|HTMLBlock|HTMLTag|Link|Image|Autolink)$/.test(
+        /^(Strikethrough|StrikethroughMark|FencedCode|CodeBlock|HTMLBlock|HTMLTag|Link|Image|Autolink)$/.test(
           n.name
         )
       )
@@ -98,6 +98,15 @@ function computeInlineFormat(
     )
       return undefined;
     const same = path.find((n) => n.name === names[kind] && range.to <= n.to);
+    let touchesStrike = false;
+    tree.iterate({
+      from: same?.from ?? range.from,
+      to: same?.to ?? range.to,
+      enter(node) {
+        if (node.name === "Strikethrough") touchesStrike = true;
+      },
+    });
+    if (touchesStrike) return undefined;
     if (same) {
       if (intent === "wrap-only") return undefined;
       const first = same.firstChild,
@@ -238,7 +247,7 @@ function computeInlineFormat(
     const start = changes.mapPos(container.from, -1),
       end = changes.mapPos(container.to, 1);
     const local = nextDoc.sliceString(start, end);
-    const parsed = commonmarkLanguage.parser.parse(local);
+    const parsed = markdownGrammar.parse(local);
     if (
       parsed.topNode.firstChild?.name !== container.name ||
       parsed.topNode.firstChild?.nextSibling

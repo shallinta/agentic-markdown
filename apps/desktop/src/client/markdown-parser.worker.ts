@@ -1,3 +1,5 @@
+import { MARKDOWN_GRAMMAR } from "../shared/markdown-profile";
+
 import { BomAwareParser } from "./bom-aware-parser";
 import {
   encodeMarkdownTree,
@@ -12,9 +14,15 @@ self.addEventListener(
     const { requestId, text } = event.data;
     let response: MarkdownParseResponse;
     try {
-      response = { requestId, tree: encodeMarkdownTree(parser.parse(text)) };
+      if (event.data.config !== MARKDOWN_GRAMMAR)
+        throw new Error("Invalid grammar");
+      response = {
+        config: MARKDOWN_GRAMMAR,
+        requestId,
+        tree: encodeMarkdownTree(parser.parse(text)),
+      };
     } catch {
-      response = { requestId, error: true };
+      response = { config: MARKDOWN_GRAMMAR, requestId, error: true };
     }
     self.postMessage(response);
   }

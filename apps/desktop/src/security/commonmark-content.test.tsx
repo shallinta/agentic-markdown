@@ -10,6 +10,40 @@ import {
   isControlledReadingElement,
 } from "./commonmark-content";
 
+test("fixed delete node renders controlled del without widening raw HTML or URL powers", () => {
+  const raw =
+    "~~中文 **bold** [link](javascript:alert)~~\n\n`~~code~~`\n\n~single~\n\n~~~long~~~";
+  const html = renderToStaticMarkup(
+    commonmarkContent(parseCanonicalMarkdown(raw), raw)
+  );
+  expect(html).toContain("<del>中文 <strong>bold</strong>");
+  expect(html).toContain("<code");
+  expect(html).toContain("~~code~~");
+  expect(html).toContain("~single~");
+  expect(html).toContain("~~~long~~~");
+  expect(html).not.toMatch(/\s(?:href|src|on\w+)=/);
+  const hostile =
+    '~~<img src="https://example.invalid/x" onerror="bad()"> <script>bad()</script>~~';
+  const inert = renderToStaticMarkup(
+    commonmarkContent(parseCanonicalMarkdown(hostile), hostile)
+  );
+  expect(inert).toContain("<del>");
+  expect(inert).not.toMatch(/<(?:img|script|iframe|a)(?:\s|>)/);
+  expect(inert).toContain("&lt;img");
+  const element = {
+    localName: "del",
+    namespaceURI: "http://www.w3.org/1999/xhtml",
+    attributes: [],
+  };
+  expect(isControlledReadingElement(element)).toBe(true);
+  expect(
+    isControlledReadingElement({
+      ...element,
+      attributes: [{ name: "onclick", value: "bad" }],
+    })
+  ).toBe(false);
+});
+
 test("controlled CommonMark renders structure but no active content/URL attributes", () => {
   const source =
     '# 标题\r\n\r\n> **粗体** 和 *斜体* `code`\r\n\r\n- 一\n- 二\n\n---\n\n[链接](javascript:alert) ![图片](https://example.invalid/a.png)\n\n<script>globalThis.bad=true</script>\n<iframe src="data:text/html,bad"></iframe>\n\n[定义]: https://example.invalid\n\n```js\nalert(1)\n```';

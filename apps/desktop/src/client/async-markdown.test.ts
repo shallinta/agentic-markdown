@@ -45,6 +45,7 @@ class ControlledWorker implements MarkdownWorker {
     this.onmessage?.(
       new MessageEvent<MarkdownParseResponse>("message", {
         data: {
+          config: request.config,
           requestId: request.requestId,
           tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
         },
@@ -55,6 +56,40 @@ class ControlledWorker implements MarkdownWorker {
 afterEach(() => {
   setMarkdownWorkerFactory(undefined);
   setMarkdownWorkPolicy("wait");
+});
+
+test("grammar mismatch in reply or nested wire faults before accepting an old numeric tree", () => {
+  for (const mode of [
+    "reply-missing",
+    "reply-old",
+    "tree-old",
+    "nested-old",
+  ] as const) {
+    const worker = new ControlledWorker();
+    setMarkdownWorkerFactory(() => worker);
+    const state = createRawEditorState(dense);
+    const session = state.field(asyncMarkdownSession);
+    session.activate();
+    const request = worker.requests[0];
+    const tree = encodeMarkdownTree(new BomAwareParser().parse("~~x~~"));
+    const data = { config: request.config, requestId: request.requestId, tree };
+    if (mode === "reply-missing") Object.assign(data, { config: undefined });
+    if (mode === "reply-old")
+      Object.assign(data, { config: "commonmark-core-1" });
+    if (mode === "tree-old")
+      Object.assign(tree, { config: "commonmark-core-1" });
+    if (mode === "nested-old") {
+      // A valid current envelope cannot authorize old child ids.
+      const child = tree.children.find((c) => !("buffer" in c));
+      expect(child).toBeDefined();
+      Object.assign(child!, { config: "commonmark-core-1" });
+    }
+    worker.onmessage?.(new MessageEvent("message", { data }));
+    expect(state.field(editorFaultSession).fault).toBe("parser");
+    expect(worker.terminated).toBe(true);
+    expect(session.snapshot().treeAccountedBytes).toBe(0);
+    session.destroy();
+  }
 });
 const dense = "**bold** [link](x) &amp; ".repeat(9000);
 
@@ -295,7 +330,11 @@ test("obsolete structured parse error is ignored and latest text becomes ready",
   await Promise.resolve();
   worker.onmessage?.(
     new MessageEvent("message", {
-      data: { requestId: oldId, error: true },
+      data: {
+        config: worker.requests[0].config,
+        requestId: oldId,
+        error: true,
+      },
     })
   );
   expect(state.field(editorFaultSession).fault).toBeNull();
@@ -333,7 +372,11 @@ test("long to short retires old callbacks; long again starts a fresh worker with
   expect(syntaxTreeAvailable(state, state.doc.length)).toBe(true);
   message?.(
     new MessageEvent("message", {
-      data: { requestId: request.requestId, error: true },
+      data: {
+        config: request.config,
+        requestId: request.requestId,
+        error: true,
+      },
     })
   );
   expect(state.field(editorFaultSession).fault).toBeNull();
@@ -345,6 +388,7 @@ test("long to short retires old callbacks; long again starts a fresh worker with
   message?.(
     new MessageEvent("message", {
       data: {
+        config: request.config,
         requestId: request.requestId,
         tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
       },

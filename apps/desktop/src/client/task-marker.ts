@@ -1,5 +1,5 @@
 import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
-import type { EditorState } from "@codemirror/state";
+import type { EditorState, Text } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
 import {
@@ -20,6 +20,16 @@ export function paragraphTaskPrefix(
   state: EditorState,
   paragraph: SyntaxNode | null
 ): TaskMarker | undefined {
+  return paragraphTaskPrefixIn(state.doc, paragraph);
+}
+
+/** Query a public local tree against its corresponding Text. Returned positions
+ * are absolute; offset binds local parser coordinates to that same document. */
+export function paragraphTaskPrefixIn(
+  doc: Text,
+  paragraph: SyntaxNode | null,
+  offset = 0
+): TaskMarker | undefined {
   if (paragraph?.name !== "Paragraph" || paragraph.parent?.name !== "ListItem")
     return;
   let first = paragraph.parent.firstChild;
@@ -31,16 +41,17 @@ export function paragraphTaskPrefix(
     paragraph.to - paragraph.from < 3
   )
     return;
-  const marker = state.sliceDoc(paragraph.from, paragraph.from + 3);
+  const from = paragraph.from + offset;
+  const marker = doc.sliceString(from, from + 3);
   if (!/^\[[ xX]\]$/.test(marker)) return;
-  const next = state.sliceDoc(
-    paragraph.from + 3,
-    Math.min(paragraph.to, paragraph.from + 4)
+  const next = doc.sliceString(
+    from + 3,
+    Math.min(paragraph.to + offset, from + 4)
   );
   if (next && next !== " " && next !== "\t" && next !== "\n") return;
   return {
-    from: paragraph.from,
-    to: paragraph.from + 3,
+    from,
+    to: from + 3,
     checked: marker[1] !== " ",
   };
 }

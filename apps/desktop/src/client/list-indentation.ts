@@ -5,7 +5,7 @@ import type { SyntaxNode } from "@lezer/common";
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
 import { markdownGrammar } from "./markdown-grammar";
 import type { IndentationPlan } from "./source-indentation";
-import { paragraphTaskPrefix } from "./task-marker";
+import { paragraphTaskPrefixIn } from "./task-marker";
 
 export const LIST_INDENT_UNAVAILABLE =
   "当前列表结构或混合选区暂不支持此缩进，未修改内容";
@@ -196,21 +196,6 @@ export function planListIndentation(
     const delta = more ? target.content - first.base : target.base - first.base;
     if ((more && delta <= 0) || (!more && delta >= 0)) return reject();
     for (const item of group) {
-      let hasTask = false;
-      walk(item.node, (node) => {
-        if (node.name !== "ListItem") return;
-        if (paragraphTaskPrefix(state, node.getChild("Paragraph")))
-          hasTask = true;
-        const marker = node.getChild("ListMark");
-        if (
-          marker &&
-          /^\s*\[[ xX]\](?:\s|$)/.test(
-            state.sliceDoc(marker.to, state.doc.lineAt(marker.to).to)
-          )
-        )
-          hasTask = true;
-      });
-      if (hasTask) return reject();
       expectedParents.set(
         item.node.from,
         more ? target.node.from : target.parent
@@ -303,6 +288,27 @@ export function planListIndentation(
       const mapped = changes.mapPos(old.from, 1);
       const node = actual.get(mapped);
       if (!node) return reject();
+      // Validate every related item, including unselected trailing siblings.
+      // Task domain is independent of whether a visible checkbox can be drawn.
+      const beforeTask = paragraphTaskPrefixIn(
+        state.doc,
+        old.getChild("Paragraph")
+      );
+      const afterTask = paragraphTaskPrefixIn(
+        next,
+        node.getChild("Paragraph"),
+        offset
+      );
+      if (Boolean(beforeTask) !== Boolean(afterTask)) return reject();
+      if (
+        beforeTask &&
+        afterTask &&
+        (beforeTask.checked !== afterTask.checked ||
+          changes.mapPos(beforeTask.from, 1) !== afterTask.from ||
+          state.doc.sliceString(beforeTask.from, beforeTask.to) !==
+            next.sliceString(afterTask.from, afterTask.to))
+      )
+        return reject();
       const parent = expectedParents.has(old.from)
         ? expectedParents.get(old.from)!
         : (parentItem(old)?.from ?? null);

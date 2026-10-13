@@ -128,12 +128,16 @@ test("real controller refuses stale task transaction without raw or history chan
   controller.dispose();
 });
 
-test("task indentation stays guarded while task continuation is independently supported", () => {
+test("task indentation and continuation preserve their independent task semantics", () => {
   let state = stateFor("- A\n- [ ] task");
   state = state.update({
     selection: EditorSelection.cursor(state.doc.length),
   }).state;
-  expect(planListIndentation(state, true)?.reason).toBeDefined();
+  const plan = planListIndentation(state, true);
+  expect(plan?.reason).toBeUndefined();
+  expect(state.update({ changes: plan?.changes }).state.field(rawText)).toBe(
+    "- A\n  - [ ] task"
+  );
   const after = listContinuationTransaction(state, false).state.field(rawText);
   expect(after).toBe("- A\n- [ ] task\n- [ ] ");
 });

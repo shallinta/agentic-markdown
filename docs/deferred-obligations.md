@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-045b/c/e 消费者回归（2026-10-13）
+
+[F-045b](iterations/F-045b-gfm-task-list.md)任务控件及[F-045c](iterations/F-045c-task-list-continuation.md)任务续写alpha.128有限非离线范围经真实WK受托Agent代验及独立最终两轴通过，已提交推送1db784e。涉及OBL-058命令、OBL-064历史/IME、OBL-066权限及OBL-068/069外观的消费者协作，未迁移主责或关闭整项；具体实操与未覆盖矩阵见唯一记录，各offline-final仍最终人工。[F-045e](iterations/F-045e-task-list-indentation.md)alpha129任务结构有限片也经实际WK与独立最终两轴及主线批准通过；完整复杂结构余项、父F-043/F-045及上述义务仍开放。
+
 ## F-043j 局部承接通过（2026-10-12）
 
 [F-043j](iterations/F-043j-selected-emphasis-completion.md) alpha.125 星号选区斜体包裹非离线有限片经最终独立两轴各0必要阻断、主线批准受托Agent代验通过，非用户亲验。局部承接OBL-058；OBL-064仅消费者协作，不迁移其主责。完整父/E-05/两项义务与F-043j-offline-final继续开放，实际证据和限制见唯一迭代。

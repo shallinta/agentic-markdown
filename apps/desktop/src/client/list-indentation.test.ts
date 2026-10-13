@@ -144,8 +144,6 @@ test("unsupported mixed, noncontiguous, tab and protected contexts reject atomic
     ["- A\n- B\n\nplain", [6, 13]],
     ["> - A\n> - B", [10]],
     ["- A\n- B\n  ```\n  x\n  ```", [17]],
-    ["- A\n- [ ] B", [6]],
-    ["- A\n- B\n  - [x] b", [6]],
   ] as const) {
     const state = source(raw, [...positions]);
     expect(planSourceIndentation(state, true).reason).toBeDefined();

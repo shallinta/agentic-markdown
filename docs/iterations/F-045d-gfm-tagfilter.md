@@ -91,3 +91,76 @@ flow 安全顺序为 `preflightReadingHtml` 词法白名单和预算 → DOMPuri
 4. 只有取得实际有用呈现且所有现安全检查不被暗中削弱后，再批准精确模块/调用点、profile换代与自动回归；随后真实WK核可见文本、危险DOM缺失、原文/模式/dirty及主题。若最低成本路线仍只回原文或需较大安全重构，继续延期，不以实验exit0关闭S-05a/完整GFM/安全及离线义务。
 
 以上是实验作者结果与建议，非独立验收结论。未构建、未UI、未提交推送；临时目录保留为明确标记的诊断证据，未吸收入生产。
+
+## 下一有限真实DOM实验最小方案（2026-10-13，待主线及独立批准）
+
+主线已全文读取本节及实际security-lab/reading-html/safe-content实现。临时入口允许范围限定为新增`components/tagfilter-prototype.tsx`和`components/security-lab.tsx`的opt-in挂载；安全生产模块、普通阅读、依赖及配置协议均不修改。独立Standards复核发现discardGuard只支持单参与者，因此否决新组件独立注册：保留SecurityLab唯一discard注册，由父组件组合停止两个实验；子组件通过稳定回调向父组件登记stop函数并在卸载时解除，独立generation及卸载清理防止迟到挂载。不得修改公共discardGuard。任何fragment必须在挂载前通过原审计；不把已挂载后才检查当准入。Spec其余方案无必要阻断；本项修正复核后由主线批准有限临时编码，不代表生产交付。
+
+本次只回答：先前4个准入的派生HTML片段，经**真实WK的现有preflight → sanitizer → audit → serialize保真**路径后，是否仍全部回退，以及是否存在有效、保真的呈现增量。不先实现tagfilter生产，也不放宽任何安全检查。
+
+### 执行入口与工具边界
+
+现`components/security-lab.tsx`只运行固定securityCorpus且直接调用createSafeContent；没有任意HTML输入或可直接执行本轮prepareReadingHtml的按钮。因此不能声称现包已经能跑本矩阵。推荐主线另批最小临时诊断入口：仅既有opt-in安全实验台内一个固定case表及“运行tagfilter固定对照”按钮，调用生产`preflightReadingHtml`、`prepareReadingHtml`、`readingHtmlSanitizer(window)`和`auditContentDOM`；正常阅读/原固定实验不改。无需安装依赖或DOM库。入口与固定表的临时接线须在本方案批准后另行明确允许文件；若需要打包，由主线统一构建一次实际WK诊断候选。此处不授权当前先写或构建。
+
+工具仅以已允许的CUA原生AX/截图/点击操作该按钮并读取逐条摘要；不shell注入UI、不evaluate任意用户HTML、不用jsdom/happy-dom结果冒称WK。若不批准诊断接线/包，则记录无法执行真实seam并暂停这一实验，不用SSR顶替。实验结束保留结果，临时入口随后按主线要求清理，不提交为产品功能。
+
+### 固定输入（不扩矩阵）
+
+沿`/tmp/agentic-f045d-poc.00iLd7/run-final.log`4个原准入HTML节点逐字取值，不拿整份Markdown重解析：
+
+1. Example657的blockquote节点：`<blockquote>\n  <xmp> is disallowed.  <XMP> is also disallowed.\n</blockquote>`（实际节点末尾换行以原日志为准，执行前打印length及JSON字符串核同）。
+2. mixed：`<p><script>payload</script></p>`。
+3. entity：`<p><script>&amp; &lt;b&gt;</script></p>`。
+4. mixedEol：`<blockquote>\r\n<script>x</script>\r<style>y</style>\n</blockquote>`。
+
+另仅3个对照：纯受限`<script>payload</script>`、纯受限带实体`<script>&amp; &lt;b&gt;</script>`、普通允许结构`<p>safe</p>`。固定原/派生字符串在临时纯模块预先生成并以已核官方输出对照，不在WK临时执行官方HTML编译器，也不引入未经批准的通用转换。记录micromark词法列；本轮不增加畸形slash样本或决定其生产规则。
+
+### 安全执行顺序与观测字段
+
+- 原始/派生长度在任何DOM步骤前核既有32KiB块预算；输入仅上述自造固定字符串，不读取用户文件/URL，不含网络或资源属性。逐case先记录原始前检与派生前检；**只派生前检通过才可调用真实sanitizer**。前检拒绝项的sanitizer调用计数必须0。
+- 使用包装计数的真实readingHtmlSanitizer(window)注入prepareReadingHtml；不改配置、不替换DOM、不绕前检。记录sanitizer自身mode/reason、返回fragment审计、textContent及其clone置入离线空div后的innerHTML；这只是对**已净化返回片段**的观测。若sanitizer已source回退，日志明确其fragment是派生字符串的文本回退，不能当成中间净化结果；不通过额外裸DOM解析“偷看”失败前的危险输入。
+- prepare若sanitized，才将已审计fragment挂入实验区域；若source，区域只用createTextNode(originalSource)，始终展示原始片段而非派生转义字符串。记录prepare最终mode/reason、mounted textContent、outer结构/零属性审计与source回退是否逐字等于原文。所有原/派生调试字符串也只通过textContent显示，不能innerHTML插入。
+- 每条摘要分独立AX文本项：case、original/derived长度、前检理由、sanitizerCalls、sanitizerMode/Reason、prepareMode/Reason、audit、serializedEqual、visibleText(JSON)、原文fallbackEqual、耗时。完整固定结果可保留在本轮唯一，不收集用户正文。序列化相等在sanitized时与派生输入比；source时单独列为回退片段序列化，不能据其不相等推断内部DOMPurify具体输出。
+- 正常取消/关闭沿现generation和discard生命周期，仅取消后续case，不声称中断同步sanitizer。主线用截图核可见字面内容与普通允许块外观，既有默认事件阻止可复用；没有网络仪器则不称证明绝对无网络。
+
+### 判据与停止条件
+
+安全与有效呈现分开：任何前检拒绝仍调用sanitizer、危险/带属性DOM进入挂载区、source回退显示派生源码而非原文，均实验失败并停后续。保持安全但全部source回退也是合法实验结果，却不能据此宣称tagfilter交付。普通`<p>safe</p>`须sanitized作为真实环境正对照；否则先记录环境/既有路径问题，不解释为tagfilter结论。
+
+4个混合样本若因`&lt;…>`序列化规范化失败，只能记录准确mode/reason与可取得的返回值；不得删除严格相等检查。若至少存在有效增量，再按证据提出独立原文/派生HTML最小生产接口；如必须调整保真策略，必须另提具体安全设计、独立审核后才编码。纯受限带实体的规范可见文字与原文回退不等价应明确，不靠exit0掩盖。S-05a、完整F045、协作OBL030及offline-final继续开放。
+
+当前只追加此方案，未安装、未运行新实验、未改生产、版本、构建/UI或Git。
+
+## 获批临时WK诊断入口实现（2026-10-13，尚无DOM实测）
+
+主线及独立复核批准限定入口后，新增`apps/desktop/src/components/tagfilter-prototype.tsx`，仅在既有opt-in `security-lab.tsx`挂载。固定7组原/派生字符串，无任意输入或WK编译器；父组件仍唯一discard参与者，通过稳定registerStop回调组合取消、卸载identity匹配解除；子generation取消后续样本并清本地事件。普通阅读、安全模块、依赖及配置协议不改。
+
+实际入口固定字符串由临时`/tmp/agentic-f045d-poc.00iLd7/wk-fixed-oracle.ts`读取字符串字面量，分别与原project候选及官方micromark+gfmTagfilterHtml对照；`bun /tmp/agentic-f045d-poc.00iLd7/wk-fixed-oracle.ts`为7/7逐字相等、exit0，`wk-fixed-oracle.log`保留输入/派生/官方结果。无DOM/脚本执行，原14重解析差异及安全前置失败历史不变。
+
+诊断实现先核两侧预算/前检，仅prepare准入才调用真实sanitizer，记录调用数；返回片段审计通过后clone观测，任何审计失败停止后续而不被prepare的回退catch掩盖。sanitized片段再次审计才挂载，source始终createTextNode(original)；逐字段独立AX摘要，明确source返回序列化不是内部净化中间值。普通允许p作为正对照。没有测试/构建/实际WK结果提前宣称。
+
+`bun run typecheck`通过；两文件`bunx --no-install eslint --max-warnings 0 ...`通过。首轮lint有两条effect清理ref警告，改稳定失效函数及捕获清理数组后消除，没有disable。仅两临时组件和本唯一记录有本lane变更，已冻结待独立审核；主线负责诊断包与真实WK，不属于tagfilter产品交付。
+
+## 实际WK结果：简单派生接入无有效增量（2026-10-13）
+
+独立Standards代码复核0必要阻断后，主线递增alpha.131并执行`AGENTIC_MARKDOWN_SKIP_SIGNING=1 bun run build:canary`，exit0；日志`/tmp/agentic-f045d-alpha131-build.log`，产物hash`1n4l2ic73buth`。直接解包官方更新artifact到`/tmp/agentic-direct131.9AKTfT/Agentic Markdown-canary.app`并核version.json；隔离数据目录`/tmp/agentic-f045d-ui.QI1lZr/data`，同时设置PERF_LAB/SECURITY_LAB启动inner launcher（exec72332）。首次精确路径CUA连接成功，无安装完成窗口；不据此推断旧超时根因。
+
+通过原生AX点击“运行tagfilter固定对照”，实际显示7/7完成，再滚动取得完整摘要与截图；结果如下。长度为JS字符串单位，耗时为本次诊断同步测量，不是性能保证。
+
+| 固定case | 原/派生长度 | 派生前检 | sanitizer次数/模式 | prepare | 挂载前审计 | 原文回退相等 | 本次ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| example657 | 76/82 | 通过 | 1/source | source | true | true | 3 |
+| mixed | 31/37 | 通过 | 1/source | source | true | true | 0 |
+| entity | 39/45 | 通过 | 1/source | source | true | true | 0 |
+| mixedEol | 63/75 | 通过 | 1/source | source | true | true | 1 |
+| pure | 24/30 | 标签未完整配对 | 0/未调用 | source | true | true | 0 |
+| pureEntity | 32/38 | 标签未完整配对 | 0/未调用 | source | true | true | 0 |
+| allowed | 11/11 | 通过 | 1/sanitized | sanitized | true | 不适用 | 1 |
+
+前6例原始前检均拒绝不支持标签，allowed原/派生均通过。前4例sanitizer/prepare准确理由均为“净化或格式规范化改变了输入，本片保守显示完整源码”；返回fragment审计true、serializedEqual=false、serializationKind为fallback-text-not-intermediate-DOM。此序列化只来自净化器返回的文本回退片段，不是内部净化中间结果，不能据它定位具体哪一字符规范化。allowed返回text为`safe`、序列化为`<p>safe</p>`且相等，截图也显示safe而非标签。6例可见区域均原文，未把派生实体源码当用户原文；mixedEol逐字相等由现场字段验证，AX空白折叠不能替代此精确检查。
+
+随后点击既有安全语料得到8/8通过（不扩大为通用网络/原生下载证明）。本次仅浅色实验台、一次7例完整运行；取消在途竞态、深色、任意HTML和自然输入未实操，不需要为丢弃实验声称全产品验收。未打开/保存用户文档、未改网络。通过CUA `⌘Q`正常退出，工具返回App quit，exec72332 exit0，ps无该包进程。
+
+结论：已取得真实WK证据，简单转义后复用现有严格入口在6个tagfilter样本无有效呈现增量；生产接入仍不批准。保留F045d/S05a及父功能开放，后续须另拟保真与原文分离的具体安全方案，不能移除检查冒充完成。临时组件副本留`/tmp/agentic-f045d-poc.00iLd7/tagfilter-prototype-wk.tsx`和`security-lab-wk.tsx`作为诊断证据，alpha131仅实验包，不作为功能交付。
+
+临时组件已用apply_patch删除，SecurityLab与HEAD逐字无diff，源码无残留引用；清理后typecheck、feature-docs/obligations及diff通过。独立最终Standards确认0必要研究收尾阻断，并核入口清理/无运行进程；主线批准本次有限研究收尾，不是F045d功能验收。没有新增生产代码，不以旧全量测试数字冒称本次新跑。版本131保留实验使用记录，不倒退或重包；下一修改代码打包从132起。手册同步未交付状态；Git待主线执行核验。

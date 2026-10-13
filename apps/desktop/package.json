@@ -1,6 +1,6 @@
 {
   "name": "@agentic-markdown/desktop",
-  "version": "0.1.0-alpha.129",
+  "version": "0.1.0-alpha.130",
   "scripts": {
     "start": "bun run build:view && electrobun dev",
     "prepare:sdk": "electrobun prepare",
@@ -33,9 +33,11 @@
     "i18next": "^26.3.6",
     "lucide-react": "^1.22.0",
     "mdast-util-from-markdown": "2.0.2",
+    "mdast-util-gfm-autolink-literal": "2.0.1",
     "mdast-util-gfm-strikethrough": "2.0.1",
     "mdast-util-gfm-task-list-item": "2.0.0",
     "micromark-extension-gfm-strikethrough": "2.1.0",
+    "micromark-extension-gfm-autolink-literal": "2.1.0",
     "micromark-extension-gfm-task-list-item": "2.1.0",
     "react": "catalog:",
     "react-dom": "catalog:",

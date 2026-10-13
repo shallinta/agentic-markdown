@@ -81,6 +81,47 @@ function fixture() {
     },
   };
 }
+test("canonical autolink trees accept current identity but reject stale envelopes", async () => {
+  for (const variant of [
+    "current",
+    "revision",
+    "session",
+    "old-config",
+    "missing-config",
+    "cancel",
+  ] as const) {
+    const f = fixture();
+    f.set({ ...f.get()!, text: "www&#46;example.com" });
+    const pending = f.service.request();
+    const worker = f.workers[0];
+    const callback = worker.onmessage!;
+    const response = worker.response();
+    const paragraph = response.result.tree.children[0];
+    expect(paragraph.type).toBe("paragraph");
+    if (paragraph.type === "paragraph")
+      expect(paragraph.children[0].position).toBeUndefined();
+    if (variant === "revision") f.set({ ...f.get()!, revision: 1 });
+    if (variant === "session") f.set({ ...f.get()!, identity: {} });
+    if (variant === "cancel") f.service.cancel();
+    const result =
+      variant === "missing-config"
+        ? { ...response.result, config: undefined }
+        : {
+            ...response.result,
+            config:
+              variant === "old-config"
+                ? "commonmark-gfm-strike-task-projection-2"
+                : response.result.config,
+          };
+    callback({ data: { ...response, result } } as MessageEvent);
+    const accepted = await pending;
+    expect(!!accepted).toBe(variant === "current");
+    if (accepted) expect(f.service.isCurrent(accepted)).toBe(true);
+    else expect(f.service.getSnapshot().status).not.toBe("ready");
+    expect(worker.terminated).toBe(true);
+    f.service.dispose();
+  }
+});
 test("lazy current parser returns raw positions and owns no resource effects", async () => {
   const f = fixture();
   expect(f.workers.length).toBe(0);

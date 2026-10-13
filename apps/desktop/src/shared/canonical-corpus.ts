@@ -1,7 +1,7 @@
-import { MARKDOWN_GRAMMAR } from "./markdown-profile";
+import { CANONICAL_PROFILE } from "./markdown-profile";
 
 /** Fixed synthetic examples only; not a user-document protocol. */
-export const CANONICAL_CONFIG = MARKDOWN_GRAMMAR;
+export const CANONICAL_CONFIG = CANONICAL_PROFILE;
 interface CanonicalSample {
   id: string;
   label: string;

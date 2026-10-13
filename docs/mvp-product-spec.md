@@ -1,5 +1,13 @@
 # Agentic Markdown MVP 产品规格
 
+## F-045f 阅读有限片交付（2026-10-13）
+
+[F-045f](iterations/F-045f-gfm-autolink-presentation.md) alpha130已受托Agent代验通过，非用户亲验：官方GFM裸URL/邮箱在阅读中非活动呈现，实际Worker/DOM/历史及权限隔离证据见唯一。中文尾标点与删除线的组合按官方语义解释，当前编辑存在已记录差异；编辑/源码自动链接与完整S05/F045、三模式一致性仍未完成，不增加F055导航。系统主题/自然IME/离线等未实操矩阵保持。
+
+## F-045e 任务结构有限片交付（2026-10-13）
+
+[F-045e](iterations/F-045e-task-list-indentation.md)alpha129已通过受托Agent真实WK与最终独立两轴及主线批准，并提交推送42ad894。可靠任务项子树缩进、勾选状态及编号保真、用户B尾随归属有限交付；更新下表旧“任务结构未交付”描述，不表示完整复杂结构或父F043/F045完成。详细自然IME/复杂输入/浅色等未实操边界见唯一，最终离线保持开放。下一F045f仅选定自动链接最小方案与公开API调查，不增加F055交互或将F045d研究算交付。
+
 ## 本片通过：F-045a GFM 删除线（2026-10-13）
 
 [F-045a](iterations/F-045a-gfm-strikethrough.md) alpha.126 按S-04/整体GFMExtension约定交付双波浪线三模式呈现，非离线有限片经真实WK及组合补验、独立两轴各0必要阻断与主线批准受托Agent代验通过，非用户亲验。单波浪线与其余GFM能力不提前交付；自然键盘全矩阵、组合测试5s超时残留及其它限制明确保留，完整F-045及相关义务开放。
@@ -493,7 +501,7 @@ L3 包含两条可以独立推进的主干：阅读与规范 Markdown、目录�
 | F-042 | 3 | Markdown 高亮与格式入口 | E-01、E-20 | 硬前置：F-006a 命令、F-012 编辑状态；富内容需对应 F-020 / F-022 安全；共享约定：F-019 方言与语料；F-012 首次即时排版装饰接入；后续接入：标记显隐/高亮与格式命令由本项追踪；首个必要切片可随 F-012 提前实现 | F-042a 本片通过；父未完成 | [F-012c](./iterations/F-012c-basic-live-formatting.md)先行排版及标记显隐状态保持；[F-042a](./iterations/F-042a-inline-format-commands.md) alpha.111 基础行内格式命令非离线受托 Agent 代验通过，最终独立复核及主线确认，Git 待实际执行，非用户亲验。其余呈现、完整高亮和格式入口、完整 OBL-057/064 与 offline-final 仍开放。 |
 | F-043 | 4 | 自动配对、补全、列表、缩进、换行与拼写 | E-04、E-05、E-06、E-07、E-13、E-14 | 硬前置：F-014 相关历史/IME、F-042 对应语法能力；共享约定：命令事务与 IME 避让；后续接入：正式编辑/源码分别验证 | F-043a/F-043b/F-043c/F-043d 本片已代验；F-043e 本片已代验；F-043f 非离线本片已代验；父未完成 | [F-043a](iterations/F-043a-source-line-wrapping.md) E-13 普通源码软换行、[F-043b](iterations/F-043b-contextual-pairing.md) E-04 配对及 [F-043c](iterations/F-043c-commonmark-list-continuation.md) alpha.109 E-06 CommonMark 列表续写本片受托代验通过，非用户亲验；F-043c Git 待实际执行。[F-043d](iterations/F-043d-source-fence-indentation.md) alpha.117普通源码顶层围栏内容缩进/段落Tab及焦点出口非离线本片受托代验通过，已提交推送3a6213aa02867dd1a90949071b83d9a7e33294f0，远端同SHA/当时clean；[F-043e](iterations/F-043e-editing-fence-indentation.md)编辑模式对应最小消费者alpha.118非离线本片经最终独立verifier0剩余阻断、主线确认受托代验通过，非用户亲验，Git待执行。F-043e已提交推送e242e92b1414ea27a2e6647ddf4cd89e37067363，远端一致/当时clean；[F-043f](iterations/F-043f-commonmark-list-indentation.md)列表结构缩进alpha.119非离线本片经最终独立verifier0剩余阻断、主线正式批准受托Agent代验通过，非用户亲验，Git待执行；尾随兄弟归属B/必要空行保留marker与数字，复杂Tab/lazy/任务/大相关块等限制保留。任务项留F-045，完整结构缩进/补全/拼写及OBL-058/064、offline-final开放。 |
 | F-044 | 5 | 源码行号、当前行与多光标 | E-02、E-03、E-08 | 硬前置：F-013 源码、F-014 相关历史；共享约定：共享原文状态与多选区事务；后续接入：F-030 源码切换回归 | F-044a/F-044b 本片已通过；父未完成 | [F-044a](iterations/F-044a-source-line-navigation.md)行号/当前行已通过；[F-044b](iterations/F-044b-source-multiple-selections.md) alpha.103 普通源码多选区及统一命令非离线本片通过，自然 IME/Escape 用户亲验、其余受托代验，Git 待执行。安全隔离及完整 OBL-059、offline-final 开放。 |
-| F-045 | 6 | GFM 扩展包 | S-02、S-03、S-04、S-05、S-05a | 硬前置：对应解析/编辑/阅读消费者；富 DOM/链接需 F-020 安全；共享约定：F-019 / F-012 GFM 统一语义；后续接入：编辑/阅读/源码分别验收；F-054 表格、F-074 一致性 | 部分完成 | [F-045a](iterations/F-045a-gfm-strikethrough.md)双波浪线已交付；[F-045b](iterations/F-045b-gfm-task-list.md)有限任务控件/只读阅读/源码原文与[F-045c](iterations/F-045c-task-list-continuation.md)有限任务续写在alpha.128合包受托Agent代验通过。跨行任务编辑、任务结构、表格、自动链接与tagfilter仍未交付，完整父及最终离线未关闭。 |
+| F-045 | 6 | GFM 扩展包 | S-02、S-03、S-04、S-05、S-05a | 硬前置：对应解析/编辑/阅读消费者；富 DOM/链接需 F-020 安全；共享约定：F-019 / F-012 GFM 统一语义；后续接入：编辑/阅读/源码分别验收；F-054 表格、F-074 一致性 | 部分完成 | [F-045a](iterations/F-045a-gfm-strikethrough.md)双波浪线已交付；[F-045b](iterations/F-045b-gfm-task-list.md)有限任务控件/只读阅读/源码原文与[F-045c](iterations/F-045c-task-list-continuation.md)有限任务续写在alpha.128合包受托Agent代验通过；[F-045e](iterations/F-045e-task-list-indentation.md)可靠任务子树结构缩进在alpha.129受托代验通过；[F-045f](iterations/F-045f-gfm-autolink-presentation.md)alpha130阅读自动链接非活动呈现已代验，官方标点组合及模式差异见唯一。编辑/源码自动链接、跨行任务编辑、完整复杂结构、表格与tagfilter仍未交付，完整父及最终离线未关闭。 |
 | F-046 | 7 | YAML Frontmatter | S-06 | 硬前置：F-019 对应解析、F-040 结构与折叠切片；共享约定：原文及错误容错语义；后续接入：对应编辑消费者；阅读呈现待专项设计，不等待大纲 UI | 部分待专项设计 | Frontmatter 可编辑、折叠且错误不阻塞正文；只有阅读模式是否展示待定。 |
 | F-047 | 8 | 脚注、定义列表、高亮、上下标与 Emoji | S-08、S-09、S-10、S-10a、S-11 | 硬前置：对应解析/编辑/阅读消费者；富内容需 F-020 对应安全；共享约定：F-019 / F-012 固定方言语义；后续接入：各模式呈现分别验收；F-074 汇合 | 未讨论 | 已确认方言按固定语法解析和渲染，原始 Markdown 保持可移植。 |
 | F-048 | 9 | 代码围栏、高亮、复制与行号 | S-15、S-16、S-17、S-18 | 硬前置：对应解析/编辑消费者、F-024 按需模块、F-040 结构折叠切片；共享约定：围栏保真与 F-042 高亮；后续接入：三模式分别验收；大纲 UI 不作前置 | 部分待专项设计 | 代码块可编辑、折叠、高亮和复制；MVP 代码行号可选，只有围栏内部换行策略待定。 |

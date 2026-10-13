@@ -5,7 +5,10 @@ import { ensureSyntaxTree, syntaxTree } from "@codemirror/language";
 import { EditorSelection } from "@codemirror/state";
 import type { Tree } from "@lezer/common";
 
-import { MARKDOWN_GRAMMAR } from "../shared/markdown-profile";
+import {
+  CANONICAL_PROFILE,
+  MARKDOWN_GRAMMAR,
+} from "../shared/markdown-profile";
 
 import { BomAwareParser } from "./bom-aware-parser";
 import { parseCanonicalMarkdown } from "./canonical-parser";
@@ -103,6 +106,10 @@ test("fixed double tilde profile reconciles old run failures, escapes and exact 
 test("wire rejects missing or obsolete grammar before interpreting numeric node ids", () => {
   const wire = encodeMarkdownTree(markdownGrammar.parse("~~x~~"));
   expect(wire.config).toBe(MARKDOWN_GRAMMAR);
+  expect(encodeMarkdownTree(decodeMarkdownTree(wire))).toEqual(wire);
+  const canonicalWire = structuredClone(wire);
+  Object.assign(canonicalWire, { config: CANONICAL_PROFILE });
+  expect(() => decodeMarkdownTree(canonicalWire)).toThrow("grammar");
   for (const config of [
     undefined,
     "commonmark-core-1",
@@ -124,13 +131,22 @@ test("wire rejects missing or obsolete grammar before interpreting numeric node 
   }
   expect(
     isCanonicalRequest({
-      config: MARKDOWN_GRAMMAR,
+      config: CANONICAL_PROFILE,
       requestId: 1,
       documentId: "doc",
       revision: 0,
       text: "~~x~~",
     })
   ).toBe(true);
+  expect(
+    isCanonicalRequest({
+      config: MARKDOWN_GRAMMAR,
+      requestId: 1,
+      documentId: "doc",
+      revision: 0,
+      text: "~~x~~",
+    })
+  ).toBe(false);
 });
 
 test("format toggles and wrapping cannot rewrite strike ancestors or descendants", () => {

@@ -10,6 +10,64 @@ import {
   isControlledReadingElement,
 } from "./commonmark-content";
 
+test("reading preserves official strike and autolink punctuation interaction", () => {
+  for (const suffix of ["。", ".", ""]) {
+    const raw = `~~https://a.b~~${suffix}`;
+    const html = renderToStaticMarkup(
+      commonmarkContent(parseCanonicalMarkdown(raw), raw)
+    );
+    const target = suffix === "。" ? "https://a.b~~。" : "https://a.b";
+    const span = `<span class="underline decoration-dotted" title="链接打开尚未接入">${target}</span>`;
+    const content =
+      suffix === "。" ? `~~${span}` : `<del>${span}</del>${suffix}`;
+    expect(html).toBe(
+      `<div data-reading-from="0" data-reading-to="${raw.length}"><p class="my-3 leading-7">${content}</p></div>`
+    );
+    expect(html).not.toMatch(/<a\b|\shref=/);
+  }
+});
+
+test("reading literal autolinks preserve complete mixed text in inert spans", () => {
+  const raw =
+    "前 www&#46;example.com，中 **粗体** 后 contact\\@example.com。\n\n- [x] ~~done~~ www.example.com";
+  const html = renderToStaticMarkup(
+    commonmarkContent(parseCanonicalMarkdown(raw), raw)
+  );
+  const link = (value: string) =>
+    `<span class="underline decoration-dotted" title="链接打开尚未接入">${value}</span>`;
+  expect(html).toBe(
+    `<div data-reading-from="0" data-reading-to="${raw.indexOf("\n\n")}"><p class="my-3 leading-7">前 ${link("www.example.com，中")} <strong>粗体</strong> 后 ${link("contact@example.com")}。</p></div>` +
+      `<div data-reading-from="${raw.indexOf("- [x]")}" data-reading-to="${raw.length}"><ul class="my-3 list-disc pl-7"><li><span class="reading-task-status">☑ 已完成：</span><p class="my-3 leading-7"><del>done</del> ${link("www.example.com")}</p></li></ul></div>`
+  );
+  expect(html).not.toMatch(
+    /<(?:a|input|button|script|iframe)\b|\s(?:href|src|on\w+|tabindex)=/i
+  );
+  expect(html).not.toContain("阅读结构无法安全呈现");
+  expect(html.match(/☑ 已完成：/g)).toHaveLength(1);
+});
+
+test("autolinks do not grant HTML or code an active reading path", () => {
+  const raw =
+    '<span>www.example.com</span>\n\n<div onclick="bad()">https://example.com</div>\n\n`www.example.com`\n\n```\na@example.com\n```\n\njavascript:alert(1) file:///tmp/a data:text/html,x';
+  const html = renderToStaticMarkup(
+    commonmarkContent(parseCanonicalMarkdown(raw), raw)
+  );
+  expect(html.match(/title="链接打开尚未接入"/g)).toHaveLength(1);
+  expect(html).toContain("&lt;span&gt;");
+  expect(html).toContain("HTML 浏览器呈现环境不可用，保留原文");
+  expect(html).toContain(
+    "&lt;div onclick=&quot;bad()&quot;&gt;https://example.com&lt;/div&gt;"
+  );
+  expect(html).toContain(
+    'class="bg-muted rounded px-1 font-mono">www.example.com</code>'
+  );
+  expect(html).toContain("```\na@example.com\n```");
+  expect(html).not.toContain("阅读结构无法安全呈现");
+  expect(html).not.toMatch(
+    /<(?:a|input|button|script|iframe)\b|<[^>]*\s(?:href|src|on\w+|tabindex)=/i
+  );
+});
+
 test("task reading status is inert and raw HTML does not gain input powers", () => {
   const raw =
     '- [x] **done**\n- [ ] <input type="checkbox" onclick="bad()"> [bad](javascript:bad)';

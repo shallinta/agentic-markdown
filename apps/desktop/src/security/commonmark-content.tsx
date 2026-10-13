@@ -14,6 +14,14 @@ import {
 type Tree = ReturnType<typeof parseCanonicalMarkdown>;
 type Node = Tree | Tree["children"][number];
 
+const tableClass = "w-full border-collapse text-sm";
+const tableScrollClass = "my-4 max-w-full overflow-x-auto";
+const cellClasses = {
+  left: "border-border border px-3 py-2 text-left align-top",
+  center: "border-border border px-3 py-2 text-center align-top",
+  right: "border-border border px-3 py-2 text-right align-top",
+} as const;
+
 /** No HTML input API, arbitrary props, URL attributes or resource-bearing elements. */
 export function commonmarkContent(
   tree: Tree,
@@ -70,6 +78,58 @@ export function commonmarkContent(
           )
         : [];
     switch (node.type) {
+      case "table": {
+        const columns = node.children[0]?.children.length ?? 0;
+        const rows = node.children.length;
+        // Charge generated cells too, before allocating any row/cell arrays.
+        // The render entry counts the wrapper; reserve table, sections and rows.
+        const structure = 3 + rows;
+        const remaining = 100000 - work - structure;
+        if (
+          !columns ||
+          depth + 4 > 128 ||
+          remaining < 0 ||
+          columns > Math.floor(remaining / rows)
+        )
+          throw Error("Presentation budget");
+        work += structure + rows * columns;
+        const row = (value: (typeof node.children)[number], index: number) => (
+          <tr key={index}>
+            {Array.from({ length: columns }, (_, column) => {
+              const cell = value.children[column];
+              const align = node.align?.[column];
+              const className =
+                cellClasses[
+                  align === "center" || align === "right" ? align : "left"
+                ];
+              const content = cell?.children.map((child, childIndex) =>
+                render(child, depth + 5, childIndex)
+              );
+              return index === 0 ? (
+                <th key={column} scope="col" className={className}>
+                  {content}
+                </th>
+              ) : (
+                <td key={column} className={className}>
+                  {content}
+                </td>
+              );
+            })}
+          </tr>
+        );
+        return (
+          <div key={key} className={tableScrollClass}>
+            <table className={tableClass}>
+              <thead>{row(node.children[0], 0)}</thead>
+              <tbody>
+                {node.children
+                  .slice(1)
+                  .map((value, index) => row(value, index + 1))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
       case "text":
         return node.value;
       case "root":
@@ -295,7 +355,7 @@ const classes: Record<string, readonly string[]> = {
     "text-muted-foreground",
     "reading-image",
   ],
-  div: ["bg-muted my-4 rounded p-3", "reading-html"],
+  div: ["bg-muted my-4 rounded p-3", "reading-html", tableScrollClass],
   pre: [
     "font-mono break-words whitespace-pre-wrap",
     "break-words whitespace-pre-wrap",
@@ -306,6 +366,36 @@ export function isControlledReadingElement(element: {
   localName: string;
   attributes: Iterable<{ name: string; value: string }>;
 }): boolean {
+  if (
+    ["table", "thead", "tbody", "tr", "th", "td"].includes(element.localName)
+  ) {
+    const attributes = [...element.attributes];
+    const tag = element.localName;
+    return (
+      element.namespaceURI === "http://www.w3.org/1999/xhtml" &&
+      (tag === "table"
+        ? attributes.length === 1 &&
+          attributes[0]?.name === "class" &&
+          attributes[0].value === tableClass
+        : tag === "th" || tag === "td"
+          ? attributes.length === (tag === "th" ? 2 : 1) &&
+            attributes.some(
+              ({ name, value }) =>
+                name === "class" &&
+                Object.values(cellClasses).some((allowed) => allowed === value)
+            ) &&
+            attributes.every(
+              ({ name, value }) =>
+                name === "class" ||
+                (tag === "th" && name === "scope" && value === "col")
+            ) &&
+            (tag !== "th" ||
+              attributes.some(
+                ({ name, value }) => name === "scope" && value === "col"
+              ))
+          : attributes.length === 0)
+    );
+  }
   if (element.localName === "img") {
     const attributes = new Map(
       [...element.attributes].map(({ name, value }) => [name, value])

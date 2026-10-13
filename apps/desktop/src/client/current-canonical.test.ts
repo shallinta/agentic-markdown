@@ -81,6 +81,47 @@ function fixture() {
     },
   };
 }
+test("canonical tables accept current identity but reject old profile and stale envelopes", async () => {
+  for (const variant of [
+    "current",
+    "revision",
+    "session",
+    "profile",
+    "cancel",
+  ] as const) {
+    const f = fixture();
+    const raw = "\uFEFFa | b\r\n--- | ---\r\nx | y";
+    f.set({ ...f.get()!, text: raw });
+    const pending = f.service.request();
+    const worker = f.workers[0];
+    const callback = worker.onmessage!;
+    const response = worker.response();
+    expect(response.result.tree.children[0].type).toBe("table");
+    expect(response.result.tree.children[0].position!.start.offset).toBe(1);
+    if (variant === "revision") f.set({ ...f.get()!, revision: 1 });
+    if (variant === "session") f.set({ ...f.get()!, identity: {} });
+    if (variant === "cancel") f.service.cancel();
+    callback({
+      data: {
+        ...response,
+        result: {
+          ...response.result,
+          config:
+            variant === "profile"
+              ? "commonmark-gfm-strike-task-autolink-3"
+              : response.result.config,
+        },
+      },
+    } as MessageEvent);
+    const accepted = await pending;
+    expect(!!accepted).toBe(variant === "current");
+    if (accepted) expect(f.service.isCurrent(accepted)).toBe(true);
+    expect(worker.terminated).toBe(true);
+    expect(f.get()!.text).toBe(raw);
+    f.service.dispose();
+  }
+});
+
 test("canonical autolink trees accept current identity but reject stale envelopes", async () => {
   for (const variant of [
     "current",
@@ -225,6 +266,7 @@ test("worker protocol rejects unsupported config, unsafe revision and >1 MiB UTF
   expect(isCanonicalRequest(value)).toBe(true);
   for (const patch of [
     { config: "other" },
+    { config: "commonmark-gfm-strike-task-autolink-3" },
     { revision: -1 },
     { requestId: NaN },
     { text: "中".repeat(400000) },

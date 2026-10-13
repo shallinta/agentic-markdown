@@ -101,7 +101,7 @@ test("canonical autolinks keep official transform semantics without inventing po
 
 test("canonical-only grammar recognizes targets but does not change editor profile", () => {
   expect(MARKDOWN_GRAMMAR).toBe("commonmark-gfm-strike-task-projection-2");
-  expect(CANONICAL_PROFILE).toBe("commonmark-gfm-strike-task-autolink-3");
+  expect(CANONICAL_PROFILE).toBe("commonmark-gfm-strike-task-autolink-table-4");
   const raw =
     "WWW.EXAMPLE.COM HTTPS://EXAMPLE.COM mailto:a@example.com xmpp:a@example.com/resource";
   expect(

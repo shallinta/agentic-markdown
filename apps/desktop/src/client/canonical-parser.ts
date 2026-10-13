@@ -1,20 +1,24 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmAutolinkLiteralFromMarkdown } from "mdast-util-gfm-autolink-literal";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { gfmTaskListItemFromMarkdown } from "mdast-util-gfm-task-list-item";
 import { gfmAutolinkLiteral } from "micromark-extension-gfm-autolink-literal";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
 
 const extensions = [
   gfmStrikethrough({ singleTilde: false }),
   gfmTaskListItem(),
   gfmAutolinkLiteral(),
+  gfmTable(),
 ];
 const mdastExtensions = [
   gfmStrikethroughFromMarkdown(),
   gfmTaskListItemFromMarkdown(),
   gfmAutolinkLiteralFromMarkdown(),
+  gfmTableFromMarkdown(),
 ];
 
 /** Internal mdast, raw UTF-16 positions; never HTML or a public plugin schema. */

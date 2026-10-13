@@ -46,7 +46,7 @@
 [data-reading-theme] .text-muted-foreground {
   color: var(--reading-secondary);
 }
-[data-reading-theme] :is(blockquote, hr) {
+[data-reading-theme] :is(blockquote, hr, th, td) {
   border-color: var(--reading-border);
 }
 [data-reading-theme] ::selection {

@@ -80,6 +80,28 @@ test("bundled manifests and styles are finite, scoped and resource-free", () => 
   }
 });
 
+test("reading table cells use the scoped reading border token, not the app theme token", () => {
+  // Static stylesheet contract, not a computed-style or visual browser assertion.
+  const css = readFileSync(
+    new URL("../reading-themes/content.css", import.meta.url),
+    "utf8"
+  );
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+  const borderRule = rules.find(
+    (rule) =>
+      rule[1].trim() === "[data-reading-theme] :is(blockquote, hr, th, td)"
+  );
+  expect(borderRule).toBeDefined();
+  expect(borderRule?.[2].trim()).toBe("border-color: var(--reading-border);");
+  for (const theme of READING_THEMES) {
+    const themeCss = readFileSync(
+      new URL(`../reading-themes/${theme.id}/theme.css`, import.meta.url),
+      "utf8"
+    );
+    expect(themeCss).toMatch(/--reading-border:\s*#[0-9a-f]{6}\s*;/i);
+  }
+});
+
 test("theme commands are fixed Chinese palette actions with no arbitrary payload", () => {
   for (const type of ["readingThemePaper", "readingThemeInk"] as const) {
     expect(isCommand({ type, args: {} })).toBe(true);

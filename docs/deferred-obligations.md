@@ -1,5 +1,11 @@
 # 迁出能力承接登记
 
+## F-045g 有限片通过与阅读故障后续责任（2026-10-13）
+
+[F-045g](iterations/F-045g-gfm-table-reading.md)canonical/阅读表格已实现，alpha132有限WK及边框失败保留，alpha133边框修正复验、独立最终两轴0剩余必要阻断后，主线正式批准非离线有限片受托Agent代验通过，非用户亲验；Git待执行。无F045专属主责ID；OBL-030安全、OBL-064原文历史及OBL-068/069外观仅消费者协作，不迁移或关闭完整责任，父/S02/offline-final保持开放。
+
+阅读无EditorView时解析故障注入停在pending的真实发现与普通段落controller红对照已在唯一记录；沿既有OBL-070/F-013保留可恢复后续责任。已核F-013d无现有编号占用，建议后续独立切片承接（本轮未创建或实施）。主线clean自建样本关闭重开已恢复编辑，编辑模式故障注入成功安全源码，CmdQ正常退出、两样本hash原样且readonly恢复644；该局部恢复不关闭无view自动恢复/同步发布/解除屏障重试/旧会话隔离验证责任，禁止把关闭dirty文档作为恢复策略。
+
 ## F-045b/c/e 消费者回归（2026-10-13）
 
 [F-045b](iterations/F-045b-gfm-task-list.md)任务控件及[F-045c](iterations/F-045c-task-list-continuation.md)任务续写alpha.128有限非离线范围经真实WK受托Agent代验及独立最终两轴通过，已提交推送1db784e。涉及OBL-058命令、OBL-064历史/IME、OBL-066权限及OBL-068/069外观的消费者协作，未迁移主责或关闭整项；具体实操与未覆盖矩阵见唯一记录，各offline-final仍最终人工。[F-045e](iterations/F-045e-task-list-indentation.md)alpha129任务结构有限片也经实际WK与独立最终两轴及主线批准通过；完整复杂结构余项、父F-043/F-045及上述义务仍开放。
@@ -235,7 +241,7 @@ OBL-065 的当前编辑/源码/安全源码保存链路已有 [F-013b 受托窗�
 | OBL-067 | F-017 / OBL-046 后续范围 | F-017 | 正式模式、副区和恢复记录消费者的关闭/退出保护及命令上下文复验；F-035 复用 F-017a 后补副区验收，F-066 接入显式放弃使恢复记录失效，避免已放弃正文复活 | 实现中 | [F-017b](./iterations/F-017b-cross-mode-close-regression.md) | 2026-09-28 用户总体验收 alpha.33 当前模式切片范围通过，不补造逐项操作；未来消费者责任保持开放。 |
 | OBL-068 | F-007 / OBL-027 后续范围 | F-012 | 后续编辑语法扩展与装饰的浅深/系统外观及主题切换不重解析验证；F-012d/e 已验收，F-012f 承接引用与分隔线外观；其他未来扩展仍保留同一开放责任，F-042 协作，不以单片关闭整体 | 实现中 | [F-012d](./iterations/F-012d-basic-list-presentation.md)、[F-012e](./iterations/F-012e-basic-code-fence-presentation.md)、[F-012f](./iterations/F-012f-basic-quote-rule-presentation.md)、[F-012l](./iterations/F-012l-basic-link-presentation.md)、[F-012m](./iterations/F-012m-basic-setext-heading-presentation.md)、[F-012n](./iterations/F-012n-basic-escape-entity-presentation.md)、[F-012o](./iterations/F-012o-basic-hard-break-presentation.md)、[F-012p](./iterations/F-012p-composed-syntax-regression.md) | 2026-09-27 用户总体验收本批切片范围通过；先前历史验收保持，完整余项仍开放，不关闭整项，证据见对应唯一迭代当前结论。2026-09-29 F-012l链接外观alpha.48本片于2026-09-29获用户总体验收通过；仅局部承接，不关闭完整余项。F-012m实现及本机自动验证完成，alpha.49构建及包内测试通过，已启动并做有限外观检查；2026-09-29用户总体验收alpha.49本片范围通过。 F-012n已实现、定向验证通过，全量复跑通过，alpha.50构建及包内测试通过，已启动并完成有限呈现/模式验证，2026-09-29用户总体验收alpha.50本片范围通过。 F-012o已验收（用户接受自动验收、免人工），仅局部承接，本机自动验证通过、alpha.51构建及包内测试通过，未启动窗口；用户于2026-09-29接受自动验收作为本片完成依据并免人工，本片已验收。 F-012p alpha.53于2026-09-29获用户总体验收通过，保留此前Agent代验及未实操边界，不补造逐项亲验，仅局部承接，完整余项开放。 |
 | OBL-069 | F-007 / OBL-028 后续范围 | F-013 | 未来源码高亮扩展的浅深/系统外观及主题切换不重解析验证；F-042 协作，随 F-013 后续消费者落实，不以基础颜色高亮验收替代完整外观接入；仅追踪既有责任，不新增范围 | 实现中 | [F-013b](./iterations/F-013b-safe-source-fallback.md)、[F-013c](./iterations/F-013c-commonmark-source-highlighting.md) | 2026-09-27 用户接受 F-013b 受托 Agent 核心路径代验结果，本片已验收；未来消费者仍开放，不补造未重验项。 F-013c 当前 CommonMark 颜色补齐 alpha.32 已于 2026-09-27 获用户总体验收通过；未来扩展外观继续开放。 |
-| OBL-070 | F-006 / OBL-042 后续范围 | F-013 | 源码安全降级、阅读前置模式返回等后续消费者的统一命令与上下文保护及键盘等价入口，随对应 F-013 / F-030 消费者到位回归；不以当前编辑/源码往返验收关闭；仅追踪既有责任，不新增范围 | 实现中 | [F-013b](./iterations/F-013b-safe-source-fallback.md) | 2026-09-27 用户接受 F-013b 受托 Agent 核心路径代验结果，本片已验收；未来消费者仍开放，不补造未重验项。 |
+| OBL-070 | F-006 / OBL-042 后续范围 | F-013 | 源码安全降级、阅读前置模式返回等后续消费者的统一命令与上下文保护及键盘等价入口，随对应 F-013 / F-030 消费者到位回归；不以当前编辑/源码往返验收关闭；仅追踪既有责任，不新增范围 | 实现中 | [F-013b](./iterations/F-013b-safe-source-fallback.md) | 2026-09-27 用户接受 F-013b 受托 Agent 核心路径代验结果，本片已验收；未来消费者仍开放，不补造未重验项。  2026-10-13新增阅读无EditorView故障注入pending证据见F-045g唯一；F-013d编号未占用、建议后续承接，尚未实施，clean重开恢复不关闭该责任。 |
 
 ### 已验收范围与后续责任关联（2026-09-25）
 

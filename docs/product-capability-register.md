@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## G-22 局部代验通过：F-013d（2026-10-14）
+
+[F-013d](iterations/F-013d-reading-fault-recovery.md)阅读无EditorView故障恢复已实现，源码1042项/29801断言/164文件、type/full lint/docs通过；独立Spec/Standards代码均0必要阻断，alpha134经最终独立两轴0必要阻断及主线正式批准，非离线有限片受托Agent代验通过，非用户亲验；Git待实际执行。仅承接已有编辑fault session的owner通知、守卫与恢复，不扩canonical故障或关闭dirty文档策略；完整G-22/F-013、OBL-070及offline-final不关闭。
+
 ## S-02 阅读有限片代验通过（alpha133）
 
 [F-045g](iterations/F-045g-gfm-table-reading.md)已实现受控阅读表格与固定canonical配置；alpha132有限代验和主题边框失败保留，修正后的alpha133经真实复验、独立最终两轴0剩余必要阻断及主线正式批准，非离线有限片受托Agent代验通过，非用户亲验；Git待执行。完整S-02三模式/E-26/F-054与父F-045仍开放。阅读无EditorView故障注入pending归F-013后续恢复责任；clean重开及编辑模式安全降级已实际恢复，不代表该缺口解决。

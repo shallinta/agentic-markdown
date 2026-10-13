@@ -324,6 +324,64 @@ export function createDocumentController(
     saveDrainRequired = false;
   };
   let canLeaveEditor = () => true;
+  // Fault ownership outlives EditorView (reading has no view). Only faults enter
+  // this pending set; ordinary edits neither scan tabs nor schedule recovery.
+  const faultOwners = new Map<
+    string,
+    { session: EditorFaultSession; notify: () => void }
+  >();
+  const pendingFaults = new Set<string>();
+  let recoveryQueued = false;
+  function scheduleFaultRecovery() {
+    if (metadataDisposed || recoveryQueued || !pendingFaults.size) return;
+    recoveryQueued = true;
+    queueMicrotask(() => {
+      recoveryQueued = false;
+      if (metadataDisposed) return;
+      for (const id of [...pendingFaults]) {
+        const owner = faultOwners.get(id);
+        const editor = editors.get(id);
+        if (!owner || editor?.state.field(editorFaultSession) !== owner.session) {
+          pendingFaults.delete(id);
+          continue;
+        }
+        if (!owner.session.recoveryFailed && !isSafeSource(editor.state))
+          controller.enterSafeSource(id, owner.session);
+        if (owner.session.recoveryFailed || controller.isSafeSource(id))
+          pendingFaults.delete(id);
+      }
+      // A blocked attempt waits for an explicit unblock event, never itself.
+    });
+  }
+  function releaseFaultOwner(id: string) {
+    const owner = faultOwners.get(id);
+    if (owner && owner.session.notify === owner.notify)
+      owner.session.notify = undefined;
+    faultOwners.delete(id);
+    pendingFaults.delete(id);
+  }
+  function bindFaultOwner(id: string) {
+    releaseFaultOwner(id);
+    const session = editors.get(id)!.state.field(editorFaultSession);
+    let announced = false;
+    const notify = () => {
+      if (
+        metadataDisposed ||
+        faultOwners.get(id)?.notify !== notify ||
+        editors.get(id)?.state.field(editorFaultSession) !== session ||
+        !session.fault || session.recoveryFailed || controller.isSafeSource(id)
+      ) return;
+      pendingFaults.add(id);
+      if (!announced) {
+        announced = true;
+        publish({ ...state });
+      }
+      scheduleFaultRecovery();
+    };
+    faultOwners.set(id, { session, notify });
+    session.notify = notify;
+    if (session.fault) queueMicrotask(notify);
+  }
   let sourceWrapping = true;
   let editorInputBlocked = false;
   function isDirty(documentId: string) {
@@ -394,6 +452,8 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
+    const recoveryUnblocked =
+      (state.busy && !next.busy) || (state.frozen && !next.frozen);
     const previousTabs = state.tabs;
     const previousId = state.snapshot?.documentId;
     const nextId = next.snapshot?.documentId;
@@ -424,6 +484,7 @@ export function createDocumentController(
     state = next;
     if (previousTabs !== next.tabs) observation.sync(next.tabs);
     listeners.forEach((listener) => listener());
+    if (recoveryUnblocked) scheduleFaultRecovery();
   }
   async function release(handle: string) {
     try {
@@ -537,6 +598,7 @@ export function createDocumentController(
         staleDocuments.delete(replaced.documentId);
         scrollPositions.delete(replaced.documentId);
         scrollSnapshots.delete(replaced.documentId);
+        releaseFaultOwner(replaced.documentId);
         editors.delete(replaced.documentId);
         search.delete(replaced.documentId);
         reading.delete(replaced.documentId);
@@ -575,6 +637,7 @@ export function createDocumentController(
           revision: 0,
         });
         onTiming?.("stateCreateMs", performance.now() - stateStart);
+        bindFaultOwner(active.documentId);
       }
       const tabs = state.tabs.some(
         (tab) =>
@@ -656,6 +719,7 @@ export function createDocumentController(
     staleDocuments.clear();
     scrollPositions.clear();
     scrollSnapshots.clear();
+    for (const id of faultOwners.keys()) releaseFaultOwner(id);
     editors.clear();
     search.clear();
     reading.clear();
@@ -707,6 +771,7 @@ export function createDocumentController(
     staleDocuments.delete(documentId);
     scrollPositions.delete(documentId);
     scrollSnapshots.delete(documentId);
+    releaseFaultOwner(documentId);
     editors.delete(documentId);
     search.delete(documentId);
     reading.delete(documentId);
@@ -881,6 +946,7 @@ export function createDocumentController(
     enterSafeSource: (documentId: string, session: EditorFaultSession) => {
       const editor = editors.get(documentId);
       if (
+        metadataDisposed ||
         editor?.state.field(editorFaultSession) !== session ||
         !session.fault ||
         session.recoveryFailed ||
@@ -1026,6 +1092,12 @@ export function createDocumentController(
     },
     setHistoryDispatch: (dispatch?: (transaction: Transaction) => void) => {
       historyDispatch = dispatch;
+      scheduleFaultRecovery();
+      return () => {
+        if (historyDispatch !== dispatch) return;
+        historyDispatch = undefined;
+        scheduleFaultRecovery();
+      };
     },
     setWrappingScheduler: (schedule?: () => void) => {
       scheduleWrapping = schedule;
@@ -1033,6 +1105,7 @@ export function createDocumentController(
     notifyInteraction: () => {
       controller.setSourceWrapping(sourceWrapping);
       publish({ ...state });
+      scheduleFaultRecovery();
     },
     getSnapshot: () => state,
     subscribe(this: void, listener: () => void) {
@@ -1127,6 +1200,7 @@ export function createDocumentController(
       ),
     dispose: () => {
       metadataDisposed = true;
+      for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();
       metadataEpoch++;
       observation.dispose();
@@ -1275,6 +1349,12 @@ export function createDocumentController(
     reportDiscardFailure,
     setInteractionCheck: (check: () => boolean) => {
       canLeaveEditor = check;
+      scheduleFaultRecovery();
+      return () => {
+        if (canLeaveEditor !== check) return;
+        canLeaveEditor = () => true;
+        scheduleFaultRecovery();
+      };
     },
     isEditorInputBlocked: () => editorInputBlocked,
     setEditorInputBlocked: (blocked: boolean) => {
@@ -1315,6 +1395,8 @@ export function createDocumentController(
         state: transaction.state,
         revision: editor.revision + (rawChanged ? 1 : 0),
       });
+      if (!isSafeSource(editor.state) && isSafeSource(transaction.state))
+        reading.delete(documentId);
       if (
         contentChanged ||
         isSafeSource(editor.state) !== isSafeSource(transaction.state) ||

@@ -66,8 +66,6 @@ export function MemoryEditor({
     view: EditorView;
     session: EditorFaultSession;
   } | null>(null);
-  const faultSessionRef = useRef<EditorFaultSession | null>(null);
-  const recoverRef = useRef<(() => void) | undefined>(undefined);
   const editor = controller.getEditor(documentId);
   const readOnly = !controller.canWrite(documentId);
   const inputBlocked = controller.isEditorInputBlocked();
@@ -77,12 +75,6 @@ export function MemoryEditor({
     const scrollTo = controller.getScrollSnapshot(documentId);
     const session = editor.state.field(editorFaultSession);
     let alive = true;
-    const recover = () => {
-      // Prefer the accepted controller state, not a potentially lagging view.
-      const currentSession = controller.getEditorFault(documentId);
-      if (alive && currentSession?.fault && !view.compositionStarted)
-        controller.enterSafeSource(documentId, currentSession);
-    };
     const view = new EditorView({
       state: editor.state,
       parent: container.current,
@@ -94,13 +86,11 @@ export function MemoryEditor({
         }
       },
     });
-    session.notify = recover;
-    faultSessionRef.current = session;
-    recoverRef.current = recover;
-    queueMicrotask(recover);
     viewRef.current = view;
     view.dom.dataset.documentEditor = documentId;
-    controller.setHistoryDispatch((transaction) => view.dispatch(transaction));
+    const releaseHistory = controller.setHistoryDispatch((transaction) =>
+      view.dispatch(transaction)
+    );
     controller.setScrollCapture(() => view.scrollSnapshot());
     view.contentDOM.setAttribute("aria-label", "Markdown 编辑区");
     if (!scrollTo)
@@ -284,7 +274,9 @@ export function MemoryEditor({
     const saveScroll = () =>
       controller.setScrollPosition(documentId, view.scrollDOM.scrollTop);
     view.scrollDOM.addEventListener("scroll", saveScroll);
-    controller.setInteractionCheck(() => !view.compositionStarted);
+    const releaseInteraction = controller.setInteractionCheck(
+      () => !view.compositionStarted
+    );
     controller.setSourceSelectionTarget({
       documentId,
       ready: () => currentView() && !view.compositionStarted && view.hasFocus,
@@ -460,7 +452,6 @@ export function MemoryEditor({
       setTimeout(() => {
         if (!currentView()) return;
         controller.notifyInteraction();
-        recover();
       }, 0);
     view.contentDOM.addEventListener("compositionstart", compositionChanged);
     view.contentDOM.addEventListener("compositionend", compositionChanged);
@@ -472,9 +463,6 @@ export function MemoryEditor({
       removeNativeFormat();
       removeListInput();
       removeIndentation();
-      if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
-      faultSessionRef.current = null;
-      recoverRef.current = undefined;
       captureViewport();
       controller.setViewportCapture(undefined);
       saveScroll();
@@ -483,8 +471,8 @@ export function MemoryEditor({
         view.state.doc,
         view.scrollSnapshot()
       );
-      controller.setInteractionCheck(() => true);
-      controller.setHistoryDispatch(undefined);
+      releaseInteraction();
+      releaseHistory();
       controller.setSourceSelectionTarget(undefined);
       controller.setListInputTarget(undefined);
       controller.setIndentationTarget(undefined);
@@ -516,12 +504,6 @@ export function MemoryEditor({
     const current = syncCurrentEditorState(view, controller, documentId);
     if (!current) return;
     const fault = current.field(editorFaultSession);
-    if (faultSessionRef.current !== fault) {
-      if (faultSessionRef.current) faultSessionRef.current.notify = undefined;
-      faultSessionRef.current = fault;
-      fault.notify = recoverRef.current;
-    }
-    if (fault.fault) queueMicrotask(() => fault.notify?.());
     if (view.state.facet(EditorState.readOnly) !== readOnly)
       view.dispatch({
         effects: writePermission.reconfigure(EditorState.readOnly.of(readOnly)),

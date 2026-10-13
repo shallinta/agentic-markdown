@@ -45,6 +45,7 @@ import {
   isOrdinarySourceSelection,
   routeSourceSelectionKey,
 } from "@/client/source-selection-input";
+import { registerTaskView } from "@/client/task-marker-input";
 import { deferWrappingUpdate } from "@/client/wrapping-measure";
 import { useCommands } from "@/commands";
 
@@ -128,6 +129,32 @@ export function MemoryEditor({
       alive &&
       viewRef.current === view &&
       controller.getSnapshot().snapshot?.documentId === documentId;
+    const removeTask = registerTaskView(
+      view,
+      () => {
+        const current = controller.getSnapshot();
+        return currentView() &&
+          controller.getEditor(documentId)?.state === view.state &&
+          view.state.field(editorFaultSession) === session &&
+          controller.getMode(documentId) === "editing" &&
+          !controller.isSafeSource(documentId) &&
+          !controller.getEditorFault(documentId)?.fault &&
+          controller.canWrite(documentId) &&
+          !current.frozen &&
+          !current.busy &&
+          !controller.isEditorInputBlocked() &&
+          !view.compositionStarted &&
+          !view.composing &&
+          !view.state.readOnly
+          ? view.state
+          : undefined;
+      },
+      (transaction) => {
+        view.dispatch(transaction);
+        return view.state === transaction.state;
+      },
+      controller.subscribe
+    );
     const removePairing = registerPairingView(
       view,
       () => {
@@ -439,6 +466,7 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      removeTask();
       removePairing();
       removeFormat();
       removeNativeFormat();

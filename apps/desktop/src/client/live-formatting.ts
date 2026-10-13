@@ -29,6 +29,9 @@ import {
   touchesProtected,
   unprotectedParts,
 } from "./long-line-protection";
+import { taskMarkers } from "./task-marker";
+import { invalidateTaskGesture } from "./task-marker-input";
+import { TaskMarkerWidget } from "./task-marker-widget";
 import {
   displayTextCharacter,
   TextCharacterWidget,
@@ -122,6 +125,17 @@ export function liveDecorations(
   };
   const seen = new Set<string>();
   const tree = syntaxTree(state);
+  const tasks = taskMarkers(state, visibleRanges).filter(
+    (marker) => !touched(state, marker.from, marker.to)
+  );
+  const tasksByStart = new Map(tasks.map((marker) => [marker.from, marker]));
+  for (const marker of tasks)
+    add(
+      Decoration.replace({ widget: new TaskMarkerWidget(state, marker) }).range(
+        marker.from,
+        marker.to
+      )
+    );
   const codeLines = new Set<number>();
   const listLines = new Set<number>();
   const quoteLines = new Map<
@@ -266,6 +280,8 @@ export function liveDecorations(
       to: visible.to,
       enter(ref) {
         const { name, from, to } = ref;
+        const task = tasksByStart.get(from);
+        if (task && to <= task.to) return false;
         if (
           ![
             "Document",
@@ -720,6 +736,8 @@ export const liveFormattingPlugin = ViewPlugin.fromClass(
       this.decorations = liveDecorations(view.state, view.visibleRanges);
     }
     update(update: ViewUpdate) {
+      if (update.state !== update.startState || update.viewportChanged)
+        invalidateTaskGesture(update.view);
       if (
         update.state.field(editorFaultSession, false)?.inject === "presentation"
       )
@@ -729,6 +747,7 @@ export const liveFormattingPlugin = ViewPlugin.fromClass(
         return;
       }
       if (
+        update.state !== update.startState ||
         update.docChanged ||
         update.selectionSet ||
         update.viewportChanged ||
@@ -875,6 +894,20 @@ const liveTheme = EditorView.baseTheme({
     textAlign: "center",
     color: "var(--muted-foreground)",
   },
+  ".cm-live-task": {
+    color: "var(--foreground)",
+    background: "transparent",
+    border: "none",
+    padding: "0 0.15em",
+    font: "inherit",
+    cursor: "pointer",
+    textIndent: "0",
+  },
+  ".cm-live-task:focus-visible": {
+    outline: "2px solid var(--primary)",
+    borderRadius: "2px",
+  },
+  ".cm-live-task[aria-disabled=true]": { opacity: "0.55", cursor: "default" },
   ".cm-live-heading": { fontWeight: "700", lineHeight: "1.5" },
   ".cm-live-h1": { fontSize: "1.75em" },
   ".cm-live-h2": { fontSize: "1.5em" },

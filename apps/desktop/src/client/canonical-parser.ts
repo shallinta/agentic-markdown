@@ -1,9 +1,17 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
+import { gfmTaskListItemFromMarkdown } from "mdast-util-gfm-task-list-item";
 import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
 
-const extensions = [gfmStrikethrough({ singleTilde: false })];
-const mdastExtensions = [gfmStrikethroughFromMarkdown()];
+const extensions = [
+  gfmStrikethrough({ singleTilde: false }),
+  gfmTaskListItem(),
+];
+const mdastExtensions = [
+  gfmStrikethroughFromMarkdown(),
+  gfmTaskListItemFromMarkdown(),
+];
 
 /** Internal mdast, raw UTF-16 positions; never HTML or a public plugin schema. */
 export function parseCanonicalMarkdown(text: string) {

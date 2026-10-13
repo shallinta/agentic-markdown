@@ -110,7 +110,16 @@ export function commonmarkContent(
           </ul>
         );
       case "listItem":
-        return <li key={key}>{children()}</li>;
+        return (
+          <li key={key}>
+            {typeof node.checked === "boolean" ? (
+              <span className="reading-task-status">
+                {node.checked ? "☑ 已完成：" : "☐ 未完成："}
+              </span>
+            ) : null}
+            {children()}
+          </li>
+        );
       case "emphasis":
         return <em key={key}>{children()}</em>;
       case "strong":
@@ -281,6 +290,7 @@ const classes: Record<string, readonly string[]> = {
   ],
   hr: ["my-5 w-full border-t"],
   span: [
+    "reading-task-status",
     "underline decoration-dotted",
     "text-muted-foreground",
     "reading-image",

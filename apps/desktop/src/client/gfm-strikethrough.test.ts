@@ -103,7 +103,12 @@ test("fixed double tilde profile reconciles old run failures, escapes and exact 
 test("wire rejects missing or obsolete grammar before interpreting numeric node ids", () => {
   const wire = encodeMarkdownTree(markdownGrammar.parse("~~x~~"));
   expect(wire.config).toBe(MARKDOWN_GRAMMAR);
-  for (const config of [undefined, "commonmark-core-1", "future"]) {
+  for (const config of [
+    undefined,
+    "commonmark-core-1",
+    "commonmark-gfm-double-strike-1",
+    "future",
+  ]) {
     const old = structuredClone(wire);
     Object.assign(old, { config });
     expect(() => decodeMarkdownTree(old)).toThrow("grammar");

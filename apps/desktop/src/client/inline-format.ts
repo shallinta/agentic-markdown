@@ -4,6 +4,7 @@ import type { SyntaxNode } from "@lezer/common";
 
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
 import { markdownGrammar } from "./markdown-grammar";
+import { touchesTaskMarker } from "./task-marker";
 
 export type InlineFormat = "bold" | "italic" | "code";
 export type InlineFormatIntent = "toggle" | "wrap-only";
@@ -47,6 +48,7 @@ function computeInlineFormat(
     plans: Plan[] = [];
   const protectedSpans = state.field(longLineProtection);
   for (const range of state.selection.ranges) {
+    if (touchesTaskMarker(state, range.from, range.to)) return undefined;
     const line = state.doc.lineAt(range.from);
     if (
       range.to > line.to ||

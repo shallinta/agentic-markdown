@@ -10,6 +10,33 @@ import {
   isControlledReadingElement,
 } from "./commonmark-content";
 
+test("task reading status is inert and raw HTML does not gain input powers", () => {
+  const raw =
+    '- [x] **done**\n- [ ] <input type="checkbox" onclick="bad()"> [bad](javascript:bad)';
+  const html = renderToStaticMarkup(
+    commonmarkContent(parseCanonicalMarkdown(raw), raw)
+  );
+  expect(html).toContain("☑ 已完成：");
+  expect(html).toContain("☐ 未完成：");
+  expect(html).toContain("<strong>done</strong>");
+  expect(html).not.toMatch(/<(?:input|button|script|a)(?:\s|>)/);
+  expect(html).not.toMatch(/<[^>]*\s(?:href|onclick|tabindex)=/);
+  expect(
+    isControlledReadingElement({
+      localName: "span",
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      attributes: [{ name: "class", value: "reading-task-status" }],
+    })
+  ).toBe(true);
+  expect(
+    isControlledReadingElement({
+      localName: "input",
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      attributes: [],
+    })
+  ).toBe(false);
+});
+
 test("fixed delete node renders controlled del without widening raw HTML or URL powers", () => {
   const raw =
     "~~中文 **bold** [link](javascript:alert)~~\n\n`~~code~~`\n\n~single~\n\n~~~long~~~";

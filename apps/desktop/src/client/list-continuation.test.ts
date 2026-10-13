@@ -175,9 +175,9 @@ test("empty-item deltas merge with insertions without duplicate numeric writes",
   expect(run("1. ab\n2. c", [[4], [5]]).out).toBe("1. a\n2. b\n3. \n4. c");
   expect(run("\ufeff- ", [[3]]).out).toBe("\ufeff");
 });
-test("nested code and task syntax do not invoke the outer list", () => {
+test("nested code remains ordinary while explicit task syntax continues unchecked", () => {
   expect(run("- a\n  ```\n  code\n  ```", [[16]]).out).not.toContain("\n- ");
-  expect(run("- [x] a", [[7]]).out).toBe("- [x] a\n");
+  expect(run("- [x] a", [[7]]).out).toBe("- [x] a\n- [ ] ");
   const large = "paragraph\n\n".repeat(50000) + "- tail";
   expect(run(large, [[large.length]]).out).toBe(large + "\n");
   const long = "- " + "a".repeat(20000);

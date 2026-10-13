@@ -1,4 +1,4 @@
-import { insertNewlineAndIndent } from "@codemirror/commands";
+import { insertNewlineAndIndent, isolateHistory } from "@codemirror/commands";
 import {
   getIndentation,
   IndentContext,
@@ -14,6 +14,8 @@ import {
 import type { SyntaxNode } from "@lezer/common";
 
 import { longLineProtection } from "./long-line-protection";
+import { taskContinuationContext } from "./task-continuation-context";
+import { paragraphTaskPrefix } from "./task-marker";
 
 interface Item {
   node: SyntaxNode;
@@ -45,6 +47,7 @@ interface Plan {
   item?: Item;
   create?: boolean;
   loose?: boolean;
+  task?: boolean;
   marker?: string;
 }
 
@@ -85,6 +88,30 @@ export function listContinuationTransaction(
   soft: boolean,
   excluded = new Set<number>()
 ) {
+  const context = taskContinuationContext(state);
+  const ordinary = () => {
+    let transaction: Transaction | undefined;
+    insertNewlineAndIndent({
+      state,
+      dispatch: (tx) => {
+        transaction = tx;
+      },
+    });
+    return transaction ?? state.update({});
+  };
+  if (context === "unknown") return ordinary();
+  const taskMode = context === "task";
+  if (
+    taskMode &&
+    state.selection.ranges.some(
+      (range) =>
+        !range.empty &&
+        state.doc.lineAt(range.from).number !==
+          state.doc.lineAt(range.to).number
+    )
+  )
+    return ordinary();
+  let failed = false;
   const tree = syntaxTree(state);
   const protectedSpans = state.field(longLineProtection);
   const groups = new Map<number, Group>();
@@ -152,36 +179,56 @@ export function listContinuationTransaction(
   };
   const plans: Plan[] = state.selection.ranges.map((range) => {
     const fallback = plain(range.from, range.to);
-    if (range.to > tree.length) return fallback;
+    const fail = () => {
+      if (taskMode) failed = true;
+      return fallback;
+    };
+    if (range.to > tree.length) return fail();
     const resolved = tree.resolveInner(range.from, -1);
     for (
       let inner: SyntaxNode | null = resolved;
       inner && inner.name !== "ListItem";
       inner = inner.parent
     )
-      if (["FencedCode", "CodeBlock", "HTMLBlock"].includes(inner.name))
+      if (["FencedCode", "CodeBlock", "HTMLBlock"].includes(inner.name)) {
+        for (
+          let container = inner.parent;
+          container;
+          container = container.parent
+        )
+          if (
+            container.name === "ListItem" &&
+            paragraphTaskPrefix(state, container.getChild("Paragraph"))
+          )
+            return fail();
         return fallback;
+      }
     const node =
       ancestor(resolved) ?? ancestor(tree.resolveInner(range.from, 1));
-    if (!node?.parent || range.to > node.to) return fallback;
+    if (!node?.parent) return fallback;
+    if (range.to > node.to) return fail();
     const group = getGroup(node.parent);
     const item = group?.byStart.get(node.from);
-    if (!group || !item || range.from < item.content) return fallback;
+    if (!group || !item || range.from < item.content) return fail();
     const line = state.doc.lineAt(range.from);
-    // Tasks belong to the later GFM consumer, not this CommonMark slice.
+    const task = paragraphTaskPrefix(state, node.getChild("Paragraph"));
+    if (task && (range.from < task.to || line.from !== item.from))
+      return fail();
+    const bodyStart = task ? task.to : item.content;
     if (
+      !task &&
       /^\[[ xX]\](?:\s|$)/.test(
         state.sliceDoc(item.content, state.doc.lineAt(item.content).to)
       )
     )
-      return fallback;
+      return fail();
     const id = group.node.from;
     const contentColumn = countColumn(
       item.prefix.replace(/^\ufeff/, "") + item.marker + item.gap,
       state.tabSize
     );
     // A selection spanning structural lines is ordinary replacement, not a rewrite.
-    if (state.doc.lineAt(range.to).number !== line.number) return fallback;
+    if (state.doc.lineAt(range.to).number !== line.number) return fail();
     if (soft)
       return {
         group: id,
@@ -195,7 +242,7 @@ export function listContinuationTransaction(
     const empty =
       range.empty &&
       line.from === item.from &&
-      !state.sliceDoc(item.content, line.to).trim() &&
+      !state.sliceDoc(bodyStart, line.to).trim() &&
       node.to <= line.to;
     if (empty) {
       const parentItemNode = ancestor(group.node.parent);
@@ -205,7 +252,7 @@ export function listContinuationTransaction(
       if (parentItemNode?.parent) {
         parentGroup = getGroup(parentItemNode.parent);
         parentItem = parentGroup?.byStart.get(parentItemNode.from);
-        if (!parentGroup || !parentItem) return fallback;
+        if (!parentGroup || !parentItem) return fail();
         insert = parentItem.prefix + parentItem.marker + parentItem.gap;
       }
       group.delta.set(node.from, (group.delta.get(node.from) ?? 0) - 1);
@@ -232,10 +279,12 @@ export function listContinuationTransaction(
       group: id,
       item,
       create: true,
+      task: !!task,
       loose: group.loose,
       edit: { from: range.from, to: range.to, insert: "" },
     };
   });
+  if (failed) return ordinary();
   if (plans.every((plan) => plan.group === undefined)) {
     let transaction: Transaction | undefined;
     insertNewlineAndIndent({
@@ -255,6 +304,7 @@ export function listContinuationTransaction(
         if (range.from < group.node.to && range.to > group.node.from)
           invalid.add(id);
     }
+  if (invalid.size && taskMode) return ordinary();
   if (invalid.size)
     return listContinuationTransaction(
       state,
@@ -356,7 +406,8 @@ export function listContinuationTransaction(
       (isLift ? "" : state.lineBreak + (plan.loose ? state.lineBreak : "")) +
       prefix +
       marker +
-      item.gap;
+      item.gap +
+      (plan.task ? "[ ] " : "");
     if (item.number !== undefined) {
       const base =
         String(itemNumbers.get(item.node.from) ?? item.number).padStart(
@@ -427,7 +478,8 @@ export function listContinuationTransaction(
           : state.lineBreak + (plan.loose ? state.lineBreak : "")) +
         prefix +
         plan.marker +
-        item.gap;
+        item.gap +
+        (plan.task ? "[ ] " : "");
     }
   const indentation: Edit[] = [];
   for (const [from, entry] of lineShifts) {
@@ -443,6 +495,7 @@ export function listContinuationTransaction(
       group: [...entry.groups][0],
     });
   }
+  if (invalid.size && taskMode) return ordinary();
   if (invalid.size)
     return listContinuationTransaction(
       state,
@@ -472,6 +525,7 @@ export function listContinuationTransaction(
       for (const edit of [all[i], all[i - 1]])
         if (edit.group !== undefined) invalid.add(edit.group);
   if (invalid.size) {
+    if (taskMode) return ordinary();
     // A lift affects both child and parent; retire its dependency group together.
     for (const plan of plans)
       if (invalid.has(plan.group ?? -1) || invalid.has(plan.edit.group ?? -1)) {
@@ -484,15 +538,21 @@ export function listContinuationTransaction(
       new Set([...excluded, ...invalid])
     );
   }
-  let index=0;
-  const input=state.changeByRange(()=>{
-    const edit=edits[index++];
-    return {changes:edit,range:EditorSelection.cursor(edit.from+(edit.caret??edit.insert.length))};
+  let index = 0;
+  const input = state.changeByRange(() => {
+    const edit = edits[index++];
+    return {
+      changes: edit,
+      range: EditorSelection.cursor(
+        edit.from + (edit.caret ?? edit.insert.length)
+      ),
+    };
   });
-  const adjustment=state.changes(additions).map(input.changes);
+  const adjustment = state.changes(additions).map(input.changes);
   return state.update({
-    changes:input.changes.compose(adjustment),
-    selection:input.selection.map(adjustment),
+    changes: input.changes.compose(adjustment),
+    selection: input.selection.map(adjustment),
+    annotations: taskMode ? isolateHistory.of("full") : undefined,
     userEvent: "input",
     scrollIntoView: true,
   });

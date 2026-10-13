@@ -5,6 +5,7 @@ import type { SyntaxNode } from "@lezer/common";
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
 import { markdownGrammar } from "./markdown-grammar";
 import type { IndentationPlan } from "./source-indentation";
+import { paragraphTaskPrefix } from "./task-marker";
 
 export const LIST_INDENT_UNAVAILABLE =
   "当前列表结构或混合选区暂不支持此缩进，未修改内容";
@@ -198,6 +199,8 @@ export function planListIndentation(
       let hasTask = false;
       walk(item.node, (node) => {
         if (node.name !== "ListItem") return;
+        if (paragraphTaskPrefix(state, node.getChild("Paragraph")))
+          hasTask = true;
         const marker = node.getChild("ListMark");
         if (
           marker &&

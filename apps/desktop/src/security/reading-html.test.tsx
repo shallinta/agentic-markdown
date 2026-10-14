@@ -70,7 +70,12 @@ test("Canonical flow qualification keeps inline and multiline quote raw rather t
   expect(html).toContain('title="行内 HTML 保留原文"');
   expect(html).toContain("HTML 块范围需要规范化，本片保留原文");
   expect(html).toContain("&gt; 二&lt;/p&gt;");
-  expect(html).toContain("```unknown");
+  expect(html).toContain('<span class="reading-code-language">unknown</span>');
+  expect(html).toContain(
+    '<pre class="reading-code-body"><code>&lt;em&gt;围栏原文&lt;/em&gt;</code></pre>'
+  );
+  expect(html).not.toContain("<em>围栏原文</em>");
+  expect(html).not.toMatch(/<(?:script|iframe)\b|\son\w+=/i);
   expect(source).toContain("> 二</p>");
 });
 test("document HTML source budget falls back locally while preserving following Markdown", () => {

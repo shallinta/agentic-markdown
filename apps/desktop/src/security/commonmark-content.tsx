@@ -3,6 +3,8 @@ import { createElement, type ReactNode } from "react";
 import { CALLOUT_PRESENTATION, readCallout } from "../client/callout-extension";
 import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
+import { isOwnedReadingCode } from "../client/reading-code-ownership";
+import { ReadingCode } from "../components/reading-code";
 import { ReadingHtmlBlock } from "../components/reading-html-block";
 import { ReadingImage } from "../components/reading-image";
 import { MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS } from "../shared/local-images";
@@ -27,7 +29,8 @@ const cellClasses = {
 export function commonmarkContent(
   tree: Tree,
   source: string,
-  images?: LocalImages
+  images?: LocalImages,
+  codeCurrent?: () => boolean
 ): ReactNode {
   let work = 0;
   let definitionWork = 0;
@@ -309,15 +312,17 @@ export function commonmarkContent(
           </code>
         );
       case "code":
+        // Entry charges the wrapper; reserve its five fixed generated elements.
+        if (work + 5 > 100000 || depth + 2 > 128)
+          throw Error("Presentation budget");
+        work += 5;
         return (
-          <div key={key} className="bg-muted my-4 rounded p-3">
-            <p className="text-muted-foreground text-xs">
-              代码块原文（完整代码呈现待后续接入）
-            </p>
-            <pre className="font-mono break-words whitespace-pre-wrap">
-              {raw(node)}
-            </pre>
-          </div>
+          <ReadingCode
+            key={key}
+            value={node.value}
+            language={node.lang}
+            current={codeCurrent}
+          />
         );
       default:
         return (
@@ -421,6 +426,7 @@ export function isControlledReadingElement(element: {
   localName: string;
   attributes: Iterable<{ name: string; value: string }>;
 }): boolean {
+  if (isCodeElement(element)) return true;
   if (
     ["table", "thead", "tbody", "tr", "th", "td"].includes(element.localName)
   ) {
@@ -514,6 +520,78 @@ export function auditReadingContent(root: Element): {
   elements: number;
 } {
   const elements = [...root.querySelectorAll("*")];
-  const safe = elements.every(isControlledReadingElement);
+  const safe = elements.every((element) => {
+    if (!isControlledReadingElement(element)) return false;
+    if (
+      element.localName === "button" ||
+      element.className.startsWith("reading-code")
+    ) {
+      const owner =
+        element.className === "reading-code" ? element : element.parentElement;
+      return !!owner && isOwnedReadingCode(owner) && validCodeStructure(owner);
+    }
+    return true;
+  });
   return { safe, elements: elements.length };
+}
+
+function isCodeElement(element: {
+  namespaceURI: string | null;
+  localName: string;
+  attributes: Iterable<{ name: string; value: string }>;
+}): boolean {
+  if (element.namespaceURI !== "http://www.w3.org/1999/xhtml") return false;
+  const attributes = new Map(
+    [...element.attributes].map(({ name, value }) => [name, value])
+  );
+  const kind = attributes.get("class");
+  const fixed: Record<
+    string,
+    { tag: string; attributes: Record<string, string> }
+  > = {
+    "reading-code": { tag: "div", attributes: {} },
+    "reading-code-language": { tag: "span", attributes: {} },
+    "reading-code-body": { tag: "pre", attributes: {} },
+    "reading-code-status": {
+      tag: "p",
+      attributes: { role: "status", "aria-live": "polite" },
+    },
+    "reading-code-copy": {
+      tag: "button",
+      attributes: { type: "button", "aria-label": "复制代码正文" },
+    },
+  };
+  const rule = kind && fixed[kind];
+  if (!rule || element.localName !== rule.tag) return false;
+  if (kind === "reading-code-copy" && attributes.get("disabled") === "")
+    attributes.delete("disabled");
+  return (
+    attributes.size === 1 + Object.keys(rule.attributes).length &&
+    Object.entries(rule.attributes).every(
+      ([name, value]) => attributes.get(name) === value
+    )
+  );
+}
+
+function validCodeStructure(root: Element): boolean {
+  const children = [...root.children];
+  if (children.length !== 4 || !children.every(isCodeElement)) return false;
+  if (
+    children.map((child) => child.className).join(" ") !==
+    "reading-code-language reading-code-copy reading-code-body reading-code-status"
+  )
+    return false;
+  if (
+    children[0].childElementCount ||
+    children[1].childElementCount ||
+    children[3].childElementCount
+  )
+    return false;
+  const pre = children[2];
+  return (
+    pre.childElementCount === 1 &&
+    pre.firstElementChild?.localName === "code" &&
+    pre.firstElementChild.attributes.length === 0 &&
+    pre.firstElementChild.childElementCount === 0
+  );
 }

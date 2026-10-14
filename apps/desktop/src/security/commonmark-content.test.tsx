@@ -46,7 +46,7 @@ test("reading literal autolinks preserve complete mixed text in inert spans", ()
   expect(html.match(/☑ 已完成：/g)).toHaveLength(1);
 });
 
-test("autolinks do not grant HTML or code an active reading path", () => {
+test("autolinks do not grant HTML or code links; code has only its own copy control", () => {
   const raw =
     '<span>www.example.com</span>\n\n<div onclick="bad()">https://example.com</div>\n\n`www.example.com`\n\n```\na@example.com\n```\n\njavascript:alert(1) file:///tmp/a data:text/html,x';
   const html = renderToStaticMarkup(
@@ -61,10 +61,16 @@ test("autolinks do not grant HTML or code an active reading path", () => {
   expect(html).toContain(
     'class="bg-muted rounded px-1 font-mono">www.example.com</code>'
   );
-  expect(html).toContain("```\na@example.com\n```");
+  expect(html).toContain(
+    '<pre class="reading-code-body"><code>a@example.com</code></pre>'
+  );
+  expect(html.match(/<button\b/g)).toHaveLength(1);
+  expect(html).toContain(
+    'type="button" class="reading-code-copy" aria-label="复制代码正文" disabled=""'
+  );
   expect(html).not.toContain("阅读结构无法安全呈现");
   expect(html).not.toMatch(
-    /<(?:a|input|button|script|iframe)\b|<[^>]*\s(?:href|src|on\w+|tabindex)=/i
+    /<(?:a|input|script|iframe)\b|<[^>]*\s(?:href|src|on\w+|tabindex)=/i
   );
 });
 
@@ -105,7 +111,8 @@ test("fixed delete node renders controlled del without widening raw HTML or URL 
   expect(html).toContain("<code");
   expect(html).toContain("~~code~~");
   expect(html).toContain("~single~");
-  expect(html).toContain("~~~long~~~");
+  expect(html).toContain('<span class="reading-code-language">long~~~</span>');
+  expect(html).toContain('<pre class="reading-code-body"><code></code></pre>');
   expect(html).not.toMatch(/\s(?:href|src|on\w+)=/);
   const hostile =
     '~~<img src="https://example.invalid/x" onerror="bad()"> <script>bad()</script>~~';

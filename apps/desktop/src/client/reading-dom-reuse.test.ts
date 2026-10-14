@@ -1,10 +1,49 @@
 import { expect, test } from "bun:test";
 
+import { retainReadingCode } from "./reading-code-ownership";
 import {
   captureReadingNodes,
   createReadingDomReuseAudit,
   sameReadingNodes,
 } from "./reading-dom-reuse";
+
+test("code status excludes only owned transient text, not body or control identity", () => {
+  const owner = { closest: () => null } as unknown as Element;
+  const status = {
+    className: "reading-code-status",
+    parentElement: owner,
+    closest: () => null,
+  };
+  const body = {
+    nodeType: 3,
+    parentElement: { className: "", closest: () => null },
+  };
+  const feedback = { nodeType: 3, parentElement: status };
+  let children: unknown[] = [owner, status, body, feedback];
+  const root = {
+    ownerDocument: {
+      createTreeWalker: (
+        _root: unknown,
+        _mask: number,
+        filter: { acceptNode(node: unknown): number }
+      ) => {
+        const items = children.filter((node) => filter.acceptNode(node) === 1);
+        let at = 0;
+        return { nextNode: () => items[at++] ?? null };
+      },
+    },
+  } as unknown as HTMLElement;
+  const beforeOwnership = captureReadingNodes(root, true);
+  const release = retainReadingCode(owner);
+  const before = captureReadingNodes(root, true);
+  expect(beforeOwnership.length).toBe(before.length + 1);
+  children = [owner, status, body, { nodeType: 3, parentElement: status }];
+  expect(sameReadingNodes(before, captureReadingNodes(root, true))).toBe(true);
+  children = [owner, status, { ...body }, feedback];
+  expect(sameReadingNodes(before, captureReadingNodes(root, true))).toBe(false);
+  release();
+  expect(captureReadingNodes(root, true).length).toBe(beforeOwnership.length);
+});
 
 test("image diagnostic excludes only resource descendants and still detects shell replacement", () => {
   const outer = { parentElement: { closest: () => null } };
@@ -12,8 +51,14 @@ test("image diagnostic excludes only resource descendants and still detects shel
   let children = [outer, inside];
   const root = {
     ownerDocument: {
-      createTreeWalker: (_root: unknown, _mask: number, filter: { acceptNode(node: unknown): number } | null) => {
-        const accepted = children.filter(node => !filter || filter.acceptNode(node) === 1);
+      createTreeWalker: (
+        _root: unknown,
+        _mask: number,
+        filter: { acceptNode(node: unknown): number } | null
+      ) => {
+        const accepted = children.filter(
+          (node) => !filter || filter.acceptNode(node) === 1
+        );
         let index = 0;
         return { nextNode: () => accepted[index++] ?? null };
       },
@@ -23,11 +68,17 @@ test("image diagnostic excludes only resource descendants and still detects shel
   expect(baseline.length).toBe(2);
   expect(captureReadingNodes(root).length).toBe(3);
   children = [outer, { parentElement: { closest: () => outer } }];
-  expect(sameReadingNodes(baseline, captureReadingNodes(root, true))).toBe(true);
+  expect(sameReadingNodes(baseline, captureReadingNodes(root, true))).toBe(
+    true
+  );
   children = [{ parentElement: { closest: () => null } }, inside];
-  expect(sameReadingNodes(baseline, captureReadingNodes(root, true))).toBe(false);
+  expect(sameReadingNodes(baseline, captureReadingNodes(root, true))).toBe(
+    false
+  );
   children = [outer];
-  expect(sameReadingNodes(captureReadingNodes(root), captureReadingNodes(root, true))).toBe(true);
+  expect(
+    sameReadingNodes(captureReadingNodes(root), captureReadingNodes(root, true))
+  ).toBe(true);
 });
 
 test("DOM reuse comparison checks every reference, count and order, not matching text", () => {

@@ -11,6 +11,7 @@ import type { createDocumentCanonical } from "@/client/document-canonical";
 import type { createDocumentController } from "@/client/documents";
 import { createLocalImages, type ImageTransport } from "@/client/local-images";
 import { rawText } from "@/client/raw-buffer";
+import { readingCodeCurrent } from "@/client/reading-code-current";
 import {
   captureReadingNodes,
   createReadingDomReuseAudit,
@@ -91,9 +92,17 @@ export function ReadingView({
   const nodes = useMemo(
     () =>
       ready && state.status === "ready"
-        ? commonmarkContent(state.result.tree, raw, images)
+        ? commonmarkContent(state.result.tree, raw, images, () =>
+            readingCodeCurrent(
+              controller,
+              canonical,
+              documentId,
+              session,
+              state.result
+            )
+          )
         : null,
-    [ready, state, raw, images]
+    [ready, state, raw, images, controller, documentId, session, canonical]
   );
   useEffect(() => {
     if (!frozen) void canonical.request();
@@ -219,7 +228,7 @@ export function ReadingView({
             state.status === "ready" &&
             ` · 解析请求 ${state.result.requestId}`}
           {ready &&
-            ` · 主题 DOM 复用（稳定正文，排除异步图片子树）：${themeDomAudit}`}
+            ` · 主题 DOM 复用（稳定正文，排除异步图片子树与自有复制反馈文本）：${themeDomAudit}`}
         </p>
       )}
       <div

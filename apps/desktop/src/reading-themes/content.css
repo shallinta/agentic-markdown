@@ -40,6 +40,51 @@
 [data-reading-theme] pre code {
   font-size: inherit;
 }
+[data-reading-theme] .reading-code {
+  position: relative;
+  margin-block: var(--reading-paragraph);
+  padding: 0.75em;
+  border: 1px solid var(--reading-border);
+  border-radius: 0.4em;
+  background: var(--reading-muted);
+}
+[data-reading-theme] .reading-code-language {
+  display: block;
+  padding-inline-end: 4em;
+  color: var(--reading-secondary);
+  font-size: 0.8em;
+  overflow-wrap: anywhere;
+}
+[data-reading-theme] .reading-code-copy {
+  position: absolute;
+  inset-block-start: 0.5em;
+  inset-inline-end: 0.5em;
+  opacity: 0;
+  padding: 0.15em 0.5em;
+  border: 1px solid var(--reading-border);
+  border-radius: 0.25em;
+  color: var(--reading-foreground);
+  background: var(--reading-background);
+}
+[data-reading-theme] .reading-code:hover .reading-code-copy,
+[data-reading-theme] .reading-code:focus-within .reading-code-copy {
+  opacity: 1;
+}
+[data-reading-theme] .reading-code-copy:focus-visible {
+  outline: 2px solid var(--reading-foreground);
+  outline-offset: 2px;
+}
+[data-reading-theme] .reading-code-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-block: 0.5em 0;
+}
+[data-reading-theme] .reading-code-status {
+  min-height: 1.5em;
+  margin: 0;
+  font-size: 0.8em;
+  color: var(--reading-secondary);
+}
 [data-reading-theme] :is(.bg-muted, blockquote) {
   background: var(--reading-muted);
 }

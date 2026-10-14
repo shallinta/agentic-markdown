@@ -1,3 +1,5 @@
+import { isOwnedReadingCode } from "./reading-code-ownership";
+
 /** Diagnostic only: include text nodes as well as elements, in tree order. */
 export function captureReadingNodes(
   root: HTMLElement,
@@ -8,8 +10,17 @@ export function captureReadingNodes(
     0xffffffff,
     excludeImageDescendants
       ? {
-          acceptNode: (node) =>
-            node.parentElement?.closest(".reading-image") ? 2 : 1,
+          acceptNode: (node) => {
+            const parent = node.parentElement;
+            const transientCodeStatus =
+              node.nodeType === 3 &&
+              parent?.className === "reading-code-status" &&
+              !!parent.parentElement &&
+              isOwnedReadingCode(parent.parentElement);
+            return parent?.closest(".reading-image") || transientCodeStatus
+              ? 2
+              : 1;
+          },
         }
       : null
   );

@@ -41,6 +41,7 @@ import { analyzeTextFidelity } from "@/shared/text-fidelity";
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
 import { ReadingView } from "./reading-view";
+import { RecentFiles, recentFailureText } from "./recent-files";
 import { TextFidelityDetails } from "./text-fidelity-details";
 import { WorkspaceTree } from "./workspace-tree";
 
@@ -50,6 +51,17 @@ const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
     : Promise.reject(new Error("RPC unavailable"));
 
 export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
+  useEffect(() => {
+    const report = ({
+      reason,
+    }: {
+      reason: import("@/shared/recent-files").RecentFailure;
+    }) => toast.error(recentFailureText(reason));
+    electrobun.rpc?.addMessageListener("recentFilesFailed", report);
+    return () => {
+      electrobun.rpc?.removeMessageListener("recentFilesFailed", report);
+    };
+  }, []);
   const [controller] = useState(() => {
     const rpc = electrobun.rpc;
     const unavailable = () => Promise.reject(new Error("RPC unavailable"));
@@ -445,8 +457,8 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       <div>
         <h1 className="text-xl font-semibold">
           {snapshot?.fileName ??
-            (workspace.folderState.roots.length
-              ? "文件夹工作区"
+            (workspace.folderState.roots.length || state.entries.length
+              ? "文件工作区"
               : "欢迎使用 Agentic Markdown")}
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
@@ -461,6 +473,15 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
             : "打开本地 Markdown 文件或加入文件夹。侧栏单击选择，双击或按 Enter 打开文档。"}
         </p>
       </div>
+      {!snapshot &&
+        !workspace.folderState.roots.length &&
+        !state.entries.length &&
+        !state.tabs.length && (
+          <RecentFiles
+            controller={controller}
+            disabled={state.busy || state.frozen}
+          />
+        )}
       {editor &&
         snapshot &&
         !controller.isSafeSource(snapshot.documentId) &&

@@ -1114,11 +1114,12 @@ export function createDocumentController(
         listeners.delete(listener);
       };
     },
-    select: () => {
+    select: () => controller.selectWith(),
+    selectWith: (open?: (request: DocumentRequest) => Promise<unknown>) => {
       if (!state.frozen && canLeaveEditor()) {
         if (saving.size || saveDrainRequired)
-          return protect([], () => load(true));
-        return load(true);
+          return protect([], () => load(true, undefined, open));
+        return load(true, undefined, open);
       }
     },
     canSelectFolder: () =>

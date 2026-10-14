@@ -23,9 +23,26 @@ import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
-      getSourceWrapping: { params: Record<string, never>; response: import("./source-wrapping").SourceWrappingResponse };
-      setSourceWrapping: { params: { enabled: boolean }; response: import("./source-wrapping").SourceWrappingResponse };
-      observeDocument: { params: import("./document-observation").ObservationRequest; response: { ok: boolean; requestId: string } };
+      recentFiles: {
+        params: import("./recent-files").RecentRequest;
+        response: import("./recent-files").RecentResponse;
+      };
+      reopenRecentFile: {
+        params: DocumentRequest & { id: string };
+        response: DocumentResponse;
+      };
+      getSourceWrapping: {
+        params: Record<string, never>;
+        response: import("./source-wrapping").SourceWrappingResponse;
+      };
+      setSourceWrapping: {
+        params: { enabled: boolean };
+        response: import("./source-wrapping").SourceWrappingResponse;
+      };
+      observeDocument: {
+        params: import("./document-observation").ObservationRequest;
+        response: { ok: boolean; requestId: string };
+      };
       getSidebarLayout: {
         params: Record<string, never>;
         response: {
@@ -111,6 +128,7 @@ export interface DesktopRPCType {
     messages: {
       finishDiscard: { requestId: string };
       documentCapabilityChanged: { handle: string };
+      recentFilesFailed: { reason: import("./recent-files").RecentFailure };
       documentExternalChanged: import("./document-observation").ObservationEvent;
       updateStatusChanged: UpdateStatusChangedPayload;
       executeCommand: Command;

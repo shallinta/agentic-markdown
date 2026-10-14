@@ -43,7 +43,7 @@ export interface NativeFileDependencies {
 }
 
 export interface NativeFileCapabilities {
-  pickFile(): Promise<string | null>;
+  pickFile(startingFolder?: string): Promise<string | null>;
   pickDirectory(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   revealPath(path: string): Promise<void>;
@@ -121,9 +121,9 @@ export function createNativeFileCapabilities(
   }
 
   return {
-    pickFile: () =>
+    pickFile: (startingFolder) =>
       pickPath({
-        startingFolder: "~/",
+        startingFolder: startingFolder ?? "~/",
         canChooseFiles: true,
         canChooseDirectory: false,
         allowsMultipleSelection: false,

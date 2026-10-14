@@ -13,6 +13,8 @@ import { createLocaleController } from "../i18n/controller";
 import { createLocaleStateStore } from "../i18n/state";
 import { logEvent } from "../logging";
 import { createNativeFileCapabilities } from "../native-files";
+import { createRecentFiles } from "../recent-files";
+import { createRecentReopener } from "../reopen-recent-file";
 import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
@@ -32,9 +34,13 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   let browserWindow: BrowserWindow | null = null;
   let rpc: MainWindowRPC | null = null;
   const nativeFiles = createNativeFileCapabilities();
+  const recent = createRecentFiles(getSettingsDir(), (reason) =>
+    rpc?.send.recentFilesFailed({ reason })
+  );
   const documents = createDocumentService({
-    onExternalChanged: event => rpc?.send.documentExternalChanged(event),
-    pickFile: () => nativeFiles.pickFile(),
+    onExternalChanged: (event) => rpc?.send.documentExternalChanged(event),
+    pickFile: (startingFolder) => nativeFiles.pickFile(startingFolder),
+    onStandaloneSelected: (metadata) => recent.recordSelected(metadata),
     onCapabilityChanged: (handle) =>
       rpc?.send.documentCapabilityChanged({ handle }),
   });
@@ -62,7 +68,12 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   });
   const lifecycle = createLifecycleGuard({
     guard: (reason, execute) =>
-      documents.withWriteBarrier(() => guard(reason, execute)),
+      documents.withWriteBarrier(() =>
+        guard(reason, async (requestId) => {
+          await recent.drain();
+          return execute(requestId);
+        })
+      ),
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.
     stop: async () => {
@@ -97,6 +108,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       stopPromise ??= stopDesktopApp([
         ["workspace", () => workspace.dispose()],
         ["documents", () => documents.dispose()],
+        ["recent files", () => recent.drain()],
         ["window state", () => mainWindow?.flushState()],
         ["updater", () => updater.stop()],
       ]);
@@ -132,6 +144,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
             : Promise.reject(Error("WINDOW_NOT_READY")),
       },
       documents,
+      recentFiles: {
+        request: (input) => recent.request(input),
+        reopen: createRecentReopener(documents, (id) => recent.find(id)),
+      },
       workspace,
       executeCommand: (command) => executeCommand(command, getMainWindow()),
       getMainWindow,

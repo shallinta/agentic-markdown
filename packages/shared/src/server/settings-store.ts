@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -13,8 +14,14 @@ export function isSettingsObject(
 /** One process owns settings. Readers and writers serialize by absolute path. */
 export function createSettingsStore<T>(
   path: string,
-  normalize: (value: unknown) => T
+  normalize: (value: unknown) => T,
+  options?: { maxBytes: number; validateData: (value: unknown) => boolean }
 ) {
+  if (
+    options &&
+    (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 1)
+  )
+    throw Error("SETTINGS_INVALID_LIMIT");
   const statePath = resolve(path);
   const enqueue = <R>(operation: () => Promise<R>): Promise<R> => {
     const pending = (queues.get(statePath) ?? Promise.resolve())
@@ -32,7 +39,38 @@ export function createSettingsStore<T>(
   const inspect = async () => {
     let original: string | undefined;
     try {
-      original = await readFile(statePath, "utf8");
+      if (options) {
+        const file = await open(
+          statePath,
+          constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW
+        );
+        try {
+          if (!(await file.stat()).isFile()) throw Error("SETTINGS_CORRUPT");
+          const buffer = Buffer.alloc(options.maxBytes + 1);
+          let length = 0;
+          while (length < buffer.length) {
+            const next = await file.read(
+              buffer,
+              length,
+              buffer.length - length,
+              null
+            );
+            if (!next.bytesRead) break;
+            length += next.bytesRead;
+          }
+          if (length > options.maxBytes) throw Error("SETTINGS_TOO_LARGE");
+          try {
+            original = new TextDecoder("utf-8", {
+              fatal: true,
+              ignoreBOM: true,
+            }).decode(buffer.subarray(0, length));
+          } catch {
+            throw Error("SETTINGS_CORRUPT");
+          }
+        } finally {
+          await file.close();
+        }
+      } else original = await readFile(statePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -47,9 +85,16 @@ export function createSettingsStore<T>(
       object !== undefined &&
       Object.prototype.hasOwnProperty.call(object, "version");
     const unsupported = versioned && object.version !== 1;
-    const valid = versioned
+    let valid = versioned
       ? !unsupported && isSettingsObject(object.data)
       : object !== undefined;
+    if (
+      valid &&
+      options &&
+      (!options.validateData(versioned ? object?.data : object) ||
+        (versioned && Object.keys(object).sort().join() !== "data,version"))
+    )
+      valid = false;
     return {
       original,
       unsupported,
@@ -76,7 +121,14 @@ export function createSettingsStore<T>(
   };
 
   const commit = async (data: T, original: string | undefined) => {
+    if (options && !options.validateData(data)) throw Error("SETTINGS_CORRUPT");
     const contents = `${JSON.stringify({ version: 1, data }, null, 2)}\n`;
+    if (
+      options &&
+      (!options.validateData(data) ||
+        Buffer.byteLength(contents) > options.maxBytes)
+    )
+      throw Error("SETTINGS_CORRUPT");
     if (contents === original) return;
     await mkdir(dirname(statePath), { recursive: true });
     // A failed backup never replaces the authoritative file. Keep exact old bytes.
@@ -85,13 +137,50 @@ export function createSettingsStore<T>(
   };
 
   return {
+    inspectState: () =>
+      enqueue(
+        async (): Promise<
+          | { available: true; data: T }
+          | {
+              available: false;
+              reason: "future" | "corrupt" | "too-large" | "io";
+            }
+        > => {
+          try {
+            const state = await inspect();
+            if (state.unsupported)
+              return { available: false, reason: "future" };
+            if (state.original !== undefined && !state.valid)
+              return { available: false, reason: "corrupt" };
+            if (state.legacy || state.original === undefined)
+              await commit(state.data, state.original);
+            return { available: true, data: state.data };
+          } catch (error) {
+            return {
+              available: false,
+              reason:
+                error instanceof Error && error.message === "SETTINGS_TOO_LARGE"
+                  ? "too-large"
+                  : error instanceof Error &&
+                      error.message === "SETTINGS_CORRUPT"
+                    ? "corrupt"
+                    : "io",
+            };
+          }
+        }
+      ),
     load: () =>
       enqueue(async () => {
         const state = await inspect();
+        if (options && state.unsupported)
+          throw Error("SETTINGS_VERSION_UNSUPPORTED");
+        if (options && state.original !== undefined && !state.valid)
+          throw Error("SETTINGS_CORRUPT");
         if (state.legacy || state.original === undefined) {
           // Migration is opportunistic: readable preferences remain usable on
           // a read-only disk. Explicit updates still report persistence failure.
-          await commit(state.data, state.original).catch(() => undefined);
+          if (options) await commit(state.data, state.original);
+          else await commit(state.data, state.original).catch(() => undefined);
         }
         return state.data;
       }),
@@ -101,7 +190,10 @@ export function createSettingsStore<T>(
         if (state.unsupported) throw new Error("SETTINGS_VERSION_UNSUPPORTED");
         if (state.original !== undefined && !state.valid)
           throw new Error("SETTINGS_CORRUPT");
-        await commit(normalize(update(state.data)), state.original);
+        const next = update(state.data);
+        if (options && !options.validateData(next))
+          throw Error("SETTINGS_CORRUPT");
+        await commit(normalize(next), state.original);
       }),
   };
 }

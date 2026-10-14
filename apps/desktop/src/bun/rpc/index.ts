@@ -18,6 +18,14 @@ export type MainWindowRPC = ReturnType<
 >;
 
 export interface MainWindowRPCDependencies {
+  recentFiles?: {
+    request(
+      input: unknown
+    ): Promise<import("../../shared/recent-files").RecentResponse>;
+    reopen(
+      input: unknown
+    ): Promise<import("../../shared/documents").DocumentResponse>;
+  };
   sourceWrapping?: {
     get(): Promise<boolean>;
     set(enabled: boolean): Promise<void>;
@@ -38,6 +46,7 @@ const MAX_REQUEST_TIME_MS = 5 * 60_000 + 10_000;
 
 export function createMainWindowRPC({
   documents,
+  recentFiles,
   sidebar,
   sourceWrapping,
   workspace,
@@ -57,6 +66,22 @@ export function createMainWindowRPC({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        recentFiles: (input) =>
+          recentFiles
+            ? recentFiles.request(input)
+            : Promise.resolve({
+                available: false as const,
+                reason: "io" as const,
+              }),
+        reopenRecentFile: (input) =>
+          recentFiles
+            ? recentFiles.reopen(input)
+            : Promise.resolve({
+                protocolVersion: 1 as const,
+                requestId: input.requestId,
+                ok: false as const,
+                error: "INVALID_REQUEST" as const,
+              }),
         getSourceWrapping: async (request) => {
           if (
             !sourceWrapping ||

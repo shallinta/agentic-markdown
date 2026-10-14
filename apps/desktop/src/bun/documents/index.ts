@@ -62,6 +62,7 @@ export interface DocumentScope {
   release?(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  select(request: unknown, prepareStartingFolder?: (check: () => void) => Promise<string | undefined>): Promise<DocumentResponse>;
   acceptRefreshCandidate(request: unknown): Promise<RefreshAcceptanceResult>;
   queryRefreshAcceptance(request: unknown): RefreshAcceptanceResult;
   readRefreshCandidate(request: unknown): Promise<RefreshResult>;
@@ -165,8 +166,10 @@ export function createDocumentService({
   probe = observeFile,
   onTiming,
   imageReader,
+  onStandaloneSelected,
 }: {
-  pickFile: () => Promise<string | null>;
+  pickFile: (startingFolder?: string) => Promise<string | null>;
+  onStandaloneSelected?: (metadata: Readonly<{ path: string; accessedAt: number }>) => void | Promise<void>;
   authorize?: typeof authorizeSingleFile;
   verify?: typeof verifySingleFileAuthorization;
   write?: (input: AtomicSaveInput) => Promise<AtomicSaveResult>;
@@ -297,6 +300,7 @@ export function createDocumentService({
   let saving = 0;
   const acceptance = createRefreshAcceptanceLedger();
   let writeBarrier = false;
+  let selectBarrierGeneration = 0;
   const uncertain = new Set<string>();
   const savingRequests = new Set<string>();
   const result = (
@@ -955,6 +959,7 @@ export function createDocumentService({
     async withWriteBarrier(action) {
       if (writeBarrier || disposed) return false;
       writeBarrier = true;
+      selectBarrierGeneration++;
       try {
         await saveTail;
         await acceptance.settled();
@@ -964,7 +969,7 @@ export function createDocumentService({
         candidates.wake();
       }
     },
-    async select(request) {
+    async select(request, prepareStartingFolder) {
       if (!validate(request, false)) return failure("", "INVALID_REQUEST");
       if (saving || writeBarrier || acceptance.busy()) return failure(request.requestId, "BUSY");
       if (disposed) return failure(request.requestId, "INVALID_HANDLE");
@@ -973,10 +978,18 @@ export function createDocumentService({
       const { task, promise } = taskFor(request.requestId);
       selecting = task;
       const generation = epoch;
+      const selectedBarrier = selectBarrierGeneration;
       void (async () => {
         try {
+          const checkSelection = () => { checkTask(task, generation); if (writeBarrier || selectedBarrier !== selectBarrierGeneration) throw new DocumentPathError("BUSY"); };
+          const startingFolder = prepareStartingFolder ? await prepareStartingFolder(checkSelection) : undefined;
+          checkTask(task, generation);
+          if (writeBarrier || selectedBarrier !== selectBarrierGeneration) {
+            task.resolve(failure(request.requestId, "BUSY"));
+            return;
+          }
           const pickerStart = onTiming ? performance.now() : 0;
-          const selected = await pickFile();
+          const selected = await pickFile(startingFolder);
           onTiming?.("pickerMs", performance.now() - pickerStart);
           checkTask(task, generation);
           if (selected === null) {
@@ -999,10 +1012,15 @@ export function createDocumentService({
               };
               checkTask(task, generation);
               const next = await snapshot(candidate, generation, task);
+              if (writeBarrier || selectedBarrier !== selectBarrierGeneration) return failure(request.requestId, "BUSY");
               commit(candidate, next, task, generation);
               // The renderer adopts the new grant before releasing its old one.
               // A committed selection can still arrive after it was cancelled.
               grants.set(candidate.handle, candidate);
+              try {
+                const recorded = onStandaloneSelected?.(Object.freeze({ path: candidate.path, accessedAt: Date.now() }));
+                if (recorded) void recorded.catch(() => undefined);
+              } catch { /* Ancillary metadata must not turn a successful open into failure. */ }
               watchGrant(candidate);
               return result(request.requestId, next);
             } catch (error) {

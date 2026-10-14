@@ -4,6 +4,11 @@
   --reading-muted: #273343;
   --reading-secondary: #b3c1d2;
   --reading-border: #63758b;
+  --reading-callout-note: #83baff;
+  --reading-callout-tip: #79d69c;
+  --reading-callout-important: #cea0ff;
+  --reading-callout-warning: #ecc56d;
+  --reading-callout-caution: #ff9c9c;
   --reading-font: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
   --reading-size: 17px;
   --reading-leading: 1.7;

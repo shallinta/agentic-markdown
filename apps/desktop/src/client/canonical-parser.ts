@@ -8,6 +8,8 @@ import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
 
+import { annotateCallouts } from "./callout-extension";
+
 const extensions = [
   gfmStrikethrough({ singleTilde: false }),
   gfmTaskListItem(),
@@ -38,5 +40,6 @@ export function parseCanonicalMarkdown(text: string) {
         for (const child of node.children) pending.push(child);
     }
   }
+  annotateCallouts(tree, text);
   return tree;
 }

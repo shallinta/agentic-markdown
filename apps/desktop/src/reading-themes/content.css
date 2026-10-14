@@ -53,6 +53,32 @@
   background: #426da8;
   color: #fff;
 }
+[data-reading-theme] blockquote.reading-callout {
+  border-inline-start: 4px solid var(--callout-color);
+  padding: 0.25em 1em;
+  margin-block: 1em;
+  color: var(--reading-foreground);
+  background: var(--reading-muted);
+}
+[data-reading-theme] .reading-callout-note {
+  --callout-color: var(--reading-callout-note);
+}
+[data-reading-theme] .reading-callout-tip {
+  --callout-color: var(--reading-callout-tip);
+}
+[data-reading-theme] .reading-callout-important {
+  --callout-color: var(--reading-callout-important);
+}
+[data-reading-theme] .reading-callout-warning {
+  --callout-color: var(--reading-callout-warning);
+}
+[data-reading-theme] .reading-callout-caution {
+  --callout-color: var(--reading-callout-caution);
+}
+[data-reading-theme] .reading-callout-title {
+  color: var(--callout-color);
+  font-weight: 600;
+}
 [data-reading-theme] .reading-image {
   display: inline-block;
   max-width: 100%;

@@ -83,7 +83,9 @@ test("old, missing and nested old table grammar cannot enter the current decoder
     new BomAwareParser().parse("a | b\n--- | ---")
   );
   expect(wire.config).toBe(MARKDOWN_GRAMMAR);
-  expect(CANONICAL_PROFILE).toBe("commonmark-gfm-strike-task-autolink-table-4");
+  expect(CANONICAL_PROFILE).toBe(
+    "commonmark-gfm-strike-task-autolink-table-callout-5"
+  );
   for (const config of [
     undefined,
     "commonmark-gfm-strike-task-projection-2",

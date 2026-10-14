@@ -267,6 +267,7 @@ test("worker protocol rejects unsupported config, unsafe revision and >1 MiB UTF
   for (const patch of [
     { config: "other" },
     { config: "commonmark-gfm-strike-task-autolink-3" },
+    { config: "commonmark-gfm-strike-task-autolink-table-4" },
     { revision: -1 },
     { requestId: NaN },
     { text: "中".repeat(400000) },

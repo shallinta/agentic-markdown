@@ -2,4 +2,4 @@
 export const MARKDOWN_GRAMMAR = "commonmark-gfm-strike-task-projection-table-3";
 
 /** Reading-only canonical capabilities; not the editor's Lezer grammar. */
-export const CANONICAL_PROFILE = "commonmark-gfm-strike-task-autolink-table-4";
+export const CANONICAL_PROFILE = "commonmark-gfm-strike-task-autolink-table-callout-5";

@@ -4,6 +4,11 @@
   --reading-muted: #ece6d9;
   --reading-secondary: #665e50;
   --reading-border: #c5baa6;
+  --reading-callout-note: #245a92;
+  --reading-callout-tip: #237044;
+  --reading-callout-important: #7941a3;
+  --reading-callout-warning: #865b08;
+  --reading-callout-caution: #ac3636;
   --reading-font: Georgia, "Songti SC", serif;
   --reading-size: 18px;
   --reading-leading: 1.85;

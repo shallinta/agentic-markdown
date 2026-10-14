@@ -1,5 +1,6 @@
 import { createElement, type ReactNode } from "react";
 
+import { CALLOUT_PRESENTATION, readCallout } from "../client/callout-extension";
 import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
 import { ReadingHtmlBlock } from "../components/reading-html-block";
@@ -146,7 +147,52 @@ export function commonmarkContent(
           { key, className: "my-4 text-xl font-semibold leading-relaxed" },
           children()
         );
-      case "blockquote":
+      case "blockquote": {
+        const callout = depth === 0 ? readCallout(node, source) : undefined;
+        if (callout) {
+          // Extra title and icon are charged before creating their elements.
+          if (work + 2 > 100000 || depth + 2 > 128)
+            throw Error("Presentation budget");
+          work += 2;
+          if (node.children.length > 100000 - work)
+            throw Error("Presentation budget");
+          const presentation = CALLOUT_PRESENTATION[callout.type];
+          return (
+            <blockquote key={key} className={presentation.className}>
+              <p className="reading-callout-title">
+                <span className="reading-callout-icon">
+                  {presentation.icon}
+                </span>{" "}
+                {presentation.title}
+              </p>
+              {node.children.map((child, index) => {
+                if (index !== 0 || child.type !== "paragraph")
+                  return render(child, depth + 1, index, true);
+                const first = child.children[0];
+                if (first?.type !== "text") throw Error("Callout prefix");
+                // Presentation only: do not clone/rewrite AST nodes or their positions.
+                const value = first.value.slice(callout.textPrefix);
+                if (!value && child.children.length === 1) return null;
+                if (
+                  work + 2 + child.children.length - 1 > 100000 ||
+                  depth + 2 > 128
+                )
+                  throw Error("Presentation budget");
+                work += 2;
+                return (
+                  <p key={index} className="my-3 leading-7">
+                    {value}
+                    {child.children.map((inline, inlineIndex) =>
+                      inlineIndex === 0
+                        ? null
+                        : render(inline, depth + 2, inlineIndex)
+                    )}
+                  </p>
+                );
+              })}
+            </blockquote>
+          );
+        }
         return (
           <blockquote
             key={key}
@@ -155,6 +201,7 @@ export function commonmarkContent(
             {children()}
           </blockquote>
         );
+      }
       case "list":
         return node.ordered ? (
           <ol
@@ -333,14 +380,21 @@ const tags = new Set([
   "img",
 ]);
 const classes: Record<string, readonly string[]> = {
-  p: ["my-3 leading-7", "text-muted-foreground text-xs"],
+  p: [
+    "my-3 leading-7",
+    "text-muted-foreground text-xs",
+    "reading-callout-title",
+  ],
   h1: ["my-4 text-xl font-semibold leading-relaxed"],
   h2: ["my-4 text-xl font-semibold leading-relaxed"],
   h3: ["my-4 text-xl font-semibold leading-relaxed"],
   h4: ["my-4 text-xl font-semibold leading-relaxed"],
   h5: ["my-4 text-xl font-semibold leading-relaxed"],
   h6: ["my-4 text-xl font-semibold leading-relaxed"],
-  blockquote: ["bg-muted/50 text-muted-foreground my-4 border-l-4 px-4 py-1"],
+  blockquote: [
+    "bg-muted/50 text-muted-foreground my-4 border-l-4 px-4 py-1",
+    ...Object.values(CALLOUT_PRESENTATION).map((value) => value.className),
+  ],
   ol: ["my-3 list-decimal pl-7"],
   ul: ["my-3 list-disc pl-7"],
   code: [
@@ -350,6 +404,7 @@ const classes: Record<string, readonly string[]> = {
   ],
   hr: ["my-5 w-full border-t"],
   span: [
+    "reading-callout-icon",
     "reading-task-status",
     "underline decoration-dotted",
     "text-muted-foreground",

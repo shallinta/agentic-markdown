@@ -101,8 +101,12 @@ test("canonical autolinks keep official transform semantics without inventing po
 });
 
 test("canonical recognizes literal autolinks while editor grammar excludes them", () => {
-  expect(MARKDOWN_GRAMMAR).toBe("commonmark-gfm-strike-task-projection-table-3");
-  expect(CANONICAL_PROFILE).toBe("commonmark-gfm-strike-task-autolink-table-4");
+  expect(MARKDOWN_GRAMMAR).toBe(
+    "commonmark-gfm-strike-task-projection-table-3"
+  );
+  expect(CANONICAL_PROFILE).toBe(
+    "commonmark-gfm-strike-task-autolink-table-callout-5"
+  );
   const raw =
     "WWW.EXAMPLE.COM HTTPS://EXAMPLE.COM mailto:a@example.com xmpp:a@example.com/resource";
   const editorNodes: string[] = [];

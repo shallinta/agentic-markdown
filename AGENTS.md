@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## F-051a alpha139本片正式通过（2026-10-14）
+
+主线确认非离线有限片受托Agent代验通过，非用户亲验。源码与包内Bun运行仓库均1068/30944/169，type/full lint/docs/lock通过；Spec最终31/475与Standards38/634均0必要阻断。alpha139/hash in649ia1kq8i实际WK五型paper/ink、DOM审计及主题复用、普通引用回退、原文模式/只读/safe和正常退出证据见唯一F051a；误触注释已undo，未保存。两fixture SHA原样/readonly644、exec13591退出0，无运行现场。Git待执行，完整F051/S20编辑消费者、自然IME/性能未实测与offline-final保持开放；下方获批生产为历史。
+
+## F-051a 窄生产获批（2026-10-14）
+
+第二轮隔离56+3例主线/两独立轴复跑无差异，首轮EOL及缺text位置失败保留。主线全文读取唯一六条方案与补充约束，批准typed canonical/阅读接入，非空判定仅Worker一次、reader固定前缀核验不重扫、字符预算覆盖现1MiB范围且与节点分离。保守顶层五型子集，CAUTION“注意”，原树仅data不改raw/位置；编辑消费者及父项仍开放。尚未实现/构建/真实验收，不得Git；下一代码包alpha139由主线递增，专项及offline边界不变。
+
+## F-051a 隔离解析验证获批（2026-10-14）
+
+主线已全文读取唯一方案的8条精确候选，独立Spec确认0必要隔离实验阻断，批准临时纯PoC核对原始marker、公开mdast位置/value与展示投影；尚不批准生产或SSR。仅root直接引用、五型大写独立行与非空正文的保守候选，不称完整GitHub等价；转义/实体/定义与嵌套均须反例，空代码/HTML等可见正文判据及EOL行为如实报告。CAUTION固定标题取“注意”。无新依赖/版本/build/UI/Git，完整父与专项/离线边界保持。
+
+## F-045h Git收据与F-051a仅规划（2026-10-14）
+
+F-045h已实际提交推送`175363f295158d3c170d20ffe6e23f82efd0e748`，主线ls-remote核远端main一致、核验时工作树clean。连续授权选择F-051a GitHub Alert canonical/阅读有限片，唯一`docs/iterations/F-051a-github-alert-reading.md`仅最小方案与本地公开接口调查，待主线全文/独立审核；未实验/生产/安装依赖/版本构建。整体CalloutExtension、五类型与未知普通引用，编辑源码保raw及完整父开放，不称GFM正式标准；专项/F028c/offline边界不变。下方F045h待Git为历史。
+
 ## F-045h alpha138本片正式通过（2026-10-14）
 
 主线正式批准F-045h alpha138非离线有限片受托Agent代验通过，**非用户亲验**。最终独立Spec0必要阻断、Standards14项/938断言通过；源码及包内Bun运行仓库各1056/30750/167，type/full lint/docs通过。Git待主线实际执行，未预写提交或推送。

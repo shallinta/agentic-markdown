@@ -52,6 +52,7 @@ export interface DocumentTransport {
   waitForDocumentSaves?(request: DocumentRequest): Promise<unknown>;
   cancelDocument(request: DocumentRequest): Promise<unknown>;
   selectDocument(request: DocumentRequest): Promise<unknown>;
+  revealDocument?(request: DocumentHandleRequest): Promise<unknown>;
   readDocument(request: DocumentHandleRequest): Promise<unknown>;
   releaseDocument(request: DocumentHandleRequest): Promise<unknown>;
 }
@@ -447,11 +448,16 @@ export function createDocumentController(
       void transport.cancelDocument(previous).catch(() => undefined);
   }
   const listeners = new Set<() => void>();
+  let revealPending: { requestId: string; handle: string } | null = null;
   const request = (): DocumentRequest => ({
     protocolVersion: 1,
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
+    if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
+      const old = revealPending; revealPending = null;
+      void transport.cancelDocument({ protocolVersion: 1, requestId: old.requestId }).catch(() => undefined);
+    }
     const recoveryUnblocked =
       (state.busy && !next.busy) || (state.frozen && !next.frozen);
     const previousTabs = state.tabs;
@@ -1108,6 +1114,25 @@ export function createDocumentController(
       scheduleFaultRecovery();
     },
     getSnapshot: () => state,
+    canRevealDocument: () => !!state.snapshot && !["missing", "replaced"].includes(observation.status(state.snapshot.documentId) ?? "") && !state.busy && !state.frozen && !saving.size && !revealPending && canLeaveEditor(),
+    async revealCurrentDocument() {
+      if (!controller.canRevealDocument() || !state.snapshot) return;
+      const target = { ...request(), handle: state.snapshot.handle };
+      revealPending = target;
+      publish({ ...state });
+      try {
+        const response = await transport.revealDocument?.(target);
+        if (revealPending !== target || state.snapshot?.handle !== target.handle || !canLeaveEditor()) return;
+        if (!isDocumentResponse(response, target.requestId) || !response.ok)
+          publish({ ...state, error: "无法发起 Finder 定位，请确认文件仍存在且授权有效。" });
+      } catch {
+        if (revealPending === target && state.snapshot?.handle === target.handle && canLeaveEditor())
+          publish({ ...state, error: "Finder 定位请求失败，请重试。" });
+      } finally {
+        if (revealPending === target) revealPending = null;
+        publish({ ...state });
+      }
+    },
     subscribe(this: void, listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -1200,6 +1225,10 @@ export function createDocumentController(
         }
       ),
     dispose: () => {
+      if (revealPending) {
+        void transport.cancelDocument({ protocolVersion: 1, requestId: revealPending.requestId }).catch(() => undefined);
+        revealPending = null;
+      }
       metadataDisposed = true;
       for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();

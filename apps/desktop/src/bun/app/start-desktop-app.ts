@@ -38,6 +38,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     rpc?.send.recentFilesFailed({ reason })
   );
   const documents = createDocumentService({
+    revealPath: (path) => Utils.showItemInFolder(path),
     onExternalChanged: (event) => rpc?.send.documentExternalChanged(event),
     pickFile: (startingFolder) => nativeFiles.pickFile(startingFolder),
     onStandaloneSelected: (metadata) => recent.recordSelected(metadata),

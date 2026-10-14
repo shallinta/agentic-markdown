@@ -86,6 +86,7 @@ export function CommandPalette({
       type === "listSoftBreak" ||
       type === "indentSource" ||
       type === "dedentSource" ||
+      type === "revealDocument" ||
       type === "reloadDocument" ||
       type === "saveDocument" ||
       type === "clearDocument" ||

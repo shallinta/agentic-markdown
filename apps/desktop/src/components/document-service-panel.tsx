@@ -82,6 +82,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         rpc ? rpc.request.cancelDocument(request) : unavailable(),
       selectDocument: (request) =>
         rpc ? rpc.request.selectDocument(request) : unavailable(),
+      revealDocument: (request) => rpc ? rpc.request.revealDocument(request) : unavailable(),
       readDocument: (request) =>
         rpc ? rpc.request.readDocument(request) : unavailable(),
       saveDocument: (request) =>
@@ -170,6 +171,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         controller.toggleSourceMode();
       },
       selectDocument: controller.select,
+      revealDocument: () => controller.revealCurrentDocument(),
       selectFolder: () => controller.runWorkspaceAction(folders.select),
       setRootHidden: ({ root, showHidden }) =>
         controller.runWorkspaceAction(() =>
@@ -242,6 +244,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       setRootHidden: () =>
         controller.canSelectFolder() && !folders.getSnapshot().busy,
       saveDocument: controller.canSave,
+      revealDocument: controller.canRevealDocument,
       undoDocument: controller.canUndo,
       redoDocument: controller.canRedo,
       addSourceCursorAbove: controller.canRunSourceSelection,
@@ -566,6 +569,9 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           onClick={() => executeCommand({ type: "selectDocument", args: {} })}
         >
           {PRODUCT_COMMANDS.selectDocument?.label}
+        </button>
+        <button className={buttonClass} disabled={!isCommandEnabled("revealDocument")} onClick={() => executeCommand({ type: "revealDocument", args: {} })}>
+          在 Finder 中显示当前文档
         </button>
         <button
           className={buttonClass}

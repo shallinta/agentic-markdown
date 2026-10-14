@@ -28,6 +28,7 @@ export interface CheckForUpdatesCommand extends GenericCommand<"checkForUpdates"
 export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdateAndRestart"> {}
 
 export type Command =
+  | GenericCommand<"revealDocument">
   | GenericCommand<"openSourceSearch">
   | GenericCommand<"closeSourceSearch">
   | GenericCommand<"nextSourceMatch">
@@ -208,6 +209,7 @@ export const COMMAND_META: Record<
   indentSource: { target: "webview", palette: false },
   dedentSource: { target: "webview", palette: false },
   selectDocument: { target: "webview" },
+  revealDocument: { target: "webview" },
   selectFolder: { target: "webview" },
   setRootHidden: { target: "webview", palette: false },
   saveDocument: { target: "webview" },
@@ -267,6 +269,7 @@ export const PRODUCT_COMMANDS: Partial<
     shortcut: "⌘O",
   },
   selectFolder: { label: "加入文件夹" },
+  revealDocument: { label: "在 Finder 中显示当前文档" },
   setRootHidden: { label: "显示隐藏文件" },
   reloadDocument: { label: "重新读取" },
   saveDocument: {

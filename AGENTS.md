@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## F-060a alpha146 非离线有限片正式通过（2026-10-15）
+
+真实WK/Finder选中、三模式/dirty/readonly/键盘/浅深/missing禁用及正常退出已核，最终独立Spec/Standards各0必要阻断，主线批准受托Agent代验通过，非用户亲验。源码1291/32645、包内Bun仓库1291/32646，两样本SHA原样644、PID44605退出；限制详见唯一迭代，完整父/OBL060/offline保持。Git待实际执行；前轮F029a本地c62d123尚未推送，SSH banner timeout仍间隔重试，不改网络、不冒称远端同步。下方待实施记录均为历史。
+
+## F-060a 有限生产方案获准（2026-10-15）
+
+主线全文阅读唯一F060a与实际2.0.1公开SDK，采用Utils.showItemInFolder无成功toast（void仅请求提交），不新原生桥/FFI/命令。两轴澄清已写入：捕获不可变grant identityKey/fingerprint与scope、屏障代数，已加载同步native函数前最后guard，单在途任务真实取消/release/dispose。批准窄实现与实现后测试，尚未构建验收；下一代码包alpha146。F029a已本地提交c62d123，SSH连接关闭/banner timeout仍间隔重试，不声称已推送。完整父/专项/F028c/offline不变。
+
 ## F-029a alpha145 非离线有限片正式通过（2026-10-15）
 
 最终独立Spec/Standards均0必要阻断，主线批准受托Agent代验通过，非用户亲验。最近独立文件元数据与重授权/管理闭环、源码1286/32612与包内仓库1286/32613、真实WK及限制详见唯一F029a。两正文原样/644，测试进程正常退出。完整父/OBL033/040、最小窄高度未测和offline-final保留；Git待实际执行，下方待复核是历史。

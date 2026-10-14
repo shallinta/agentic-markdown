@@ -14,6 +14,10 @@ import { CALLOUT_SUMMARY_CONFIG } from "@/client/callout-summary-protocol";
 import { registerPairingView } from "@/client/contextual-pairing";
 import type { createDocumentController } from "@/client/documents";
 import {
+  registerEditingImages,
+  observeEditingImages,
+} from "@/client/editing-images";
+import {
   editorFaultSession,
   type EditorFaultSession,
 } from "@/client/editor-fault";
@@ -34,6 +38,7 @@ import {
 } from "@/client/inline-format-input";
 import { listContinuationTransaction } from "@/client/list-continuation";
 import { registerListInputView, routeListInput } from "@/client/list-input";
+import type { ImageTransport } from "@/client/local-images";
 import { editorOffset, rawOffset, rawText } from "@/client/raw-buffer";
 import { planSourceIndentation } from "@/client/source-indentation";
 import {
@@ -57,13 +62,22 @@ export function MemoryEditor({
   controller,
   documentId,
   frozen,
+  readLocalImage,
+  assetEpoch,
 }: {
   controller: ReturnType<typeof createDocumentController>;
   documentId: string;
   frozen: boolean;
+  readLocalImage?: ImageTransport;
+  assetEpoch?: string;
 }) {
+  const imageInputs = useRef({ readLocalImage, assetEpoch });
+  imageInputs.current = { readLocalImage, assetEpoch };
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  useLayoutEffect(() => {
+    if (viewRef.current) observeEditingImages(viewRef.current);
+  });
   const [mountAttempt, setMountAttempt] = useState(0);
   const [searchSlot, setSearchSlot] = useState<{
     view: EditorView;
@@ -132,6 +146,48 @@ export function MemoryEditor({
       viewRef.current === view &&
       controller.getSnapshot().snapshot?.documentId === documentId;
     const calloutToast = `callout-${documentId}`;
+    const imageToast = `images-${documentId}`;
+    const removeImages = registerEditingImages(
+      view,
+      {
+        current: () => {
+          const snapshot = controller.getSnapshot(),
+            current = controller.getEditor(documentId);
+          if (
+            !imageInputs.current.readLocalImage ||
+            !currentView() ||
+            current?.state !== view.state ||
+            current.state.field(editorFaultSession) !== session ||
+            session.fault ||
+            controller.getMode(documentId) !== "editing" ||
+            controller.isSafeSource(documentId) ||
+            snapshot.busy ||
+            snapshot.frozen ||
+            controller.isEditorInputBlocked() ||
+            view.compositionStarted ||
+            view.composing ||
+            !snapshot.snapshot
+          )
+            return null;
+          return {
+            documentId,
+            revision: current.revision,
+            doc: current.state.doc,
+            rawText: current.state.field(rawText),
+            identity: session,
+            handle: snapshot.snapshot.handle,
+            assetEpoch: String(imageInputs.current.assetEpoch ?? ""),
+          };
+        },
+        transport: (request) => imageInputs.current.readLocalImage!(request),
+        failed: (retry) =>
+          toast.error("图片呈现失败，已保留原文", {
+            id: imageToast,
+            action: { label: "重试", onClick: retry },
+          }),
+      },
+      controller.subscribe
+    );
     const removeCallout = registerCalloutView(
       view,
       () => {
@@ -506,6 +562,8 @@ export function MemoryEditor({
     return () => {
       alive = false;
       removeCallout();
+      removeImages();
+      toast.dismiss(imageToast);
       toast.dismiss(calloutToast);
       removeTask();
       removePairing();

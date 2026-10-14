@@ -26,6 +26,7 @@ import {
   calloutPresentation,
   calloutEditingTheme,
 } from "./callout-presentation";
+import { editingImages } from "./editing-images";
 import { GuardedParser, editorFaultSession } from "./editor-fault";
 import {
   longLineProtection,
@@ -943,6 +944,7 @@ const liveTheme = EditorView.baseTheme({
 
 // Direct language, rather than markdown(), avoids adding paste/Enter/HTML behavior.
 export const livePresentation = [
+  editingImages,
   liveFormattingPlugin,
   liveTheme,
   calloutPresentation,

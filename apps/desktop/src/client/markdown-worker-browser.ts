@@ -4,6 +4,8 @@ import {
 } from "./async-markdown";
 import { setCalloutWorkerFactory } from "./callout-presentation";
 import CalloutWorker from "./callout-summary.worker?worker&inline";
+import { setImageSummaryWorkerFactory } from "./editing-images";
+import ImageWorker from "./image-summary.worker?worker&inline";
 import MarkdownWorker from "./markdown-parser.worker?worker&inline";
 
 // Keep historical diagnostics on their original synchronous configuration.
@@ -28,3 +30,4 @@ if (
 if (lab?.enabled && lab.responsiveProbe && !lab.parserWorkProbe)
   setMarkdownWorkPolicy("wait");
 if (!lab?.enabled) setCalloutWorkerFactory(() => new CalloutWorker());
+if (!lab?.enabled) setImageSummaryWorkerFactory(() => new ImageWorker());

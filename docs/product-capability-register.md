@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## F-022c alpha142 编辑图片有限片通过（2026-10-15）
+
+[F-022c](iterations/F-022c-local-editing-images.md)已通过实际WK有限验收与最终独立Spec/Standards复核（均0必要阻断），主线批准受托Agent代验通过，非用户亲验；Git待执行。新增编辑本地PNG/JPEG呈现、点击/键盘显原文及按需资源租约，继承授权/只读/源码边界。完整F022/S28、OBL010/031不关闭；canonical极端成本、自然物理IME、完整竞态/RSS及offline-final继续开放。下方旧消费者收据与失败历史保留。
+
 ## F-048a alpha141 阅读代码有限片正式通过（2026-10-15）
 
 [F-048a](iterations/F-048a-reading-code-content-copy.md)阅读代码正文与复制已获两独立最终复核0必要阻断及主线正式批准，非离线有限片受托Agent代验通过，**非用户亲验**。原canonical value纯文本呈现、固定语言、显式复制与短暂反馈、只读复制已交付；真实WK鼠标/Option+Tab后Return/Space、实际粘贴、主题复用与正常退出证据见唯一，源码/包内Bun仓库各1205/31870。无原生桥、无原文/history修改。

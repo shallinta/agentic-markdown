@@ -697,6 +697,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               />
             ) : (
               <MemoryEditor
+                readLocalImage={readLocalImage}
+                assetEpoch={
+                  workspace.folderState.assetEpochs?.[snapshot.handle]
+                }
                 controller={controller}
                 documentId={snapshot.documentId}
                 frozen={state.frozen || state.busy}

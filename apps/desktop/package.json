@@ -1,6 +1,6 @@
 {
   "name": "@agentic-markdown/desktop",
-  "version": "0.1.0-alpha.139",
+  "version": "0.1.0-alpha.140",
   "scripts": {
     "start": "bun run build:view && electrobun dev",
     "prepare:sdk": "electrobun prepare",
@@ -41,6 +41,7 @@
     "micromark-extension-gfm-autolink-literal": "2.1.0",
     "micromark-extension-gfm-task-list-item": "2.1.0",
     "micromark-extension-gfm-table": "2.1.2",
+    "micromark-util-normalize-identifier": "2.0.1",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-i18next": "^17.0.11",

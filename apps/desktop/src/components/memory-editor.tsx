@@ -9,6 +9,8 @@ import { EditorView } from "@codemirror/view";
 import { useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { registerCalloutView } from "@/client/callout-presentation";
+import { CALLOUT_SUMMARY_CONFIG } from "@/client/callout-summary-protocol";
 import { registerPairingView } from "@/client/contextual-pairing";
 import type { createDocumentController } from "@/client/documents";
 import {
@@ -129,6 +131,42 @@ export function MemoryEditor({
       alive &&
       viewRef.current === view &&
       controller.getSnapshot().snapshot?.documentId === documentId;
+    const calloutToast = `callout-${documentId}`;
+    const removeCallout = registerCalloutView(
+      view,
+      () => {
+        const snapshot = controller.getSnapshot();
+        const current = controller.getEditor(documentId);
+        if (
+          !currentView() ||
+          current?.state !== view.state ||
+          current.state.field(editorFaultSession) !== session ||
+          session.fault ||
+          controller.getMode(documentId) !== "editing" ||
+          controller.isSafeSource(documentId) ||
+          snapshot.busy ||
+          snapshot.frozen ||
+          controller.isEditorInputBlocked() ||
+          view.compositionStarted ||
+          view.composing
+        )
+          return null;
+        return {
+          documentId,
+          revision: current.revision,
+          doc: current.state.doc,
+          rawText: current.state.field(rawText),
+          identity: session,
+          config: CALLOUT_SUMMARY_CONFIG,
+        };
+      },
+      (retry) =>
+        toast.error("提示块呈现失败，已保留原文", {
+          id: calloutToast,
+          action: { label: "重试", onClick: retry },
+        }),
+      controller.subscribe
+    );
     const removeTask = registerTaskView(
       view,
       () => {
@@ -467,6 +505,8 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      removeCallout();
+      toast.dismiss(calloutToast);
       removeTask();
       removePairing();
       removeFormat();

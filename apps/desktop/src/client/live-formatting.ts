@@ -22,6 +22,10 @@ import {
   asyncMarkdownLifecycle,
 } from "./async-markdown";
 import { BomAwareParser } from "./bom-aware-parser";
+import {
+  calloutPresentation,
+  calloutEditingTheme,
+} from "./callout-presentation";
 import { GuardedParser, editorFaultSession } from "./editor-fault";
 import {
   longLineProtection,
@@ -938,5 +942,10 @@ const liveTheme = EditorView.baseTheme({
 });
 
 // Direct language, rather than markdown(), avoids adding paste/Enter/HTML behavior.
-export const livePresentation = [liveFormattingPlugin, liveTheme];
+export const livePresentation = [
+  liveFormattingPlugin,
+  liveTheme,
+  calloutPresentation,
+  calloutEditingTheme,
+];
 export const basicLiveFormatting = [editingMarkdown, livePresentation];

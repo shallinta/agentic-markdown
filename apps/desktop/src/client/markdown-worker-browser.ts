@@ -2,6 +2,8 @@ import {
   setMarkdownWorkerFactory,
   setMarkdownWorkPolicy,
 } from "./async-markdown";
+import { setCalloutWorkerFactory } from "./callout-presentation";
+import CalloutWorker from "./callout-summary.worker?worker&inline";
 import MarkdownWorker from "./markdown-parser.worker?worker&inline";
 
 // Keep historical diagnostics on their original synchronous configuration.
@@ -25,3 +27,4 @@ if (
   setMarkdownWorkerFactory(() => new MarkdownWorker());
 if (lab?.enabled && lab.responsiveProbe && !lab.parserWorkProbe)
   setMarkdownWorkPolicy("wait");
+if (!lab?.enabled) setCalloutWorkerFactory(() => new CalloutWorker());

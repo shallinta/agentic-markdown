@@ -15,7 +15,12 @@ import {
   editorFaultSession,
   type EditorFaultSession,
 } from "@/client/editor-fault";
-import { syncCurrentEditorState } from "@/client/editor-view-sync";
+import {
+  syncCurrentEditorState,
+  prepareEditorViewState,
+  editorPermissionEffect,
+  editorSurfaceEditable,
+} from "@/client/editor-view-sync";
 import {
   fenceCompletionTransaction,
   isCurrentFenceCompletion,
@@ -27,12 +32,7 @@ import {
 } from "@/client/inline-format-input";
 import { listContinuationTransaction } from "@/client/list-continuation";
 import { registerListInputView, routeListInput } from "@/client/list-input";
-import {
-  editorOffset,
-  rawOffset,
-  rawText,
-  writePermission,
-} from "@/client/raw-buffer";
+import { editorOffset, rawOffset, rawText } from "@/client/raw-buffer";
 import { planSourceIndentation } from "@/client/source-indentation";
 import {
   isOrdinaryIndentation,
@@ -62,6 +62,7 @@ export function MemoryEditor({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [mountAttempt, setMountAttempt] = useState(0);
   const [searchSlot, setSearchSlot] = useState<{
     view: EditorView;
     session: EditorFaultSession;
@@ -72,11 +73,17 @@ export function MemoryEditor({
   const { executeCommand } = useCommands();
   useLayoutEffect(() => {
     if (!container.current || !editor) return;
+    const initialState = prepareEditorViewState(controller, documentId);
+    if (!initialState) {
+      // A frozen/busy controller may refuse the facet-only transaction.
+      // Wait for its next state notification; never mount an unaccepted state.
+      return controller.subscribe(() => setMountAttempt((value) => value + 1));
+    }
     const scrollTo = controller.getScrollSnapshot(documentId);
-    const session = editor.state.field(editorFaultSession);
+    const session = initialState.field(editorFaultSession);
     let alive = true;
     const view = new EditorView({
-      state: editor.state,
+      state: initialState,
       parent: container.current,
       scrollTo,
       dispatchTransactions(transactions) {
@@ -87,6 +94,9 @@ export function MemoryEditor({
       },
     });
     viewRef.current = view;
+    view.contentDOM.contentEditable = String(
+      editorSurfaceEditable(initialState.readOnly, frozen, inputBlocked)
+    );
     view.dom.dataset.documentEditor = documentId;
     const releaseHistory = controller.setHistoryDispatch((transaction) =>
       view.dispatch(transaction)
@@ -497,18 +507,27 @@ export function MemoryEditor({
     };
     // A new view only on document switch; transactions preserve its DOM/IME.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controller, documentId]);
+  }, [controller, documentId, mountAttempt]);
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const current = syncCurrentEditorState(view, controller, documentId);
     if (!current) return;
     const fault = current.field(editorFaultSession);
-    if (view.state.facet(EditorState.readOnly) !== readOnly)
+    if (
+      view.state.facet(EditorState.readOnly) !== readOnly ||
+      view.state.facet(EditorView.editable) !== !readOnly
+    )
       view.dispatch({
-        effects: writePermission.reconfigure(EditorState.readOnly.of(readOnly)),
+        effects: editorPermissionEffect(readOnly),
       });
-    view.contentDOM.contentEditable = frozen || inputBlocked ? "false" : "true";
+    view.contentDOM.contentEditable = String(
+      editorSurfaceEditable(
+        readOnly || view.state.readOnly,
+        frozen,
+        inputBlocked
+      )
+    );
     view.contentDOM.setAttribute(
       "aria-readonly",
       String(frozen || inputBlocked || readOnly)

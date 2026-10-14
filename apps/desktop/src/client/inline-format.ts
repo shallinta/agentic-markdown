@@ -2,8 +2,13 @@ import { syntaxTree } from "@codemirror/language";
 import { EditorSelection, type EditorState } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
 
+import { BomAwareParser } from "./bom-aware-parser";
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
-import { markdownGrammar } from "./markdown-grammar";
+import {
+  tableFormatPreserved,
+  tableGapIndex,
+  type TableGap,
+} from "./table-format";
 import { touchesTaskMarker } from "./task-marker";
 
 export type InlineFormat = "bold" | "italic" | "code";
@@ -17,6 +22,7 @@ const markers = { bold: "**", italic: "*", code: "`" };
 export const FORMAT_UNAVAILABLE = "当前位置或选区不支持此行内格式";
 
 interface Plan {
+  gap?: TableGap;
   from: number;
   to: number;
   insert: string;
@@ -47,6 +53,30 @@ function computeInlineFormat(
   const tree = syntaxTree(state),
     plans: Plan[] = [];
   const protectedSpans = state.field(longLineProtection);
+  // Bound related containers before collecting row gaps, table nodes or text.
+  const blocks = new Map<string, { from: number; to: number }>();
+  for (const range of state.selection.ranges) {
+    let path = ancestors(tree.resolveInner(range.from, 1));
+    if (range.empty && !path.some((n) => n.parent?.name === "Document"))
+      path = ancestors(tree.resolveInner(range.from, -1));
+    const block = path.find((n) => n.parent?.name === "Document");
+    const from = state.doc.lineAt(block?.from ?? range.from).from;
+    const to = state.doc.lineAt(block?.to ?? range.to).to;
+    if (
+      tree.length < to ||
+      (tree.length < state.doc.length && to >= tree.length) ||
+      protectedSpans.some((p) => p.from <= to && p.to >= from)
+    )
+      return undefined;
+    blocks.set(from + ":" + to, { from, to });
+  }
+  let projected = [...blocks.values()].reduce(
+    (sum, b) => sum + b.to - b.from,
+    0
+  );
+  if (projected > LONG_LINE_UNITS) return undefined;
+  const findGap = tableGapIndex(state.doc);
+  const usedGaps = new Set<string>();
   for (const range of state.selection.ranges) {
     if (touchesTaskMarker(state, range.from, range.to)) return undefined;
     const line = state.doc.lineAt(range.from);
@@ -57,6 +87,20 @@ function computeInlineFormat(
     )
       return undefined;
     let path = ancestors(tree.resolveInner(range.from, 1));
+    let gap: TableGap | undefined;
+    if (range.empty) {
+      const row = [
+        ...path,
+        ...ancestors(tree.resolveInner(range.from, -1)),
+      ].find((n) => n.name === "TableRow" || n.name === "TableHeader");
+      if (row) gap = findGap(row, range.from);
+      if (gap) {
+        const key = gap.from + ":" + gap.to;
+        if (usedGaps.has(key)) return undefined;
+        usedGaps.add(key);
+        path = ancestors(gap.row);
+      }
+    }
     // At an exclusive text-block end, right-biased resolution returns the
     // outside container. Borrow only that ending text block, never its ending
     // emphasis/code descendant (which would incorrectly unwrap outside it).
@@ -65,6 +109,7 @@ function computeInlineFormat(
       !path.some(
         (n) =>
           n.name === "Paragraph" ||
+          n.name === "TableCell" ||
           /^(ATXHeading[1-6]|SetextHeading[12])$/.test(n.name)
       )
     ) {
@@ -73,6 +118,7 @@ function computeInlineFormat(
       const text = left.find(
         (n) =>
           (n.name === "Paragraph" ||
+            n.name === "TableCell" ||
             /^(ATXHeading[1-6]|SetextHeading[12])$/.test(n.name)) &&
           n.to === range.from
       );
@@ -136,6 +182,8 @@ function computeInlineFormat(
         !(range.from === same.from && range.to === same.to)
       )
         return undefined;
+      projected += contentTo - contentFrom;
+      if (projected > LONG_LINE_UNITS) return undefined;
       const content = state.sliceDoc(contentFrom, contentTo);
       const position = (p: number) =>
         Math.max(0, Math.min(content.length, p - contentFrom));
@@ -152,12 +200,13 @@ function computeInlineFormat(
     const paragraph = path.find(
       (n) =>
         n.name === "Paragraph" ||
+        n.name === "TableCell" ||
         /^ATXHeading[1-6]$/.test(n.name) ||
         /^SetextHeading[12]$/.test(n.name)
     );
     const emptyLine =
       !line.text.trim() && path.every((n) => n.name === "Document");
-    if (!paragraph && !emptyLine) return undefined;
+    if (!paragraph && !emptyLine && !gap) return undefined;
     if (paragraph && (range.from < paragraph.from || range.to > paragraph.to))
       return undefined;
     // This slice does not split or rewrite existing syntax, even a partial span.
@@ -198,15 +247,23 @@ function computeInlineFormat(
       let max = 0;
       for (const match of text.matchAll(/`+/g))
         max = Math.max(max, match[0].length);
-      delimiter = "`".repeat(max + 1);
       if (/^`|`$/.test(text) || (/^ .* $/.test(text) && /[^ ]/.test(text)))
         padding = " ";
+      if (
+        projected + text.length + 2 * (max + 1 + padding.length) >
+        LONG_LINE_UNITS
+      )
+        return undefined;
+      delimiter = "`".repeat(max + 1);
     } else if (/^\s|\s$|[*_\\`]/u.test(text)) return undefined;
+    projected += text.length + 2 * (delimiter.length + padding.length);
+    if (projected > LONG_LINE_UNITS) return undefined;
     const prefix = delimiter + padding,
       insert = prefix + text + padding + delimiter;
     const a = prefix.length,
       b = a + text.length;
     plans.push({
+      gap,
       from: range.from,
       to: range.to,
       insert,
@@ -249,10 +306,23 @@ function computeInlineFormat(
     const start = changes.mapPos(container.from, -1),
       end = changes.mapPos(container.to, 1);
     const local = nextDoc.sliceString(start, end);
-    const parsed = markdownGrammar.parse(local);
+    const parsed = new BomAwareParser().parse(local);
     if (
       parsed.topNode.firstChild?.name !== container.name ||
       parsed.topNode.firstChild?.nextSibling
+    )
+      return undefined;
+    if (
+      !tableFormatPreserved(
+        tree,
+        parsed,
+        state.doc,
+        nextDoc,
+        container,
+        start,
+        changes,
+        edits
+      )
     )
       return undefined;
     for (const p of plans)

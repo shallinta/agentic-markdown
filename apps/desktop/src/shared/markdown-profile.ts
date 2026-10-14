@@ -1,5 +1,5 @@
 /** Fixed first-party profile. Other GFM features remain unregistered. */
-export const MARKDOWN_GRAMMAR = "commonmark-gfm-strike-task-projection-2";
+export const MARKDOWN_GRAMMAR = "commonmark-gfm-strike-task-projection-table-3";
 
 /** Reading-only canonical capabilities; not the editor's Lezer grammar. */
 export const CANONICAL_PROFILE = "commonmark-gfm-strike-task-autolink-table-4";

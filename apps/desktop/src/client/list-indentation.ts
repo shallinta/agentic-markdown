@@ -344,7 +344,9 @@ export function planListIndentation(
         const candidate = nodes.get(key);
         if (!candidate) valid = false;
         else if (
-          /^(?:Paragraph|FencedCode|CodeBlock|HTMLBlock)$/.test(node.name) &&
+          /^(?:Paragraph|Table|FencedCode|CodeBlock|HTMLBlock)$/.test(
+            node.name
+          ) &&
           blockValue(state.doc, node.node) !==
             blockValue(next, candidate, offset)
         )

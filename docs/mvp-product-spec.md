@@ -1,5 +1,27 @@
 # Agentic Markdown MVP 产品规格
 
+## F-045h alpha138本片正式通过（2026-10-14）
+
+主线正式批准F-045h alpha138非离线有限片受托Agent代验通过，**非用户亲验**。最终独立Spec0必要阻断、Standards14项/938断言通过；源码及包内Bun运行仓库各1056/30750/167，type/full lint/docs通过。Git待主线实际执行，未预写提交或推送。
+
+本片交付固定编辑Table结构、源码纯颜色、可靠cell格式/真实空gap模板及整Table引用兼容，并完成只读原生surface窄修与临时诊断清理。实际动态权限证据为chmod后重新读取，不是watcher实时切换；自然物理IME、完整焦点/系统动态外观/大规模UI性能及首次拒绝后React挂载等未实操边界保留。完整S-02/F-045/F-054、协作义务与offline-final仍开放；135失败、137修复复验及138清理包证据均保留，以下待最终复核记录为历史。
+
+## F-045h alpha138收尾补证（2026-10-14，待最终复核）
+
+同alpha138用既有faultflag启动exec91711，打开tables编辑，呈现故障注入后立即进入安全源码、clean且完整原文保留；选择alpha有AX明确选区证据，CmdShiftB无变化。CmdQ后CUA App quit、exec退出0、PID消失。readonly已恢复644，三样本SHA全部原样，无保存、无网络改动。新增临时诊断已清理，原fault实验仍仅依既有flag存在。此前普通Tab未移焦不等于功能损坏，完整焦点矩阵未验证；本条补足上条待做safe/权限恢复事项，不改写历史。当前仍待最终独立审核与主线批准，不得Git。
+
+## F-045h alpha138待最终复核（2026-10-14）
+
+[F-045h](iterations/F-045h-gfm-table-editor-structure.md)：alpha138/hash `1h5nydskwv1b7`直接解包`/tmp/agentic-direct138.elBVZD`，无faultflag启动exec22897；两独立轴诊断清理0必要阻断，源码及包内Bun运行仓库各1056项/30750断言/167文件，type/full lint/docs通过。当前仅待最终复核，未正式验收、不得Git；完整S-02/F-045/F-054、协作义务及offline-final开放。
+
+无实验UI的真实只读编辑/源码、动态权限重读、工具组合输入取消/提交、退出取消与正常退出、表格单cell格式及历史/跨标签已取得局部证据；三fixture磁盘SHA原样，无正文保存或网络修改。Tab后焦点仍editor，不计遍历成功；readonly权限444尚待恢复644，同包safe实验回归仍待做。自然IME、首次controller拒绝后React挂载等未WK覆盖。OBL-030/064/068/069仅消费者协作，不迁移主责或关闭整项；下方alpha135待验与137局部证据为历史，不改写版本，详见唯一。
+
+## F-045h 已实现待真实验收（alpha135，2026-10-14）
+
+[F-045h](iterations/F-045h-gfm-table-editor-structure.md)：固定编辑Table/profile换代及相关命令兼容已实现，不改canonical与原文历史。下方表格编辑/源码结构未交付为此前验收状态，本片仍待交付批准。
+
+两独立代码轴0必要阻断；主线全量1054项/30709断言/166文件及type/full lint/docs/lock检查通过。alpha135/hash `ojkq48m8uyy3`已构建并直接解包启动exec40200，真实WK待验；包内Bun运行仓库测试exec46543进行中，尚无完成结论。未正式验收、未Git。完整S-02/F-045/F-054、协作义务及offline-final保持开放。
+
 ## F-045g 阅读有限片代验通过（alpha133，2026-10-13）
 
 [F-045g](iterations/F-045g-gfm-table-reading.md)仅canonical/阅读表格已实现；alpha132实际表格/原文/历史/权限证据与主题边框失败保留，边框窄修后alpha133经实际复验、独立最终两轴0剩余必要阻断及主线正式批准，非离线有限片受托Agent代验通过，非用户亲验；Git待实际执行。编辑三模式结构一致性及F-054不随本片完成，完整S-02/F-045与offline-final开放。

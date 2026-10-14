@@ -6,6 +6,7 @@ import {
 } from "../shared/markdown-profile";
 
 import { parseCanonicalMarkdown } from "./canonical-parser";
+import { markdownGrammar } from "./markdown-grammar";
 
 type Tree = ReturnType<typeof parseCanonicalMarkdown>;
 type Node = Tree | Tree["children"][number];
@@ -99,11 +100,19 @@ test("canonical autolinks keep official transform semantics without inventing po
   }
 });
 
-test("canonical-only grammar recognizes targets but does not change editor profile", () => {
-  expect(MARKDOWN_GRAMMAR).toBe("commonmark-gfm-strike-task-projection-2");
+test("canonical recognizes literal autolinks while editor grammar excludes them", () => {
+  expect(MARKDOWN_GRAMMAR).toBe("commonmark-gfm-strike-task-projection-table-3");
   expect(CANONICAL_PROFILE).toBe("commonmark-gfm-strike-task-autolink-table-4");
   const raw =
     "WWW.EXAMPLE.COM HTTPS://EXAMPLE.COM mailto:a@example.com xmpp:a@example.com/resource";
+  const editorNodes: string[] = [];
+  markdownGrammar.parse(raw).iterate({
+    enter(node) {
+      editorNodes.push(node.name);
+    },
+  });
+  expect(editorNodes).not.toContain("Autolink");
+  expect(editorNodes).not.toContain("URL");
   expect(
     nodes(parseCanonicalMarkdown(raw))
       .filter((n) => n.type === "link")

@@ -2,6 +2,7 @@ import { commonmarkLanguage } from "@codemirror/lang-markdown";
 import {
   MarkdownParser,
   Strikethrough,
+  Table,
   type MarkdownConfig,
 } from "@lezer/markdown";
 
@@ -38,4 +39,4 @@ const doubleStrike: MarkdownConfig = {
 const base = commonmarkLanguage.parser;
 if (!(base instanceof MarkdownParser))
   throw new Error("Fixed Markdown parser unavailable");
-export const markdownGrammar = base.configure(doubleStrike);
+export const markdownGrammar = base.configure([doubleStrike, Table]);

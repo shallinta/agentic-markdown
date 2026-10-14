@@ -64,6 +64,8 @@ test("grammar mismatch in reply or nested wire faults before accepting an old nu
     "reply-old",
     "tree-old",
     "nested-old",
+    "reply-previous",
+    "nested-previous",
   ] as const) {
     const worker = new ControlledWorker();
     setMarkdownWorkerFactory(() => worker);
@@ -76,13 +78,22 @@ test("grammar mismatch in reply or nested wire faults before accepting an old nu
     if (mode === "reply-missing") Object.assign(data, { config: undefined });
     if (mode === "reply-old")
       Object.assign(data, { config: "commonmark-core-1" });
+    if (mode === "reply-previous")
+      Object.assign(data, {
+        config: "commonmark-gfm-strike-task-projection-2",
+      });
     if (mode === "tree-old")
       Object.assign(tree, { config: "commonmark-core-1" });
-    if (mode === "nested-old") {
+    if (mode === "nested-old" || mode === "nested-previous") {
       // A valid current envelope cannot authorize old child ids.
       const child = tree.children.find((c) => !("buffer" in c));
       expect(child).toBeDefined();
-      Object.assign(child!, { config: "commonmark-core-1" });
+      Object.assign(child!, {
+        config:
+          mode === "nested-old"
+            ? "commonmark-core-1"
+            : "commonmark-gfm-strike-task-projection-2",
+      });
     }
     worker.onmessage?.(new MessageEvent("message", { data }));
     expect(state.field(editorFaultSession).fault).toBe("parser");

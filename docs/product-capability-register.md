@@ -1,5 +1,27 @@
 # Agentic Markdown 产品能力总账
 
+## F-045h alpha138本片正式通过（2026-10-14）
+
+主线正式批准F-045h alpha138非离线有限片受托Agent代验通过，**非用户亲验**。最终独立Spec0必要阻断、Standards14项/938断言通过；源码及包内Bun运行仓库各1056/30750/167，type/full lint/docs通过。Git待主线实际执行，未预写提交或推送。
+
+本片交付固定编辑Table结构、源码纯颜色、可靠cell格式/真实空gap模板及整Table引用兼容，并完成只读原生surface窄修与临时诊断清理。实际动态权限证据为chmod后重新读取，不是watcher实时切换；自然物理IME、完整焦点/系统动态外观/大规模UI性能及首次拒绝后React挂载等未实操边界保留。完整S-02/F-045/F-054、协作义务与offline-final仍开放；135失败、137修复复验及138清理包证据均保留，以下待最终复核记录为历史。
+
+## F-045h alpha138收尾补证（2026-10-14，待最终复核）
+
+同alpha138用既有faultflag启动exec91711，打开tables编辑，呈现故障注入后立即进入安全源码、clean且完整原文保留；选择alpha有AX明确选区证据，CmdShiftB无变化。CmdQ后CUA App quit、exec退出0、PID消失。readonly已恢复644，三样本SHA全部原样，无保存、无网络改动。新增临时诊断已清理，原fault实验仍仅依既有flag存在。此前普通Tab未移焦不等于功能损坏，完整焦点矩阵未验证；本条补足上条待做safe/权限恢复事项，不改写历史。当前仍待最终独立审核与主线批准，不得Git。
+
+## F-045h alpha138待最终复核（2026-10-14）
+
+[F-045h](iterations/F-045h-gfm-table-editor-structure.md)：alpha138/hash `1h5nydskwv1b7`直接解包`/tmp/agentic-direct138.elBVZD`，无faultflag启动exec22897；两独立轴诊断清理0必要阻断，源码及包内Bun运行仓库各1056项/30750断言/167文件，type/full lint/docs通过。当前仅待最终复核，未正式验收、不得Git；完整S-02/F-045/F-054、协作义务及offline-final开放。
+
+无实验UI的真实只读编辑/源码、动态权限重读、工具组合输入取消/提交、退出取消与正常退出、表格单cell格式及历史/跨标签已取得局部证据；三fixture磁盘SHA原样，无正文保存或网络修改。Tab后焦点仍editor，不计遍历成功；readonly权限444尚待恢复644，同包safe实验回归仍待做。自然IME、首次controller拒绝后React挂载等未WK覆盖。OBL-030/064/068/069仅消费者协作，不迁移主责或关闭整项；下方alpha135待验与137局部证据为历史，不改写版本，详见唯一。
+
+## F-045h 已实现待真实验收（alpha135，2026-10-14）
+
+[F-045h](iterations/F-045h-gfm-table-editor-structure.md)：S-02新增有限编辑/源码结构基础，保持raw可见、源码纯颜色和可靠cell格式；完整三模式视觉表格及F-054单元格编辑不在本片交付范围。
+
+两独立代码轴0必要阻断；主线全量1054项/30709断言/166文件及type/full lint/docs/lock检查通过。alpha135/hash `ojkq48m8uyy3`已构建并直接解包启动exec40200，真实WK待验；包内Bun运行仓库测试exec46543进行中，尚无完成结论。未正式验收、未Git。完整S-02/F-045/F-054、协作义务及offline-final保持开放。
+
 ## G-22 局部代验通过：F-013d（2026-10-14）
 
 [F-013d](iterations/F-013d-reading-fault-recovery.md)阅读无EditorView故障恢复已实现，源码1042项/29801断言/164文件、type/full lint/docs通过；独立Spec/Standards代码均0必要阻断，alpha134经最终独立两轴0必要阻断及主线正式批准，非离线有限片受托Agent代验通过，非用户亲验；Git待实际执行。仅承接已有编辑fault session的owner通知、守卫与恢复，不扩canonical故障或关闭dirty文档策略；完整G-22/F-013、OBL-070及offline-final不关闭。
@@ -835,7 +857,7 @@ F-010 执行边界（2026-09-22）：用户确认读取保真方案并授权推�
 |---|---|---|---|---|
 | S-01 | CommonMark 基线 | 多数产品 | 固定规范版本与官方 corpus；共享语义/方言配置；允许不同高性能实现但必须做一致性验证 | 已确认 · M0 |
 | S-01a | GFM 首方扩展包 | GitHub | `ExtendedMarkdownPreset` 组件；完整、内置、可版本化；统一注册解析/渲染/编辑/索引/测试 | 已确认 · M0/MVP |
-| S-02 | GFM 表格 | Typora、Obsidian、GitHub | `GFMExtension` 组成部分；三模式共享结构语义；与已确认的 E-26 表格编辑规则联测 | 已确认 · MVP  F-045g阅读有限片alpha133已获主线批准受托Agent代验通过，非用户亲验；编辑结构/单元格操作与完整三模式保持开放。 |
+| S-02 | GFM 表格 | Typora、Obsidian、GitHub | `GFMExtension` 组成部分；三模式共享结构语义；与已确认的 E-26 表格编辑规则联测 | 已确认 · MVP  F-045g阅读有限片alpha133已获主线批准受托Agent代验通过，非用户亲验；[F-045h](iterations/F-045h-gfm-table-editor-structure.md)编辑/源码结构有限片alpha138已获主线批准非离线受托Agent代验通过，非用户亲验，Git待实际执行；F-054单元格操作与完整三模式保持开放。 |
 | S-03 | GFM 任务列表 | 全部 | `GFMExtension` 组成部分；编辑可点击、阅读只读、源码原文；统一撤销事务。F-045b有限任务控件与F-045c有限续写在alpha.128合包受托Agent代验通过；F-045e可靠任务子树结构缩进在alpha.129受托代验通过；跨行编辑、完整复杂结构与最终离线仍开放 | 已确认 · MVP · 部分完成 |
 | S-04 | GFM 删除线 | GFM 产品 | `GFMExtension` 组成部分；App profile 仅接受 `~~`；单 `~` 保留给下标；编辑按焦点显隐。F-045a alpha.126三模式非离线有限片已受托代验并推送7dea000；完整GFM及最终离线开放 | 已确认 · MVP（兼容例外）· 本片已代验 |
 | S-05 | GFM 扩展自动链接 | GFM 产品 | `GFMExtension` 组成部分；按规范识别裸 URL/邮箱；F-045f alpha130阅读非活动呈现有限片已受托Agent代验。中文尾标点/删除线按官方组合语义；编辑/源码识别、三模式一致性及导航仍待后续，不提前开放协议执行 | 已确认 · MVP · 部分完成 |

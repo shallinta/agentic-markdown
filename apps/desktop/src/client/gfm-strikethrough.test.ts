@@ -100,7 +100,8 @@ test("fixed double tilde profile reconciles old run failures, escapes and exact 
       "| a | b |\n| - | - |\n\n- [x] task\n\nhttps://example.com\n\n~sub~"
     )
   );
-  expect(other).not.toMatch(/Strikethrough|Table|Task|Autolink/);
+  expect(other).toMatch(/Table/);
+  expect(other).not.toMatch(/Strikethrough|Task|Autolink/);
 });
 
 test("wire rejects missing or obsolete grammar before interpreting numeric node ids", () => {

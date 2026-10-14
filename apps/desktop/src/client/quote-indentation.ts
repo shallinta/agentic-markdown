@@ -117,7 +117,7 @@ export function planQuoteIndentation(
         ),
         1
       );
-      while (node && node.name !== "Paragraph") {
+      while (node && node.name !== "Paragraph" && node.name !== "Table") {
         if (node.name === "Blockquote") quoteSeen = true;
         node = node.parent;
       }
@@ -231,14 +231,14 @@ export function planQuoteIndentation(
           if (
             collect &&
             !node &&
-            old.name === "Paragraph" &&
+            (old.name === "Paragraph" || old.name === "Table") &&
             selected.has(old.from)
           ) {
             const from = changes.mapPos(old.from, 1),
               to = changes.mapPos(old.to, -1);
             for (const candidate of actual.values())
               if (
-                candidate.name === "Paragraph" &&
+                candidate.name === old.name &&
                 candidate.from + offset <= from &&
                 candidate.to + offset >= to
               ) {
@@ -249,10 +249,15 @@ export function planQuoteIndentation(
               }
           }
           let target = old;
-          while (target.parent && target.name !== "Paragraph")
+          while (
+            target.parent &&
+            target.name !== "Paragraph" &&
+            target.name !== "Table"
+          )
             target = target.parent;
           const delta =
-            selected.has(target.from) && target.name === "Paragraph"
+            selected.has(target.from) &&
+            (target.name === "Paragraph" || target.name === "Table")
               ? more
                 ? 1
                 : -1

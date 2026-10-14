@@ -1,5 +1,77 @@
 # AGENTS.md
 
+## F-045h alpha138本片正式通过（2026-10-14）
+
+主线正式批准F-045h alpha138非离线有限片受托Agent代验通过，**非用户亲验**。最终独立Spec0必要阻断、Standards14项/938断言通过；源码及包内Bun运行仓库各1056/30750/167，type/full lint/docs通过。Git待主线实际执行，未预写提交或推送。
+
+本片交付固定编辑Table结构、源码纯颜色、可靠cell格式/真实空gap模板及整Table引用兼容，并完成只读原生surface窄修与临时诊断清理。实际动态权限证据为chmod后重新读取，不是watcher实时切换；自然物理IME、完整焦点/系统动态外观/大规模UI性能及首次拒绝后React挂载等未实操边界保留。完整S-02/F-045/F-054、协作义务与offline-final仍开放；135失败、137修复复验及138清理包证据均保留，以下待最终复核记录为历史。
+
+## F-045h alpha138收尾补证（2026-10-14，待最终复核）
+
+同alpha138用既有faultflag启动exec91711，打开tables编辑，呈现故障注入后立即进入安全源码、clean且完整原文保留；选择alpha有AX明确选区证据，CmdShiftB无变化。CmdQ后CUA App quit、exec退出0、PID消失。readonly已恢复644，三样本SHA全部原样，无保存、无网络改动。新增临时诊断已清理，原fault实验仍仅依既有flag存在。此前普通Tab未移焦不等于功能损坏，完整焦点矩阵未验证；本条补足上条待做safe/权限恢复事项，不改写历史。当前仍待最终独立审核与主线批准，不得Git。
+
+## F-045h alpha138待最终复核（2026-10-14，未验收）
+
+alpha138/hash `1h5nydskwv1b7`直接解包`/tmp/agentic-direct138.elBVZD`，无faultflag启动exec22897；两独立轴诊断清理0必要阻断，源码及包内Bun运行仓库各1056项/30750断言/167文件，type/full lint/docs通过。当前仅待最终复核，未正式验收、不得Git；完整S-02/F-045/F-054、协作义务及offline-final开放。
+
+真实无实验UI。readonly444编辑CmdEnd/CmdShiftHome截图全选后x/Escape不变，源码切换成功；chmod644并重新读取后可写，工具press n/i产生组合状态、树disabled/dirty，Escape恢复clean；n/i/Space生成单个“你”，CmdZ恢复clean。paste temporary后CmdQ弹退出确认，继续编辑后CmdZ clean；chmod444重读后源码只读恢复，x/Escape不写，Tab焦点仍editor，不能称Tab遍历通过。
+
+另开tables，编辑alpha工具选择有明确Selected text，CmdShiftB后切源码确认`**alpha**`，undo clean；跨tab到readonly仍clean，x/Escape/CmdQ退出0、PID消失，三fixture SHA全原样，无保存或网络修改。readonly当前仍444待恢复644；准备同包开启原故障实验作safe有限回归，尚未执行。本轮组合输入是工具驱动，非自然物理IME；初次controller拒绝后的React挂载等仅seam、非WK，不泛称全矩阵。135失败、137修复局部复验、138无临时诊断回归分版本保留。
+
+## F-045h alpha137 原红路径局部通过（2026-10-14，非整片验收）
+
+主线构建alpha137/hash `2pzjg4j6eg5jt`，直接解包`/tmp/agentic-direct137.32Ikuq`。源码1058项/30762断言/167文件，包内Bun运行仓库1058项/30763断言/167文件分别通过，保留计数差异不推因；type/full lint通过，两独立代码轴只读surface窄修0必要阻断。
+
+旧alpha136退出前仅readonly clean及hash核实；TERM91516未退后KILL，exec75996退出137，91505/91516消失。这是本次获授权自建clean故障实例终止，不是正常退出证据或dirty恢复策略。
+
+新alpha137 exec62193仅打开readonly444样本，工具selectText immutable（AX无选区证据，仅记工具动作）→press x，正文及controls无变化；Escape/CmdQ后CUA App quit、exec退出0、进程消失，readonly SHA原样。原红路径本次通过不等于全验，不推完整根因。
+
+尚待source、选择/复制/查找/Tab、可写IME与动态权限等回归；临时诊断未清理，不得Git。完整父/义务/offline-final仍开放，下方旧检查点与失败均保留历史。
+
+## F045h alpha136定位退出guard，最小修复获批（2026-10-14）
+
+用户已授权本次故障自建clean实例按需终止重开。alpha13589403经TERM未退后KILL，旧exec36104=137；alpha136 exec75996现运行。真实CmdQ request-arrived/begin-denied/release，busy/frozen=false、saving0、canLeave=false、当前view/state/session匹配、compositionStarted=true/composing=false、readonly=true，定位到组合guard，非系统缺end的证明。现readonly仍把DOM设editable=true是明确代码缺口。主线全文读唯一顶部方案、Spec0必要阻断后批准readOnly+公开editable同步与tabindex0窄候选：初装先controller接受facet事务，同一state建view；不清IME/不放宽退出、冻结或权限保护。临时诊断保留至下一alpha137真红路径回归再清理；未修复验收/不得Git。
+
+## F045h 临时诊断alpha136已构建，待切包（2026-10-14）
+
+仅临时opt-in元数据诊断获两轴代码0必要阻断，各独立14/100定向通过；没有修保护逻辑。源码全量1056/30722/166，包内Bun仓库1056/30723/166（计数差1如实保留），alpha136/hash3pl3nxe3gxzax构建并解包`/tmp/agentic-direct136.d3CPO6`，尚未启动/WK取证。当前alpha135第二复现实例exec36104仍卡住，用户首次终止许可仅用于此前79127，已询问本次诊断范围的后续重开许可、待答；不得重叠启动或擅自扩大终止范围。临时诊断最终需清理，root type/full lint已通过，未验收/未Git。
+
+## F045h 只读退出阻断诊断获批（2026-10-14）
+
+用户实体Esc及CmdQ失败，并明确授权终止旧测试实例重开。核PID/hash后TERM79127未退，KILL后exec40200=137、旧PID消失；同alpha135重开exec36104，只打开readonly444、选择immutable按x即禁用，Escape/CmdQ仍失败，去掉原格式/保存/第二文档仍复现。未证明根因，不以权限确认中推断busy或组合状态。主线全文读唯一F045h顶部最小元数据方案，独立Spec0必要阻断，批准仅临时opt-in诊断实现，含短AX、公开view/controller快照与现discard单participant observer；不改保护或退出返回值、不记录正文/路径。代码待复核，下一包136；当前复现实例保留，尚未授权新一次终止。不验收/不Git，父与离线开放。
+
+## F045h alpha135 实际只读输入发现（2026-10-14）
+
+源码与包内Bun运行仓库均1054/30709/166通过，两轴代码无必要阻断，alpha135/hash ojkq48m8uyy3直接解包于`/tmp/agentic-direct135.PAgDLT`并启动exec40200。实际WK已验证单cell三格式/历史、真空gap占位、跨cell拒绝、引用整表升降、列表Table缩进、阅读与浅色编辑/源码外观；尚未整片验收/不得Git。只读样本选immutable后工具输入x及CmdS，正文仍clean但多个交互持续disabled，Escape/移焦/Return/输入源切换及CmdQ未恢复。独立只读复核确认旧CM组合守卫可能阻止，但无start/end实证，不断言根因或Table回归。已请用户实体Esc与正常CmdQ，保留当前实例、不强杀/改内部状态。详细失败及工具选区偏差见唯一迭代；父/专项/离线保持开放。
+
+## F045h 最小生产实施获批（2026-10-14）
+
+主线已全文读取唯一最小生产方案，独立Spec/Standards均0必要路线阻断，批准typed窄实现。Table配置与编辑profile换代、单cell/真实gap与整表引用、列表Table内容核验；聚合预算须在收集/复制前，单命令每row一次索引消除重复扫描，不改canonical/raw/history。生产与实验分开复核，代码/真实WK未通过，不得Git；下一代码包由主线升alpha135，当前未构建。
+
+## F045h 第三实验已复核，生产方案待编（2026-10-14）
+
+主线与独立Spec/Standards复跑冻结37例/0失败及历史/三保护检查。原外围空白误称空cell的分类已按公开两树纠正，旧日志保留；真正delimiter间gap模板通过。不是生产/WK/性能验收。gap资格仍每光标扫row，需按命令生命周期行索引收敛，不可称后段二分已消除所有乘积。现仅编typed最小生产方案，待主线全文及独立批准；alpha134仍最新已验版本。
+
+## F045h 第三轮窄实验获批（2026-10-14）
+
+第二轮25例/1空cell回归由两lane独立复跑确认，尚不可生产。主线全文读第三轮方案，两lane0必要实验路线阻断后批准新临时目录：公开行/delimiter真实ASCII空格或Tab gap资格、不伪造AST/缺列；按位置核新增cell与未选内容；排序扫描收敛验证乘积成本，逐cell模板oracle与非默认align/多窗口/partial/预算前提补证。旧冻结红保留，计数不代表Lezer成本；生产/版本/构建/Git均未授权。
+
+## F045h 下一有限适配实验获批（2026-10-14）
+
+主线已全文读回唯一末节及两lane要求的空光标澄清，批准新临时目录窄适配实验。非空TableCell内既有空光标toggle与格式内解包不能漏验；真正无节点空cell单列旧候选差异。单cell/整表引用与list叶内容、未选归属/对齐及undo/redo按固定矩阵验证，canonical仅实验oracle。原首轮28/6红目录保留；不批准生产/新版本/构建/Git，成本或语义越界须先报告。
+
+## F045h 首轮实验保留六项差异（2026-10-14）
+
+主线及两独立lane复跑公开Table隔离候选28例/6差异，17语义仅table数量及raw边界一致，三项单cell格式回归尚未修，不能接生产。依既有低成本体验授权，主线选择保留可靠单cell格式、跨pipe/分隔行原子拒绝、引用表格以完整Table为单位并保护未选邻块；不改写F043g历史范围。下一窄适配先补唯一方案，另批准实验，现冻结目录与红例保留。无生产/新版本/构建/Git，父/专项/离线不关闭。
+
+## F045h 有限隔离实验获批（2026-10-14）
+
+主线已全文读取唯一最小方案及候选依赖图修订，独立Spec/Standards均0剩余必要路线阻断，批准仅临时目录公开Table与canonical对照。state语言与inline/list/quote局部parse须同一候选，冻结副本差异及raw映射证据；旧命令退化保留红例，不先改生产或全面禁用。实验不代表生产/性能/验收通过，alpha134仍最新已验包；无新构建或Git。下方仅规划为历史。
+
+## F013d Git收据与下一F045h（2026-10-14）
+
+F013d已提交推送`022090a6279a6ffd629db3649b6f9ec4eae425fd`，主线ls-remote核远端main一致、核验时工作树clean。连续授权下一选择F045h编辑/源码表格结构识别与源码纯颜色，编号已核无冲突，唯一`docs/iterations/F-045h-gfm-table-editor-structure.md`为待主线全文及独立路线复核最小方案。当前只规划，未批准/运行PoC或生产、无新版本构建；编辑保留raw，不冒称F054视觉单元格交付，旧命令变化先实验再决定，不全禁表格正文。F045d失败路线、专项/F028c/offline不自动推进，下方F013d待Git为历史。
+
 ## F013d alpha134 有限片正式通过（2026-10-14）
 
 最终独立Spec/Standards均0必要阻断，主线正式批准非离线有限片受托Agent代验通过，非用户亲验。阅读无EditorView的故障恢复、dirty/历史/只读及编辑旧路径实证见唯一；源码与包内Bun仓库均1042/29801/164。补正常同包无实验flag启动exec35108，CUA AX及截图欢迎页无实验入口，CmdQ exit0。故障包与正常包均正常退出，三自建样本hash原样、644，无正文保存或断网。Git待实际执行；父F013、完整OBL070、自然故障/IME等限制及offline-final保持开放。下方实施/待验为历史。

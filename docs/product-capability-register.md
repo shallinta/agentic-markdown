@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## F-048b alpha144 编辑复制有限片通过（2026-10-15）
+
+[F-048b](iterations/F-048b-editing-code-copy.md)编辑模式右键代码正文复制经实际WK与最终独立双轴0必要阻断，主线批准非离线受托Agent代验通过，非用户亲验。围栏/缩进/容器纯正文、只读及模式隔离、菜单背景误输入保护有限证据已记录。F-048/S15–18完整父、高亮/折叠/行号、自然IME/精准竞态/极端性能及offline-final继续开放，不关闭完整协作义务。Git待执行；下方旧“编辑复制后续”为此前阶段历史。
+
 ## F-022c alpha142 编辑图片有限片通过（2026-10-15）
 
 [F-022c](iterations/F-022c-local-editing-images.md)已通过实际WK有限验收与最终独立Spec/Standards复核（均0必要阻断），主线批准受托Agent代验通过，非用户亲验；Git待执行。新增编辑本地PNG/JPEG呈现、点击/键盘显原文及按需资源租约，继承授权/只读/源码边界。完整F022/S28、OBL010/031不关闭；canonical极端成本、自然物理IME、完整竞态/RSS及offline-final继续开放。下方旧消费者收据与失败历史保留。

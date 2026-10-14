@@ -56,6 +56,7 @@ import { registerTaskView } from "@/client/task-marker-input";
 import { deferWrappingUpdate } from "@/client/wrapping-measure";
 import { useCommands } from "@/commands";
 
+import { EditingCodeMenu } from "./editing-code-menu";
 import { SourceSearch } from "./source-search";
 
 export function MemoryEditor({
@@ -650,10 +651,16 @@ export function MemoryEditor({
   }, [controller, documentId, editor, frozen, readOnly, inputBlocked]);
   return (
     <>
-      <div
-        ref={container}
-        className="min-h-0 flex-1 overflow-hidden rounded-md border"
-      />
+      <EditingCodeMenu
+        controller={controller}
+        documentId={documentId}
+        getView={() => viewRef.current}
+      >
+        <div
+          ref={container}
+          className="min-h-0 flex-1 overflow-hidden rounded-md border"
+        />
+      </EditingCodeMenu>
       {searchSlot?.view.dom.dataset.documentEditor === documentId &&
         searchSlot.session === editor?.state.field(editorFaultSession) &&
         controller.getMode(documentId) === "source" &&

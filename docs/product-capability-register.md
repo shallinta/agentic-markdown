@@ -1,5 +1,9 @@
 # Agentic Markdown 产品能力总账
 
+## F-060b 系统默认应用打开有限交付（2026-10-15）
+
+[F-060b](iterations/F-060b-open-current-default-app.md) alpha147已按W14有限代验：当前文档默认应用打开，磁盘版不自动保存、不改系统关联或F028c历史规则。实际Xcode目标与dirty保留已核，SDKtrue非普遍应用展示保证，完整父/OBL060及离线继续开放。
+
 ## F-060a 当前文档 Finder 定位有限交付（2026-10-15）
 
 [F-060a](iterations/F-060a-reveal-current-document.md) alpha146已通过非离线有限代验，在既定W13内接入公开原生SDK与当前授权路径守卫；无新FFI/原生桥/任意命令。只读/dirty可定位不保存，实际Finder选中正确样本，SDK void不冒称普遍系统成功保证。OBL060命令/键盘局部承接，外部默认编辑器及目录消费者仍后续，完整父与离线开放。

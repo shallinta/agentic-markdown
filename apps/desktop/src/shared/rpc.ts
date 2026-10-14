@@ -24,6 +24,7 @@ export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
       revealDocument: { params: DocumentHandleRequest; response: DocumentResponse };
+      openDefaultDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       recentFiles: {
         params: import("./recent-files").RecentRequest;
         response: import("./recent-files").RecentResponse;

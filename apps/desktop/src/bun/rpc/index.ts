@@ -34,7 +34,7 @@ export interface MainWindowRPCDependencies {
     get(): SidebarLayout | undefined;
     save(layout: SidebarLayout): Promise<void>;
   };
-  documents: DocumentService & { reveal?: (request: unknown) => Promise<import("../../shared/documents").DocumentResponse> };
+  documents: DocumentService & { reveal?: (request: unknown) => Promise<import("../../shared/documents").DocumentResponse>; openDefault?: (request: unknown) => Promise<import("../../shared/documents").DocumentResponse> };
   workspace?: WorkspaceService;
   executeCommand: (command: Command) => void;
   getMainWindow: () => BrowserWindow;
@@ -171,6 +171,7 @@ export function createMainWindowRPC({
         waitForDocumentSaves: (request) => documents.waitForSaves(request),
         selectDocument: (request) => documents.select(request),
         revealDocument: (request) => documents.reveal ? documents.reveal(request) : Promise.resolve({ protocolVersion: 1, requestId: request.requestId, ok: false, error: "READ_FAILED" }),
+        openDefaultDocument: (request) => documents.openDefault ? documents.openDefault(request) : Promise.resolve({ protocolVersion: 1, requestId: request.requestId, ok: false, error: "READ_FAILED" }),
         cancelDocument: (request) => documents.cancel(request),
         readDocument: (request) => documents.read(request),
         readLocalImage: (request) => documents.readLocalImage(request),

@@ -29,6 +29,7 @@ export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdat
 
 export type Command =
   | GenericCommand<"revealDocument">
+  | GenericCommand<"openDefaultDocument">
   | GenericCommand<"openSourceSearch">
   | GenericCommand<"closeSourceSearch">
   | GenericCommand<"nextSourceMatch">
@@ -210,6 +211,7 @@ export const COMMAND_META: Record<
   dedentSource: { target: "webview", palette: false },
   selectDocument: { target: "webview" },
   revealDocument: { target: "webview" },
+  openDefaultDocument: { target: "webview" },
   selectFolder: { target: "webview" },
   setRootHidden: { target: "webview", palette: false },
   saveDocument: { target: "webview" },
@@ -270,6 +272,7 @@ export const PRODUCT_COMMANDS: Partial<
   },
   selectFolder: { label: "加入文件夹" },
   revealDocument: { label: "在 Finder 中显示当前文档" },
+  openDefaultDocument: { label: "用系统默认应用打开" },
   setRootHidden: { label: "显示隐藏文件" },
   reloadDocument: { label: "重新读取" },
   saveDocument: {

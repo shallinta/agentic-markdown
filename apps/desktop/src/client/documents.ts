@@ -53,6 +53,7 @@ export interface DocumentTransport {
   cancelDocument(request: DocumentRequest): Promise<unknown>;
   selectDocument(request: DocumentRequest): Promise<unknown>;
   revealDocument?(request: DocumentHandleRequest): Promise<unknown>;
+  openDefaultDocument?(request: DocumentHandleRequest): Promise<unknown>;
   readDocument(request: DocumentHandleRequest): Promise<unknown>;
   releaseDocument(request: DocumentHandleRequest): Promise<unknown>;
 }
@@ -1115,19 +1116,21 @@ export function createDocumentController(
     },
     getSnapshot: () => state,
     canRevealDocument: () => !!state.snapshot && !["missing", "replaced"].includes(observation.status(state.snapshot.documentId) ?? "") && !state.busy && !state.frozen && !saving.size && !revealPending && canLeaveEditor(),
-    async revealCurrentDocument() {
+    revealCurrentDocument: () => controller.dispatchDocumentPath("reveal"),
+    openDefaultDocument: () => controller.dispatchDocumentPath("open-default"),
+    async dispatchDocumentPath(action: "reveal" | "open-default") {
       if (!controller.canRevealDocument() || !state.snapshot) return;
       const target = { ...request(), handle: state.snapshot.handle };
       revealPending = target;
       publish({ ...state });
       try {
-        const response = await transport.revealDocument?.(target);
+        const response = await (action === "reveal" ? transport.revealDocument?.(target) : transport.openDefaultDocument?.(target));
         if (revealPending !== target || state.snapshot?.handle !== target.handle || !canLeaveEditor()) return;
         if (!isDocumentResponse(response, target.requestId) || !response.ok)
-          publish({ ...state, error: "无法发起 Finder 定位，请确认文件仍存在且授权有效。" });
+          publish({ ...state, error: action === "reveal" ? "无法发起 Finder 定位，请确认文件仍存在且授权有效。" : "无法用系统默认应用打开，请确认文件仍存在且有默认关联。" });
       } catch {
         if (revealPending === target && state.snapshot?.handle === target.handle && canLeaveEditor())
-          publish({ ...state, error: "Finder 定位请求失败，请重试。" });
+          publish({ ...state, error: action === "reveal" ? "Finder 定位请求失败，请重试。" : "系统默认应用打开请求失败，请重试。" });
       } finally {
         if (revealPending === target) revealPending = null;
         publish({ ...state });

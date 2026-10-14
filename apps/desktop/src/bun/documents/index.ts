@@ -63,6 +63,7 @@ export interface DocumentScope {
 }
 export interface TrustedDocumentService extends DocumentService {
   reveal(request: unknown): Promise<DocumentResponse>;
+  openDefault(request: unknown): Promise<DocumentResponse>;
   select(request: unknown, prepareStartingFolder?: (check: () => void) => Promise<string | undefined>): Promise<DocumentResponse>;
   acceptRefreshCandidate(request: unknown): Promise<RefreshAcceptanceResult>;
   queryRefreshAcceptance(request: unknown): RefreshAcceptanceResult;
@@ -169,10 +170,12 @@ export function createDocumentService({
   imageReader,
   onStandaloneSelected,
   revealPath,
+  openDefaultPath,
 }: {
   pickFile: (startingFolder?: string) => Promise<string | null>;
   onStandaloneSelected?: (metadata: Readonly<{ path: string; accessedAt: number }>) => void | Promise<void>;
   revealPath?: (path: string) => void;
+  openDefaultPath?: (path: string) => boolean;
   authorize?: typeof authorizeSingleFile;
   verify?: typeof verifySingleFileAuthorization;
   write?: (input: AtomicSaveInput) => Promise<AtomicSaveResult>;
@@ -484,8 +487,7 @@ export function createDocumentService({
     next.mirror = mirrors.put(grant.handle, next.text, 0);
   }
 
-  return {
-    reveal(request) {
+  function dispatchDocumentPath(request: unknown, action: "reveal" | "open-default"): Promise<DocumentResponse> {
       if (!validate(request, true))
         return Promise.resolve(failure("", "INVALID_REQUEST"));
       if (revealing || duplicate(request.requestId) || saving || writeBarrier)
@@ -522,8 +524,12 @@ export function createDocumentService({
           check();
           await verify({ ...grant, file });
           check();
-          if (!revealPath) throw Error("Unavailable");
-          revealPath(grant.path);
+          if (action === "reveal") {
+            if (!revealPath) throw Error("Unavailable");
+            revealPath(grant.path);
+          } else if (!openDefaultPath || openDefaultPath(grant.path) !== true) {
+            throw Error("Unavailable");
+          }
           task.committed = true;
           response = result(task.id, null);
         } catch {
@@ -535,7 +541,10 @@ export function createDocumentService({
         task.resolve(response);
       })();
       return promise;
-    },
+  }
+  return {
+    reveal: (request) => dispatchDocumentPath(request, "reveal"),
+    openDefault: (request) => dispatchDocumentPath(request, "open-default"),
     async acceptRefreshCandidate(request) {
       if (!validRefreshAcceptance(request)) return { status: "rejected", error: "INVALID_REQUEST" };
       const params = { ...request };

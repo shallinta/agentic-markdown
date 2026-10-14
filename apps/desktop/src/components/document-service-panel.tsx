@@ -83,6 +83,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       selectDocument: (request) =>
         rpc ? rpc.request.selectDocument(request) : unavailable(),
       revealDocument: (request) => rpc ? rpc.request.revealDocument(request) : unavailable(),
+      openDefaultDocument: (request) => rpc ? rpc.request.openDefaultDocument(request) : unavailable(),
       readDocument: (request) =>
         rpc ? rpc.request.readDocument(request) : unavailable(),
       saveDocument: (request) =>
@@ -172,6 +173,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       },
       selectDocument: controller.select,
       revealDocument: () => controller.revealCurrentDocument(),
+      openDefaultDocument: () => controller.openDefaultDocument(),
       selectFolder: () => controller.runWorkspaceAction(folders.select),
       setRootHidden: ({ root, showHidden }) =>
         controller.runWorkspaceAction(() =>
@@ -245,6 +247,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         controller.canSelectFolder() && !folders.getSnapshot().busy,
       saveDocument: controller.canSave,
       revealDocument: controller.canRevealDocument,
+      openDefaultDocument: controller.canRevealDocument,
       undoDocument: controller.canUndo,
       redoDocument: controller.canRedo,
       addSourceCursorAbove: controller.canRunSourceSelection,
@@ -573,6 +576,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         <button className={buttonClass} disabled={!isCommandEnabled("revealDocument")} onClick={() => executeCommand({ type: "revealDocument", args: {} })}>
           在 Finder 中显示当前文档
         </button>
+        <button className={buttonClass} disabled={!isCommandEnabled("openDefaultDocument")} onClick={() => executeCommand({ type: "openDefaultDocument", args: {} })}>
+          用系统默认应用打开
+        </button>
+        <span className="text-muted-foreground text-sm">打开磁盘上的版本，不会自动保存当前修改；默认应用也可能是本 App。</span>
         <button
           className={buttonClass}
           disabled={!isCommandEnabled("reloadDocument")}

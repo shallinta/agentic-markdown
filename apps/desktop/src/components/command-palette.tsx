@@ -87,6 +87,7 @@ export function CommandPalette({
       type === "indentSource" ||
       type === "dedentSource" ||
       type === "revealDocument" ||
+      type === "openDefaultDocument" ||
       type === "reloadDocument" ||
       type === "saveDocument" ||
       type === "clearDocument" ||

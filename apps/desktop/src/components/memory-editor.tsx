@@ -31,6 +31,7 @@ import {
   fenceCompletionTransaction,
   isCurrentFenceCompletion,
 } from "@/client/fence-completion";
+import { isHeadingShortcut, observeHeadingFolding, registerHeadingView, toggleCurrentHeading } from "@/client/heading-folding";
 import { routeHistoryInput } from "@/client/history-input";
 import {
   registerFormatView,
@@ -77,7 +78,10 @@ export function MemoryEditor({
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   useLayoutEffect(() => {
-    if (viewRef.current) observeEditingImages(viewRef.current);
+    if (viewRef.current) {
+      observeEditingImages(viewRef.current);
+      observeHeadingFolding(viewRef.current);
+    }
   });
   const [mountAttempt, setMountAttempt] = useState(0);
   const [searchSlot, setSearchSlot] = useState<{
@@ -87,7 +91,7 @@ export function MemoryEditor({
   const editor = controller.getEditor(documentId);
   const readOnly = !controller.canWrite(documentId);
   const inputBlocked = controller.isEditorInputBlocked();
-  const { executeCommand } = useCommands();
+  const { executeCommand, registerCommandHandlers } = useCommands();
   useLayoutEffect(() => {
     if (!container.current || !editor) return;
     const initialState = prepareEditorViewState(controller, documentId);
@@ -147,6 +151,27 @@ export function MemoryEditor({
       viewRef.current === view &&
       controller.getSnapshot().snapshot?.documentId === documentId;
     const calloutToast = `callout-${documentId}`;
+    const headingReady = () => {
+      const snapshot = controller.getSnapshot();
+      return currentView() && controller.getEditor(documentId)?.state === view.state &&
+        !snapshot.busy && !snapshot.frozen && !controller.isEditorInputBlocked() &&
+        !controller.hasSaves() && !session.fault && !controller.isSafeSource(documentId) &&
+        controller.getMode(documentId) !== "reading" && !view.compositionStarted && !view.composing;
+    };
+    const removeHeading = registerHeadingView(view, {
+      ready: headingReady,
+      run: (action) => executeCommand({ type: "toggleHeadingFold", args: action }),
+      rejected: () => toast.info("选区跨入待折叠内容，请先调整选区再折叠。", { id: `heading-${documentId}` }),
+    });
+    const removeHeadingCommand = registerCommandHandlers({
+      toggleHeadingFold: (action) => { toggleCurrentHeading(view, action); },
+    }, { toggleHeadingFold: headingReady });
+    const headingKey = (event: KeyboardEvent) => {
+      if (!isHeadingShortcut(event) || !view.hasFocus || !headingReady()) return;
+      event.preventDefault(); event.stopPropagation();
+      executeCommand({ type: "toggleHeadingFold", args: {} });
+    };
+    view.contentDOM.addEventListener("keydown", headingKey, true);
     const imageToast = `images-${documentId}`;
     const removeImages = registerEditingImages(
       view,
@@ -567,6 +592,9 @@ export function MemoryEditor({
       toast.dismiss(imageToast);
       toast.dismiss(calloutToast);
       removeTask();
+      removeHeading();
+      removeHeadingCommand();
+      view.contentDOM.removeEventListener("keydown", headingKey, true);
       removePairing();
       removeFormat();
       removeNativeFormat();

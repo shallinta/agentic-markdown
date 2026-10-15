@@ -1,5 +1,17 @@
 # F-041d：阅读模式可见正文查找
 
+## 冻结候选的恢复凭据（2026-10-15）
+
+为避免新迭代构建带入未验旧跨模式交互，主线将本片14个已跟踪修改与19个新文件按明确路径保存为 Git stash `7da4d26fc0ced33d66469ac96eb274375219f610`。保存前后33个文件blob逐一核对一致；文档未移走，生产源码/package/lock已核与已验HEAD `4184df9` 一致。该stash为本地可恢复候选，不是产品提交或推送，禁止自动pop覆盖后续工作；后续确需复用时按文件复核再取回。旧实验和失败证据保留，本片跨窗口衔接未实现或验收。
+
+## 当前暂停旧窗口模型交付：阅读独立子窗口（2026-10-15）
+
+用户决定阅读改为独立子窗口，主窗口（含主区、副区）文档仅编辑/源码切换，先记录后继续按序推进未完成项。alpha158 同模式查找已验并推送 `4184df9`，仍是旧主窗阅读实现，不被改写为新窗口验收。
+
+本唯一迭代未提交的跨模式 nearest 候选冻结保留、不自动回滚，暂停按旧主窗三模式模型发布；已有实现、测试、实验及失败记录保留，不称正式验收。其来源映射和定位是否复用于跨窗口，在对应轮最小设计中重评。子窗口数量、单/多文档、内容来源和未保存同步、关闭/退出、查找条件/当前位置衔接及恢复尚无结论；预览落点也未定，不自行扩成新产品规则或专项禁推进。
+
+完整 F-041d/F-041/OBL-056 保持开放，阅读同模式功能保留；后续可继续不依赖阅读窗口决定的编辑查找等独立候选。此次只记录，不改代码、版本、构建或 Git，下方旧生产批准和待 alpha159 验收安排均由本节覆盖，不删除历史。
+
 ## 主线批准同模式有限片（2026-10-15）
 
 最终独立Spec与Standards均确认0剩余必要验收阻断，主线正式批准alpha158阅读同模式非离线受托Agent代验通过，非用户亲验。Spec独立16/77通过；两轴独立核源码/包内1328测试、PID63453消失及other644，SHA核验范围按各自收据不扩大，主线五SHA完整前后核对不变。本批准仅覆盖下方正式阅读同模式闭环及前置inlineCode修正，保留157/158实际版本边界与全部失败历史。
@@ -628,3 +640,169 @@ other.md预置444，App明确只读；阅读target1/1，Esc后正文空格输入
 另真实发现：墨夜tar全词1/1切回search时当前橙色正确，却持久显示高亮受限，向顶部滚动后消失。源码核count1无Worker截断可能，owner无条件OR几何回退标志导致提示；具体哪个DOM端点触发回退未取探针，不断言图片是唯一根因。独立Spec认可：几何回粗区间仅扩大候选，真正丢弃范围由Worker截断标志表示。主线批准移除无条件OR，保真正2048截断提示；同时对非空match无法构造Range时明确失败并清理，不再静默漏标。须防后续旧ready覆盖失败、保持可重试；追加少量/截断/映射失败正式回归，再独立复核与新包真实回验。
 
 本包正常CmdQ退出exec46009 exit0、Bun62313消失；五Markdown样本SHA与156基线相同，other权限恢复644，未保存正文或断网。启动日志一条IMK mach-port消息不推因。非整片验收、不得Git；下一代码包alpha158。跨模式nearest仍后续，不关闭完整F041d/OBL056。
+
+## 下一阶段：跨模式来源接口有限验证（主线批准隔离执行）
+
+同模式alpha158已获正式有限批准；主线确认`4184df9`已提交push且远端SHA一致。主线已全文读取本节，独立Spec确认0必要隔离执行阻断，现批准仅本节首项临时接口验证，不改已验同模式代码，不是生产授权。原同leaf实体/转义与重复词末项两红纳入既定组内，独立raw oracle不从候选回填；纯驱动未实际Worker传输就明确未测，不为计时新造架构。
+
+### 目标与最小接口
+
+采用三层映射：CM LF坐标↔原始raw UTF16↔受控语义片段↔当前阅读投影。第一层复用`raw-buffer.ts`公开函数；最后一层复用现`collectReadingDom`/`projectReading`的实际normal/pre规则、对象/块/cell边界与压缩run。中间来源仍须验证，不将Stage1e/A2的字符串相等当DOM来源映射已完成。
+
+候选私有recipe绑定内容Text身份、revision、canonical树身份/profile及top-block稳定编号；片段另有canonical节点路径、消费者角色和来源精度。普通text、代码body、生成Callout标题、图片可见alt、HTML净化/原文回退必须区分。recipe通过既有私有registry/消费者已有元素关联，不使用可伪造的HTML属性，不为逐字或每个text leaf新增span，也不改变正式HTML审计、布局或主题。实验先验证recipe能与现有Text快照按固定消费者顺序对齐；不预设当前仅DOM路径segment已经具备canonical身份。
+
+映射结果为有序压缩run：等长线性段保存范围，实体/EOL/空白折叠保存完整来源区间，生成标题保明确marker/块锚点，未知来源显式`unknown`。不按字符生成持久对象、不以比例或重复词`indexOf`猜来源。每片段须在原始语义值与实际规范化consumer值均严格核对后组合；表格裁列、图片状态和HTML片段所有权须一致，合法但未对齐的片段不得借相邻节点伪坐标。
+
+### 临时执行方式与成本边界
+
+批准后仅新建`mktemp`隔离目录、纯适配模块与薄单命令driver，保留旧Stage1e/A2及红例。沿已安装公开micromark根入口`parse/preprocess/postprocess`及现四项GFM配置读取已resolve events，不复制私有compiler或生成HTML。按需来源Worker同一内容/profile代仅完整解析一次；这是额外一次全篇解析、events分配和raw传输成本，不能称局部解析。query与scroll只复用来源索引，不重parse。未来生产若采用需显式声明同版micromark直接依赖；本阶段不安装或修改依赖。
+
+先用真实canonical结果、当前受控消费者SSR和当前生产collector/normalizer做接口适配。无新浏览器/UI接线：collector的结构DOM seam必须与对应真实SSR结构证据分列，不能称真实浏览器Text/布局或React动态生命周期已经验证；动态图片/HTML状态显式输入并报告覆盖边界。手写独立期望不从候选输出回填。每组输出CM/raw/语义/reading范围、精度、最近项与不确定原因；计时分列完整events解析、映射构造/压缩run数量、查询成本及Worker传输，不把逐匹配扫描临时数组搬入生产。
+
+### 有限独立oracle（最多十组）
+
+1. 重复普通词：向前/向后最近、等距取正文较前项，证实不是仅后方首项。
+2. 跨strong/emphasis的连续匹配与标记内源码锚点；相邻未匹配片段不被吞并。
+3. 实体emoji、ASCII空格与NBSP、转义字符：UTF16与完整实体来源区间。
+4. BOM及LF/CRLF/CR混合：CM↔raw双向边界及软/硬换行规范化。
+5. inlineCode padding、连续空白/EOL与表格escaped pipe：沿正式消费者输出，不重用过期A2假设。
+6. fenced/indented code及quote容器：重复词末项；partial-tab虚拟前缀须保未知而真实对齐后缀可精确。
+7. Callout生成标题与首段正文：标题锚定marker/块，正文重复词不可整段伪精确。
+8. 表格多余列裁剪/缺列补空/跨cell拒绝：仅实际可见consumer参与距离判断。
+9. 图片ready与失败alt状态：物体不拼词，状态变化使旧代失效，隐藏alt不作为候选。
+10. 净化HTML与原文fallback两侧普通重复词：HTML来源未证时明确未知，不能让整段外部可靠文字无故失去来源；来源已知部分与未知部分分列。
+
+nearest只在可靠来源区间上定义距离与稳定tie；如果unknown片段可能改变最近项结论，实验结果必须为`unresolved`，**不得跳过unknown后宣称全局nearest正确，也不得把unknown输出当修复通过**。首阶段仅回答可靠片段来源与DOM可见规范化能否同构、nearest是否可判定，不实际切模式、滚动或显示产品提示，不扩展为通用HTML源码映射项目。此阶段须报告未闭环例，不能自行确定产品降级行为；后续产品接线由主线决定。第一项验证结束只交冻结结果、具体未解映射与最小接线建议；生产、更改查询store/模式切换行为、版本/build/GUI/Git均需后续主线批准。完整F041d/F041/OBL056、自然IME与最终离线不关闭。
+
+### 首项来源接口实验冻结：10例/3红，尚不可生产
+
+获主线批准后重读prototype/LOGIC，建立`/tmp/agentic-f041d-cross-interface.BqCfs6`，纯`query.ts`与薄`run.ts`，README及`result.log`。复跑`bun /tmp/agentic-f041d-cross-interface.BqCfs6/run.ts all`退出1；可将all替换输出case名。旧Stage1e/A2脚本与oracle未改，无生产/依赖/版本/build/GUI/Git修改。
+
+首轮及加入真实consumer SSR证据后的复跑均10例/3红/3unresolved。有限成功包括同leaf实体与转义重复末项、emoji实体、跨strong连续匹配、inlineCode padding；它们使用当前生产collector/projectReading与匹配engine，来源为公开events的token-sized run而非逐字符对象。真实SSR单独输出，不当浏览器DOM或空白布局证明。
+
+三红保持原期望：`BOM-mixed-EOL`普通text缺lineEnding来源拼接、`fence-last`把围栏外换行一并拼入导致strict-token-value-mismatch，均unresolved而未达到预期末项；`partial-tab`查询虚拟两个空格错误resolved为raw[3,8]，因候选把所有非线性token一概当已证解码区间。后者是明确假known安全缺口，必须区分已证实体/escape与虚拟prefix，不能改oracle称粗精度通过。第三个unresolved是`unknown-repeated`预期保护，仍非nearest修复。
+
+本轮十行是首项接口的窄矩阵，不是前述十组全部覆盖：Callout、表格裁列、图片动态及生命周期未展开，发现红后停止扩大。结构seam在临时对象中使用SPAN/PRE包装叶，不是正式消费者结构或新增生产span；unknown HTML模拟净化文字而Bun真实SSR为raw回退，二者不同明确保留，不声称实际consumer同构。recipeIdentity仅同调用绑定canonical对象，不是session/ABA实证。候选逐leaf filter tokens、逐match find与sort仍有乘积成本，不能因压缩run就生产照搬；Worker未建立，传输未测，SSR额外canonical解析在probe计时之外。
+
+结论只支持继续收敛来源接口：真实token解码与线性原文须分类，普通换行与代码有效token边界须严格恢复完整consumer值；virtual前缀无证则unknown。先保留本目录供独立复跑，下一窄修/扩大真实consumer适配由主线决定，不自行进入生产或修改产品nearest语义。
+
+冻结日志的有限成本：首实体例canonical2.99ms、完整events0.32ms、probe合计5.43ms，5条来源run/5条DOM run；其余短样本events约0.09–0.43ms、probe约0.59–1.38ms。仅小样本同进程计时，不是大文档/WK/稳定性能门槛，未测Worker传输、RSS或生命周期成本。
+
+### 首项接口窄修批准（主线与独立Spec复跑后）
+
+主线与独立Spec均实际复跑10/3红/3unresolved。Spec另实跑`a<em>b`中间HTML为unknown而查询整串仍resolved的反例，证实只核端点会漏未知内部；该候选明确不能生产。主线已读候选与Stage1e相关公开token逻辑，批准仅新临时目录收敛以下缺口，旧目录/日志不改：
+
+1. 完整匹配区间覆盖检查，任何内部unknown不能由两端known洗成精确。实体/escape使用已证转换；partial-tab沿公开sliceStream把虚拟前缀unknown与严格原文后缀分开，不猜前一字符。
+2. 普通lineEnding纳入来源，代码仅首尾真实codeFlowValue之间的token；沿既有Stage1e已验证规则，不再手写容器去缩进，严格核完整consumer值。
+3. 结构seam要显式按当前consumer元素/white-space规则构造，并增加独立固定SSR结构/文字断言；SSR与seam不等的净化HTML案例只记未覆盖，不混成已证consumer。保留反例的独立raw锚点与正反向范围；第一步仍只修已覆盖组，不扩通用HTML parser。
+4. 有序token区间索引和命中映射区间二分/顺序遍历替代每leaf全filter、每match全find及排序；最近候选一次扫描维护最小距离。只记录实际访问量，identity/session与Worker传输未测明确不具证据，不再输出自等即identityBound的成功标记。
+
+修后先冻结复跑原红及内部unknown反例；未覆盖Callout/表格/图片与生命周期继续保持开放，不能将这轮通过当全部十组或生产接线成立。无新生产/依赖/版本/build/GUI/Git，后续仍须主线与独立复核决定。
+
+### 首项窄修冻结（11行、0红、3 unresolved，非生产）
+
+新目录`/tmp/agentic-f041d-cross-narrow.imHm3t`，`query.ts`纯适配、`run.ts`薄驱动、README/first-run.md/result.log；复跑`bun /tmp/agentic-f041d-cross-narrow.imHm3t/run.ts all`退出0。原10行加Spec内部unknown一行，实体与escape同leaf变体合一组，共10个小组，不扩大到原规划的全部语法组。旧目录3红/日志不改，未生产/依赖/版本/build/GUI/Git。
+
+完整匹配现在逐覆盖run检查，`a<em>b`中间unknown不能由两端known洗白；partialTab虚拟两空格为unknown，公开chunks首段-1且纯字符串后缀、raw与suffix及完整serialized均严格相等时只有后缀linear。普通lineEnding加入来源，code仅首尾codeFlowValue内token且完整值核对，原混合EOL/fence末项红本轮resolved符合原oracle。11行中3个unresolved分别是partialTab前缀、raw HTML保留未知、跨内部unknown保护，**不算nearest功能已解决**。
+
+结构seam改显式P/STRONG/CODE/PRE/BLOCKQUOTE，inline HTML CODE采用pre-wrap，unknown block采用真实SSR的raw fallback/pre文字；无逐叶SPAN。每行真实consumer SSR与独立固定正文片段断言匹配；只证所列正文结构/文字，不是完整DOM同构、异步净化HTML、布局或React生命周期。控制按钮/App状态在seam未复刻，不新增其证明。初跑仅BOM SSR断言把CRLF错误写成字面反斜杠而1红；按独立raw期望纠正driver转义后0红，first-run.md保留，未改nearest oracle。
+
+token先排序、区间二分与局部顺序遍历，完整match映射亦二分进入覆盖run，nearest单次扫描取距离/正文次序，不再逐leaf全filter、逐match全find及排序。计数仅记录实际tokenVisits/lookupComparisons，不能替代生产调度/聚合预算。保留完整公开events成本、有限SSR额外解析不计入probe；无Worker故不报传输。删去自等identityBound假标，身份明确未测，后续必须同时绑定raw/revision/canonical/profile，CM Text相同不足以防raw-only变更ABA。
+
+待主线与Spec复跑后决定：当前只说明已覆盖片段来源与规范化接口可收敛；Callout/表格/图片、真实consumer来源登记及更广代码/EOL、可靠unknown策略仍未完成，不将本轮绿当正式nearest实现批准。
+
+### 下一单批：剩余消费者与最近项资格（第1–3点已获批隔离执行）
+
+主线已全文读取并批准仅第1–3点静态隔离执行，Spec0必要执行阻断。nearest四例补包含锚点恰落match端点；第4–6点不执行，后续身份测试需逐字段单变量变更、其余字段相同，并实际拒旧recipe/match，不能只比较字符串。本批新mktemp、保旧红与独立oracle，完成即冻结，不生产/依赖/版本/build/GUI/Git。
+
+主线及独立Spec/Standards已复跑上一冻结候选11行/0红/3unresolved。下一只在新mktemp保留旧候选，纯接口与单命令driver补下列小批；不安装依赖、不接生产/真实UI/版本/build/Git，不设计通用HTML mapper。SSR与结构seam仍分别输出，不把SSR通过称实际DOM/生命周期通过。
+
+主线进一步收敛：**本次申请执行仅第1–3点静态消费者**（方向/tie/截断、Callout、Table）。第4–6点仅列后续同目录候选，不随本次默认执行，待本小批冻结后再决定；避免一次构建通用来源/生命周期架构。
+
+1. **nearest资格，四个固定输入。** 重复词锚点分别位于首项前、两项之间且靠前、靠后、严格等距，预先手写raw区间与期望索引，验证前后最近及tie取正文较前项。另一个3000短匹配输入专门触发现engine视口2048返回上限：若仅握有截断结果，候选必须`unresolved: incomplete-match-set`，不可从前2048选出所谓global nearest；不为本实验另建全文匹配框架或扩大上限。unknown命中仍整次unresolved。
+2. **Callout，两个固定输入。** 用真实canonical `readCallout` metadata及受控SSR确认生成标题与首正文。标题recipe为明确`semantic-block`，只锚到公开marker/块范围，不伪造中文标题逐字raw对应；首正文保精确textPrefix切片后的来源核验，重复末词应独立定位。手写期待同时区分semantic-block与exact/token。
+3. **Table，两个固定输入。** 固定header列数决定visible cells；多余cell原文含同查询词但必须不参与，缺列只补空边界。另含inlineCode escaped pipe，与现官方Table语义严格value核对；cell之间不能匹配拼词。显式TD/TH结构seam与真实SSR正文片段断言分列，不新增HTML表格权力。
+4. **Image，一个固定文档两状态。** 不伪装普通text：使用当前真实私有registry的`kind:image`挂载host，ready时alt=null、失败时仅登记已有alt Text容器。对前后正文/alt查询分别手写期望，物体边界不能拼词。状态变更重做本实验快照并拒旧呈现代结果；仅seam非实际加载/网络证明。
+5. **HTML，一个原文回退与一个净化模型。** 原文回退使用真实consumer SSR与pre-wrap结构，原文字符串严格相等时提供linear/EOL来源，不再人为unknown；查询正文与标签字符均核raw区间。净化模型继续单列unknown，不将SSR fallback说成净化成功，不解析HTML标签来猜源码；如其未知命中可能影响最近结论则unresolved。
+6. **双向与身份，复用上述小输入。** 每个可靠reading match的完整来源区间→CM端点使用现公开EOL转换；从该CM区间回raw再查询对应reading范围，按token/semantic-block的区间精度而非字符双射校验。原始expected raw范围和精度在driver固定，不从候选生成期望。加一个有限纯身份票据seam：同Text下仅raw变化、revision变化、canonical对象变化、profile变化以及呈现代变化分别拒旧；完全相同票据才接收。这只是拟接线接口可执行证据，不冒称现生产owner已实施该守卫。
+
+实现仍限上轮小query适配，不加入通用缓存、解析器或新Worker；token来源/正常化继续用现已读公开接口，未支持组合返回unresolved并记录。每行输出独立oracle、真实SSR片段断言、seam投影/边界、双向raw/CM/reading区间与精度、实际访问量和耗时；未知与截断保护通过不计作nearest已解。完成单批即冻结给主线/独立复跑，若出现新的根本来源缺口先保红报告，不扩大通用映射工程。
+
+### 静态第1–3点隔离冻结（10行/0红，非生产）
+
+主线与Spec已独立复跑同10/0/3。按复核要求driver补标题precision=semantic-block及截断reason/全count3000/返回2048的直接断言，复跑仍10/0/3，asserted-result.log保留。Table裁列由手写leaves/shape及table:true输入，**没有自动recipe生成或祖先资格的可执行证明**。
+
+新目录`/tmp/agentic-f041d-cross-static.8SdcpD`，纯query.ts、薄run.ts、README、first.log/result.log。复跑`bun /tmp/agentic-f041d-cross-static.8SdcpD/run.ts all`退出0：10行/0红/3 unresolved。其中1行是全计数3000但仅返回2048项，明确`incomplete-match-set`拒绝假global nearest；另2行是表格无匹配负例，不是未知来源已经解决。result.log单列matchCount/returnedMatches，first.log保留。旧两目录红例/oracle未改，本批未复跑旧11行全部矩阵。
+
+最近项覆盖起点0、首命中末端1、靠后3与严格等距2，独立raw区间和较前tie通过；不称穷尽方向。Callout标题“备注”明确semantic-block锚到marker[2,9]，首正文重复x分别[12,13]/[20,21]，末项独立定位；body先完整token值核验再按真实textPrefix裁片。Table候选裁去header外hidden列，显式空cell保边界，header至body的hx不能跨cell拼词；escaped pipe完整正文x|x映射[15,19]。仅table上下文按官方`/\\([\\|])/g`非重叠配对，pipe去slash、slash配对原样，不泛用decodeString。
+
+上述SSR只核固定正文/结构片段与hidden缺席，显式BLOCKQUOTE/P与TABLE/TH/TD seam未复刻控件、icon和所有包装，不是完整DOM同构或真实布局证明。空cell样本是显式空cell，不冒称缺列补齐已证；跨cell样本跨header/body，不冒称全部同row邻列组合。第4–6点图片/HTML/双向/逐字段身份未执行，未实现生产recipe登记或模式切换，未知/无匹配仍用临时unresolved分类而非最终产品语义。
+
+有限复跑中3000匹配案例保留1条来源run，额外完整events解析及canonical/投影/查询耗时逐行见日志；属于同进程小样本计时，不是WK布局/Worker传输/生命周期/大文档预算结论。SSR额外解析不计入probe，identity/workerTransfer仍明确not measured。待主线与独立复跑，不自批准生产；完整F041d/父/OBL056与离线边界不变。
+
+### 第4–6点有限接口冻结（主线后续批准，部分问题仍未完成）
+
+主线在静态批后明确批准原第4–6点继续新目录，不再追加泛化方案。`/tmp/agentic-f041d-cross-state.uCgKLS`内query.ts/ticket.ts/薄run.ts、README、first.log/result.log；运行`bun /tmp/agentic-f041d-cross-state.uCgKLS/run.ts all`最终退出0，7语义行及6个逐字段拒旧/旧recipe与match检查通过。first.log保留1红：driver把right写成[16,21]，手工数`left`4单位与图片原文13单位，实际独立区间应[17,22]；仅纠正driver，不改生产/候选来迎合。该错误不是源码映射修复。
+
+图片host真实调用现私有registry.mount(kind:image)：ready不查不可见alt，error只查独立alt且不拼接左右词；右侧普通正文可精确映射，alt自身仍unknown，不能称图片来源已解。HTML source登记下原文严格等值，CRLF规范化后的重复x及标签字符可回到手写raw范围；sanitized模型保unknown。Bun实际SSR仍是图片默认占位及HTML回退，日志分列，不能把seam的ready/净化状态说成真实加载或净化成功。没有新增生产DOM span。
+
+新纯票据consume实际返回recipe/match或null，Text对象不变但raw/revision/canonical/profile/presentation分别单独变化均拒绝，Text变化与旧recipe/旧match也拒绝；这是**拟议接口**，不是现生产owner已经实施的守卫，不证明异步ABA/取消。双向仅完成所列可靠范围raw→CM→raw端点回环，**反向DOM reading定位尚未实现**，没有把自等检查宣称全双向通过。图片动态重建两次独立seam并未证明同owner异步换代生命周期。完整片仍未生产获批。
+
+本批有限parse/events/probe计时逐行记录，无Worker传输、布局、内存硬界或稳定性能结论；旧静态批和所有旧红目录未改。剩余实质缺口是图片alt/净化HTML来源、真正双向定位、真实producer recipe与owner身份接线，交主线与独立复核，停止扩大本批。
+
+### 下一最小实验：真实静态consumer旁路recipe（仅方案，待主线批准）
+
+主线与两独立轴已复跑后半7/0。下一只回答“来源recipe能否随实际render分支生成并与collector文字严格对齐”，不再手填leaf/path/table:true；仅三个固定小输入：Callout标题及首正文、Table裁列/空cell/escaped pipe、普通跨strong/emphasis/inlineCode。图片与HTML只输出动态unknown标记，不实验加载或净化。新mktemp保留旧全部证据，无生产/依赖/版本/build/GUI/Git。
+
+1. **最小可行旁路。** 现`commonmarkContent`无来源回调，单看最终React元素不能可靠恢复canonical node身份/textPrefix/table祖先；因此本次采用临时shadow副本而非猜文字。副本保留实际所有render分支、预算和返回结构，原相对imports改指向现生产模块/已安装依赖，仅在产生正文字符串处旁路记录typed trace。记录canonical对象身份、node/path、role、展示值、明确slice与table上下文；Callout固定icon/空格/title分开角色，首text使用实际textPrefix；Table只在真实header列数循环访问的cell中记录，缺cell不制造文字。普通children递归自动传递路径与祖先上下文，不让driver指定资格。不复制私有compiler或变更canonical。
+2. **原版/影子证据分开。** 相同实际canonical对象与raw分别调用原版和shadow，`renderToStaticMarkup`输出须逐字完全相等。旁路trace不进入props/DOM，不新增span、data属性、HTML权限或授信。保存副本与最小差异说明，SSR一致只是返回呈现的有限证据，不称浏览器或生产实现已成立。
+3. **自动结构seam对齐。** 对这三例的shadow公开React元素树递归构造结构DOM seam，复制真实元素标签/既有class、相邻字符串按顺序合并Text；不使用private Fiber、不解析任意HTML。trace按同一渲染次序、元素路径与角色顺序消费，累计UTF16长度处理相邻Text合并，每段完整字符串严格核等值，不能用indexOf猜重复词。生成的source recipe再交现生产私有registry/collector/normalizer，现token来源接口消费recipe；任何结构/文字不一致记红或unknown，不回填期望。异步组件不在本次执行范围，遇到明确unknown而非展开其私有实现。
+4. **有限oracle与停止边界。** 三个输入的可见正文、隐藏cell不出现、Callout标题marker精度/首正文末项、escaped pipe来源及跨inline匹配raw范围预先手写；输出原版/影子SSR相等、自动trace、collector投影及实际映射分列。保留无法对齐案例，不扩通用DOM/HTMLmapper；仅一次有限运行后冻结供独立复跑。额外events完整解析与seam/SSR成本如实记录，无Worker不报传输。
+
+双向后续不需要构建任意DOM字符的通用逆映射：可捕获当前可靠匹配的raw区间，在目标模式**完整匹配集合**上按来源区间距离/tie选择nearest；未知候选可能改变结论或集合截断则unresolved。这个“current可靠区间→目标集合nearest”流程尚未实施，本次也不把raw-CM端点回环当作其证明。仍需严格raw/revision/canonical/profile/呈现代身份，不改变已验同模式行为。
+
+### 静态shadow冻结：3输入/0红（主线批准的隔离执行）
+
+主线全文读计划、Spec0必要执行阻断后批准，仅执行三例。冻结`/tmp/agentic-f041d-shadow.3wwzEj`；复跑`cd /private/tmp/agentic-f041d-shadow.3wwzEj && bun run.tsx`。含shadow.tsx、原版original.txt/shadow.diff、recipe/query、driver/README及first/second/third/result日志。最终三输入各SSR逐字相等，9个query检查通过，trace零剩余；所有实际React字符串均按顺序严格消费，否则throw，不使用indexOf或private Fiber。静态元素/数组/Fragment之外组件拒绝，未调用hook猜DOM。
+
+旁路emit保原string与返回结构：text、inlineCode、Callout icon/显式空格/title/首正文记录node身份、自动canonical path、role/cut/table祖先。table由真实renderer列循环产生trace，hidden多余列无trace，缺列补空有真实TD而无假文字；不再driver手填leaf/table:true。path/table WeakMap是实验一次完整canonical索引，不能直接称生产有界调度。collector seam从实际公开React元素自动生成标签/class，合并邻接Text时按UTF16平移保留分角色来源run；Callout发生一次space/title合并，icon查询0、title仅marker[2,9]，未把装饰整体授信。无新增生产span、HTML权限或props。
+
+Callout正文x两范围[12,13]/[20,21]；Table escaped pipe范围[23,27]、hidden与跨相邻cell x|xt均0；inline跨strong的bcde范围[1,9]、emphasis x[12,13]、code y[16,17]。first/second日志为临时目录JSX包解析失败，改用本地classic JSX/createElement配置后可运行，无安装依赖；third.log保留Table oracle手数偏1：[前两行各10单位]+`| `与反引号3单位，x独立起点23而非22，仅纠正driver为[23,27]，未改来源候选凑绿。
+
+结果仍只证三个静态分支的shadow/SSR和结构collector接口。实际浏览器Text合并/布局、动态image/HTML、production registry与身份生命周期未验证；图片/HTML仍不授信。query driver每条检查重复events解析，纯实验收据**不是生产每query解析方案**；日志total包含本例SSR与检查，probe.canonicalMs因复用实际tree近零，不当完整canonical成本。后续双向current区间→完整目标集合nearest尚未实施。未生产/版本/build/GUI/Git，待主线和独立复跑。
+
+### 跨模式最近项最小正式切片方案（待主线全文与独立批准，尚未实施）
+
+主线与两轴已复跑shadow三例0红。本次申请交付“共享查找条件、在可靠来源上双向迁移当前匹配”的有限闭环；保留alpha158同模式完整计数/导航/高亮。不是所有语法字符均可逆，不改变模式切换、raw/history/只读/IME或专项边界。普通静态正文、inline格式、Callout标题/正文、Table实际可见cell为首批可靠对象；其余逐消费者明确known/unknown，不因来源失败禁用目标模式普通查找。
+
+1. **实际render内可选recipe，原子发布。** 修改`security/commonmark-content.tsx`、`reading-search-registry.ts`和`components/reading-view.tsx`的必要登记。新增typed只读recipe模块，节点用同canonical代的稳定ordinal/语义角色/切片描述；已有render访问时顺带分配，不先全树paths索引、不复制每节点祖先数组。每个受控顶层block的文字角色按实际生成次序登记；Table资格来自实际table分支上下文，hidden cell不会进入，空cell只结构边界。预算在push/copy前同时计recipe条数/总UTF16引用或片段量，超限只令来源索引失败，不令正文或同模式查找失败。沿既有render try/catch，正常block记录先局部累积，整次成功才发布；任何fallback丢弃半成品trace，fallback原文可另登记独立raw角色或明确unknown，不混用旧AST recipe。producer必须与实际collector排除规则一致：icon/control/status被collector整段跳过，其trace同样不进入待zip的可搜流；实际可见分隔空格保留独立unknown/布局角色，不丢弃也不并入标题授信。原始HTML不能自行制造recipe。
+
+2. **私有host局部对齐，压缩run。** `reading-search-dom.ts`/新`reading-search-source.ts`仅在已登记block建立/换代时按同一实际collector顺序流式消费recipe，DOM Text拆分/合并按UTF16段长度和完整值严格核对，不indexOf、不额外span、不全root每键扫描。只消费双方一致的可搜流；跳过的icon/control/status不可占据Text队列，实际保留空格可消费但不授信为标题。动态私有host为显式opaque边界，登记就绪后在自己的子流内对齐，不与相邻静态文字zip；跨Text普通空白仍由现normalizer处理。记录连续linear段、已证entity/escape token区间、generated semantic-block与unknown，合并相邻可合并段，不逐字符对象；端点查询二分进入并检查完整命中覆盖。零剩余recipe及零未归属可搜Text是发布条件；不一致只将本代来源状态置failed，旧来源失效，现同模式projection仍可用。现block缓存绑定recipe与registry呈现代，query/scroll只复用，不重新对齐。
+
+3. **按需一次公开events Worker。** 新窄`reading-source-protocol.ts`、`reading-source.worker.ts`、`reading-source-owner.ts`；复用现公开micromark根parse/preprocess/postprocess与完全相同GFM profile，新增同版micromark显式直接依赖仅在主线批准后执行，不升级其他包。当前活动会话只持一个按需来源Worker，不按block/query建Worker；raw/canonical/profile内容代来源第一次需要时启动，完成一次完整events解析及压缩来源索引；不是局部parse，额外全篇解析/clone/索引内存成本明确存在，已知极端canonical成本不因此消失。后续query/scroll/viewport同代不parse；registry动态变更只重建对应呈现映射，不重跑内容events。Worker只接typed、有限输入与描述符，不传DOM/canonical对象，主线程owner持精确对象身份，消息用不可复用generation。micromark内部parse/postprocess/events是同步调用，不能声称其内部分配可前置计费或分片：该部分只依既有输入上限、独立Worker隔离与timeout terminate控制；timeout不是已证明RSS硬界或同步调用可协作取消。自建索引/输出才在分配前核节点/字符/输出预算并分片验证回执。失效终止旧Worker，timeout/错误取消该来源代并提供显式重试，不无界自动重启；raw/clone/events/索引及销毁延迟可能短暂重叠，单Worker并不等于内存硬上限。输入/模式切换不await来源，IME期间不强dispatch；不得改通用parser架构。
+
+4. **完整集合nearest，不搬2048视口列表。** 对`source-search-engine.ts`/protocol新增可选受控迁移请求（默认旧scan/navigate行为不变），在Worker内已有完整匹配pairs上可取消分片扫描，源码CM/raw转换先构建一次EOL索引或按有序pairs单调扫描，禁止每pair调用前缀rawOffset造成乘积；结合压缩来源区间选择最小区间距离、等距正文较前项；仅回选中index/current及迁移状态，不把全部匹配传到UI。阅读目标使用已规范化projection+完整边界，源码目标使用现CM文本匹配集合及raw↔CM EOL映射。捕获当前可靠match完整raw区间，送往目标完整集合比较，不建任意DOM字符逆映射。unknown命中若可能改变最短距离（首片可保守任何unknown候选即unresolved）、集合不完整或当前无可靠来源则不声称nearest；generated title的marker范围精度明确semantic-block。源码marker/URL中独有匹配目标可无对应，按目标完整集合的可靠区间距离而非字符串猜同一项。迁移完成后只设置目标自己的current，绝不把reading offset写进source position。
+
+5. **严格身份与失败UX。** `source-search-store.ts`只增加短期迁移意图/可靠raw区间票据，不长存DOM/Text；`components/source-search.tsx`、`components/reading-search.tsx`与现owner通过窄接口交换，只有当前可交互会话/非组合状态才捕获。明确分两层：origin ticket绑定document/session、raw、Text身份、revision、查询/options及单调模式切换nonce，cold source无canonical也可捕获可靠源码raw区间；不把Text放入持久store，仅会话内短期owner引用。target binding在reading ready且内容/nonce仍相同后补绑定canonical/profile/registry呈现代；source目标不要求canonical。每异步回执/提交核两层实际所需身份，raw-only变更即使Text相同亦拒旧。预期的一次origin→target切换消费nonce而不撤票据；第二次切换、第三模式、别的文档、主动query/nav、编辑或关标签撤销，不覆盖新选择；自动scan回执与本模式anchor写入不是用户操作，不应误取消迁移。reading→source仅在切换当刻来源已ready时捕获current完整raw区间；若来源仍pending，该次明确unresolved，不为此创建跨卸载DOM任务或后台controller框架。目标呈现代变化使绑定失效，不使用旧映射。主线依用户低成本体验授权选择：切换立即展示目标普通查找与完整count，不阻止打开；短暂显示“正在定位最近匹配”，成功才选中可靠项。失败/unknown显示非阻断“暂无法可靠定位最近匹配，可继续查找”，同模式既有恢复不变，不把旧模式坐标冒充目标当前项；若无法恢复，用户上一/下一项按目标正常导航建立当前项。只有技术失败提供重试；确定unknown不无意义重试。来源失败不清同模式计数/高亮，不保存、不改dirty/history。
+
+6. **动态消费者契约与最小验证。** `ReadingCode`正文可登记canonical value及block身份，但只在公开codeFlowValue/codeText token完整值与原文片段规则均成立时known，partialTab虚拟前缀未证为unknown，不复制私有compiler。图片ready仅物体边界无alt，placeholder可见alt本片明确unknown；图片状态变化使呈现映射与迁移票据失效。净化HTML来源unknown；原文fallback仅严格等值raw/EOL映射成立时known，否则unknown。这不是三类已全实现或验收承诺，不扩大HTML权限/网络/资源池。生产接线应独立回归上述状态与过期清理，不能拿旧seam代真实组件。
+
+最小自动验证：真实parser→实际consumer→collector的普通跨inline、实体重复词、Callout标题与首正文、Table裁列/缺cell/escaped pipe；原版渲染快照和安全审计不变；Text拆合/装饰角色与fallback原子丢弃；完整匹配超过2048仍定位末项；双向current raw区间→完整集合nearest方向/tie与unknown；raw-only/revision/profile/session/查询/呈现单变量拒旧，源码旧矩阵保持；来源失败仍同模式可查找。计数/时间只实测，不立未授权性能门槛。
+
+最小真实WK happy path由主线统一新alpha包：打开自建混合文档，在源码重复词末项切阅读并保持可靠最近，再从阅读返回源码；跨strong/entity/Callout/Table各一个可见例；6000匹配末项迁移不得误用前2048；图片ready/placeholder换代或HTMLunknown出现明确非阻断提示，同模式仍能导航；只读文档复制/查找与原文clean、Esc及正常退出。自然IME未实操仍单列，不用合成事件代替。实现后两轴/自动/实际验收才能批准，完整F041d/F041/OBL056及离线保持开放。
+
+### 跨模式有限生产实施批准
+
+主线已全文读取上述修订方案，两独立轴0必要路线阻断，批准typed有限实现及实现后测试（非TDD）。仅生产必要代码/同版直接依赖/测试与实施收据，禁止作者版本/build/GUI/Git；下一alpha159由主线统一。未实施完成或验收，不将隔离实验结果当生产通过。
+
+### 跨模式生产候选作者冻结（待独立代码与真实验收）
+
+当前实现分为实际render旁路recipe、私有DOM流严格对齐、一次公开events来源Worker、压缩run投影、完整pairs nearest、短期模式票据与两模式UI。新增`reading-source-{recipe,alignment,index,map,protocol,owner}`/Worker、`reading-provenance`、`search-nearest`、`search-migration`及针对测试；修改既有consumer/registry、两搜索Worker/owner/UI、store及controller模式切换窄入口。没有新增正文span或HTML权限，没有逐query重parse。显式直接依赖仅已安装同版micromark4.0.3与micromark-util-decode-string2.0.1；lock仅对应依赖，未升级包版本、未build/GUI/Git。
+
+早审问题已在候选收敛：空recipe/opaque外层访问同样计费；alignment核recipe对象与registry代，短Text累计预算后才yield；serialize先预留保守长度，自建输出聚合预算与partialTab真实unknown前缀回归；源码EOL单调转换使用累计work，不再被奇数起始CRLF步长跳过yield。失败对齐锁定精确DOM/recipe代，滚动不反复重算，显式重试或新代解锁。来源worker仅active+latest请求，迟到回执不能复活旧代。
+
+nearest改为**计算候选→主线程完整票据/目标/IME核验→apply**两阶段，计算不写engine.current；普通viewport保留候选，scan/nav/cancel/新nearest撤销。迁移错误仅返回失败，不令普通查询Worker.onerror；组合开始同步撤票据与nearest。未知命中保守整次unresolved、表格裁列与Callout标题语义块不伪字面精度。reading→source仅切换当刻已缓存且有限同步步数内可取的raw区间；需要再次yield的复杂长命中本次明确未就绪，不跨卸载保DOM任务。此限制不影响普通完整计数/导航。
+
+作者定向命令：`bun test apps/desktop/src/client/reading-source*.test.ts* apps/desktop/src/client/reading-provenance.test.ts apps/desktop/src/client/search-nearest.test.ts apps/desktop/src/client/search-migration.test.ts apps/desktop/src/client/source-search*.test.ts apps/desktop/src/client/reading-search*.test.ts`，83 pass/505断言/18文件；随后仅nearest失败回执改用只读viewport快照避免改变excluded current，再跑nearest6/18通过。typecheck与修改范围eslint `--max-warnings 0`、diffcheck通过。期间新增测试首次type少传projectReading预算参数，补真实参数后通过；不以测试绿代替窗口。真实Bun来源Worker回执与复用有测试，不称WK性能或内存硬界。
+
+主线新增自建真实验收样本`/tmp/agentic-f041d-ui.bzJ5ui/cross-mode.md`，SHA256 `7b84129d611d6f149901fec1dcd87b7cab2abba6f61dae3ed1987297717ee35f`，作者未修改；原五样本保持。当前只是可审生产候选，alpha159尚未由作者构建/启动，待两轴最终代码复核、主线全量与真实WK双向/只读/未知提示/长块验证。自然IME、净化HTML/图片alt未知、partialTab虚拟前缀与已知极端解析成本、完整F041d/父/OBL056/offline-final均不提前关闭。

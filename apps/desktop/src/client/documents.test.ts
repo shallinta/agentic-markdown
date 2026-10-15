@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 
 import { undo, undoDepth } from "@codemirror/commands";
+import {
+  foldedRanges,
+  ensureSyntaxTree,
+  syntaxTreeAvailable,
+  unfoldEffect,
+} from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 
 import type {
@@ -17,6 +23,13 @@ import {
   type DocumentTransport,
 } from "./documents";
 import { reportEditorFault } from "./editor-fault";
+import {
+  currentFoldAtSelection,
+  currentFoldTarget,
+  headingStructureReady,
+  headingToggleTransaction,
+} from "./heading-folding";
+import { headingStructureSteps } from "./heading-structure";
 import { rawText } from "./raw-buffer";
 
 test("safe source preserves dirty revision and transfer, waits for interaction, and stays isolated on reload", async () => {
@@ -152,6 +165,121 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
     controller: createDocumentController(transport, confirmDiscard),
   };
 }
+
+test("heading fold survives actual controller tab suspension and mode switch without dirtying readonly", async () => {
+  const { controller, transport, value } = setup();
+  value.text = "# A\nbody\n# B\nlast";
+  value.byteLength = new TextEncoder().encode(value.text).length;
+  value.fidelity = analyzeTextFidelity(value.text);
+  value.writeCapability = { writable: false, reason: "readonly" };
+  await controller.select();
+  let editor = controller.getEditor(value.documentId)!;
+  const task = headingStructureSteps(editor.state);
+  let next = task.next();
+  while (!next.done) next = task.next();
+  expect(
+    controller.updateEditor(
+      value.documentId,
+      editor.state.update({ effects: headingStructureReady.of(next.value) })
+    )
+  ).toBe(true);
+  editor = controller.getEditor(value.documentId)!;
+  expect(
+    controller.updateEditor(
+      value.documentId,
+      headingToggleTransaction(editor.state, next.value.sections[0])!
+    )
+  ).toBe(true);
+  const revision = controller.getEditor(value.documentId)!.revision;
+  const second = snapshot("# second\nother");
+  transport.selectDocument = (request) =>
+    Promise.resolve(result(request, second));
+  await controller.select();
+  controller.activateTab(value.documentId);
+  editor = controller.getEditor(value.documentId)!;
+  expect(foldedRanges(editor.state).size).toBe(1);
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(foldedRanges(controller.getEditor(value.documentId)!.state).size).toBe(
+    1
+  );
+  expect(controller.isDirty(value.documentId)).toBe(false);
+  expect(controller.getEditor(value.documentId)!.revision).toBe(revision);
+  expect(controller.getEditor(value.documentId)!.state.field(rawText)).toBe(
+    value.text
+  );
+  const fault = controller.getEditorFault(value.documentId)!;
+  reportEditorFault(fault, "presentation");
+  expect(controller.enterSafeSource(value.documentId, fault)).toBe(true);
+  expect(foldedRanges(controller.getEditor(value.documentId)!.state).size).toBe(
+    0
+  );
+  controller.dispose();
+});
+
+for (const title of ["# A\n", "first title line\nsecond title line\n===\n"])
+  test(`existing long tail fold can unfold after partial controller restore: ${JSON.stringify(title)}`, async () => {
+    const { controller, transport, value } = setup();
+    value.text = title + "paragraph text\n\n".repeat(3000);
+    value.byteLength = new TextEncoder().encode(value.text).length;
+    value.fidelity = analyzeTextFidelity(value.text);
+    await controller.select();
+    let editor = controller.getEditor(value.documentId)!;
+    // Test-only simulate an already fully parsed state, never a production force.
+    expect(
+      ensureSyntaxTree(editor.state, editor.state.doc.length, 1000)
+    ).not.toBeNull();
+    const task = headingStructureSteps(editor.state);
+    let next = task.next();
+    while (!next.done) next = task.next();
+    expect(next.value.sections).toHaveLength(1);
+    controller.updateEditor(
+      value.documentId,
+      editor.state.update({ effects: headingStructureReady.of(next.value) })
+    );
+    editor = controller.getEditor(value.documentId)!;
+    controller.updateEditor(
+      value.documentId,
+      headingToggleTransaction(editor.state, next.value.sections[0])!
+    );
+    const stamp = {
+      doc: editor.state.doc,
+      from: next.value.sections[0].from,
+      to: next.value.sections[0].to,
+    };
+    const second = snapshot("other");
+    transport.selectDocument = (request) =>
+      Promise.resolve(result(request, second));
+    await controller.select();
+    controller.activateTab(value.documentId);
+    editor = controller.getEditor(value.documentId)!;
+    expect(syntaxTreeAvailable(editor.state, editor.state.doc.length)).toBe(
+      false
+    );
+    expect(foldedRanges(editor.state).size).toBe(1);
+    const target = currentFoldTarget(editor.state, stamp);
+    expect(target).toBeDefined();
+    expect(editor.state.selection.main.head).toBe(0);
+    expect(currentFoldAtSelection(editor.state)).toEqual(target);
+    if (title.startsWith("first")) {
+      controller.updateEditor(
+        value.documentId,
+        editor.state.update({ selection: { anchor: 20 } })
+      );
+      editor = controller.getEditor(value.documentId)!;
+      expect(currentFoldAtSelection(editor.state)).toEqual(target);
+    }
+    expect(
+      controller.updateEditor(
+        value.documentId,
+        editor.state.update({ effects: unfoldEffect.of(target!) })
+      )
+    ).toBe(true);
+    expect(
+      foldedRanges(controller.getEditor(value.documentId)!.state).size
+    ).toBe(0);
+    expect(controller.isDirty(value.documentId)).toBe(false);
+    controller.dispose();
+  });
 
 test("folder open reuses dirty mode and history and honors composition", async () => {
   const { controller, transport, value } = setup();
@@ -722,7 +850,10 @@ test("version regression, identity mismatch and malformed replies are rejected",
 
 test("standalone list accumulates lightweight leaves, switches by handle and deduplicates canonical location", async () => {
   const confirmations: string[] = [];
-  const { controller, transport, value, released } = setup(message => { confirmations.push(message); return Promise.resolve(true); });
+  const { controller, transport, value, released } = setup((message) => {
+    confirmations.push(message);
+    return Promise.resolve(true);
+  });
   value.locationId = crypto.randomUUID();
   await controller.select();
   const second = {

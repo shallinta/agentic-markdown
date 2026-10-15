@@ -9,6 +9,7 @@ import {
 import { tags } from "@lezer/highlight";
 
 import { editorFaultSession, reportEditorFault } from "./editor-fault";
+import { clearHeadingFolds, headingFolding } from "./heading-folding";
 import {
   editingMarkdown,
   createEditingMarkdown,
@@ -104,6 +105,7 @@ const sourcePresentation = [
 export const createEditorModeExtensions = (isolated = false) => [
   wrapping.of(wrapExtension("editing", true)),
   editorFaultSession,
+  headingFolding,
   EditorView.exceptionSink.compute([editorFaultSession], (state) => {
     const session = state.field(editorFaultSession);
     return () => reportEditorFault(session, "presentation");
@@ -116,10 +118,15 @@ export const createEditorModeExtensions = (isolated = false) => [
 export const editorModeExtensions = createEditorModeExtensions();
 export const isSafeSource = (state: EditorState) => state.facet(safe);
 /** Release/rebuild derived parsing only; never switch mode or lift fault isolation. */
-export const pauseEditorParser = () => parserLanguage.reconfigure([]);
+/** Inactive tabs retain presentation state; fault/explicit pauses must clear it. */
+export const pauseEditorParser = (inactiveTab = false) => [
+  ...(inactiveTab ? [] : [clearHeadingFolds.of(null)]),
+  parserLanguage.reconfigure([]),
+];
 export const resumeEditorParser = (state: EditorState) =>
   parserLanguage.reconfigure(isSafeSource(state) ? [] : editingMarkdown);
 export const safeSourceEffects = () => [
+  clearHeadingFolds.of(null),
   wrapping.reconfigure(wrapExtension("editing", true)),
   parserLanguage.reconfigure([]),
   presentation.reconfigure([mode.of("source"), safe.of(true)]),

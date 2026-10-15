@@ -482,7 +482,7 @@ export function createDocumentController(
             effects:
               id === nextId
                 ? resumeEditorParser(editor.state)
-                : pauseEditorParser(),
+                : pauseEditorParser(true),
             annotations: Transaction.addToHistory.of(false),
           }).state,
         });

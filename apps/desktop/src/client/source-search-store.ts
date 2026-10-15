@@ -2,6 +2,8 @@ import type { SearchOptions } from "./source-search-protocol";
 export interface SearchConditions extends SearchOptions {
   open: boolean;
   position: number | null;
+  /** Reading projection coordinate; never passed to the source editor. */
+  readingPosition: { segment: string; offset: number; content: object } | null;
   replacement: string;
   replaceOpen: boolean;
 }
@@ -11,6 +13,7 @@ const empty: SearchConditions = Object.freeze({
   wholeWord: false,
   open: false,
   position: null,
+  readingPosition: null,
   replacement: "",
   replaceOpen: false,
 });
@@ -37,7 +40,7 @@ export function createSearchStore(
       entries.set(id, {
         ...previous,
         ...update,
-        ...(changed ? { position: null } : {}),
+        ...(changed ? { position: null, readingPosition: null } : {}),
       });
       notify();
     },

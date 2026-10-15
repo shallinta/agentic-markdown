@@ -4,9 +4,13 @@ import { CALLOUT_PRESENTATION, readCallout } from "../client/callout-extension";
 import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
 import { isOwnedReadingCode } from "../client/reading-code-ownership";
+import type { ReadingSearchRegistry } from "../client/reading-search-registry";
 import { ReadingCode } from "../components/reading-code";
 import { ReadingHtmlBlock } from "../components/reading-html-block";
-import { ReadingImage } from "../components/reading-image";
+import {
+  ReadingImage,
+  ReadingImagePlaceholder,
+} from "../components/reading-image";
 import { MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS } from "../shared/local-images";
 
 import {
@@ -30,7 +34,8 @@ export function commonmarkContent(
   tree: Tree,
   source: string,
   images?: LocalImages,
-  codeCurrent?: () => boolean
+  codeCurrent?: () => boolean,
+  search?: ReadingSearchRegistry
 ): ReactNode {
   let work = 0;
   let definitionWork = 0;
@@ -239,7 +244,7 @@ export function commonmarkContent(
       case "inlineCode":
         return (
           <code key={key} className="bg-muted rounded px-1 font-mono">
-            {node.value}
+            {node.value.replace(/\r\n|\r|\n/g, " ")}
           </code>
         );
       case "break":
@@ -273,13 +278,16 @@ export function commonmarkContent(
                 reference={reference}
                 alt={node.alt || ""}
                 images={images}
+                search={search}
               />
             );
         }
         return (
-          <span key={key} className="text-muted-foreground">
-            [图片尚未加载：{node.alt || "无替代文字"}]
-          </span>
+          <ReadingImagePlaceholder
+            key={key}
+            alt={node.alt || ""}
+            search={search}
+          />
         );
       case "html":
         if (flow) {
@@ -290,6 +298,7 @@ export function commonmarkContent(
             <ReadingHtmlBlock
               key={key}
               source={source}
+              search={search}
               reason={
                 htmlBlocks > MAX_HTML_DOCUMENT_BLOCKS
                   ? "HTML 正文累计超过安全块数限制，保留原文"
@@ -344,6 +353,11 @@ export function commonmarkContent(
       return (
         <div
           key={index}
+          ref={(element) =>
+            element
+              ? search?.mount(element, { kind: "block", id: index })
+              : undefined
+          }
           data-reading-from={node.position!.start.offset}
           data-reading-to={node.position!.end.offset}
         >
@@ -353,7 +367,11 @@ export function commonmarkContent(
     });
   } catch {
     return (
-      <div>
+      <div
+        ref={(element) =>
+          element ? search?.mount(element, { kind: "block", id: 0 }) : undefined
+        }
+      >
         <p role="status">阅读结构无法安全呈现，已保留完整原文。</p>
         <pre className="break-words whitespace-pre-wrap">{source}</pre>
       </div>

@@ -3,18 +3,20 @@ import { EditorState } from "@codemirror/state";
 
 import {
   SEARCH_MARK_LIMIT,
+  SEARCH_LIMIT,
   validSearchRequest,
   type SearchRequest,
   type SearchResult,
 } from "./source-search-protocol";
 
 /** Disposable Worker-only projection. No Markdown extensions or filesystem. */
-export function createSearchEngine() {
+export function createSearchEngine(limit = SEARCH_LIMIT) {
   let state: EditorState | undefined;
   let epoch = "";
   let pairs = new Uint32Array();
   let count = 0,
     index = -1;
+  let boundaries: [number, number][] = [];
   const lowerBound = (position: number, end = false) => {
     let lo = 0,
       hi = count;
@@ -26,11 +28,16 @@ export function createSearchEngine() {
     return lo;
   };
   return (request: SearchRequest): SearchResult => {
-    if (!validSearchRequest(request)) throw new Error("invalid search request");
+    if (!validSearchRequest(request, limit))
+      throw new Error("invalid search request");
     if (request.kind === "scan") {
-      if (request.text !== undefined)
+      if (request.text !== undefined) {
         state = EditorState.create({ doc: request.text });
+        boundaries = request.boundaries ?? [];
+      } else if (request.boundaries) boundaries = request.boundaries;
       if (!state) throw new Error("missing search text");
+      if (boundaries.some((range) => range[1] > state!.doc.length))
+        throw new Error("invalid search boundary");
       epoch = request.epoch;
       const query = request.options.query.replace(/\r\n?/g, "\n");
       const folded = request.options.caseSensitive
@@ -49,12 +56,20 @@ export function createSearchEngine() {
       pairs = new Uint32Array(state.doc.length * 2);
       count = 0;
       if (search.valid) {
-        const cursor = search.getCursor(state);
-        for (let next = cursor.next(); !next.done; next = cursor.next()) {
-          if (count >= state.doc.length) throw new Error("search index limit");
-          pairs[count * 2] = next.value.from;
-          pairs[count * 2 + 1] = next.value.to;
-          count++;
+        let from = 0;
+        for (let segment = 0; segment <= boundaries.length; segment++) {
+          const to = boundaries[segment]?.[0] ?? state.doc.length;
+          if (from < to) {
+            const cursor = search.getCursor(state, from, to);
+            for (let next = cursor.next(); !next.done; next = cursor.next()) {
+              if (count >= state.doc.length)
+                throw new Error("search index limit");
+              pairs[count * 2] = next.value.from;
+              pairs[count * 2 + 1] = next.value.to;
+              count++;
+            }
+          }
+          from = boundaries[segment]?.[1] ?? state.doc.length;
         }
       }
       index = count

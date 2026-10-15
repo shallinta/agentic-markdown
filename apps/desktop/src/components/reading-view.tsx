@@ -17,6 +17,7 @@ import {
   createReadingDomReuseAudit,
 } from "@/client/reading-dom-reuse";
 import { firstReadingBlock } from "@/client/reading-position";
+import { createReadingSearchRegistry } from "@/client/reading-search-registry";
 import { READING_THEMES, type ReadingThemeId } from "@/client/reading-theme";
 import "@/reading-themes/content.css";
 import "@/reading-themes/ink/theme.css";
@@ -25,6 +26,8 @@ import {
   auditReadingContent,
   commonmarkContent,
 } from "@/security/commonmark-content";
+
+import { ReadingSearch } from "./reading-search";
 
 export function ReadingView({
   controller,
@@ -89,20 +92,54 @@ export function ReadingView({
     canonical.isCurrent(state.result) &&
     state.result.documentId === documentId &&
     state.result.revision === editor.revision;
+  const searchRegistry = useMemo(
+    () => createReadingSearchRegistry(),
+    // A registry belongs to this canonical/raw/session generation, not to queries.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [documentId, session, state, raw]
+  );
+  const searchCurrent = useMemo(
+    () => () =>
+      ready &&
+      state.status === "ready" &&
+      readingCodeCurrent(
+        controller,
+        canonical,
+        documentId,
+        session,
+        state.result
+      ),
+    [ready, state, controller, canonical, documentId, session]
+  );
   const nodes = useMemo(
     () =>
       ready && state.status === "ready"
-        ? commonmarkContent(state.result.tree, raw, images, () =>
-            readingCodeCurrent(
-              controller,
-              canonical,
-              documentId,
-              session,
-              state.result
-            )
+        ? commonmarkContent(
+            state.result.tree,
+            raw,
+            images,
+            () =>
+              readingCodeCurrent(
+                controller,
+                canonical,
+                documentId,
+                session,
+                state.result
+              ),
+            searchRegistry
           )
         : null,
-    [ready, state, raw, images, controller, documentId, session, canonical]
+    [
+      ready,
+      state,
+      raw,
+      images,
+      controller,
+      documentId,
+      session,
+      canonical,
+      searchRegistry,
+    ]
   );
   useEffect(() => {
     if (!frozen) void canonical.request();
@@ -275,6 +312,16 @@ export function ReadingView({
           </div>
         )}
       </div>
+      {ready && (
+        <ReadingSearch
+          controller={controller}
+          documentId={documentId}
+          registry={searchRegistry}
+          root={content}
+          scroller={container}
+          current={searchCurrent}
+        />
+      )}
     </>
   );
 }

@@ -14,6 +14,7 @@ export type SearchRequest = { epoch: string; id: number } & (
       options: SearchOptions;
       position: number;
       exclude?: [number, number];
+      boundaries?: [number, number][];
     }
   | { kind: "viewport"; from: number; to: number }
   | { kind: "navigate"; direction: number }
@@ -32,7 +33,11 @@ const record = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const integer = (n: unknown, max = SEARCH_LIMIT): n is number =>
   typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= max;
-export function validSearchRequest(v: unknown): v is SearchRequest {
+export function validSearchRequest(
+  v: unknown,
+  limit = SEARCH_LIMIT
+): v is SearchRequest {
+  const bounded = (n: unknown) => integer(n, limit);
   if (
     !record(v) ||
     typeof v.epoch !== "string" ||
@@ -42,7 +47,16 @@ export function validSearchRequest(v: unknown): v is SearchRequest {
     return false;
   const keys =
     v.kind === "scan"
-      ? ["epoch", "id", "kind", "text", "options", "position", "exclude"]
+      ? [
+          "epoch",
+          "id",
+          "kind",
+          "text",
+          "options",
+          "position",
+          "exclude",
+          "boundaries",
+        ]
       : v.kind === "viewport"
         ? ["epoch", "id", "kind", "from", "to"]
         : ["epoch", "id", "kind", "direction"];
@@ -50,29 +64,51 @@ export function validSearchRequest(v: unknown): v is SearchRequest {
   if (v.kind === "scan")
     return (
       (v.text === undefined ||
-        (typeof v.text === "string" && v.text.length <= SEARCH_LIMIT)) &&
-      integer(v.position) &&
+        (typeof v.text === "string" && v.text.length <= limit)) &&
+      bounded(v.position) &&
+      (v.boundaries === undefined ||
+        validSearchBoundaries(v.boundaries, limit)) &&
       (v.exclude === undefined ||
         (Array.isArray(v.exclude) &&
           v.exclude.length === 2 &&
-          integer(v.exclude[0]) &&
-          integer(v.exclude[1]) &&
+          bounded(v.exclude[0]) &&
+          bounded(v.exclude[1]) &&
           v.exclude[0] <= v.exclude[1])) &&
       record(v.options) &&
       Object.keys(v.options).length === 3 &&
       typeof v.options.query === "string" &&
-      v.options.query.length <= SEARCH_LIMIT &&
+      v.options.query.length <= limit &&
       typeof v.options.caseSensitive === "boolean" &&
       typeof v.options.wholeWord === "boolean"
     );
   if (v.kind === "viewport")
-    return integer(v.from) && integer(v.to) && v.from <= v.to;
+    return bounded(v.from) && bounded(v.to) && v.from <= v.to;
   return (
     v.kind === "navigate" &&
     typeof v.direction === "number" &&
     Number.isSafeInteger(v.direction) &&
-    Math.abs(v.direction) <= SEARCH_LIMIT
+    Math.abs(v.direction) <= limit
   );
+}
+export function validSearchBoundaries(
+  value: unknown,
+  limit: number
+): value is [number, number][] {
+  if (!Array.isArray(value) || value.length > limit) return false;
+  let end = 0;
+  for (const pair of value) {
+    if (
+      !Array.isArray(pair) ||
+      pair.length !== 2 ||
+      !integer(pair[0], limit) ||
+      !integer(pair[1], limit) ||
+      pair[0] < end ||
+      pair[0] >= pair[1]
+    )
+      return false;
+    end = pair[1];
+  }
+  return true;
 }
 export function validSearchResult(
   v: unknown,

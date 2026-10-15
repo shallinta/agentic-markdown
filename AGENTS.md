@@ -1,5 +1,87 @@
 # AGENTS.md
 
+## F-041d 同模式有限片正式通过（2026-10-15）
+
+alpha158/hash3goapcr76o63u经最终独立Spec与Standards均0剩余必要阻断，主线正式批准阅读同模式非离线受托Agent代验通过，非用户亲验。源码1328/32844、包内1328/32843、真实157及158范围/失败史/未测边界见唯一迭代。实例正常退出，五SHA原样、other644。Git待执行；下一跨模式nearest仍在同唯一继续，完整F041d/F041/OBL056、自然IME及offline-final不关闭。下方待复核为历史。
+
+## F-041d alpha158同模式候选待最终复核（2026-10-15）
+
+alpha158/hash3goapcr76o63u真实复验小文档原红路径无受限误报、6000行尾页普通高亮及导航/Esc通过；源码1328/32844、包内1328/32843及type/full lint/docs通过，详细首次build失败/实际首按等待边界见唯一迭代。正常CmdQ exec47303 exit0、Bun63453消失，五SHA原样、other644。当前仅候选待最终独立复核，未主线正式批准、不得Git；自然IME/真实Range故障/极密视口未实操保留。跨模式nearest下一同唯一继续，完整F041d/F041/OBL056及离线仍开放。
+
+## F-041d alpha157 实际回归与提示窄修（2026-10-15）
+
+长代码块末页普通高亮已真实修复，6000计数/末项及跨标签保持通过；图片17→16、条件、纸页/墨夜、原生双击复制标题、只读查找与故障清理通过。源码1325/32833、包内1325/32832及type/full lint/docs通过。另发现小文档1/1切回标签误报高亮受限，主线批准去掉几何回粗范围与真实匹配截断的混淆，并明确处理Range映射失败；待独立复核及alpha158真实回归，不得Git。alpha157正常CmdQ退出exec46009/Bun62313、五SHA原样、other权限恢复644。跨模式nearest/完整义务/离线边界保持。
+
+## F-041d alpha157 修复包构建中（2026-10-15）
+
+alpha156真实target17→16、条件/生成标题/排除项/导航和跨标签第6000项保持通过，但6000行尾页普通高亮缺失且误报受限；非验收。已clean正常CmdQ退出exec23411/Bun61325，五SHA原样，源码1323/32821、包内1323/32820。主线批准仅细化裁切侧、完整侧原范围、块内端点和双侧独立回退；作者71/635及type/lint/docs通过，两独立轴各11/59无必要代码阻断。主线已读并升alpha157，正在全量测试与构建，须真实重验，不得Git。跨模式nearest与离线/专项边界不变。
+
+## F-041d 长块视口窄修待冻结（2026-10-15）
+
+正式作者定向65/607、type/lint通过；主线首轮全量1317pass/1fail/32798为新content选择样式漏阅读主题祖先，作者已按旧测试约束修scope，不放宽测试。两轴核旧缺陷已修，仍发现单长块只返前2048高亮；主线批准唯一迭代内首末块Range前后缀包围盒二分、最多64几何读的窄适配，失效/无rect回粗区间保受限提示，不宣称layout总成本有界。新6000行fixture长块后段须真实验证。未构建、未验收、不得Git，下一alpha156。
+
+## F-041d 正式同模式查找接线中（2026-10-15）
+
+alpha155 inlineCode EOL有限窄修已获独立最终复核并由主线批准，未代表完整F041d验收。全部临时reading-search-lab入口已退役；正式私有消费者登记、DOM投影、独立Worker与查找栏正在接线。两轴早审指出默认图片占位误计、动态当前项裸坐标漂移、登记列表同步分配等需修；主线另要求核对视口末端覆盖，作者补修与生命周期测试中，未冻结、未构建、不得Git。下一代码包alpha156；跨模式nearest/完整OBL056/离线人工仍开放。连续推进无需等待用户确认。
+
+## F-041d alpha155窄修实测、正式同模式接线获批（2026-10-15）
+
+源码/包内1307/32786，type/lint/docs及独立代码11/173通过。真实inlineCRLF Text已为a b三单位，代码块15单位保持，audit87通过；clean正常退出exec23331/Bun59141、三SHA原样。仅窄修候选待独立最终复核，不代表F041d验收。主线全文读取唯一末节正式方案，批准步骤①至③同模式闭环实现并退役全部临时lab；跨模式nearest与完整OBL056开放。尚无正式查找代码/验收，不得Git。下一代码包alpha156；无需等待用户确认。
+
+## F-041d alpha154实验退役、inlineCode前置修正（2026-10-15）
+
+源码/包内1305/32764与type/lint/docs通过，显式宽度restore实际恢复无属性且图片后审计通过，但关闭重开仍空style，根因未证。主线决定退役临时width而非继续修工具；生产前须移除所有实验接线，失败保留。alpha154已正常退出exec82476/Bun58185，三SHA原样。唯一迭代末节已批准正式阅读inlineCode EOL→单space窄修，不动canonical/raw/history/CSS，待代码和真实复核。正式查找方案尚未批准，不得Git；下一代码包alpha155。
+
+## F-041d alpha153 八组观察完成但仍有红（2026-10-15）
+
+源码1305/32753、包内1305/32752及type/lint/docs通过。真实八组有限读数已记录唯一迭代；inline CRLF与官方解析存在差异，宽度restore后审计失败（重挂恢复），未认定根因或正式验收。alpha153已clean正常退出，PID57019/57021消失，三样本SHA不变。主线批准仅临时width租约属性完整恢复及组4有限元数据；inline EOL先隔离生产路径，尚不改正式消费者。不得Git，下一代码包alpha154。以下为历史。
+
+## F-041d B显示对照 alpha152 构建中（2026-10-15）
+
+两独立轴各6/46通过；零selector目标误报完整组已窄修并复核0必要构建阻断。主线读临时组件/fixture/helper并批准alpha152，源码测试及unsigned构建进行中。仅固定样本显示语义实验，无正式查找、未验收/不得Git；semantic.md基线SHA d069b77ecbc043a154bedbd4acfd25b95798a0dc60f21ff3f55fa1ba833966e0，仍用隔离data，不改用户正文/网络。
+
+## F-041d A2通过有限复跑、B固定显示对照获批（2026-10-15）
+
+主线及独立Spec实际复跑A2新27/0，旧26仍2个normal空白语义差异不删；raw fallback EOL/inline HTML前pending红已在有限模型修正，周围HTML来源unknown保持。alpha151包内仓库1302/32731通过，独立Standards确认首挂技术收尾0阻断（非产品验收）。主线全文读唯一B八组固定fixture/累计有限只读DOM/单段width恢复方案，Spec0路线阻断，已批准临时接线；不生产、不改全局CSS/CSP，下一包alpha152，待两轴代码/真实显示验证。无运行实例，F041d不得Git。
+
+## F-041d alpha151 首挂实测与消费者投影红例（2026-10-15）
+
+alpha151/hash2o5nen5lsuy46真实WK首次进入阅读直接建12范围、局部text绘制；跨other阅读无串色，返回新owner none/registry false，重新建立/关闭/重开正常，clean CmdQ退出exec44394/Bun54307，样本SHA不变。源码1302/32732、type/lint/docs通过，包内仓库测试进行中。首轮build漏unsigned参数MissingDeveloperId、并行lint扫构建临时目录失败均保留，构建完成目录自动消失后full lint通过。F041d仍非产品交付，不Git。
+
+消费者实验A新18/2与旧26/2已独立复跑：pipe手写oracle错误、inline HTML前pending空白移位真红；Spec另发现raw HTML fallback CRLF匹配坐标偏移真红。下一只收敛新目录A2窄修方案，不改旧冻结；B真实显示oracle接线待进一步批准。专项/F028c/offline不变。
+
+## F-041d alpha150 实际绘制与 alpha151 首挂候选（2026-10-15）
+
+局部正文text后固定范围已实际绘制，跨strong/代码/Callout/table/HTML/失败alt/行内代码/远处均有截图。独立probe过宽及单独恢复none立即残色保留；图片变化和手动clear确实移除颜色、registry并恢复none。不是完整搜索验收。alpha150 hash2z6f90ceuftjr，源码1302/32733、包内仓库1302/32732通过，Bun53140正常退出、样本SHA原样。主线全文批准并静态读首挂useEffect候选，两轴0必要代码阻断，alpha151构建中（首次漏本地unsigned环境导致MissingDeveloperId已记录，现用既有skipSigning本地构建）。不得Git，继续真实首挂及可见投影实验；专项/F028c/offline边界不变。
+
+## F-041d alpha149 实际诊断与局部对照（2026-10-15）
+
+同 Range/registry 固定颜色仍无色，独立 block/flex/block 均无色；实际元数据正文 P/祖先与独立 probe 的 `-webkit-user-select` 为 none。尚不认定根因。主线全文批准唯一末节局部 text/恢复的单变量实验，Spec 0 路线阻断，要求 CSSOM 别名精确恢复；不改 body/CSP/正式样式或首挂逻辑。源码1301/32708通过，alpha149/hash55jh02e4e9wz，Bun51994已正常退出、两样本SHA原样。F041d仍未正式实现/验收/提交；下一代码包alpha150。
+
+## F-041d alpha148 真实实验未通过（2026-10-15）
+
+首次阅读面板建立显示无owner；关闭再开可建12真实Range并导航，但普通/代码/Table截图无高亮背景色。API/rect不替代像素验收，尚未归因WKbug。主线批准唯一末节固定色、registry/Range只读元数据、独立block/flex绘制三个诊断探针，不改正文/CSP/全局布局，首挂暂分开保留。alpha148/hash ouak9wlmoopv 已clean正常退出、Bun50813消失，自建两正文SHA原样；包内Bun仓库1300/32702通过。下一代码包alpha149；F041d未正式生产/验收/提交，连续推进不等用户确认。
+
+## 连续推进与 F-041d Stage2（2026-10-15）
+
+用户明确要求直接继续、遇问题解决、不逐次停等确认；既有专项设计、F028c、offline-final、安全及真实验收边界不变。主线已完整批准唯一F041d的Stage2固定fixture/真实Text Range临时诊断方案，独立Spec0必要路线阻断，实施中。非正式查找，不接CmdF/store，不改正文/选择或CSP；动态样式失败如实保留。代码两轴复核后主线递增alpha148并实际WK实验，尚未构建/验收/提交。
+
+## F-041d Stage1e 复核与下一实验（2026-10-15）
+
+主线和独立Spec/Standards实际复跑Stage1e均26/0、exit0，允许规划有限真实WK Highlight实验；尚未生产/构建/验收。partialTab虚拟前缀仍unknown，表格额外列模型与实际消费者不一致须保留，不能称完整投影可用。下一实验仅固定真实Text Range绘制、清理及显示语义，待主线完整批准具体接线；alpha147无运行实例，下一包alpha148。Git三片已推送以下收据为准，旧SSH待推状态为历史。
+
+## 三片 Git 推送已核实（2026-10-15）
+
+F029a `c62d123`、F060a `e3af96a`、F060b `52d8ed6` 已通过同仓库HTTPS标准443端口推送，`ls-remote`确认远端main=`52d8ed63e7cd14483e0ec426cfc39de923b5b675`，origin/main已同步。使用现有gh账号凭据的单命令helper，不输出凭据，不改持久配置/网络/SSH或origin地址；原SSH超时保留为历史。当前未提交变更仅F041d实验文档/义务/本检查点，F041d未生产或验收，不随已验三片推送。
+
+## F-041d 隔离映射实验推进（2026-10-15）
+
+Stage1有限文本模型25/0、锚点7/2；Stage1b严格text解码及空白模型36/0，主线与独立两轴实际复跑一致，原实体/转义两红已收敛。但独立新增Callout首正文、围栏及行内代码重复词末锚点仍误选首项，coarse semantic区间不得伪称准确位置；真实解码自动链接无position仍unknown。唯一F041d保留红例及模型/DOM边界，继续最小修正实验，不生产/构建/验收/Git。当前alpha147无运行实例，三本地已验提交SSH待推送，完整义务/专项/F028c/offline不变。
+
+## 下一片 F-041d 与本地 Git 收据（2026-10-15）
+
+F060b 已本地提交 `52d8ed6`；与 `e3af96a`、`c62d123` 共三提交尚未推送成功，最新有限 SSH 重试仍 banner exchange 超时，不推断原因、不改网络。连续授权下推进阅读可见正文查找，主线已全文读取唯一 `docs/iterations/F-041d-reading-visible-search.md`，正在独立路线复核；仅方案，尚未运行实验或生产修改，下一代码包 alpha148。F041/OBL056余项、专项/F028c及最终离线保持开放。
+
 ## F-060b alpha147 正式有限通过（2026-10-15）
 
 真实WK/Xcode磁盘版打开及dirty不保存、撤销/三模式/只读/命令键盘/missing/浅深和Finder回归已完成，独立最终Spec/Standards各0必要阻断，主线批准有限Agent代验非用户亲验。源码1298/32695包内仓库1298/32696，hash19vu56umf3o22，PID46336正常退出，两样本SHA原样644。工具pipe异常重建恢复和权限暂态未推因，未实操边界见唯一F060b；完整父/OBL060/offline开放。Git待执行，前c62d123/e3af96a尚未推送，SSH仍重试。

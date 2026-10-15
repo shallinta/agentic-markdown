@@ -10,6 +10,34 @@ import {
   type SearchRequest,
 } from "./source-search-protocol";
 
+test("optional reading boundaries reject crossing matches, persist for query reuse and reset with new text", () => {
+  const engine = createSearchEngine();
+  const req = {
+    kind: "scan" as const,
+    epoch: "reading",
+    id: 1,
+    text: "a\nb\na\nb",
+    boundaries: [[1, 2]] as [number, number][],
+    options: { query: "a\nb", caseSensitive: true, wholeWord: false },
+    position: 0,
+  };
+  expect(engine(req).current).toEqual([4, 7]);
+  expect(
+    engine({ ...req, id: 2, text: undefined, boundaries: undefined }).count
+  ).toBe(1);
+  expect(engine({ ...req, id: 3, boundaries: undefined }).count).toBe(2);
+  expect(() => engine({ ...req, boundaries: [[7, 8]] })).toThrow();
+  const larger = createSearchEngine(SEARCH_LIMIT + 10);
+  expect(
+    larger({
+      ...req,
+      text: "x".repeat(SEARCH_LIMIT + 1),
+      boundaries: [],
+      options: { ...req.options, query: "x" },
+    }).count
+  ).toBe(SEARCH_LIMIT + 1);
+});
+
 test("replacement exclusion only affects automatic current, never count or explicit navigation", () => {
   const engine = createSearchEngine();
   const request = {

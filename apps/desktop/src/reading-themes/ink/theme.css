@@ -1,4 +1,7 @@
 [data-reading-theme="ink"] {
+  --reading-search-match: #675326;
+  --reading-search-current: #98621e;
+  --reading-search-text: #fff4d6;
   --reading-background: #19212c;
   --reading-foreground: #e2e7ee;
   --reading-muted: #273343;

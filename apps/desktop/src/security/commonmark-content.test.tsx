@@ -10,6 +10,55 @@ import {
   isControlledReadingElement,
 } from "./commonmark-content";
 
+test("image service absence keeps visible alt in its dedicated consumer span", () => {
+  const source = "before![searchable](missing.png)after ![](empty.png)";
+  const html = renderToStaticMarkup(
+    commonmarkContent(parseCanonicalMarkdown(source), source)
+  );
+  expect(html).toContain(
+    '[图片尚未加载：<span class="text-muted-foreground">searchable</span>]'
+  );
+  expect(html).toContain("[图片尚未加载：无替代文字]");
+  expect(html).not.toContain("data-search");
+});
+
+test("reading inline code normalizes complete EOL without modifying canonical or other whitespace", () => {
+  const cases = [
+    ["`a\nb`", "a b"],
+    ["`a\r\nb`", "a b"],
+    ["`a\rb`", "a b"],
+    ["` a\r\nb `", "a b"],
+    ["`  `", "  "],
+    ["`a\t  b`", "a\t  b"],
+    ["`  a  `", " a "],
+    ["**`a\r\nb`**", "a b"],
+    ["> `a\r\n> b`", "a b"],
+  ];
+  for (const [raw, expected] of cases) {
+    const tree = parseCanonicalMarkdown(raw);
+    const before = JSON.stringify(tree);
+    const html = renderToStaticMarkup(commonmarkContent(tree, raw));
+    expect(html).toContain(
+      `<code class="bg-muted rounded px-1 font-mono">${expected}</code>`
+    );
+    expect(JSON.stringify(tree)).toBe(before);
+  }
+});
+
+test("inline EOL presentation fix leaves fenced code payload and raw HTML unchanged", () => {
+  for (const raw of ["```\r\na\t  b\r\nx\r\n```", "<iframe>a\r\nb</iframe>"]) {
+    const tree = parseCanonicalMarkdown(raw);
+    const before = JSON.stringify(tree);
+    const html = renderToStaticMarkup(commonmarkContent(tree, raw));
+    const value = tree.children[0];
+    if (value.type !== "code" && value.type !== "html")
+      throw Error("Unexpected fixture");
+    const escaped = value.value.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    expect(html).toContain(escaped);
+    expect(JSON.stringify(tree)).toBe(before);
+  }
+});
+
 test("reading preserves official strike and autolink punctuation interaction", () => {
   for (const suffix of ["。", ".", ""]) {
     const raw = `~~https://a.b~~${suffix}`;

@@ -28,7 +28,14 @@ export interface CheckForUpdatesCommand extends GenericCommand<"checkForUpdates"
 export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdateAndRestart"> {}
 
 export type Command =
-  | GenericCommand<"toggleHeadingFold", { heading?: number; unfoldFrom?: number; unfoldTo?: number }>
+  | GenericCommand<
+      "toggleHeadingFold",
+      { heading?: number; unfoldFrom?: number; unfoldTo?: number }
+    >
+  | GenericCommand<
+      "toggleCodeFold",
+      { heading?: number; unfoldFrom?: number; unfoldTo?: number }
+    >
   | GenericCommand<"revealDocument">
   | GenericCommand<"openDefaultDocument">
   | GenericCommand<"openSourceSearch">
@@ -146,8 +153,24 @@ export function isCommand(value: unknown): value is Command {
         args.documentId
       )
     );
-  if (input.type === "toggleHeadingFold")
-    return keys.length === 0 || (keys.length === 1 && keys[0] === "heading" && typeof args.heading === "number" && Number.isSafeInteger(args.heading) && args.heading >= 0) || (keys.length === 2 && keys.includes("unfoldFrom") && keys.includes("unfoldTo") && typeof args.unfoldFrom === "number" && Number.isSafeInteger(args.unfoldFrom) && args.unfoldFrom >= 0 && typeof args.unfoldTo === "number" && Number.isSafeInteger(args.unfoldTo) && args.unfoldTo > args.unfoldFrom);
+  if (input.type === "toggleHeadingFold" || input.type === "toggleCodeFold")
+    return (
+      keys.length === 0 ||
+      (keys.length === 1 &&
+        keys[0] === "heading" &&
+        typeof args.heading === "number" &&
+        Number.isSafeInteger(args.heading) &&
+        args.heading >= 0) ||
+      (keys.length === 2 &&
+        keys.includes("unfoldFrom") &&
+        keys.includes("unfoldTo") &&
+        typeof args.unfoldFrom === "number" &&
+        Number.isSafeInteger(args.unfoldFrom) &&
+        args.unfoldFrom >= 0 &&
+        typeof args.unfoldTo === "number" &&
+        Number.isSafeInteger(args.unfoldTo) &&
+        args.unfoldTo > args.unfoldFrom)
+    );
   if (input.type === "setRootHidden")
     return (
       keys.length === 2 &&
@@ -190,6 +213,7 @@ export const COMMAND_META: Record<
   { target: "webview" | "bun"; palette?: false }
 > = {
   toggleHeadingFold: { target: "webview" },
+  toggleCodeFold: { target: "webview" },
   openSourceSearch: { target: "webview", palette: false },
   closeSourceSearch: { target: "webview", palette: false },
   nextSourceMatch: { target: "webview", palette: false },
@@ -247,6 +271,7 @@ export const PRODUCT_COMMANDS: Partial<
   >
 > = {
   toggleHeadingFold: { label: "折叠/展开当前标题章节", shortcut: "⌘⌥F" },
+  toggleCodeFold: { label: "折叠/展开当前代码块" },
   formatBold: { label: "切换粗体", shortcut: "⌘⇧B" },
   formatItalic: { label: "切换斜体", shortcut: "⌘⇧I" },
   formatCode: { label: "切换行内代码", shortcut: "⌘E" },

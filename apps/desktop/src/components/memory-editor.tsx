@@ -31,7 +31,12 @@ import {
   fenceCompletionTransaction,
   isCurrentFenceCompletion,
 } from "@/client/fence-completion";
-import { isHeadingShortcut, observeHeadingFolding, registerHeadingView, toggleCurrentHeading } from "@/client/heading-folding";
+import {
+  isHeadingShortcut,
+  observeHeadingFolding,
+  registerHeadingView,
+  toggleCurrentHeading,
+} from "@/client/heading-folding";
 import { routeHistoryInput } from "@/client/history-input";
 import {
   registerFormatView,
@@ -153,22 +158,48 @@ export function MemoryEditor({
     const calloutToast = `callout-${documentId}`;
     const headingReady = () => {
       const snapshot = controller.getSnapshot();
-      return currentView() && controller.getEditor(documentId)?.state === view.state &&
-        !snapshot.busy && !snapshot.frozen && !controller.isEditorInputBlocked() &&
-        !controller.hasSaves() && !session.fault && !controller.isSafeSource(documentId) &&
-        controller.getMode(documentId) !== "reading" && !view.compositionStarted && !view.composing;
+      return (
+        currentView() &&
+        controller.getEditor(documentId)?.state === view.state &&
+        !snapshot.busy &&
+        !snapshot.frozen &&
+        !controller.isEditorInputBlocked() &&
+        !controller.hasSaves() &&
+        !session.fault &&
+        !controller.isSafeSource(documentId) &&
+        controller.getMode(documentId) !== "reading" &&
+        !view.compositionStarted &&
+        !view.composing
+      );
     };
     const removeHeading = registerHeadingView(view, {
       ready: headingReady,
-      run: (action) => executeCommand({ type: "toggleHeadingFold", args: action }),
-      rejected: () => toast.info("选区跨入待折叠内容，请先调整选区再折叠。", { id: `heading-${documentId}` }),
+      run: ({ kind, ...action }) =>
+        executeCommand({
+          type: kind === "fencedCode" ? "toggleCodeFold" : "toggleHeadingFold",
+          args: action,
+        }),
+      rejected: () =>
+        toast.info("选区跨入待折叠内容，请先调整选区再折叠。", {
+          id: `heading-${documentId}`,
+        }),
     });
-    const removeHeadingCommand = registerCommandHandlers({
-      toggleHeadingFold: (action) => { toggleCurrentHeading(view, action); },
-    }, { toggleHeadingFold: headingReady });
+    const removeHeadingCommand = registerCommandHandlers(
+      {
+        toggleHeadingFold: (action) => {
+          toggleCurrentHeading(view, action);
+        },
+        toggleCodeFold: (action) => {
+          toggleCurrentHeading(view, { ...action, kind: "fencedCode" });
+        },
+      },
+      { toggleHeadingFold: headingReady, toggleCodeFold: headingReady }
+    );
     const headingKey = (event: KeyboardEvent) => {
-      if (!isHeadingShortcut(event) || !view.hasFocus || !headingReady()) return;
-      event.preventDefault(); event.stopPropagation();
+      if (!isHeadingShortcut(event) || !view.hasFocus || !headingReady())
+        return;
+      event.preventDefault();
+      event.stopPropagation();
       executeCommand({ type: "toggleHeadingFold", args: {} });
     };
     view.contentDOM.addEventListener("keydown", headingKey, true);

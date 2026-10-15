@@ -23,11 +23,13 @@ import {
   type DocumentTransport,
 } from "./documents";
 import { reportEditorFault } from "./editor-fault";
+import { currentTypedFold, editorFoldEntries } from "./editor-fold-state";
 import {
   currentFoldAtSelection,
   currentFoldTarget,
   headingStructureReady,
   headingToggleTransaction,
+  codeToggleTransaction,
 } from "./heading-folding";
 import { headingStructureSteps } from "./heading-structure";
 import { rawText } from "./raw-buffer";
@@ -228,6 +230,9 @@ for (const title of ["# A\n", "first title line\nsecond title line\n===\n"])
     expect(
       ensureSyntaxTree(editor.state, editor.state.doc.length, 1000)
     ).not.toBeNull();
+    // Publish the test-only advanced parse context into the actual editor state.
+    controller.updateEditor(value.documentId, editor.state.update({}));
+    editor = controller.getEditor(value.documentId)!;
     const task = headingStructureSteps(editor.state);
     let next = task.next();
     while (!next.done) next = task.next();
@@ -280,6 +285,81 @@ for (const title of ["# A\n", "first title line\nsecond title line\n===\n"])
     expect(controller.isDirty(value.documentId)).toBe(false);
     controller.dispose();
   });
+
+test("typed code and heading survive actual readonly controller tabs, partial return and source presentation", async () => {
+  const { controller, transport, value } = setup();
+  value.text = "# A\n```ts\n" + "code line\n".repeat(3000) + "```\n# B\nend";
+  value.byteLength = new TextEncoder().encode(value.text).length;
+  value.fidelity = analyzeTextFidelity(value.text);
+  value.writeCapability = { writable: false, reason: "readonly" };
+  await controller.select();
+  let editor = controller.getEditor(value.documentId)!;
+  expect(
+    ensureSyntaxTree(editor.state, editor.state.doc.length, 1000)
+  ).not.toBeNull();
+  controller.updateEditor(value.documentId, editor.state.update({}));
+  editor = controller.getEditor(value.documentId)!;
+  const task = headingStructureSteps(editor.state);
+  let next = task.next();
+  while (!next.done) next = task.next();
+  expect(next.value.code).toHaveLength(1);
+  controller.updateEditor(
+    value.documentId,
+    editor.state.update({ effects: headingStructureReady.of(next.value) })
+  );
+  editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(
+    value.documentId,
+    codeToggleTransaction(editor.state, next.value.code[0])!
+  );
+  editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(
+    value.documentId,
+    headingToggleTransaction(editor.state, next.value.sections[0])!
+  );
+  editor = controller.getEditor(value.documentId)!;
+  const before = editor.revision,
+    history = undoDepth(editor.state);
+  const code = next.value.code[0],
+    stamp = {
+      doc: editor.state.doc,
+      kind: "fencedCode" as const,
+      from: code.from,
+      to: code.to,
+    };
+  const second = snapshot("other");
+  transport.selectDocument = (request) =>
+    Promise.resolve(result(request, second));
+  await controller.select();
+  controller.activateTab(value.documentId);
+  editor = controller.getEditor(value.documentId)!;
+  expect(syntaxTreeAvailable(editor.state, editor.state.doc.length)).toBe(
+    false
+  );
+  expect(foldedRanges(editor.state).size).toBe(2);
+  expect(editor.state.field(editorFoldEntries).size).toBe(2);
+  expect(currentTypedFold(editor.state, stamp)).toBeDefined();
+  expect(controller.toggleSourceMode()).toBe(true);
+  editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(
+    value.documentId,
+    headingToggleTransaction(editor.state, next.value.sections[0])!
+  );
+  editor = controller.getEditor(value.documentId)!;
+  expect(foldedRanges(editor.state).size).toBe(1);
+  controller.updateEditor(
+    value.documentId,
+    codeToggleTransaction(editor.state, code)!
+  );
+  editor = controller.getEditor(value.documentId)!;
+  expect(foldedRanges(editor.state).size).toBe(0);
+  expect(editor.state.field(editorFoldEntries).size).toBe(0);
+  expect(editor.revision).toBe(before);
+  expect(undoDepth(editor.state)).toBe(history);
+  expect(editor.state.field(rawText)).toBe(value.text);
+  expect(controller.isDirty(value.documentId)).toBe(false);
+  controller.dispose();
+});
 
 test("folder open reuses dirty mode and history and honors composition", async () => {
   const { controller, transport, value } = setup();

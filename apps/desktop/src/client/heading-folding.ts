@@ -1,21 +1,16 @@
 import {
   codeFolding,
-  foldEffect,
   foldedRanges,
   language,
   syntaxTree,
-  syntaxTreeAvailable,
   unfoldEffect,
 } from "@codemirror/language";
 import {
-  EditorSelection,
   EditorState,
   RangeSet,
   RangeSetBuilder,
   StateEffect,
-  StateField,
   Transaction,
-  type SelectionRange,
 } from "@codemirror/state";
 import {
   EditorView,
@@ -27,38 +22,35 @@ import {
 
 import { editorFaultSession, reportEditorFault } from "./editor-fault";
 import {
+  clearEditorFolds,
+  clearLocatedEditorFolds,
+  currentTypedFold,
+  editorFoldEntries,
+  exactLiveFold,
+  foldEntry,
+  selectedTypedFold,
+  toggleTypedFold,
+  type EditorFoldKind,
+} from "./editor-fold-state";
+import {
   headingLowerBound,
   headingStructureSteps,
+  headingStructureReady,
+  headingStructureState,
   type HeadingSection,
   type HeadingStructure,
+  type CodeFoldSection,
 } from "./heading-structure";
 
-export const headingStructureReady = StateEffect.define<HeadingStructure>();
-export const clearHeadingFolds = StateEffect.define<null>();
+export {
+  headingStructureReady,
+  headingStructureState,
+} from "./heading-structure";
+export const clearHeadingFolds = clearEditorFolds;
+export { selectionIntersectsFold } from "./editor-fold-state";
 const headingHoverChanged = StateEffect.define<null>();
-export const headingStructureState = StateField.define<HeadingStructure | null>(
-  {
-    create: () => null,
-    update(value, tr) {
-      if (
-        tr.docChanged ||
-        !tr.state.facet(language) ||
-        tr.state.field(editorFaultSession, false)?.fault
-      )
-        return null;
-      if (value && value.tree !== syntaxTree(tr.state)) value = null;
-      for (const effect of tr.effects)
-        if (
-          effect.is(headingStructureReady) &&
-          effect.value.doc === tr.state.doc &&
-          effect.value.tree === syntaxTree(tr.state)
-        )
-          value = effect.value;
-      return value;
-    },
-  }
-);
 export interface HeadingAction {
+  kind?: EditorFoldKind;
   heading?: number;
   unfoldFrom?: number;
   unfoldTo?: number;
@@ -80,39 +72,28 @@ export function registerHeadingView(
     if (routes.get(view) === route) routes.delete(view);
   };
 }
-export function selectionIntersectsFold(
-  selection: SelectionRange,
-  range: { from: number; to: number }
-) {
-  return selection.empty
-    ? selection.head > range.from && selection.head < range.to
-    : selection.from < range.to && selection.to > range.from;
-}
 export function headingToggleTransaction(
   state: EditorState,
   section: HeadingSection
 ) {
-  let existing = false;
-  foldedRanges(state).between(section.from, section.to, (from, to) => {
-    if (from === section.from && to === section.to) existing = true;
+  return toggleTypedFold(state, state.doc, {
+    kind: "heading",
+    titleFrom: section.line,
+    from: section.from,
+    to: section.to,
   });
-  if (existing)
-    return state.update({
-      effects: unfoldEffect.of(section),
-      annotations: Transaction.addToHistory.of(false),
-    });
-  const overlaps = state.selection.ranges.some((range) =>
-    selectionIntersectsFold(range, section)
-  );
-  if (
-    overlaps &&
-    (state.selection.ranges.length !== 1 || !state.selection.main.empty)
-  )
-    return null;
-  return state.update({
-    effects: foldEffect.of(section),
-    selection: overlaps ? EditorSelection.cursor(section.from) : undefined,
-    annotations: Transaction.addToHistory.of(false),
+}
+export function codeToggleTransaction(
+  state: EditorState,
+  section: CodeFoldSection
+) {
+  return toggleTypedFold(state, state.doc, {
+    kind: "fencedCode",
+    openingFrom: section.line,
+    from: section.from,
+    to: section.to,
+    languageLabel: section.languageLabel,
+    lineCount: section.lineCount,
   });
 }
 function currentStructure(state: EditorState) {
@@ -123,41 +104,24 @@ function currentStructure(state: EditorState) {
 }
 export function currentFoldTarget(
   state: EditorState,
-  stamp: { doc: EditorState["doc"]; from: number; to: number }
+  stamp: {
+    doc: EditorState["doc"];
+    from: number;
+    to: number;
+    kind?: EditorFoldKind;
+  }
 ) {
   // Existing exact folds may always unfold for the same Text, even while the
   // resumed parser has not yet covered the tail. Never reuse this to add folds.
-  if (state.doc !== stamp.doc) return undefined;
-  let folded = false;
-  foldedRanges(state).between(stamp.from, stamp.to, (from, to) => {
-    if (from === stamp.from && to === stamp.to) folded = true;
+  const entry = currentTypedFold(state, {
+    ...stamp,
+    kind: stamp.kind ?? "heading",
   });
-  return folded ? { from: stamp.from, to: stamp.to } : undefined;
+  return entry ? { from: entry.from, to: entry.to } : undefined;
 }
 export function currentFoldAtSelection(state: EditorState) {
-  const head = state.selection.main.head;
-  let target: { from: number; to: number } | undefined;
-  foldedRanges(state).between(0, state.doc.length, (from, to) => {
-    let titleFrom = state.doc.lineAt(from).from;
-    // A resumed partial tree can still prove the complete multiline title.
-    // This only widens an existing fold's unfold target, never creates a fold.
-    if (syntaxTreeAvailable(state, from)) {
-      let node = syntaxTree(state).resolveInner(from, -1);
-      for (;;) {
-        if (
-          /^(?:ATXHeading[1-6]|SetextHeading[12])$/.test(node.name) &&
-          node.to === from
-        ) {
-          titleFrom = state.doc.lineAt(node.from).from;
-          break;
-        }
-        if (!node.parent) break;
-        node = node.parent;
-      }
-    }
-    if (head >= titleFrom && head <= to) target = { from, to };
-  });
-  return target;
+  const entry = selectedTypedFold(state, "heading");
+  return entry ? { from: entry.from, to: entry.to } : undefined;
 }
 export function isHeadingShortcut(
   event: Pick<
@@ -181,16 +145,17 @@ export function toggleCurrentHeading(
   const route = routes.get(view);
   if (!route?.ready() || view.compositionStarted || view.composing)
     return false;
-  const { heading, unfoldFrom, unfoldTo } = action;
+  const { heading, unfoldFrom, unfoldTo, kind = "heading" } = action;
   let unfolding: { from: number; to: number } | undefined;
   if (unfoldFrom !== undefined && unfoldTo !== undefined)
     unfolding = currentFoldTarget(view.state, {
       doc: view.state.doc,
       from: unfoldFrom,
       to: unfoldTo,
+      kind,
     });
   else if (heading === undefined)
-    unfolding = currentFoldAtSelection(view.state);
+    unfolding = selectedTypedFold(view.state, kind);
   if (unfolding) {
     const tr = view.state.update({
       effects: unfoldEffect.of(unfolding),
@@ -202,6 +167,22 @@ export function toggleCurrentHeading(
   if (unfoldFrom !== undefined || unfoldTo !== undefined) return false;
   const structure = currentStructure(view.state);
   if (!structure) return false;
+  if (kind === "fencedCode") {
+    const head = view.state.selection.main.head;
+    const section = structure.code.find((item) =>
+      heading !== undefined
+        ? item.opening === heading
+        : head >= item.line && head <= item.to
+    );
+    if (!section) return false;
+    const tr = codeToggleTransaction(view.state, section);
+    if (!tr) {
+      route.rejected();
+      return true;
+    }
+    view.dispatch(tr);
+    return view.state === tr.state;
+  }
   let section: HeadingSection | undefined;
   if (heading !== undefined)
     section = structure.sections.find((item) => item.heading === heading);
@@ -227,7 +208,8 @@ class HeadingMarker extends GutterMarker {
     readonly structure: HeadingStructure,
     readonly heading: number,
     readonly closed: boolean,
-    readonly hovered: boolean
+    readonly hovered: boolean,
+    readonly kind: EditorFoldKind = "heading"
   ) {
     super();
   }
@@ -236,7 +218,8 @@ class HeadingMarker extends GutterMarker {
       this.structure === other.structure &&
       this.heading === other.heading &&
       this.closed === other.closed &&
-      this.hovered === other.hovered
+      this.hovered === other.hovered &&
+      this.kind === other.kind
     );
   }
   toDOM(view: EditorView) {
@@ -246,10 +229,16 @@ class HeadingMarker extends GutterMarker {
     button.textContent = this.closed ? "›" : "⌄";
     button.setAttribute(
       "aria-label",
-      this.closed ? "展开标题章节" : "折叠标题章节"
+      this.closed
+        ? this.kind === "heading"
+          ? "展开标题章节"
+          : "展开代码块"
+        : this.kind === "heading"
+          ? "折叠标题章节"
+          : "折叠代码块"
     );
     button.setAttribute("aria-expanded", String(!this.closed));
-    button.title = this.closed ? "展开标题章节" : "折叠标题章节";
+    button.title = button.getAttribute("aria-label")!;
     button.addEventListener("mousedown", (event) => event.preventDefault());
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -260,7 +249,7 @@ class HeadingMarker extends GutterMarker {
         !view.compositionStarted &&
         !view.composing
       )
-        route.run({ heading: this.heading });
+        route.run({ heading: this.heading, kind: this.kind });
     });
     return button;
   }
@@ -294,6 +283,8 @@ const structurePlugin = ViewPlugin.fromClass(
             : structure.sections[index - 1];
         if (section && position >= section.line && position <= section.from)
           heading = section.heading;
+        const code = structure.code[headingLowerBound(structure.code, line)];
+        if (code?.line === line) heading = code.opening;
       }
       this.setHover(heading);
     };
@@ -379,24 +370,22 @@ const structurePlugin = ViewPlugin.fromClass(
       if (!structure) return builder.finish();
       for (const block of this.view.viewportLineBlocks) {
         const at = headingLowerBound(structure.sections, block.from),
-          section = structure.sections[at];
+          title = structure.sections[at],
+          code = structure.code[headingLowerBound(structure.code, block.from)],
+          section = title?.line === block.from ? title : code;
         if (section?.line !== block.from) continue;
-        let closed = false;
-        foldedRanges(this.view.state).between(
-          section.from,
-          section.to,
-          (from, to) => {
-            if (from === section.from && to === section.to) closed = true;
-          }
-        );
+        const closed = exactLiveFold(this.view.state, section),
+          isTitle = "heading" in section,
+          position = isTitle ? section.heading : section.opening;
         builder.add(
           block.from,
           block.from,
           new HeadingMarker(
             structure,
-            section.heading,
+            position,
             closed,
-            section.heading === this.hovered
+            position === this.hovered,
+            isTitle ? "heading" : "fencedCode"
           )
         );
       }
@@ -424,67 +413,63 @@ export function observeHeadingFolding(view: EditorView) {
 
 /** Shared across editing/source presentations; only heading-specific UI emits folds. */
 export const headingFolding = [
+  editorFoldEntries,
   codeFolding({
     preparePlaceholder: (state, range) => ({
       doc: state.doc,
       from: range.from,
       to: range.to,
+      entry: foldEntry(state, range),
     }),
     placeholderDOM(view, _defaultClick, prepared: unknown) {
       const button = view.dom.ownerDocument.createElement("button");
+      const stamp = prepared as {
+        doc: EditorState["doc"];
+        from: number;
+        to: number;
+        entry: ReturnType<typeof foldEntry>;
+      } | null;
+      const entry = stamp?.entry;
       button.type = "button";
-      button.textContent = "…";
+      button.textContent =
+        entry?.kind === "fencedCode"
+          ? `${entry.languageLabel} · ${entry.lineCount}行`
+          : "…";
       button.className = "cm-foldPlaceholder";
-      button.setAttribute("aria-label", "展开标题章节");
-      button.title = "展开标题章节";
+      button.setAttribute(
+        "aria-label",
+        entry?.kind === "fencedCode"
+          ? "展开代码块"
+          : entry?.kind === "heading"
+            ? "展开标题章节"
+            : "展开折叠内容"
+      );
+      button.title = button.getAttribute("aria-label")!;
       button.addEventListener("mousedown", (event) => event.preventDefault());
       button.addEventListener("click", (event) => {
         event.preventDefault();
         const route = routes.get(view);
-        const stamp = prepared as {
-          doc: EditorState["doc"];
-          from: number;
-          to: number;
-        };
-        const section = currentFoldTarget(view.state, stamp);
+        const section =
+          stamp && entry
+            ? currentFoldTarget(view.state, { ...stamp, kind: entry.kind })
+            : undefined;
         if (
           section &&
           route?.ready() &&
           !view.compositionStarted &&
           !view.composing
         )
-          route.run({ unfoldFrom: section.from, unfoldTo: section.to });
+          route.run({
+            unfoldFrom: section.from,
+            unfoldTo: section.to,
+            kind: entry!.kind,
+          });
       });
       return button;
     },
   }),
   headingStructureState,
-  EditorState.transactionExtender.of((tr) => {
-    const all =
-      tr.docChanged ||
-      tr.effects.some((effect) => effect.is(clearHeadingFolds)) ||
-      !!tr.startState.field(editorFaultSession, false)?.fault;
-    if (!all && !tr.selection) return null;
-    const effects: StateEffect<unknown>[] = [];
-    foldedRanges(tr.startState).between(
-      0,
-      tr.startState.doc.length,
-      (from, to) => {
-        const mapped = {
-          from: tr.changes.mapPos(from, 1),
-          to: tr.changes.mapPos(to, -1),
-        };
-        if (
-          all ||
-          tr.newSelection.ranges.some((range) =>
-            selectionIntersectsFold(range, mapped)
-          )
-        )
-          effects.push(unfoldEffect.of(mapped));
-      }
-    );
-    return effects.length ? { effects } : null;
-  }),
+  clearLocatedEditorFolds,
   structurePlugin,
   gutter({
     class: "cm-heading-gutter",

@@ -1,6 +1,17 @@
-import { syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
-import type { EditorState, Text } from "@codemirror/state";
+import {
+  syntaxTree,
+  syntaxTreeAvailable,
+  language,
+} from "@codemirror/language";
+import {
+  StateEffect,
+  StateField,
+  type EditorState,
+  type Text,
+} from "@codemirror/state";
 import type { SyntaxNode, Tree } from "@lezer/common";
+
+import { editorFaultSession } from "./editor-fault";
 
 export interface HeadingSection {
   readonly heading: number;
@@ -13,7 +24,39 @@ export interface HeadingStructure {
   readonly doc: Text;
   readonly tree: Tree;
   readonly sections: readonly HeadingSection[];
+  readonly code: readonly CodeFoldSection[];
 }
+export interface CodeFoldSection {
+  readonly opening: number;
+  readonly line: number;
+  readonly from: number;
+  readonly to: number;
+  readonly languageLabel: string;
+  readonly lineCount: number;
+}
+export const headingStructureReady = StateEffect.define<HeadingStructure>();
+export const headingStructureState = StateField.define<HeadingStructure | null>(
+  {
+    create: () => null,
+    update(value, tr) {
+      if (
+        tr.docChanged ||
+        !tr.state.facet(language) ||
+        tr.state.field(editorFaultSession, false)?.fault
+      )
+        return null;
+      if (value && value.tree !== syntaxTree(tr.state)) value = null;
+      for (const effect of tr.effects)
+        if (
+          effect.is(headingStructureReady) &&
+          effect.value.doc === tr.state.doc &&
+          effect.value.tree === syntaxTree(tr.state)
+        )
+          value = effect.value;
+      return value;
+    },
+  }
+);
 interface OpenHeading {
   index: number;
   heading: number;
@@ -44,6 +87,7 @@ export function* headingStructureSteps(
     doc = state.doc;
   const full = syntaxTreeAvailable(state, doc.length);
   const slots: (HeadingSection | null)[] = [];
+  const code: CodeFoldSection[] = [];
   const stack: Frame[] = [
     { node: tree.topNode, next: tree.topNode.firstChild, open: [] },
   ];
@@ -95,6 +139,57 @@ export function* headingStructureSteps(
       slots.push(null);
     } else {
       for (const parent of frame.open) parent.body = true;
+      if (node.name === "FencedCode") {
+        const opening = node.firstChild,
+          last = node.lastChild;
+        if (opening?.name === "CodeMark") {
+          const closed =
+            last?.name === "CodeMark" && last.from !== opening.from;
+          if (closed ? syntaxTreeAvailable(state, last.to) : full) {
+            const first = doc.lineAt(opening.from);
+            let to = node.to;
+            if (
+              !closed &&
+              to > first.to &&
+              doc.sliceString(to - 1, to) === "\n"
+            )
+              to--;
+            const lineCount = closed
+              ? doc.lineAt(last.from).number - first.number - 1
+              : doc.lineAt(to).number - first.number;
+            if (lineCount > 0 && to > first.to) {
+              const info = opening.nextSibling;
+              const token =
+                info?.name === "CodeInfo"
+                  ? (/^\S+/.exec(
+                      doc.sliceString(
+                        info.from,
+                        Math.min(info.to, info.from + 65)
+                      )
+                    )?.[0] ?? "")
+                  : "";
+              // Derived display only: preserve the raw code/info string.
+              const label = token.replace(
+                // eslint-disable-next-line no-control-regex
+                /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g,
+                ""
+              );
+              code.push({
+                opening: node.from,
+                line: first.from,
+                from: first.to,
+                to,
+                languageLabel: label
+                  ? label.length > 40
+                    ? `${label.slice(0, 40)}…`
+                    : label
+                  : "纯文本",
+                lineCount,
+              });
+            }
+          }
+        }
+      }
       if (containers.has(node.name))
         stack.push({ node, next: node.firstChild, open: [] });
     }
@@ -107,12 +202,12 @@ export function* headingStructureSteps(
     }
     if (section) sections.push(section);
   }
-  return { doc, tree, sections };
+  return { doc, tree, sections, code };
 }
 
 /** First heading whose display line is at or after position. */
 export function headingLowerBound(
-  sections: readonly HeadingSection[],
+  sections: readonly { line: number }[],
   position: number
 ) {
   let low = 0,

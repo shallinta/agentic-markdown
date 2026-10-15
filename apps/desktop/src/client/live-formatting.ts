@@ -1,5 +1,5 @@
 import { commonmarkLanguage } from "@codemirror/lang-markdown";
-import { Language, syntaxTree } from "@codemirror/language";
+import { Language, syntaxTree, foldedRanges } from "@codemirror/language";
 import {
   StateEffect,
   countColumn,
@@ -28,6 +28,7 @@ import {
 } from "./callout-presentation";
 import { editingImages } from "./editing-images";
 import { GuardedParser, editorFaultSession } from "./editor-fault";
+import { foldEntry, exactLiveFold } from "./editor-fold-state";
 import {
   longLineProtection,
   protectedPosition,
@@ -545,6 +546,25 @@ export function liveDecorations(
           return;
         }
         if (name === "FencedCode" || name === "CodeBlock") {
+          // The shared fold placeholder owns the summary; do not duplicate its
+          // language badge or hide its opening fence through live decorations.
+          const last = ref.node.lastChild;
+          const closed =
+            last?.name === "CodeMark" &&
+            last.from !== ref.node.firstChild?.from;
+          const range = {
+            from: state.doc.lineAt(from).to,
+            to:
+              !closed && state.doc.sliceString(to - 1, to) === "\n"
+                ? to - 1
+                : to,
+          };
+          if (
+            name === "FencedCode" &&
+            foldEntry(state, range)?.kind === "fencedCode" &&
+            exactLiveFold(state, range)
+          )
+            return;
           if (name === "FencedCode" && !touched(state, from, to)) {
             // Hide parsed fence symbols, never container prefixes/newlines.
             // CommonMark places fences at the child edges. Quoted code has
@@ -754,6 +774,7 @@ export const liveFormattingPlugin = ViewPlugin.fromClass(
       if (
         update.state !== update.startState ||
         update.docChanged ||
+        foldedRanges(update.startState) !== foldedRanges(update.state) ||
         update.selectionSet ||
         update.viewportChanged ||
         syntaxTree(update.startState) !== syntaxTree(update.state) ||

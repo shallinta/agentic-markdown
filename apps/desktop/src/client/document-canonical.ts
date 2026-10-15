@@ -1,3 +1,5 @@
+import type { CanonicalPurpose } from "../shared/markdown-profile";
+
 import {
   createCurrentCanonical,
   type CurrentCanonicalWorker,
@@ -8,23 +10,29 @@ import { rawText } from "./raw-buffer";
 /** Bind lifetime to controller sessions, including an unchanged/empty reload. */
 export function createDocumentCanonical(
   controller: ReturnType<typeof createDocumentController>,
-  factory: () => CurrentCanonicalWorker
+  factory: () => CurrentCanonicalWorker,
+  purpose: CanonicalPurpose
 ) {
-  return createCurrentCanonical(() => {
-    const state = controller.getSnapshot();
-    if (state.frozen || state.busy) return null;
-    const snapshot = state.snapshot;
-    const editor = snapshot && controller.getEditor(snapshot.documentId);
-    const identity = snapshot && controller.getEditorFault(snapshot.documentId);
-    return snapshot && editor && identity
-      ? {
-          documentId: snapshot.documentId,
-          revision: editor.revision,
-          text: editor.state.field(rawText),
-          identity,
-        }
-      : null;
-  }, factory);
+  return createCurrentCanonical(
+    () => {
+      const state = controller.getSnapshot();
+      if (state.frozen || state.busy) return null;
+      const snapshot = state.snapshot;
+      const editor = snapshot && controller.getEditor(snapshot.documentId);
+      const identity =
+        snapshot && controller.getEditorFault(snapshot.documentId);
+      return snapshot && editor && identity
+        ? {
+            documentId: snapshot.documentId,
+            revision: editor.revision,
+            text: editor.state.field(rawText),
+            identity,
+          }
+        : null;
+    },
+    factory,
+    purpose
+  );
 }
 
 /** DiscardGuard has one participant; compose derived cancellation with document safety. */

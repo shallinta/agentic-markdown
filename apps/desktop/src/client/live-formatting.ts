@@ -35,6 +35,7 @@ import {
   touchesProtected,
   unprotectedParts,
 } from "./long-line-protection";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { taskMarkers } from "./task-marker";
 import { invalidateTaskGesture } from "./task-marker-input";
 import { TaskMarkerWidget } from "./task-marker-widget";
@@ -46,7 +47,9 @@ import {
 export const createEditingMarkdown = () =>
   new Language(
     commonmarkLanguage.data,
-    new GuardedParser(new AsyncLongLineParser(new BomAwareParser())),
+    new GuardedParser(
+      new AsyncLongLineParser(new BomAwareParser(documentMarkdownParser))
+    ),
     [asyncMarkdownSession, asyncMarkdownLifecycle],
     "markdown"
   );

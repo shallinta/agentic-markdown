@@ -1,9 +1,10 @@
 /** Explicit Bun-only cost model experiment, not a measurement of heap or RSS. */
 import { BomAwareParser } from "./bom-aware-parser";
 import { estimateMarkdownTreeCost } from "./markdown-cache-cost";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { encodeMarkdownTree, decodeMarkdownTree } from "./markdown-tree-wire";
 
-const parser = new BomAwareParser();
+const parser = new BomAwareParser(documentMarkdownParser);
 const rows: object[] = [];
 for (const units of [10_000, 50_000, 200_000, 1_000_000])
   for (const dense of [0, 1]) {

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { ensureSyntaxTree } from "@codemirror/language";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import {
   findCodeCopyValue,
   rawCodeTarget,

@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { undo, redo } from "@codemirror/commands";
 import { EditorSelection, EditorState } from "@codemirror/state";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import {
   inlineFormatTransaction,
   planInlineFormat,

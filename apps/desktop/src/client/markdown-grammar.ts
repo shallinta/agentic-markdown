@@ -6,6 +6,9 @@ import {
   type MarkdownConfig,
 } from "@lezer/markdown";
 
+import { FrontmatterExtension } from "./frontmatter-extension";
+import { FrontmatterParser } from "./frontmatter-parser";
+
 const upstream = Strikethrough.parseInline?.find(
   (rule) => rule.name === "Strikethrough"
 );
@@ -39,4 +42,9 @@ const doubleStrike: MarkdownConfig = {
 const base = commonmarkLanguage.parser;
 if (!(base instanceof MarkdownParser))
   throw new Error("Fixed Markdown parser unavailable");
-export const markdownGrammar = base.configure([doubleStrike, Table]);
+export const markdownGrammar = base.configure([
+  doubleStrike,
+  Table,
+  FrontmatterExtension.lezer,
+]);
+export const documentMarkdownParser = new FrontmatterParser(markdownGrammar);

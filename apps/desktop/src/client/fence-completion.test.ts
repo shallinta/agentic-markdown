@@ -7,7 +7,7 @@ import { EditorSelection, EditorState, StateEffect } from "@codemirror/state";
 import type { DocumentSnapshot } from "../shared/documents";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { createDocumentController } from "./documents";
 import { editorFaultSession } from "./editor-fault";
 import { switchEditorMode } from "./editor-mode";

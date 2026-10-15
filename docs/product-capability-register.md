@@ -894,7 +894,7 @@ F-010 执行边界（2026-09-22）：用户确认读取保真方案并授权推�
 | S-04 | GFM 删除线 | GFM 产品 | `GFMExtension` 组成部分；App profile 仅接受 `~~`；单 `~` 保留给下标；编辑按焦点显隐。F-045a alpha.126三模式非离线有限片已受托代验并推送7dea000；完整GFM及最终离线开放 | 已确认 · MVP（兼容例外）· 本片已代验 |
 | S-05 | GFM 扩展自动链接 | GFM 产品 | `GFMExtension` 组成部分；按规范识别裸 URL/邮箱；F-045f alpha130阅读非活动呈现有限片已受托Agent代验。中文尾标点/删除线按官方组合语义；编辑/源码识别、三模式一致性及导航仍待后续，不提前开放协议执行 | 已确认 · MVP · 部分完成 |
 | S-05a | GFM tagfilter | GitHub | `GFMExtension` 组成部分；按规范过滤会改变 HTML 解析上下文的危险原始标签；不替代完整渲染安全策略 | 已确认 · MVP |
-| S-06 | YAML Frontmatter | Obsidian、Zettlr、Typora | 原子 `FrontmatterExtension` 加入 Preset；编辑可折叠原文；错误不阻塞；阅读呈现待定 | 已确认 · MVP（阅读待定） |
+| S-06 | YAML Frontmatter | Obsidian、Zettlr、Typora | 原子 `FrontmatterExtension` 加入 Preset；[F-046a](iterations/F-046a-frontmatter-editing.md) alpha161 编辑原文折叠、源码完整与有限语法诊断经真实WK、最终双轴及主线批准非离线受托Agent代验通过，非用户亲验；错误不阻塞正文。完整父项、阅读呈现专项、未测边界与最终离线保持开放 | 已确认 · MVP · 部分完成（阅读待定） |
 | S-07 | Properties 可视化编辑 | Obsidian | 不提供；始终编辑 YAML 原文，不维护属性表单状态 | 已确认不提供 |
 | S-07a | Extended Markdown Preset | 多产品方言并集 | 固定 App 方言；组合 CommonMark、GFM 与已确认原子 Extension；MVP 始终使用；无方言切换 | 已确认 · M0/MVP |
 | S-08 | 脚注 | Typora、Zettlr、Pandoc | 原子 `FootnoteExtension` 加入 Preset；仅 `[^id]` 引用式；阅读往返；不支持行内脚注 | 已确认 · MVP |

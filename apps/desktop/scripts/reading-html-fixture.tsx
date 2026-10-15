@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import "tailwindcss/preflight.css";
 
-import { parseCanonicalMarkdown } from "../src/client/canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "../src/client/canonical-parser";
 import "../src/reading-themes/content.css";
 import "../src/reading-themes/ink/theme.css";
 import "../src/reading-themes/paper/theme.css";

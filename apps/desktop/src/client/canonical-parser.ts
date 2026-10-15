@@ -8,7 +8,10 @@ import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 import { gfmTable } from "micromark-extension-gfm-table";
 import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
 
+import type { CanonicalPurpose } from "../shared/markdown-profile";
+
 import { annotateCallouts } from "./callout-extension";
+import { FrontmatterExtension } from "./frontmatter-extension";
 
 const extensions = [
   gfmStrikethrough({ singleTilde: false }),
@@ -24,9 +27,21 @@ const mdastExtensions = [
 ];
 
 /** Internal mdast, raw UTF-16 positions; never HTML or a public plugin schema. */
-export function parseCanonicalMarkdown(text: string) {
+export function parseCanonicalMarkdown(
+  text: string,
+  purpose: CanonicalPurpose
+) {
   const bom = text.startsWith("\uFEFF") ? 1 : 0;
-  const tree = fromMarkdown(text.slice(bom), { extensions, mdastExtensions });
+  const tree = fromMarkdown(text.slice(bom), {
+    extensions:
+      purpose === "editing-semantic"
+        ? [...extensions, FrontmatterExtension.micromark]
+        : extensions,
+    mdastExtensions:
+      purpose === "editing-semantic"
+        ? [...mdastExtensions, FrontmatterExtension.mdast]
+        : mdastExtensions,
+  });
   if (bom) {
     const pending = [tree as typeof tree | (typeof tree.children)[number]];
     while (pending.length) {
@@ -43,3 +58,7 @@ export function parseCanonicalMarkdown(text: string) {
   annotateCallouts(tree, text);
   return tree;
 }
+export const parseReadingMarkdown = (text: string) =>
+  parseCanonicalMarkdown(text, "reading-legacy");
+export const parseEditingMarkdown = (text: string) =>
+  parseCanonicalMarkdown(text, "editing-semantic");

@@ -7,6 +7,7 @@ import {
   estimateMarkdownTreeCost,
   MARKDOWN_ACTIVE_TREE_BUDGET,
 } from "./markdown-cache-cost";
+import { documentMarkdownParser } from "./markdown-grammar";
 
 test("cost counts shared child and backing store once, with estimated object cost separate", () => {
   const buffer = new Uint16Array([0, 0, 1, 4]);
@@ -24,7 +25,7 @@ test("cost counts shared child and backing store once, with estimated object cos
 
 test("dense trees can exceed soft budget without losing syntax or pretending a hard cap", () => {
   const raw = "**bold** [link](local.md) &amp; \\* ".repeat(16_000);
-  const tree = new BomAwareParser().parse(raw);
+  const tree = new BomAwareParser(documentMarkdownParser).parse(raw);
   const cost = estimateMarkdownTreeCost(tree);
   expect(cost.accountedBytes).toBeGreaterThan(MARKDOWN_ACTIVE_TREE_BUDGET);
   expect(tree.length).toBe(raw.length);

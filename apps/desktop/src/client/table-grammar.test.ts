@@ -10,9 +10,10 @@ import {
 } from "../shared/markdown-profile";
 
 import { BomAwareParser } from "./bom-aware-parser";
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { sourceHighlightStyle, switchEditorMode } from "./editor-mode";
 import { liveDecorations } from "./live-formatting";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { decodeMarkdownTree, encodeMarkdownTree } from "./markdown-tree-wire";
 import {
   createRawEditorState,
@@ -56,7 +57,9 @@ test("table grammar preserves canonical raw table boundaries and wire including 
       if ("children" in node) node.children.forEach(visit);
     }
     visit(parseCanonicalMarkdown(raw));
-    const tree = new BomAwareParser().parse(editorText(raw));
+    const tree = new BomAwareParser(documentMarkdownParser).parse(
+      editorText(raw)
+    );
     expect(
       nodes(tree)
         .filter((n) => n.name === "Table")
@@ -66,7 +69,7 @@ test("table grammar preserves canonical raw table boundaries and wire including 
       nodes(decodeMarkdownTree(structuredClone(encodeMarkdownTree(tree))))
     ).toEqual(nodes(tree));
   }
-  const tree = new BomAwareParser().parse(
+  const tree = new BomAwareParser(documentMarkdownParser).parse(
     "a | b\n--- | ---\nx | y\n\n".repeat(40)
   );
   function buffered(t: Tree): boolean {
@@ -80,7 +83,7 @@ test("table grammar preserves canonical raw table boundaries and wire including 
 
 test("old, missing and nested old table grammar cannot enter the current decoder", () => {
   const wire = encodeMarkdownTree(
-    new BomAwareParser().parse("a | b\n--- | ---")
+    new BomAwareParser(documentMarkdownParser).parse("a | b\n--- | ---")
   );
   expect(wire.config).toBe(MARKDOWN_GRAMMAR);
   expect(CANONICAL_PROFILE).toBe(

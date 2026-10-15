@@ -5,6 +5,8 @@ import {
 import { setCalloutWorkerFactory } from "./callout-presentation";
 import CalloutWorker from "./callout-summary.worker?worker&inline";
 import { setImageSummaryWorkerFactory } from "./editing-images";
+import FrontmatterWorker from "./frontmatter-diagnostic.worker?worker&inline";
+import { setFrontmatterDiagnosticFactory } from "./frontmatter-presentation";
 import ImageWorker from "./image-summary.worker?worker&inline";
 import MarkdownWorker from "./markdown-parser.worker?worker&inline";
 
@@ -31,3 +33,5 @@ if (lab?.enabled && lab.responsiveProbe && !lab.parserWorkProbe)
   setMarkdownWorkPolicy("wait");
 if (!lab?.enabled) setCalloutWorkerFactory(() => new CalloutWorker());
 if (!lab?.enabled) setImageSummaryWorkerFactory(() => new ImageWorker());
+if (!lab?.enabled)
+  setFrontmatterDiagnosticFactory(() => new FrontmatterWorker());

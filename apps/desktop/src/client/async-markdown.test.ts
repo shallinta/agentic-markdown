@@ -19,6 +19,7 @@ import {
 import { BomAwareParser } from "./bom-aware-parser";
 import { editorFaultSession } from "./editor-fault";
 import { longLineProtection } from "./long-line-protection";
+import { documentMarkdownParser } from "./markdown-grammar";
 import {
   encodeMarkdownTree,
   decodeMarkdownTree,
@@ -47,7 +48,9 @@ class ControlledWorker implements MarkdownWorker {
         data: {
           config: request.config,
           requestId: request.requestId,
-          tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
+          tree: encodeMarkdownTree(
+            new BomAwareParser(documentMarkdownParser).parse(request.text)
+          ),
         },
       })
     );
@@ -73,7 +76,9 @@ test("grammar mismatch in reply or nested wire faults before accepting an old nu
     const session = state.field(asyncMarkdownSession);
     session.activate();
     const request = worker.requests[0];
-    const tree = encodeMarkdownTree(new BomAwareParser().parse("~~x~~"));
+    const tree = encodeMarkdownTree(
+      new BomAwareParser(documentMarkdownParser).parse("~~x~~")
+    );
     const data = { config: request.config, requestId: request.requestId, tree };
     if (mode === "reply-missing") Object.assign(data, { config: undefined });
     if (mode === "reply-old")
@@ -194,7 +199,7 @@ test("accepted over-budget active tree stays ready and fault-free until explicit
   expect(tree?.length).toBe(raw.length);
   expect(syntaxTreeAvailable(state, state.doc.length)).toBe(true);
   expect(tree && encodeMarkdownTree(tree)).toEqual(
-    encodeMarkdownTree(new BomAwareParser().parse(raw))
+    encodeMarkdownTree(new BomAwareParser(documentMarkdownParser).parse(raw))
   );
   const held = session.snapshot();
   expect(held.treeAccountedBytes).toBeGreaterThan(held.activeTreeBudgetBytes);
@@ -279,7 +284,7 @@ test("public skipping parser is unavailable until worker tree; full ready beyond
   await Promise.resolve();
   const tree = ensureSyntaxTree(state, state.doc.length, 100);
   expect(tree && encodeMarkdownTree(tree)).toEqual(
-    encodeMarkdownTree(new BomAwareParser().parse(dense))
+    encodeMarkdownTree(new BomAwareParser(documentMarkdownParser).parse(dense))
   );
   expect(syntaxTreeAvailable(state, state.doc.length)).toBe(true);
   const beforeRelease = session.snapshot();
@@ -401,7 +406,9 @@ test("long to short retires old callbacks; long again starts a fresh worker with
       data: {
         config: request.config,
         requestId: request.requestId,
-        tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
+        tree: encodeMarkdownTree(
+          new BomAwareParser(documentMarkdownParser).parse(request.text)
+        ),
       },
     })
   );
@@ -453,7 +460,7 @@ test("destroyed worker late errors cannot fault or terminate a resumed session",
 });
 
 test("wire round trip preserves node positions, type props, BOM and contextHash", () => {
-  const parser = new BomAwareParser();
+  const parser = new BomAwareParser(documentMarkdownParser);
   const tree = parser.parse(
     "\uFEFF# heading\n\n> quote **bold**\n\n- item\n\n```js\na\n```\n".repeat(
       100

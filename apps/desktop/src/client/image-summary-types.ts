@@ -1,5 +1,5 @@
-import { CANONICAL_CONFIG } from "./current-canonical-protocol";
-export const IMAGE_SUMMARY_CONFIG = `${CANONICAL_CONFIG}:editing-images-1`;
+import { EDITING_CANONICAL_PROFILE } from "../shared/markdown-profile";
+export const IMAGE_SUMMARY_CONFIG = `${EDITING_CANONICAL_PROFILE}:editing-images-2`;
 export interface ImageSource {
   url: string;
   title: string | null;

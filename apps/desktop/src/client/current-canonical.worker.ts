@@ -1,3 +1,5 @@
+import { EDITING_CANONICAL_PROFILE } from "../shared/markdown-profile";
+
 import { parseCanonicalMarkdown } from "./canonical-parser";
 import { isCanonicalRequest } from "./current-canonical-protocol";
 
@@ -7,7 +9,12 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
     if (!isCanonicalRequest(request))
       throw Error("Invalid current canonical request");
     const start = performance.now();
-    const tree = parseCanonicalMarkdown(request.text);
+    const tree = parseCanonicalMarkdown(
+      request.text,
+      request.config === EDITING_CANONICAL_PROFILE
+        ? "editing-semantic"
+        : "reading-legacy"
+    );
     self.postMessage({
       ok: true,
       result: {

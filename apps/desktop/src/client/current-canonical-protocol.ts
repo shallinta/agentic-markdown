@@ -1,5 +1,9 @@
 import { CANONICAL_CONFIG } from "../shared/canonical-corpus";
 import { MAX_DOCUMENT_BYTES } from "../shared/documents";
+import {
+  CANONICAL_PROFILE,
+  EDITING_CANONICAL_PROFILE,
+} from "../shared/markdown-profile";
 
 import type { parseCanonicalMarkdown } from "./canonical-parser";
 
@@ -30,7 +34,8 @@ export function isCanonicalRequest(value: unknown): value is CanonicalRequest {
     request.documentId.length <= 200 &&
     Number.isSafeInteger(request.revision) &&
     request.revision >= 0 &&
-    request.config === CANONICAL_CONFIG &&
+    (request.config === CANONICAL_PROFILE ||
+      request.config === EDITING_CANONICAL_PROFILE) &&
     typeof request.text === "string" &&
     request.text.length <= MAX_DOCUMENT_BYTES &&
     new TextEncoder().encode(request.text).length <= MAX_DOCUMENT_BYTES

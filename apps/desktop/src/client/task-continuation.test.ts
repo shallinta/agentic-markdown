@@ -9,7 +9,7 @@ import {
 import { ensureSyntaxTree } from "@codemirror/language";
 import { EditorSelection, type Transaction } from "@codemirror/state";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { switchEditorMode } from "./editor-mode";
 import { listContinuationTransaction } from "./list-continuation";
 import { createRawEditorState, rawText } from "./raw-buffer";

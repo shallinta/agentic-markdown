@@ -5,7 +5,7 @@ import { commonmarkLanguage } from "@codemirror/lang-markdown";
 import { ensureSyntaxTree } from "@codemirror/language";
 import { EditorSelection, EditorState } from "@codemirror/state";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { switchEditorMode } from "./editor-mode";
 import { LIST_INDENT_BUDGET } from "./list-indentation";
 import { longLineProtection } from "./long-line-protection";

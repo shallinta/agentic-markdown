@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 
 type Tree = ReturnType<typeof parseCanonicalMarkdown>;
 type Node = Tree | Tree["children"][number];

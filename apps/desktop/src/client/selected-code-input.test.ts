@@ -8,7 +8,7 @@ import {
 } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import {
   handlePairingInput,
   registerPairingView,

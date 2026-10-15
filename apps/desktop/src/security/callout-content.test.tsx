@@ -6,7 +6,7 @@ import {
   CALLOUT_PRESENTATION,
   CALLOUT_TYPES,
 } from "../client/callout-extension";
-import { parseCanonicalMarkdown } from "../client/canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "../client/canonical-parser";
 
 import {
   commonmarkContent,

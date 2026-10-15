@@ -11,11 +11,12 @@ import {
 } from "../shared/markdown-profile";
 
 import { BomAwareParser } from "./bom-aware-parser";
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { isCanonicalRequest } from "./current-canonical-protocol";
 import { sourceHighlightStyle, switchEditorMode } from "./editor-mode";
 import { planInlineFormat } from "./inline-format";
 import { liveDecorations } from "./live-formatting";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { markdownGrammar } from "./markdown-grammar";
 import { decodeMarkdownTree, encodeMarkdownTree } from "./markdown-tree-wire";
 import {
@@ -84,7 +85,9 @@ test("fixed double tilde profile reconciles old run failures, escapes and exact 
       samples.push(`A ~~text${"\\".repeat(slash)}${"~".repeat(run)} B`);
     }
   for (const raw of samples) {
-    const tree = new BomAwareParser().parse(editorText(raw));
+    const tree = new BomAwareParser(documentMarkdownParser).parse(
+      editorText(raw)
+    );
     expect(editorRanges(tree, raw)).toEqual(canonicalRanges(raw));
     expect(
       editorRanges(

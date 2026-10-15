@@ -5,7 +5,7 @@ import {
   MARKDOWN_GRAMMAR,
 } from "../shared/markdown-profile";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { markdownGrammar } from "./markdown-grammar";
 
 type Tree = ReturnType<typeof parseCanonicalMarkdown>;
@@ -102,7 +102,7 @@ test("canonical autolinks keep official transform semantics without inventing po
 
 test("canonical recognizes literal autolinks while editor grammar excludes them", () => {
   expect(MARKDOWN_GRAMMAR).toBe(
-    "commonmark-gfm-strike-task-projection-table-3"
+    "commonmark-gfm-strike-task-table-frontmatter-4"
   );
   expect(CANONICAL_PROFILE).toBe(
     "commonmark-gfm-strike-task-autolink-table-callout-5"

@@ -12,7 +12,7 @@ import { Tree } from "@lezer/common";
 import type { DocumentSnapshot } from "../shared/documents";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { createDocumentController } from "./documents";
 import { planInlineFormat } from "./inline-format";
 import { listContinuationTransaction } from "./list-continuation";

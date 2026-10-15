@@ -5,9 +5,10 @@ import {
 } from "../shared/canonical-corpus";
 
 import { BomAwareParser } from "./bom-aware-parser";
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
+import { documentMarkdownParser } from "./markdown-grammar";
 
-export { parseCanonicalMarkdown } from "./canonical-parser";
+export { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 const canonicalKinds = new Set([
   "heading",
   "blockquote",
@@ -109,7 +110,7 @@ export function runCanonicalSample(request: unknown): CanonicalRow {
     editingText += character === "\r" ? "\n" : character;
     offsets.push(index + 1);
   }
-  new BomAwareParser().parse(editingText).iterate({
+  new BomAwareParser(documentMarkdownParser).parse(editingText).iterate({
     enter(node) {
       let kind = editorKinds[node.name];
       if (/^(ATXHeading|SetextHeading)[1-6]$/.test(node.name)) kind = "heading";

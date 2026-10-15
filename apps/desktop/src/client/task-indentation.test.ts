@@ -8,7 +8,7 @@ import {
 } from "@codemirror/language";
 import { EditorSelection, type EditorState } from "@codemirror/state";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { switchEditorMode } from "./editor-mode";
 import { planListIndentation } from "./list-indentation";
 import { longLineProtection } from "./long-line-protection";

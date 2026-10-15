@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import type { DocumentSnapshot } from "../shared/documents";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { CANONICAL_CONFIG } from "./current-canonical-protocol";
 import { createDocumentController } from "./documents";
 import { readingCodeCurrent } from "./reading-code-current";

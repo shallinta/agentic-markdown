@@ -1,14 +1,16 @@
 import { Parser, Tree, TreeFragment, type Input } from "@lezer/common";
 
-import { markdownGrammar } from "./markdown-grammar";
-
 /** BOM is raw file content, not Markdown syntax; preserve all editor offsets. */
 export class BomAwareParser extends Parser {
+  constructor(private readonly markdownGrammar: Parser) {
+    super();
+  }
   createParse(
     input: Input,
     fragments: readonly TreeFragment[],
     ranges: readonly { from: number; to: number }[]
   ) {
+    const markdownGrammar = this.markdownGrammar;
     if (input.read(0, 1) !== "\uFEFF")
       return markdownGrammar.startParse(input, fragments, ranges);
     const shifted: Input = {

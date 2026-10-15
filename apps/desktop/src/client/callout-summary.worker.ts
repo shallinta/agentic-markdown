@@ -1,6 +1,7 @@
 import { BomAwareParser } from "./bom-aware-parser";
 import { calloutDefinitions } from "./callout-definitions";
 import { isCalloutSummaryRequest } from "./callout-summary-protocol";
+import { documentMarkdownParser } from "./markdown-grammar";
 
 self.addEventListener("message", (event: MessageEvent<unknown>) => {
   const request = event.data;
@@ -9,7 +10,7 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
       throw Error("Invalid callout request");
     // Same LF coordinate normalization as editorText, without importing editor UI.
     const text = request.text.replace(/\r\n?/g, "\n");
-    const tree = new BomAwareParser().parse(text);
+    const tree = new BomAwareParser(documentMarkdownParser).parse(text);
     self.postMessage({
       requestId: request.requestId,
       documentId: request.documentId,

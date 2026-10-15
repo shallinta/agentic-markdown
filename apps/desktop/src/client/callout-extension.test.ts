@@ -9,7 +9,7 @@ import {
   CALLOUT_TYPES,
   readCallout,
 } from "./callout-extension";
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 
 function quote(raw: string) {
   const node = parseCanonicalMarkdown(raw).children[0];

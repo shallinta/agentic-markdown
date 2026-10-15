@@ -13,6 +13,7 @@ import { BomAwareParser } from "./bom-aware-parser";
 import { waitForDenseParser } from "./dense-line-probe";
 import { createDocumentController, type DocumentTransport } from "./documents";
 import { longLineProbeText } from "./editor-view-probe";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { rawText } from "./raw-buffer";
 
 function check(signal: AbortSignal) {
@@ -220,7 +221,7 @@ export async function runResponsiveInputProbe(
             currentRow!.metrics.readyWaitMs = performance.now() - waitStart;
             currentRow!.metrics.finalParserReady = Number(ready);
             if (ready) {
-              const expected = new BomAwareParser().parse(
+              const expected = new BomAwareParser(documentMarkdownParser).parse(
                 view.state.doc.toString()
               );
               currentRow!.metrics.treeMatches = Number(

@@ -1,6 +1,6 @@
 import { normalizeIdentifier } from "micromark-util-normalize-identifier";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseEditingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import type {
   ImageSemantic,
   ImageSource,

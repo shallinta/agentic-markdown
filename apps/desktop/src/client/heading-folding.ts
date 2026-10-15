@@ -33,6 +33,10 @@ import {
   type EditorFoldKind,
 } from "./editor-fold-state";
 import {
+  frontmatterEditing,
+  type FrontmatterSection,
+} from "./frontmatter-structure";
+import {
   headingLowerBound,
   headingStructureSteps,
   headingStructureReady,
@@ -96,6 +100,17 @@ export function codeToggleTransaction(
     lineCount: section.lineCount,
   });
 }
+export function frontmatterToggleTransaction(
+  state: EditorState,
+  section: FrontmatterSection
+) {
+  return toggleTypedFold(state, state.doc, {
+    kind: "frontmatter",
+    openingFrom: section.line,
+    from: section.from,
+    to: section.to,
+  });
+}
 function currentStructure(state: EditorState) {
   const value = state.field(headingStructureState, false);
   return value?.doc === state.doc && value.tree === syntaxTree(state)
@@ -146,6 +161,8 @@ export function toggleCurrentHeading(
   if (!route?.ready() || view.compositionStarted || view.composing)
     return false;
   const { heading, unfoldFrom, unfoldTo, kind = "heading" } = action;
+  if (kind === "frontmatter" && !view.state.facet(frontmatterEditing))
+    return false;
   let unfolding: { from: number; to: number } | undefined;
   if (unfoldFrom !== undefined && unfoldTo !== undefined)
     unfolding = currentFoldTarget(view.state, {
@@ -167,6 +184,25 @@ export function toggleCurrentHeading(
   if (unfoldFrom !== undefined || unfoldTo !== undefined) return false;
   const structure = currentStructure(view.state);
   if (!structure) return false;
+  if (kind === "frontmatter") {
+    const section = structure.frontmatter,
+      head = view.state.selection.main.head;
+    if (
+      !section ||
+      section.lineCount <= 0 ||
+      (heading !== undefined
+        ? heading !== section.opening
+        : head < section.line || head > section.to)
+    )
+      return false;
+    const tr = frontmatterToggleTransaction(view.state, section);
+    if (!tr) {
+      route.rejected();
+      return true;
+    }
+    view.dispatch(tr);
+    return view.state === tr.state;
+  }
   if (kind === "fencedCode") {
     const head = view.state.selection.main.head;
     const section = structure.code.find((item) =>
@@ -232,10 +268,14 @@ class HeadingMarker extends GutterMarker {
       this.closed
         ? this.kind === "heading"
           ? "展开标题章节"
-          : "展开代码块"
+          : this.kind === "frontmatter"
+            ? "展开 YAML Frontmatter"
+            : "展开代码块"
         : this.kind === "heading"
           ? "折叠标题章节"
-          : "折叠代码块"
+          : this.kind === "frontmatter"
+            ? "折叠 YAML Frontmatter"
+            : "折叠代码块"
     );
     button.setAttribute("aria-expanded", String(!this.closed));
     button.title = button.getAttribute("aria-label")!;
@@ -285,6 +325,9 @@ const structurePlugin = ViewPlugin.fromClass(
           heading = section.heading;
         const code = structure.code[headingLowerBound(structure.code, line)];
         if (code?.line === line) heading = code.opening;
+        const fm = structure.frontmatter;
+        if (this.view.state.facet(frontmatterEditing) && fm?.line === line)
+          heading = fm.opening;
       }
       this.setHover(heading);
     };
@@ -308,6 +351,8 @@ const structurePlugin = ViewPlugin.fromClass(
         update.docChanged ||
         update.viewportChanged ||
         update.selectionSet ||
+        update.startState.facet(frontmatterEditing) !==
+          update.state.facet(frontmatterEditing) ||
         update.startState.field(headingStructureState) !==
           update.state.field(headingStructureState) ||
         foldedRanges(update.startState) !== foldedRanges(update.state) ||
@@ -372,7 +417,18 @@ const structurePlugin = ViewPlugin.fromClass(
         const at = headingLowerBound(structure.sections, block.from),
           title = structure.sections[at],
           code = structure.code[headingLowerBound(structure.code, block.from)],
-          section = title?.line === block.from ? title : code;
+          fm =
+            this.view.state.facet(frontmatterEditing) &&
+            structure.frontmatter &&
+            structure.frontmatter.lineCount > 0
+              ? structure.frontmatter
+              : undefined,
+          section =
+            title?.line === block.from
+              ? title
+              : code?.line === block.from
+                ? code
+                : fm;
         if (section?.line !== block.from) continue;
         const closed = exactLiveFold(this.view.state, section),
           isTitle = "heading" in section,
@@ -385,7 +441,7 @@ const structurePlugin = ViewPlugin.fromClass(
             position,
             closed,
             position === this.hovered,
-            isTitle ? "heading" : "fencedCode"
+            isTitle ? "heading" : section === fm ? "frontmatter" : "fencedCode"
           )
         );
       }
@@ -432,17 +488,21 @@ export const headingFolding = [
       const entry = stamp?.entry;
       button.type = "button";
       button.textContent =
-        entry?.kind === "fencedCode"
-          ? `${entry.languageLabel} · ${entry.lineCount}行`
-          : "…";
+        entry?.kind === "frontmatter"
+          ? "YAML Frontmatter"
+          : entry?.kind === "fencedCode"
+            ? `${entry.languageLabel} · ${entry.lineCount}行`
+            : "…";
       button.className = "cm-foldPlaceholder";
       button.setAttribute(
         "aria-label",
-        entry?.kind === "fencedCode"
-          ? "展开代码块"
-          : entry?.kind === "heading"
-            ? "展开标题章节"
-            : "展开折叠内容"
+        entry?.kind === "frontmatter"
+          ? "展开 YAML Frontmatter"
+          : entry?.kind === "fencedCode"
+            ? "展开代码块"
+            : entry?.kind === "heading"
+              ? "展开标题章节"
+              : "展开折叠内容"
       );
       button.title = button.getAttribute("aria-label")!;
       button.addEventListener("mousedown", (event) => event.preventDefault());

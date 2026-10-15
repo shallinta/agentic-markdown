@@ -34,7 +34,8 @@ const values = texts.map((value) => ({
 let next = 0;
 let outcome: "normal" | "cancel" | "failure" = "normal";
 const controller = createDocumentController({
-  cancelDocument: (request) => Promise.resolve({ ...request, ok: true, snapshot: null }),
+  cancelDocument: (request) =>
+    Promise.resolve({ ...request, ok: true, snapshot: null }),
   selectDocument: async (request) => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     if (outcome === "failure") throw Error("controlled transport failure");
@@ -44,20 +45,23 @@ const controller = createDocumentController({
       snapshot: outcome === "cancel" ? null : values[next++ % values.length],
     };
   },
-  readDocument: (request) => Promise.resolve({
-    ...request,
-    ok: true,
-    snapshot: values[0],
-  }),
-  releaseDocument: (request) => Promise.resolve({
-    ...request,
-    ok: true,
-    snapshot: null,
-  }),
+  readDocument: (request) =>
+    Promise.resolve({
+      ...request,
+      ok: true,
+      snapshot: values[0],
+    }),
+  releaseDocument: (request) =>
+    Promise.resolve({
+      ...request,
+      ok: true,
+      snapshot: null,
+    }),
 });
 const canonical = createDocumentCanonical(
   controller,
-  () => new CanonicalWorker()
+  () => new CanonicalWorker(),
+  "reading-legacy"
 );
 controller.subscribe(canonical.invalidate);
 await controller.select();

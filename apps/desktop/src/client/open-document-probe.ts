@@ -14,6 +14,7 @@ import {
   isDocumentResponse,
   type DocumentTransport,
 } from "./documents";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { rawText } from "./raw-buffer";
 
 function sameTree(a: Tree, b: Tree) {
@@ -192,7 +193,9 @@ export async function runOpenDocumentProbe(
               row.metrics.treeMatches = Number(
                 sameTree(
                   syntaxTree(view.state),
-                  new BomAwareParser().parse(view.state.doc.toString())
+                  new BomAwareParser(documentMarkdownParser).parse(
+                    view.state.doc.toString()
+                  )
                 )
               );
             check();
@@ -276,7 +279,9 @@ export async function runOpenDocumentProbe(
             if (continuousReady)
               continuousMatches &&= sameTree(
                 syntaxTree(view.state),
-                new BomAwareParser().parse(view.state.doc.toString())
+                new BomAwareParser(documentMarkdownParser).parse(
+                  view.state.doc.toString()
+                )
               );
             for (let count = 0; count < 3; count++) {
               const applied = controller.runHistory("undo");

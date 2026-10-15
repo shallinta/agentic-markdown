@@ -4,6 +4,7 @@ import type { SyntaxNode } from "@lezer/common";
 
 import { BomAwareParser } from "./bom-aware-parser";
 import { LONG_LINE_UNITS, longLineProtection } from "./long-line-protection";
+import { markdownGrammar } from "./markdown-grammar";
 import {
   tableFormatPreserved,
   tableGapIndex,
@@ -306,7 +307,7 @@ function computeInlineFormat(
     const start = changes.mapPos(container.from, -1),
       end = changes.mapPos(container.to, 1);
     const local = nextDoc.sliceString(start, end);
-    const parsed = new BomAwareParser().parse(local);
+    const parsed = new BomAwareParser(markdownGrammar).parse(local);
     if (
       parsed.topNode.firstChild?.name !== container.name ||
       parsed.topNode.firstChild?.nextSibling

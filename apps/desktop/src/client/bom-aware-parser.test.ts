@@ -6,6 +6,7 @@ import { TreeFragment, type Tree } from "@lezer/common";
 import { openProbeText } from "../shared/open-probe";
 
 import { BomAwareParser } from "./bom-aware-parser";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { createRawEditorState, rawText } from "./raw-buffer";
 
 function nodes(tree: Tree) {
@@ -18,7 +19,7 @@ function nodes(tree: Tree) {
 }
 
 test("BOM projection preserves the open fragment tail on a 64-line paragraph", () => {
-  const parser = new BomAwareParser();
+  const parser = new BomAwareParser(documentMarkdownParser);
   for (const raw of ["\uFEFF" + "x\n".repeat(64), openProbeText(1)]) {
     const original = parser.parse(raw);
     const next = raw + "!";
@@ -50,7 +51,7 @@ test("BOM projection preserves the open fragment tail on a 64-line paragraph", (
 });
 
 test("BOM fragment projection preserves insert, delete and BOM transition semantics", () => {
-  const parser = new BomAwareParser();
+  const parser = new BomAwareParser(documentMarkdownParser);
   let text = "\uFEFF" + "**bold**\n\nordinary\n".repeat(80);
   let tree = parser.parse(text);
   for (const [from, to, insert] of [
@@ -71,7 +72,7 @@ test("BOM fragment projection preserves insert, delete and BOM transition semant
 });
 
 test("BOM projection retains partial/open fragments after multiple offset-changing edits", () => {
-  const parser = new BomAwareParser();
+  const parser = new BomAwareParser(documentMarkdownParser);
   const original = "\uFEFF" + "line\n\n".repeat(100);
   let fragments = TreeFragment.addTree(parser.parse(original), [], true);
   let text = original;

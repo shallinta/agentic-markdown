@@ -10,13 +10,14 @@ import {
   type CalloutQueryCache,
 } from "./callout-query";
 import { calloutQueryFixtures } from "./callout-query-fixtures";
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { createRawEditorState, editorOffset } from "./raw-buffer";
 
 function check(raw: string, expected?: boolean) {
   const state = createRawEditorState(raw),
     text = state.doc.toString(),
-    tree = new BomAwareParser().parse(text);
+    tree = new BomAwareParser(documentMarkdownParser).parse(text);
   const definitions = new Set(calloutDefinitions(tree, text));
   const work = queryEditingCallouts(
     state.doc,
@@ -106,7 +107,9 @@ test("long whitespace eventually completes in bounded slices", () => {
 });
 test("completed quote eligibility is reused when the viewport moves inside it", () => {
   const state = createRawEditorState("> [!NOTE]\n> " + " ".repeat(9000) + "x"),
-    tree = new BomAwareParser().parse(state.doc.toString());
+    tree = new BomAwareParser(documentMarkdownParser).parse(
+      state.doc.toString()
+    );
   const cache: CalloutQueryCache = new Map(),
     definitions = new Set<string>();
   const first = queryEditingCallouts(
@@ -143,7 +146,9 @@ test("completed quote eligibility is reused when the viewport moves inside it", 
 });
 test("pending local completeness is not cached as a negative eligibility", () => {
   const state = createRawEditorState("> [!NOTE]\n> body"),
-    tree = new BomAwareParser().parse(state.doc.toString()),
+    tree = new BomAwareParser(documentMarkdownParser).parse(
+      state.doc.toString()
+    ),
     cache: CalloutQueryCache = new Map();
   const pending = advanceCalloutWork(
     queryEditingCallouts(

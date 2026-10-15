@@ -1,5 +1,45 @@
 # AGENTS.md
 
+## F-046a alpha161 非离线有限片正式通过（2026-10-15）
+
+真实WK与最终独立Spec/Standards各0必要阻断，主线批准Frontmatter识别/编辑原文折叠/源码完整及非阻塞语法诊断有限片受托Agent代验通过，非用户亲验。源码/包内仓库均1377/33532，hash2bxph215iwtab；五样本SHA原样、readonly恢复644，正常CmdQ exec49248 exit0/Bun1032消失。复制/EOF/只读/空块/浅深等范围、工具失败与IMK退出stderr详见唯一F046a，不扩大自然IME/极端/race/RSS证据。Git待执行；阅读仍legacy、子窗及完整父/冻结stash/最终离线开放。下方构建候选为历史。
+
+## F-046a alpha161 构建候选（2026-10-15）
+
+正式候选主线全量1377/33532、type/full lint/docs/lock通过，两独立轴增量各13/179且0必要构建阻断。旧grammar硬编码、复制测试二次raw映射及.at目标lib失败保留唯一迭代，未放宽语义。主线已读parser/typed fold/诊断/用途接线并批准递增alpha161及构建；尚未构建成功或真实WK验收，不得Git。阅读legacy不变、子窗专项/F041d冻结stash/完整父及最终离线保持。
+
+## F-046a typed有限生产实施获批（2026-10-15）
+
+主线全文读取唯一F046a顶部最终P1–P5，Spec/Standards均0必要实施路线阻断，批准源码/三个固定直接依赖及最小lock/实现后测试。明确全文与片段入口、canonical新编辑/旧阅读隔离、可信根proof分片恢复、正式FM fold kind和非阻塞诊断保护；保留既有标题/代码命令语义。诊断最多65536 UTF16、1500ms宿主watchdog、32条投影为操作保护非性能门槛。尚未代码/实际验收，版本alpha160，build/GUI/Git仍主线管理，下一包alpha161；阅读专项/冻结stash/离线不变。
+
+## F-046a 合并前置实验收敛（2026-10-15）
+
+主线及两轴实际复跑`/tmp/agentic-f046a-prereq.Ndphxa`均1–9通过、10在测试EditorState.appendConfig误用失败；仅API修正新`/tmp/agentic-f046a-statefix.qVReQf`第10三方单独通过，非整批重跑。解码/BOM正向证明恢复、正常小CM full ranges、canonical用途影子与诊断有限线程证据见唯一迭代。只读仅事务创建、safe前已docedit清fold、诊断全量投影/正文外恒等/空闲终止及非WK成本限制保留。下一仅最终typed生产方案收敛，尚未批准生产/版本/build/GUI/Git；不继续无限扩临时模型。alpha160仍最新已验已推。
+
+## F-046a 八组贯穿有限复跑通过（2026-10-15）
+
+原GaeSUw初始化遇Lezer绝对目录CJS/bare ESM类身份冲突，0用例进入，失败冻结；仅导入修正新`/tmp/agentic-f046a-chain-esm.qG1fLT`，主线及Spec/Standards均8组/0timeout/exit0。实际工厂/固定nodeSet wire影子、BOM/EOL与模拟后台stale拒绝取得有限证据；正文共享子树观察2，decodedReuse=false仍为必要缺口，非full ranges资格/首次后台闭合接受/全部buffer消费者未全证。下一仅同唯一typed路线收敛，合并缓存恢复、编辑canonical/阅读legacy分流与A2诊断前置，不重复身份模型。无生产/版本/build/GUI/Git，alpha160仍已验已推。
+
+## F-046a 14组强化验证通过有限复跑（2026-10-15）
+
+主线及独立Spec/Standards实际复跑`/tmp/agentic-f046a-assertions.8Lt5Pe`均14组/0timeout/exit0，模型与旧版字节一致；精确完整树、正文追加reuse/scan0与两partial停止树重扫已核。第08进度仅记录、第09仅首次parsedPos断言，不冒全状态机证明。下一仅编写常量状态扫描与原子树组合的最小贯穿方案，尚未批准实验/生产/A2/版本/build/GUI/Git；line累积与同步逐行消费、真实CM/wire/BOM/EOL等前置仍开放，alpha160仍最新已验已推。
+
+## F-046a 公开接口模型与窄补（2026-10-15）
+
+主线及独立Spec/Standards复跑`/tmp/agentic-f046a-interface.h3yPbW`均12组/0红/exit0；仅公开wrap有限模型，原A1六红保留。closed范围断言、真实reuse强断言与stopped树续算尚需补证，line累积/整行regex和inner同步逐行消费不能直接迁生产。主线全文读唯一F046a末节并批准新目录最多14组、不改算法的窄补，首红停止、每组15秒/整批180秒。尚未生产/A2/版本/build/GUI/Git，alpha160已验已推，阅读专项/冻结stash/离线边界不变。
+
+## F-046a A1 候选失败并冻结（2026-10-15）
+
+主线与独立Spec/Standards实际复跑`/tmp/agentic-f046a-a1.c9OZXu`一致48case/6红/exit1/0timeout：06/07三EOL未闭合扫描后只余Document，公开nextLine后returnfalse路线不可生产。新canonical实际SSR及文外定义变化亦不可直接替换阅读；legacy identity不证明新profile兼容，partial/owner/cache/DOM缺证保留。下一仅研究官方yamlFrontmatter与公开Parser替代方案，尚未批准新实验、A2/CM组或生产/版本/build/Git。alpha160已验已推，完整父/阅读专项/冻结stash/最终离线不变。
+
+## F-046a 首批 A1 隔离验证获准（2026-10-15）
+
+主线全文读唯一F046a及16固定fixture/48 EOL case限定，独立Spec/Standards均0必要首子步路线阻断，现仅批准mktemp公开接口结构与旧消费者兼容验证。每case每engine单次、宿主15秒监督；未闭合无法公开回退即红，不访问私有接口/重复扫描补救。允许标准registry固定版本临时实验依赖，不改仓库依赖或生产；A2诊断成本、CM生命周期、版本/build/GUI均未批准。源码必须完整，阅读专项不偷定，未知消费者和owner/cache缺证保留。alpha160已验已推，下一仅候选方案而非生产。
+
+## F-048c Git 收据与下一片调查（2026-10-15）
+
+已提交推送 `2316a180c54e835c4b27742756859cf33c5903e0`，主线ls-remote核远端main同SHA，核验时工作树干净。下一按依赖调查F-046a Frontmatter识别与编辑模式折叠，源码完整原文，阅读呈现专项不自动决定；当前仅唯一最小方案编写，尚未批准隔离实验、生产、依赖或新版本/build。alpha160仍最新已验包，F041d冻结stash不动、完整父及专项/最终离线边界保持。下方Git待执行为历史。
+
 ## F-048c alpha160 非离线有限片通过（2026-10-15）
 
 真实WK与最终独立Spec/Standards均0必要阻断，主线批准编辑/源码围栏代码折叠受托Agent代验通过，非用户亲验。源码1358/33396、包内Bun仓库1358/33397，hash192e5xr33tbwb；摘要、嵌套、容器、只读/跨标签、修改与安全展开、浅深最小路径及失败见唯一F048c。两次正常CmdQ exec94145/5034 exit0，PID88888/90018消失，三SHA原样、readonly644；退出IMK stderr不推因。Git待实际执行，完整父、自然IME/真实多光标/精确partial时序/RSS、阅读子窗、F041d冻结stash及专项/最终离线边界保持。下方构建中为历史。

@@ -1,16 +1,19 @@
 import { expect, test } from "bun:test";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import type { EditorView } from "@codemirror/view";
+
+import { parseEditingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
+import { codeCopyTarget, rawCodeTarget } from "./code-copy-target";
 import {
   createCurrentCanonical,
   type CurrentCanonicalWorker,
 } from "./current-canonical";
 import type { CanonicalRequest } from "./current-canonical-protocol";
 import { createEditingCodeCopy } from "./editing-code-copy";
+import { createRawEditorState } from "./raw-buffer";
 
-function setup() {
-  const raw = "```\na\n```\n\n~~~\nb\n~~~",
-    source = { documentId: "doc", revision: 1, identity: {}, text: raw };
+function setup(raw = "```\na\n```\n\n~~~\nb\n~~~") {
+  const source = { documentId: "doc", revision: 1, identity: {}, text: raw };
   const workers: (CurrentCanonicalWorker & { request?: CanonicalRequest })[] =
       [],
     statuses: string[] = [],
@@ -38,7 +41,8 @@ function setup() {
           };
           workers.push(worker);
           return worker;
-        }
+        },
+        "editing-semantic"
       ),
       (text) => {
         writes.push(text);
@@ -90,6 +94,36 @@ function setup() {
     settle: () => settle?.(),
   };
 }
+test("frontmatter raw target and editing canonical owner copy only real body code", async () => {
+  const raw =
+    "\uFEFF---\r\n```js\r\nfake\r\n```\r\n---\r\n\r\n```js\r\nconst real = 1\r\n```";
+  const state = createRawEditorState(raw);
+  let position = state.doc.toString().indexOf("fake");
+  const view = { state, posAtCoords: () => position } as unknown as EditorView;
+  expect(codeCopyTarget(view, 0, 0)).toBeNull();
+  position = state.doc.toString().indexOf("const real");
+  const target = codeCopyTarget(view, 0, 0);
+  expect(target?.kind).toBe("FencedCode");
+  const conversion = rawCodeTarget(raw, target!);
+  let result = conversion.next();
+  while (!result.done) result = conversion.next();
+  expect(raw.slice(result.value.from, result.value.to)).toBe(
+    "```js\r\nconst real = 1\r\n```"
+  );
+  const h = setup(raw);
+  try {
+    h.owner.open({ raw, target: target!, valid: () => true });
+    h.reply();
+    await Promise.resolve();
+    expect(h.statuses[h.statuses.length - 1]).toBe("ready");
+    expect(h.owner.select()).toBe(true);
+    expect(h.writes).toEqual(["const real = 1"]);
+    h.settle();
+    await Promise.resolve();
+  } finally {
+    h.owner.dispose();
+  }
+});
 test("open A then B cancels old preparation and synchronously copies only B", async () => {
   const h = setup();
   h.owner.open(h.ticket());

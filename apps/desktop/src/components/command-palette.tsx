@@ -75,6 +75,7 @@ export function CommandPalette({
       type === "readingThemeInk" ||
       type === "toggleHeadingFold" ||
       type === "toggleCodeFold" ||
+      type === "toggleFrontmatterFold" ||
       type === "selectDocument" ||
       type === "selectFolder" ||
       type === "setRootHidden" ||

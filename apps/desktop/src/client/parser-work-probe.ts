@@ -18,6 +18,7 @@ import { BomAwareParser } from "./bom-aware-parser";
 import { waitForDenseParser } from "./dense-line-probe";
 import { createDocumentController, type DocumentTransport } from "./documents";
 import { longLineProbeText } from "./editor-view-probe";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { rawText } from "./raw-buffer";
 
 function check(signal: AbortSignal) {
@@ -297,7 +298,9 @@ export async function runParserWorkProbe(
                 row.metrics.treeMatches = Number(
                   sameTree(
                     syntaxTree(view.state),
-                    new BomAwareParser().parse(view.state.doc.toString())
+                    new BomAwareParser(documentMarkdownParser).parse(
+                      view.state.doc.toString()
+                    )
                   )
                 );
               const costMatches = observe(row, "Ready", session);

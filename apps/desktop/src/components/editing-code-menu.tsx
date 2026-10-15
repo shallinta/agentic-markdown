@@ -59,7 +59,11 @@ export function EditingCodeMenu({
   }
   useEffect(() => {
     const current = createEditingCodeCopy(
-      createDocumentCanonical(controller, () => new CurrentCanonicalWorker()),
+      createDocumentCanonical(
+        controller,
+        () => new CurrentCanonicalWorker(),
+        "editing-semantic"
+      ),
       writeCodeClipboard,
       setStatus,
       (result) => {

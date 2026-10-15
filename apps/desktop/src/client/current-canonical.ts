@@ -1,5 +1,9 @@
 import {
-  CANONICAL_CONFIG,
+  canonicalProfile,
+  type CanonicalPurpose,
+} from "../shared/markdown-profile";
+
+import {
   isCanonicalRequest,
   type CanonicalRequest,
   type CanonicalResult,
@@ -26,8 +30,10 @@ export type CurrentCanonicalState =
 /** A single, lazy current-document consumer; no background queue or cross-tab cache. */
 export function createCurrentCanonical(
   current: () => CanonicalSource | null,
-  factory: () => CurrentCanonicalWorker
+  factory: () => CurrentCanonicalWorker,
+  purpose: CanonicalPurpose
 ) {
+  const config = canonicalProfile(purpose);
   let state: CurrentCanonicalState = { status: "idle" };
   let captured: CanonicalSource | null = null;
   let generation = 0;
@@ -82,7 +88,7 @@ export function createCurrentCanonical(
       if (!source) return Promise.resolve(null);
       captured = source;
       const id = generation;
-      const request = { ...source, requestId: id, config: CANONICAL_CONFIG };
+      const request = { ...source, requestId: id, config };
       if (!isCanonicalRequest(request)) {
         captured = null;
         publish({ status: "failed" });
@@ -127,7 +133,7 @@ export function createCurrentCanonical(
               result?.requestId !== id ||
               result.documentId !== source.documentId ||
               result.revision !== source.revision ||
-              result.config !== CANONICAL_CONFIG ||
+              result.config !== config ||
               result.tree?.type !== "root" ||
               !Array.isArray(result.tree.children) ||
               !Number.isFinite(result.milliseconds) ||
@@ -144,7 +150,7 @@ export function createCurrentCanonical(
             requestId: id,
             documentId: source.documentId,
             revision: source.revision,
-            config: CANONICAL_CONFIG,
+            config,
             text: source.text,
           });
         } catch {

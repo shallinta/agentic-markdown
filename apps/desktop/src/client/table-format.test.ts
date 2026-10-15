@@ -12,7 +12,7 @@ import {
   type Transaction,
 } from "@codemirror/state";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { switchEditorMode } from "./editor-mode";
 import { inlineFormatTransaction, planInlineFormat } from "./inline-format";
 import { planListIndentation } from "./list-indentation";

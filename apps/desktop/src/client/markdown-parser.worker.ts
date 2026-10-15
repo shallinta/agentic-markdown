@@ -1,13 +1,14 @@
 import { MARKDOWN_GRAMMAR } from "../shared/markdown-profile";
 
 import { BomAwareParser } from "./bom-aware-parser";
+import { documentMarkdownParser } from "./markdown-grammar";
 import {
   encodeMarkdownTree,
   type MarkdownParseRequest,
   type MarkdownParseResponse,
 } from "./markdown-tree-wire";
 
-const parser = new BomAwareParser();
+const parser = new BomAwareParser(documentMarkdownParser);
 self.addEventListener(
   "message",
   (event: MessageEvent<MarkdownParseRequest>) => {

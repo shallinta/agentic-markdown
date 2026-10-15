@@ -6,6 +6,7 @@ import {
   setMarkdownWorkerFactory,
 } from "./async-markdown";
 import { BomAwareParser } from "./bom-aware-parser";
+import { documentMarkdownParser } from "./markdown-grammar";
 import { encodeMarkdownTree } from "./markdown-tree-wire";
 import { createRawEditorState } from "./raw-buffer";
 
@@ -45,7 +46,9 @@ for (const units of [32_000, 64_000, 128_000, 256_000, 512_000, 800_000]) {
         edits.push(performance.now() - before);
       }
       const parseStart = performance.now();
-      const tree = new BomAwareParser().parse(state.doc.toString());
+      const tree = new BomAwareParser(documentMarkdownParser).parse(
+        state.doc.toString()
+      );
       const fullParseMs = performance.now() - parseStart;
       const readyStart = performance.now();
       while (

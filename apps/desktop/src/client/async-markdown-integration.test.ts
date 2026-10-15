@@ -18,6 +18,7 @@ import { BACKGROUND_ENTER_UNITS } from "./background-parsing";
 import { BomAwareParser } from "./bom-aware-parser";
 import { createDocumentController, type DocumentTransport } from "./documents";
 import { editorFaultSession, reportEditorFault } from "./editor-fault";
+import { documentMarkdownParser } from "./markdown-grammar";
 import {
   encodeMarkdownTree,
   type MarkdownParseRequest,
@@ -53,24 +54,27 @@ class ControlledWorker implements MarkdownWorker {
         data: {
           config: request.config,
           requestId: request.requestId,
-          tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
+          tree: encodeMarkdownTree(
+            new BomAwareParser(documentMarkdownParser).parse(request.text)
+          ),
         },
       })
     );
   }
 }
 
-async function setup(multiline = false) {
+async function setup(multiline = false, override?: string) {
   const worker = new ControlledWorker();
   const previous = setMarkdownWorkerFactory(() => worker);
   const text =
+    override ??
     "\uFEFF# 异步\r\n" +
-    (multiline
-      ? "ordinary short line\r\n".repeat(
-          Math.ceil(BACKGROUND_ENTER_UNITS / 20)
-        ) + "**bold**\n"
-      : "**bold** ".repeat(1400)) +
-    "\n尾";
+      (multiline
+        ? "ordinary short line\r\n".repeat(
+            Math.ceil(BACKGROUND_ENTER_UNITS / 20)
+          ) + "**bold**\n"
+        : "**bold** ".repeat(1400)) +
+      "\n尾";
   const snapshot: DocumentSnapshot = {
     documentId: crypto.randomUUID(),
     handle: crypto.randomUUID(),
@@ -115,6 +119,26 @@ async function setup(multiline = false) {
   };
 }
 
+test("closed frontmatter first background tree is accepted by actual controller without safe fallback", async () => {
+  const f = await setup(
+    false,
+    "\uFEFF---\r\na: 1\r\n---\r\n# real\r\n" +
+      "ordinary line\n".repeat(Math.ceil(BACKGROUND_ENTER_UNITS / 13))
+  );
+  try {
+    await waitCaptured(() => f.worker.requests.length === 1);
+    f.worker.reply(f.worker.requests[0]);
+    const tree = ensureSyntaxTree(f.state(), f.state().doc.length, 100);
+    expect(tree?.topNode.firstChild?.name).toBe("Frontmatter");
+    expect(syntaxTreeAvailable(f.state(), f.state().doc.length)).toBe(true);
+    expect(f.state().field(editorFaultSession).fault).toBeNull();
+    expect(f.state().field(rawText)).toBe(f.snapshot.text);
+    expect(f.controller.isDirty(f.snapshot.documentId)).toBe(false);
+  } finally {
+    f.cleanup();
+  }
+});
+
 for (const multiline of [false, true])
   test(`pending ${multiline ? "multiline" : "long-line"} parsing never blocks current raw save or cross-mode selection; obsolete result cannot mark newer text ready`, async () => {
     const f = await setup(multiline);
@@ -149,7 +173,11 @@ for (const multiline of [false, true])
       f.worker.reply(f.worker.requests[1]);
       const parsed = ensureSyntaxTree(f.state(), f.state().doc.length, 100);
       expect(treeNodes(parsed)).toEqual(
-        treeNodes(new BomAwareParser().parse(f.state().doc.toString()))
+        treeNodes(
+          new BomAwareParser(documentMarkdownParser).parse(
+            f.state().doc.toString()
+          )
+        )
       );
       expect(syntaxTreeAvailable(f.state(), f.state().doc.length)).toBe(true);
       expect(f.state().field(rawText)).toBe(f.snapshot.text + "最新");
@@ -182,7 +210,9 @@ test("pending session disposal plus controller safe-source and close refuse late
         data: {
           config: request.config,
           requestId: request.requestId,
-          tree: encodeMarkdownTree(new BomAwareParser().parse(request.text)),
+          tree: encodeMarkdownTree(
+            new BomAwareParser(documentMarkdownParser).parse(request.text)
+          ),
         },
       })
     );

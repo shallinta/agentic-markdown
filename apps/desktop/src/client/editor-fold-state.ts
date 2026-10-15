@@ -15,6 +15,7 @@ import {
 } from "@codemirror/state";
 
 import { editorFaultSession } from "./editor-fault";
+import { frontmatterEditing, unfoldFrontmatter } from "./frontmatter-structure";
 import { headingStructureState, headingLowerBound } from "./heading-structure";
 
 interface FoldRange {
@@ -22,6 +23,7 @@ interface FoldRange {
   readonly to: number;
 }
 export type EditorFoldEntry =
+  | (FoldRange & { readonly kind: "frontmatter"; readonly openingFrom: number })
   | (FoldRange & { readonly kind: "heading"; readonly titleFrom: number })
   | (FoldRange & {
       readonly kind: "fencedCode";
@@ -132,6 +134,7 @@ export function toggleTypedFold(
 ) {
   if (
     state.doc !== doc ||
+    (entry.kind === "frontmatter" && !state.facet(frontmatterEditing)) ||
     state.field(editorFaultSession, false)?.fault ||
     !Number.isSafeInteger(entry.from) ||
     !Number.isSafeInteger(entry.to) ||
@@ -162,7 +165,7 @@ export function toggleTypedFold(
       section.to !== entry.to
     )
       return null;
-  } else {
+  } else if (entry.kind === "fencedCode") {
     const section =
       structure.code[headingLowerBound(structure.code, entry.openingFrom)];
     if (
@@ -171,6 +174,16 @@ export function toggleTypedFold(
       section.to !== entry.to ||
       section.languageLabel !== entry.languageLabel ||
       section.lineCount !== entry.lineCount
+    )
+      return null;
+  } else {
+    const section = structure.frontmatter;
+    if (
+      !section ||
+      section.lineCount <= 0 ||
+      section.line !== entry.openingFrom ||
+      section.from !== entry.from ||
+      section.to !== entry.to
     )
       return null;
   }
@@ -211,7 +224,10 @@ export const clearLocatedEditorFolds = EditorState.transactionExtender.of(
       tr.docChanged ||
       tr.effects.some((e) => e.is(clearEditorFolds)) ||
       !!tr.startState.field(editorFaultSession, false)?.fault;
-    if (!all && !tr.selection) return null;
+    const onlyFrontmatter = tr.effects.some((effect) =>
+      effect.is(unfoldFrontmatter)
+    );
+    if (!all && !tr.selection && !onlyFrontmatter) return null;
     const effects: StateEffect<unknown>[] = [];
     foldedRanges(tr.startState).between(
       0,
@@ -223,6 +239,8 @@ export const clearLocatedEditorFolds = EditorState.transactionExtender.of(
         };
         if (
           all ||
+          (onlyFrontmatter &&
+            foldEntry(tr.startState, { from, to })?.kind === "frontmatter") ||
           tr.newSelection.ranges.some((range) =>
             selectionIntersectsFold(range, mapped)
           )

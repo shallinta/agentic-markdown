@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { parseCanonicalMarkdown } from "../client/canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "../client/canonical-parser";
 import { createLocalImages } from "../client/local-images";
 
 import {

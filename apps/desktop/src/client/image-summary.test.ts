@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { normalizeIdentifier } from "micromark-util-normalize-identifier";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseEditingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { currentImageCandidates } from "./editing-images";
 import { summarizeImages } from "./image-summary";
 import { validateImageSummary } from "./image-summary-protocol";

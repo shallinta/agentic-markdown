@@ -12,6 +12,10 @@ import {
 import type { SyntaxNode, Tree } from "@lezer/common";
 
 import { editorFaultSession } from "./editor-fault";
+import {
+  currentFrontmatter,
+  type FrontmatterSection,
+} from "./frontmatter-structure";
 
 export interface HeadingSection {
   readonly heading: number;
@@ -25,6 +29,7 @@ export interface HeadingStructure {
   readonly tree: Tree;
   readonly sections: readonly HeadingSection[];
   readonly code: readonly CodeFoldSection[];
+  readonly frontmatter?: FrontmatterSection | null;
 }
 export interface CodeFoldSection {
   readonly opening: number;
@@ -202,7 +207,7 @@ export function* headingStructureSteps(
     }
     if (section) sections.push(section);
   }
-  return { doc, tree, sections, code };
+  return { doc, tree, sections, code, frontmatter: currentFrontmatter(state) };
 }
 
 /** First heading whose display line is at or after position. */

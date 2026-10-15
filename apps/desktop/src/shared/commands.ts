@@ -29,6 +29,10 @@ export interface ApplyUpdateAndRestartCommand extends GenericCommand<"applyUpdat
 
 export type Command =
   | GenericCommand<
+      "toggleFrontmatterFold",
+      { heading?: number; unfoldFrom?: number; unfoldTo?: number }
+    >
+  | GenericCommand<
       "toggleHeadingFold",
       { heading?: number; unfoldFrom?: number; unfoldTo?: number }
     >
@@ -153,7 +157,11 @@ export function isCommand(value: unknown): value is Command {
         args.documentId
       )
     );
-  if (input.type === "toggleHeadingFold" || input.type === "toggleCodeFold")
+  if (
+    input.type === "toggleHeadingFold" ||
+    input.type === "toggleCodeFold" ||
+    input.type === "toggleFrontmatterFold"
+  )
     return (
       keys.length === 0 ||
       (keys.length === 1 &&
@@ -214,6 +222,7 @@ export const COMMAND_META: Record<
 > = {
   toggleHeadingFold: { target: "webview" },
   toggleCodeFold: { target: "webview" },
+  toggleFrontmatterFold: { target: "webview" },
   openSourceSearch: { target: "webview", palette: false },
   closeSourceSearch: { target: "webview", palette: false },
   nextSourceMatch: { target: "webview", palette: false },
@@ -272,6 +281,7 @@ export const PRODUCT_COMMANDS: Partial<
 > = {
   toggleHeadingFold: { label: "折叠/展开当前标题章节", shortcut: "⌘⌥F" },
   toggleCodeFold: { label: "折叠/展开当前代码块" },
+  toggleFrontmatterFold: { label: "折叠/展开 YAML Frontmatter" },
   formatBold: { label: "切换粗体", shortcut: "⌘⇧B" },
   formatItalic: { label: "切换斜体", shortcut: "⌘⇧I" },
   formatCode: { label: "切换行内代码", shortcut: "⌘E" },

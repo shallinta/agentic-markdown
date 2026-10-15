@@ -4,7 +4,7 @@ import { isolateHistory, redo, undo, undoDepth } from "@codemirror/commands";
 import { syntaxTreeAvailable } from "@codemirror/language";
 import { EditorSelection, EditorState } from "@codemirror/state";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import { parseReadingMarkdown as parseCanonicalMarkdown } from "./canonical-parser";
 import { switchEditorMode } from "./editor-mode";
 import { createRawEditorState, rawText, writePermission } from "./raw-buffer";
 import {

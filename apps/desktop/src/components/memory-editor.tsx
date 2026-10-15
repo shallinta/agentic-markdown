@@ -62,6 +62,8 @@ import { registerTaskView } from "@/client/task-marker-input";
 import { deferWrappingUpdate } from "@/client/wrapping-measure";
 import { useCommands } from "@/commands";
 
+import { observeFrontmatter } from "../client/frontmatter-presentation";
+
 import { EditingCodeMenu } from "./editing-code-menu";
 import { SourceSearch } from "./source-search";
 
@@ -86,6 +88,7 @@ export function MemoryEditor({
     if (viewRef.current) {
       observeEditingImages(viewRef.current);
       observeHeadingFolding(viewRef.current);
+      observeFrontmatter(viewRef.current);
     }
   });
   const [mountAttempt, setMountAttempt] = useState(0);
@@ -176,7 +179,12 @@ export function MemoryEditor({
       ready: headingReady,
       run: ({ kind, ...action }) =>
         executeCommand({
-          type: kind === "fencedCode" ? "toggleCodeFold" : "toggleHeadingFold",
+          type:
+            kind === "frontmatter"
+              ? "toggleFrontmatterFold"
+              : kind === "fencedCode"
+                ? "toggleCodeFold"
+                : "toggleHeadingFold",
           args: action,
         }),
       rejected: () =>
@@ -192,8 +200,16 @@ export function MemoryEditor({
         toggleCodeFold: (action) => {
           toggleCurrentHeading(view, { ...action, kind: "fencedCode" });
         },
+        toggleFrontmatterFold: (action) => {
+          toggleCurrentHeading(view, { ...action, kind: "frontmatter" });
+        },
       },
-      { toggleHeadingFold: headingReady, toggleCodeFold: headingReady }
+      {
+        toggleHeadingFold: headingReady,
+        toggleCodeFold: headingReady,
+        toggleFrontmatterFold: () =>
+          headingReady() && controller.getMode(documentId) === "editing",
+      }
     );
     const headingKey = (event: KeyboardEvent) => {
       if (!isHeadingShortcut(event) || !view.hasFocus || !headingReady())

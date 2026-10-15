@@ -9,6 +9,11 @@ import {
 import { tags } from "@lezer/highlight";
 
 import { editorFaultSession, reportEditorFault } from "./editor-fault";
+import {
+  frontmatterPresentation,
+  frontmatterTheme,
+} from "./frontmatter-presentation";
+import { frontmatterEditing, unfoldFrontmatter } from "./frontmatter-structure";
 import { clearHeadingFolds, headingFolding } from "./heading-folding";
 import {
   editingMarkdown,
@@ -80,6 +85,7 @@ const safe = Facet.define<boolean, boolean>({
   combine: (values) => values.some(Boolean),
 });
 const sourcePresentation = [
+  frontmatterEditing.of(false),
   mode.of("source"),
   EditorState.allowMultipleSelections.of(true),
   protectedSourceHighlighting(sourceHighlightStyle),
@@ -106,13 +112,17 @@ export const createEditorModeExtensions = (isolated = false) => [
   wrapping.of(wrapExtension("editing", true)),
   editorFaultSession,
   headingFolding,
+  frontmatterPresentation,
+  frontmatterTheme,
   EditorView.exceptionSink.compute([editorFaultSession], (state) => {
     const session = state.field(editorFaultSession);
     return () => reportEditorFault(session, "presentation");
   }),
   parserLanguage.of(isolated ? [] : editingMarkdown),
   presentation.of(
-    isolated ? [mode.of("source"), safe.of(true)] : livePresentation
+    isolated
+      ? [mode.of("source"), safe.of(true), frontmatterEditing.of(false)]
+      : livePresentation
   ),
 ];
 export const editorModeExtensions = createEditorModeExtensions();
@@ -129,12 +139,17 @@ export const safeSourceEffects = () => [
   clearHeadingFolds.of(null),
   wrapping.reconfigure(wrapExtension("editing", true)),
   parserLanguage.reconfigure([]),
-  presentation.reconfigure([mode.of("source"), safe.of(true)]),
+  presentation.reconfigure([
+    mode.of("source"),
+    safe.of(true),
+    frontmatterEditing.of(false),
+  ]),
 ];
 export const restartParserForFaultTest = () =>
   parserLanguage.reconfigure(createEditingMarkdown());
 export const getEditorMode = (state: EditorState) => state.facet(mode);
 export const switchEditorMode = (next: EditorMode, sourceWrap = true) => [
+  ...(next === "source" ? [unfoldFrontmatter.of(null)] : []),
   wrapping.reconfigure(wrapExtension(next, sourceWrap)),
   presentation.reconfigure(
     next === "source" ? sourcePresentation : livePresentation

@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 
 import type { DocumentSnapshot } from "../shared/documents";
+import { EDITING_CANONICAL_PROFILE } from "../shared/markdown-profile";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
-import { parseCanonicalMarkdown } from "./canonical-parser";
+import {
+  parseReadingMarkdown as parseCanonicalMarkdown,
+  parseEditingMarkdown,
+} from "./canonical-parser";
 import {
   createCurrentCanonical,
   type CanonicalSource,
@@ -55,6 +59,54 @@ class FakeWorker implements CurrentCanonicalWorker {
     this.onmessage?.({ data: this.response() } as MessageEvent);
   }
 }
+test("simultaneous reading and editing owners retain explicit profiles and reject crossed replies", async () => {
+  const source = {
+    documentId: "fm",
+    revision: 1,
+    identity: {},
+    text: "---\na: 1\n---\n# body",
+  };
+  const readingWorker = new FakeWorker(),
+    editingWorker = new FakeWorker();
+  const reading = createCurrentCanonical(
+    () => source,
+    () => readingWorker,
+    "reading-legacy"
+  );
+  const editing = createCurrentCanonical(
+    () => source,
+    () => editingWorker,
+    "editing-semantic"
+  );
+  try {
+    const rp = reading.request(),
+      ep = editing.request();
+    expect(editingWorker.request.config).toBe(EDITING_CANONICAL_PROFILE);
+    expect(readingWorker.request.config).toBe(CANONICAL_CONFIG);
+    readingWorker.complete();
+    const response = editingWorker.response();
+    editingWorker.onmessage!({
+      data: {
+        ...response,
+        result: { ...response.result, config: CANONICAL_CONFIG },
+      },
+    } as MessageEvent);
+    expect((await rp)?.tree.children[0].type).not.toBe("yaml");
+    expect(await ep).toBeNull();
+    const current = editing.request(),
+      valid = editingWorker.response();
+    editingWorker.onmessage!({
+      data: {
+        ...valid,
+        result: { ...valid.result, tree: parseEditingMarkdown(source.text) },
+      },
+    } as MessageEvent);
+    expect((await current)?.tree.children[0].type).toBe("yaml");
+  } finally {
+    reading.dispose();
+    editing.dispose();
+  }
+});
 function fixture() {
   let source: CanonicalSource | null = {
     documentId: "doc",
@@ -69,7 +121,8 @@ function fixture() {
       const worker = new FakeWorker();
       workers.push(worker);
       return worker;
-    }
+    },
+    "reading-legacy"
   );
   return {
     service,
@@ -250,7 +303,8 @@ test("wrong versions, malformed replies and worker failures settle without stale
     () => ({ documentId: "d", revision: 0, text: "", identity: {} }),
     () => {
       throw Error("unavailable");
-    }
+    },
+    "reading-legacy"
   );
   expect(await service.request()).toBeNull();
   expect(service.getSnapshot().status).toBe("failed");
@@ -389,11 +443,15 @@ test("real controller captures unsaved buffer, ignores selection and cancels on 
     Promise.resolve(true)
   );
   const workers: FakeWorker[] = [];
-  const service = createDocumentCanonical(controller, () => {
-    const worker = new FakeWorker();
-    workers.push(worker);
-    return worker;
-  });
+  const service = createDocumentCanonical(
+    controller,
+    () => {
+      const worker = new FakeWorker();
+      workers.push(worker);
+      return worker;
+    },
+    "reading-legacy"
+  );
   const unsubscribe = controller.subscribe(service.invalidate);
   await controller.select();
   controller.beginDiscard();

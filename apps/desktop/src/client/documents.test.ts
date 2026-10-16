@@ -631,6 +631,7 @@ test("read-only documents can switch presentation but reject source edits", asyn
 for (const raw of [
   "==readonly==\r\n\r\nend",
   "^read\\ only^ ~text~\r\n\r\nend",
+  ":smile: :+1:\r\n\r\nend",
 ])
   test("dialect readonly controller rejects edits and preserves raw/history in both modes", async () => {
     const { controller, value } = setup();

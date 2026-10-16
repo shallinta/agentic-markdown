@@ -128,7 +128,7 @@ function computeInlineFormat(
     }
     if (
       path.some((n) =>
-        /^(Strikethrough|StrikethroughMark|Highlight|HighlightMark|Subscript|Superscript|SubscriptMark|SuperscriptMark|FencedCode|CodeBlock|HTMLBlock|HTMLTag|Link|Image|Autolink)$/.test(
+        /^(Strikethrough|StrikethroughMark|Highlight|HighlightMark|Subscript|Superscript|SubscriptMark|SuperscriptMark|EmojiShortcode|FencedCode|CodeBlock|HTMLBlock|HTMLTag|Link|Image|Autolink)$/.test(
           n.name
         )
       )
@@ -153,9 +153,13 @@ function computeInlineFormat(
       to: same?.to ?? range.to,
       enter(node) {
         if (
-          ["Strikethrough", "Highlight", "Subscript", "Superscript"].includes(
-            node.name
-          )
+          [
+            "Strikethrough",
+            "Highlight",
+            "Subscript",
+            "Superscript",
+            "EmojiShortcode",
+          ].includes(node.name)
         )
           touchesStrike = true;
       },

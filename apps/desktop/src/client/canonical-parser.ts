@@ -11,6 +11,7 @@ import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
 import type { CanonicalPurpose } from "../shared/markdown-profile";
 
 import { annotateCallouts } from "./callout-extension";
+import { EmojiExtension } from "./emoji-extension";
 import { FrontmatterExtension } from "./frontmatter-extension";
 import { HighlightExtension } from "./highlight-extension";
 import { SubSupExtension } from "./subsup-extension";
@@ -35,6 +36,10 @@ export function parseCanonicalMarkdown(
 ) {
   const bom = text.startsWith("\uFEFF") ? 1 : 0;
   const parseText = text.slice(bom);
+  const emoji =
+    purpose === "editing-semantic"
+      ? EmojiExtension.canonical(parseText)
+      : undefined;
   const tree = fromMarkdown(parseText, {
     extensions:
       purpose === "editing-semantic"
@@ -43,6 +48,7 @@ export function parseCanonicalMarkdown(
             FrontmatterExtension.micromark,
             HighlightExtension.micromark(parseText),
             SubSupExtension.micromark(parseText),
+            emoji!.micromark,
           ]
         : extensions,
     mdastExtensions:
@@ -52,6 +58,7 @@ export function parseCanonicalMarkdown(
             FrontmatterExtension.mdast,
             HighlightExtension.mdast,
             SubSupExtension.mdast(parseText),
+            emoji!.mdast,
           ]
         : mdastExtensions,
   });

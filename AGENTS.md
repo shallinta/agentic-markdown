@@ -1,5 +1,41 @@
 # AGENTS.md
 
+## F-047c alpha165 非离线有限显示片通过（2026-10-16）
+
+最终独立Spec/Standards均0必要阻断，主线批准受托Agent有限代验通过，非用户亲验。源码1489/36458、包内Bun仓库1489/36460，hash2x826g9z7bw88；真实WK编辑/源码/原文复制/撤销/折叠/查找/只读/浅深及失败边界见唯一第16节。exec37302正常CmdQ退出0、Bun44273消失，两SHA原样、readonly644。Git待实际执行；候选输入下一片、阅读子窗、自然IME/完整父/冻结F041d/专项/offline保持。
+
+## F-047c alpha165构建中（2026-10-16）
+
+主线全量1489/36458、type/full lint/docs/lock均通过，两轴最终代码各70/1764且0必要构建阻断。主线已读核心/显示/真实消费者并复跑串行成本16/0，C2 canonical14.39ms对9.11ms仅有限单次观测，初始化未计。批准递增alpha165并unsigned构建，尚未构建成功或真实验收，不得Git。完整S11候选/阅读子窗/自然IME/父义务与冻结/离线边界保持。
+
+## F-047c 有限typed生产实施获批（2026-10-16）
+
+主线全文读唯一第14节T1–T5，独立Spec/Standards均0必要实施阻断，批准固定gemoji8.1.0 dev生成纯映射、原子Emoji扩展、editing profile/wire/真实消费者与局部widget及实现后测试。新代码须重测预算unknown/BOM/容器/非BMP；成本运行前冻结各自语义oracle，不要求有意Emoji差异与baseline全等。仍未实现验收；版本alpha164保持，下一alpha165/build/GUI/Git由主线后续管理。候选按需功能/阅读子窗/完整父/冻结F041d/专项/offline边界不变。
+
+## F-047c 流式宿主实验通过有限复核（2026-10-16）
+
+新目录stream候选原12+N6共13例，作者/主线/独立Spec及Standards实际复跑均13/0。E5纠错后的7节点+真实baseline整AST、图片alt/定义/链接title/HTML及严格嵌套通过，新增读取与诊断分账。主线批准编写typed最小正式接入方案，尚未批准生产；新版预算unknown/BOM/容器/非BMP、实际factory/消费者/显示及有限成本转正式验证责任，不能继承旧候选结果冒已测。alpha164/现有包不变，无新构建或Git。
+
+## F-047c resolveTo有限通过与宿主回归实验（2026-10-16）
+
+主线及独立两轴复跑resolveTo新目录均6/0；仅content下界与预算unknown回退有限通过，完整右邻/身份失败/读取计费仍待补。已全文读取唯一第12节及执行前E5官方GFM末冒号oracle纠错，两轴0必要实验阻断，批准新目录原12+N6共13例、流式名称及右邻、真实token身份和完整URL/alt结构，15/180首红停。仍不生产/依赖/版本/build/GUI/Git；alpha164已验已推保持。
+
+## F-047c 来源窄补首红与替代实验（2026-10-16）
+
+主线与独立Standards复跑新六例目录仅N1红：canonical候选未建立公开inline边界，N2–N6未跑；不是micromark无解结论。Lezer264漏诊断slice7，至少271及全events诊断复制限制已追加唯一记录，原冻结不改。主线全文读第10节与公开resolveTo契约，两轴0必要隔离阻断，批准新目录相同六oracle、15/180首红停的真实token后置资格实验；拒绝改data，不造Point。未生产/构建/验收/Git，alpha164不变。
+
+## F-047c 六例来源与预算窄补获准（2026-10-16）
+
+主线全文读取唯一迭代第8节，独立Spec/Standards均0必要隔离实验阻断，批准仅新临时目录六例、15秒每例/180秒整批首红停。公开InlineContext来源、canonical公开inline边界、BOM映射、严格父子拓扑及unknown局部回退须实际核；leftReads256不混名称/邻居总读取。原12冻结保留，新六绿亦非原矩阵回归或生产资格。不改生产/依赖/版本/build/GUI/Git，alpha164已验已推保持。
+
+## F-047c 有限临时实验获准（2026-10-16）
+
+主线全文读唯一F047c及第6节12准确JSON，两轴0必要实验阻断，批准仅新临时目录固定gemoji8.1.0取源核完整性及公开接口探针。URI/parity共享256左读预算、15秒每例/180整批首红停，unknown不计通过；复杂URL/候选按需/图片alt及真实消费者不能假定完成。未批准生产/仓库依赖/版本/build/GUI/Git，alpha164/f01c3b9已验已推保持，其他冻结边界不变。
+
+## F-047b Git收据与下一片（2026-10-16）
+
+已提交推送f01c3b91eb456685d448076fbbbe97b9b2a96e7a，主线HTTPS ls-remote核远端main同SHA，origin/main已同步，编写本条前工作树clean。连续授权下下一F-047c Emoji shortcode先做唯一最小方案与固定词典/公开接口调查，尚未批准实验/生产/依赖/构建。alpha164仍最新已验包，父F047/阅读子窗/自然IME/专项/F028c/冻结stash/offline边界保持。下方Git待执行为历史，本条自身后续随文档提交。
+
 ## F-047b alpha164 非离线有限片正式通过（2026-10-16）
 
 最终独立Spec/Standards均0必要阻断，主线批准受托Agent代验通过，非用户亲验。alpha164/hash1s5t9zpz99ax7，源码1462/35189、包内Bun仓库1462/35190及真实WK前后段/源码/浅深/折叠/复制编辑撤销/只读跨标签证据见唯一迭代。exec62773正常CmdQ退出0、Bun36056消失，两SHA原样、readonly644；alpha163预算红与操作限制保留。Git待实际执行。完整F047/OBL068069/阅读子窗/自然IME/专项/F028c/冻结stash/offline仍开放。

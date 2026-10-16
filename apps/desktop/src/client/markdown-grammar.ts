@@ -6,6 +6,7 @@ import {
   type MarkdownConfig,
 } from "@lezer/markdown";
 
+import { EmojiExtension } from "./emoji-extension";
 import { FrontmatterExtension } from "./frontmatter-extension";
 import { FrontmatterParser } from "./frontmatter-parser";
 import { HighlightExtension } from "./highlight-extension";
@@ -50,5 +51,6 @@ export const markdownGrammar = base.configure([
   FrontmatterExtension.lezer,
   HighlightExtension.lezer,
   SubSupExtension.lezer,
+  EmojiExtension.lezer,
 ]);
 export const documentMarkdownParser = new FrontmatterParser(markdownGrammar);

@@ -1,6 +1,6 @@
 {
   "name": "@agentic-markdown/desktop",
-  "version": "0.1.0-alpha.164",
+  "version": "0.1.0-alpha.165",
   "scripts": {
     "start": "bun run build:view && electrobun dev",
     "prepare:sdk": "electrobun prepare",
@@ -55,6 +55,7 @@
     "yaml": "2.9.0"
   },
   "devDependencies": {
+    "gemoji": "8.1.0",
     "@types/mdast": "4.0.4",
     "micromark-util-types": "2.0.3",
     "@tailwindcss/postcss": "^4.0.15",

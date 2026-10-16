@@ -206,7 +206,8 @@ export function* calloutInlineBody(
       ].includes(child.name)
     )
       continue;
-    if (["Image", "HTMLTag", "Autolink"].includes(child.name)) return true;
+    if (["Image", "HTMLTag", "Autolink", "EmojiShortcode"].includes(child.name))
+      return true;
     if (child.name === "Entity" || child.name === "Escape") {
       const raw = yield* labelText(doc, child, child.from, child.to);
       if (decodeTextCharacter(child.name, raw)?.trim()) return true;

@@ -124,6 +124,36 @@ test("frontmatter raw target and editing canonical owner copy only real body cod
     h.owner.dispose();
   }
 });
+test("Emoji grammar retains actual code target and canonical copy owner", async () => {
+  const raw = ":smile:\r\n\r\n```js\r\nconst x = ':smile:'\r\n```\r\n\r\n:+1:";
+  const state = createRawEditorState(raw);
+  const view = {
+    state,
+    posAtCoords: () => state.doc.toString().indexOf("const x"),
+  } as unknown as EditorView;
+  const target = codeCopyTarget(view, 0, 0);
+  expect(target?.kind).toBe("FencedCode");
+  expect(
+    codeCopyTarget(
+      { state, posAtCoords: () => 2 } as unknown as EditorView,
+      0,
+      0
+    )
+  ).toBeNull();
+  const h = setup(raw);
+  try {
+    h.owner.open({ raw, target: target!, valid: () => true });
+    h.reply();
+    await Promise.resolve();
+    expect(h.statuses[h.statuses.length - 1]).toBe("ready");
+    expect(h.owner.select()).toBe(true);
+    expect(h.writes).toEqual(["const x = ':smile:'"]);
+    h.settle();
+    await Promise.resolve();
+  } finally {
+    h.owner.dispose();
+  }
+});
 test("SubSup grammar retains actual code target and canonical copy owner", async () => {
   const raw =
     "^before^\r\n\r\n```js\r\nconst x = '^literal~'\r\n```\r\n\r\n~after~";

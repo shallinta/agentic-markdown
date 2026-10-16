@@ -29,6 +29,7 @@ import {
 import { editingImages } from "./editing-images";
 import { GuardedParser, editorFaultSession } from "./editor-fault";
 import { foldEntry, exactLiveFold } from "./editor-fold-state";
+import { emojiBudget, emojiPresentation } from "./emoji-presentation";
 import {
   longLineProtection,
   protectedPosition,
@@ -145,6 +146,7 @@ export function liveDecorations(
   };
   const seen = new Set<string>();
   const subsupBudget = subSupBudget();
+  const emojisBudget = emojiBudget();
   const tree = syntaxTree(state);
   const tasks = taskMarkers(state, visibleRanges).filter(
     (marker) => !touched(state, marker.from, marker.to)
@@ -322,6 +324,25 @@ export function liveDecorations(
           return false;
         if (["HTMLBlock", "HTMLTag", "URL", "LinkTitle"].includes(name))
           return false;
+        if (name === "EmojiShortcode") {
+          const key = `emoji:${from}:${to}`;
+          if (seen.has(key)) return false;
+          const presentation = emojiPresentation(
+            state,
+            tree,
+            ref.node,
+            emojisBudget
+          );
+          if (!presentation) return false;
+          seen.add(key);
+          if (!presentation.reveal && presentation.value !== undefined)
+            add(
+              Decoration.replace({
+                widget: new TextCharacterWidget(presentation.value),
+              }).range(from, to)
+            );
+          return false;
+        }
         if (name === "HardBreak") {
           // Lezer includes the physical newline in this node. Only replace
           // marker characters, never the newline or the next container prefix.

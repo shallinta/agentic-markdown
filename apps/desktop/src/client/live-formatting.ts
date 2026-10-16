@@ -695,7 +695,9 @@ export function liveDecorations(
                 ? "cm-live-code"
                 : name === "Strikethrough"
                   ? "cm-live-strike"
-                  : null;
+                  : name === "Highlight"
+                    ? "cm-live-highlight"
+                    : null;
         if (!className) return;
         const key = `${name}:${from}:${to}`;
         // Another visible segment may contain children not visited previously.
@@ -723,7 +725,9 @@ export function liveDecorations(
             ? "CodeMark"
             : name === "Strikethrough"
               ? "StrikethroughMark"
-              : "EmphasisMark";
+              : name === "Highlight"
+                ? "HighlightMark"
+                : "EmphasisMark";
         // These syntax delimiters are edge children. Avoid walking a spanning
         // emphasis node's many children inside a protected physical line.
         for (const child of [ref.node.firstChild, ref.node.lastChild]) {
@@ -953,6 +957,11 @@ const liveTheme = EditorView.baseTheme({
   },
   ".cm-live-emphasis": { fontStyle: "italic" },
   ".cm-live-strike": { textDecoration: "line-through" },
+  ".cm-live-highlight": {
+    backgroundColor:
+      "color-mix(in oklab, var(--primary) 25%, var(--background))",
+    borderRadius: "2px",
+  },
   ".cm-live-code": {
     fontFamily: "monospace",
     backgroundColor:

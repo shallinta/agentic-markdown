@@ -8,6 +8,7 @@ import {
 
 import { FrontmatterExtension } from "./frontmatter-extension";
 import { FrontmatterParser } from "./frontmatter-parser";
+import { HighlightExtension } from "./highlight-extension";
 
 const upstream = Strikethrough.parseInline?.find(
   (rule) => rule.name === "Strikethrough"
@@ -46,5 +47,6 @@ export const markdownGrammar = base.configure([
   doubleStrike,
   Table,
   FrontmatterExtension.lezer,
+  HighlightExtension.lezer,
 ]);
 export const documentMarkdownParser = new FrontmatterParser(markdownGrammar);

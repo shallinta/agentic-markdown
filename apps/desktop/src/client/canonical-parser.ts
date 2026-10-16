@@ -12,6 +12,7 @@ import type { CanonicalPurpose } from "../shared/markdown-profile";
 
 import { annotateCallouts } from "./callout-extension";
 import { FrontmatterExtension } from "./frontmatter-extension";
+import { HighlightExtension } from "./highlight-extension";
 
 const extensions = [
   gfmStrikethrough({ singleTilde: false }),
@@ -32,14 +33,23 @@ export function parseCanonicalMarkdown(
   purpose: CanonicalPurpose
 ) {
   const bom = text.startsWith("\uFEFF") ? 1 : 0;
-  const tree = fromMarkdown(text.slice(bom), {
+  const parseText = text.slice(bom);
+  const tree = fromMarkdown(parseText, {
     extensions:
       purpose === "editing-semantic"
-        ? [...extensions, FrontmatterExtension.micromark]
+        ? [
+            ...extensions,
+            FrontmatterExtension.micromark,
+            HighlightExtension.micromark(parseText),
+          ]
         : extensions,
     mdastExtensions:
       purpose === "editing-semantic"
-        ? [...mdastExtensions, FrontmatterExtension.mdast]
+        ? [
+            ...mdastExtensions,
+            FrontmatterExtension.mdast,
+            HighlightExtension.mdast,
+          ]
         : mdastExtensions,
   });
   if (bom) {

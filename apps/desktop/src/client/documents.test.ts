@@ -24,6 +24,7 @@ import {
 } from "./documents";
 import { reportEditorFault } from "./editor-fault";
 import { currentTypedFold, editorFoldEntries } from "./editor-fold-state";
+import { prepareEditorViewState } from "./editor-view-sync";
 import {
   currentFoldAtSelection,
   currentFoldTarget,
@@ -627,6 +628,33 @@ test("read-only documents can switch presentation but reject source edits", asyn
   );
 });
 
+test("highlight readonly controller rejects edits and preserves raw/history in both modes", async () => {
+  const { controller, value } = setup();
+  value.text = "==readonly==\r\n\r\nend";
+  value.byteLength = new TextEncoder().encode(value.text).length;
+  value.fidelity = analyzeTextFidelity(value.text);
+  value.writeCapability = { writable: false, reason: "readonly" };
+  await controller.select();
+  for (let mode = 0; mode < 2; mode++) {
+    expect(prepareEditorViewState(controller, value.documentId)).toBeDefined();
+    const before = controller.getEditor(value.documentId)!.state;
+    expect(before.readOnly).toBe(true);
+    expect(before.facet(EditorView.editable)).toBe(false);
+    const depth = undoDepth(before);
+    expect(
+      controller.updateEditor(
+        value.documentId,
+        before.update({ changes: { from: 3, insert: "X" } })
+      )
+    ).toBe(false);
+    const after = controller.getEditor(value.documentId)!.state;
+    expect(after).toBe(before);
+    expect(after.field(rawText)).toBe(value.text);
+    expect(undoDepth(after)).toBe(depth);
+    expect(controller.isDirty(value.documentId)).toBe(false);
+    if (mode === 0) expect(controller.toggleSourceMode()).toBe(true);
+  }
+});
 test("mode dispatch keeps the current view and scroll effect, and reload retains document mode", async () => {
   const { controller, transport, value } = setup();
   await controller.select();

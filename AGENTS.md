@@ -1,5 +1,33 @@
 # AGENTS.md
 
+## F-047a alpha162 非离线有限片正式通过（2026-10-16）
+
+真实WK高亮显隐、源码保真、折叠、原生复制/编辑撤销、浅深和只读跨标签完成；最终独立Spec/Standards均0必要阻断，主线批准本片受托Agent代验通过，非用户亲验。源码与包内Bun运行仓库均1410/33788，type/full lint/docs/lock通过；hash1jrx3g6uy44x8。AX选区偏移、主题取消及旧只读测试红保留唯一迭代，不推断根因。正常CmdQ exec26352退出0、Bun21389消失，三SHA原样、readonly恢复644。Git待实际执行；完整F047、阅读子窗、自然IME/极端/竞态/真实图片及最终离线仍开放，F041d冻结stash不动。
+
+## F-047a alpha162 构建中（2026-10-16）
+
+主线全量1409/33768及type/full lint通过；独立Spec发现只读测试资格假阳性，已用公开writePermission重配置修正，主线/Spec复跑36/256、最终两轴0必要构建阻断。未为测试改生产守卫。主线已读核心接线并递增alpha162，源码全量重跑和unsigned构建中，尚无构建成功或真实WK验收。只读输入/折叠像素必须实际核，不得Git；完整父及各既定边界保持。
+
+## F-047a 有限生产实施获批（2026-10-16）
+
+主线及独立Spec/Standards复跑floor候选25/0、四成本16/0；主线C3 canonical75.89ms对64.29ms，Lezer28.68对9.23仍保留，不称整体线性。已全文读唯一typed六点与实际窄修，批准原子高亮扩展、编辑装饰/源码保真、editing用途接线及实际consumer回归；最小已锁直接依赖可声明。reading-legacy不变、真实窗口尚未验收，不得Git。版本/build/GUI由主线管理，下一代码包alpha162；完整父、冻结stash、阅读子窗/专项/最终离线开放。
+
+## F-047a 成本放大与局部窄修（2026-10-16）
+
+四固定成本16次均完成，但主线32KiB close-only canonical317.59ms对baseline65.31ms，不批准原回扫直接生产。已全文读唯一末节并批准新临时候选局部失败查找floor：失败保当前enter、成功重置0、递归独立，不改Lezer私有接口或原24oracle；另补一条明确连续配对25。先语义全部通过再同四成本单次复验，首红停，未知consumer仍转正式接线后必测。尚无生产/版本/build/GUI/Git。
+
+## F-047a 24条语义实验有限通过（2026-10-16）
+
+主线及独立Spec/Standards复跑 `/tmp/agentic-f047a-unicode.JSBZh2` 均24/0、exit0、无timeout。初版helper初始化失败与importfix第02 Emoji分类真红保留；仅同输入闭包和公开offset有限码点分类窄修，oracle不改。真实图片摘要/代码复制/Callout仍unknown，回扫成本未证；下一编写一次有限成本及实际consumer前置方案，不直接生产、版本/build/GUI/Git。alpha161已验已推、阅读子窗及冻结stash/专项/最终离线边界不变。
+
+## F-047a 固定高亮小实验获批（2026-10-16）
+
+主线全文读取唯一F047a及24条精确样本，两独立轴路线0必要阻断；批准新临时目录首批公开Lezer/micromark接口实验，15秒每例/180秒整批、首红停止。D1图片alt取语义caption而AST形状可不同；D2允许表定同型嵌套；D3按表先闭合形成非交叉树，不能随输出改oracle。仅固定小语料，不称两引擎线性，不以unknown消费者冒验证。尚无生产/依赖安装/版本/build/GUI/Git；alpha161与冻结stash/阅读子窗/专项/最终离线边界保持。
+
+## F-046a Git 收据与 F-047a 方案（2026-10-16）
+
+Frontmatter有限片已提交推送 `356ed9c7d4a5f19bd2544247802b9548c23616f2`，主线通过HTTPS ls-remote核远端main同SHA，origin/main同步。下一唯一F-047a拟为固定 `==高亮==` 编辑呈现与源码保真，主线已全文读最小方案；仅准备最多24条精确样本及独立路线复核，尚未批准实验、生产、依赖、版本/build/GUI。reading-legacy不变，阅读子窗、完整父、冻结F041d stash与最终离线仍开放。alpha161仍最新已验包；下方Git待执行为历史。
+
 ## F-046a alpha161 非离线有限片正式通过（2026-10-15）
 
 真实WK与最终独立Spec/Standards各0必要阻断，主线批准Frontmatter识别/编辑原文折叠/源码完整及非阻塞语法诊断有限片受托Agent代验通过，非用户亲验。源码/包内仓库均1377/33532，hash2bxph215iwtab；五样本SHA原样、readonly恢复644，正常CmdQ exec49248 exit0/Bun1032消失。复制/EOF/只读/空块/浅深等范围、工具失败与IMK退出stderr详见唯一F046a，不扩大自然IME/极端/race/RSS证据。Git待执行；阅读仍legacy、子窗及完整父/冻结stash/最终离线开放。下方构建候选为历史。

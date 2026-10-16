@@ -1,5 +1,9 @@
 # F-046a：Frontmatter 识别与编辑模式原文折叠
 
+## Git 收据（2026-10-16）
+
+已提交 `356ed9c7d4a5f19bd2544247802b9548c23616f2` 并通过既有单命令 HTTPS credential helper 推送 main；主线随后以显式 `github.com:443` HTTPS ls-remote 核远端同 SHA，origin/main 已同步。普通 github.com URL 查询遇 SSH port22 连接关闭，保留为连接失败；显式443查询成功，不推断根因、不改持久网络或 origin 配置。Git hook 未改变已验源码，冻结 F-041d stash 不动。下方 Git 待执行为历史状态。
+
 ## 主线正式结论：alpha161 非离线有限片代验通过
 
 最终独立 Spec/Standards 两轴均0必要阻断，主线正式批准 F-046a alpha161（hash `2bxph215iwtab`）非离线有限片受托 Agent 代验通过，**非用户亲验**。范围为文档首部原子识别、编辑原文折叠/独立命令、源码完整、有限语法诊断及编辑消费者用途隔离。源码/包内均1377/33532，真实 WK、正常退出、五 SHA 原样/权限恢复与失败历史见下文；Git仍待主线实际执行，作者不预写推送成功。

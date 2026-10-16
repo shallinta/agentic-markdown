@@ -30,7 +30,7 @@
     },
     "apps/desktop": {
       "name": "@agentic-markdown/desktop",
-      "version": "0.1.0-alpha.161",
+      "version": "0.1.0-alpha.162",
       "dependencies": {
         "@agentic-markdown/shared": "workspace:*",
         "@agentic-markdown/ui": "workspace:*",
@@ -62,7 +62,10 @@
         "micromark-extension-gfm-strikethrough": "2.1.0",
         "micromark-extension-gfm-table": "2.1.2",
         "micromark-extension-gfm-task-list-item": "2.1.0",
+        "micromark-util-chunked": "2.0.1",
+        "micromark-util-classify-character": "2.0.1",
         "micromark-util-normalize-identifier": "2.0.1",
+        "micromark-util-resolve-all": "2.0.1",
         "react": "catalog:",
         "react-dom": "catalog:",
         "react-i18next": "^17.0.11",
@@ -72,10 +75,12 @@
       },
       "devDependencies": {
         "@tailwindcss/postcss": "^4.0.15",
+        "@types/mdast": "4.0.4",
         "@types/three": "^0.165.0",
         "@vitejs/plugin-react": "^4.3.4",
         "autoprefixer": "^10.4.20",
         "concurrently": "^9.1.0",
+        "micromark-util-types": "2.0.3",
         "node-api-headers": "1.9.0",
         "postcss": "^8.5.3",
         "tailwindcss": "^4.0.15",

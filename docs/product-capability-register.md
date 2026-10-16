@@ -899,7 +899,7 @@ F-010 执行边界（2026-09-22）：用户确认读取保真方案并授权推�
 | S-07a | Extended Markdown Preset | 多产品方言并集 | 固定 App 方言；组合 CommonMark、GFM 与已确认原子 Extension；MVP 始终使用；无方言切换 | 已确认 · M0/MVP |
 | S-08 | 脚注 | Typora、Zettlr、Pandoc | 原子 `FootnoteExtension` 加入 Preset；仅 `[^id]` 引用式；阅读往返；不支持行内脚注 | 已确认 · MVP |
 | S-09 | 定义列表 | Pandoc、Zettlr | 原子 `DefinitionListExtension` 加入 Preset；固定冒号定义语法与 corpus；语义化渲染 | 已确认 · MVP |
-| S-10 | 高亮 | Typora、MarkText | 原子 `HighlightExtension` 加入 Preset；`==text==`；样式由主题决定；编辑显隐标记 | 已确认 · MVP |
+| S-10 | 高亮 | Typora、MarkText | 原子 `HighlightExtension` 加入 Preset；`==text==`；样式由主题决定；编辑显隐标记；[F-047a](iterations/F-047a-highlight-editing.md) alpha162编辑/源码有限片经主线批准受托Agent代验通过，非用户亲验，阅读子窗与完整余项开放 | 已确认 · MVP · 部分实现 |
 | S-10a | 上标 / 下标 | Typora | 原子 `SubSupExtension` 加入 Preset；`^text^` 上标、`~text~` 下标；源码原文 | 已确认 · MVP |
 | S-11 | Emoji shortcode | MarkText、HackMD | 原子 `EmojiExtension` 加入 Preset；固定版本映射；合法上下文按需加载候选；原文保持 shortcode | 已确认 · MVP |
 | S-12 | 数学公式 | Typora、Obsidian、Zettlr | 原子 `MathExtension` 加入 Preset；KaTeX；文档检测与 viewport 懒加载；失败局部降级 | 已确认 · MVP |

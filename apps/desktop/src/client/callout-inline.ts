@@ -167,6 +167,7 @@ export function* calloutInlineBody(
         "LinkTitle",
         "EmphasisMark",
         "StrikethroughMark",
+        "HighlightMark",
         "HardBreak",
         "HeaderMark",
       ].includes(child.name)

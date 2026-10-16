@@ -102,7 +102,7 @@ test("canonical autolinks keep official transform semantics without inventing po
 
 test("canonical recognizes literal autolinks while editor grammar excludes them", () => {
   expect(MARKDOWN_GRAMMAR).toBe(
-    "commonmark-gfm-strike-task-table-frontmatter-highlight-5"
+    "commonmark-gfm-strike-task-table-frontmatter-highlight-subsup-6"
   );
   expect(CANONICAL_PROFILE).toBe(
     "commonmark-gfm-strike-task-autolink-table-callout-5"

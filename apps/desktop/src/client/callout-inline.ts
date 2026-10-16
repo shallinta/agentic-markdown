@@ -132,6 +132,28 @@ interface Frame {
   child: SyntaxNode | null;
   at: number;
   to: number;
+  subsup: boolean;
+}
+/** Visible whitespace in confirmed SubSup gaps, yielded through the existing owner budget. */
+function* visibleGap(
+  doc: Text,
+  from: number,
+  to: number,
+  subsup: boolean
+): Work<boolean> {
+  if (!subsup) return yield* calloutNonblank(doc, from, to);
+  for (let at = from; at < to;) {
+    const char = doc.sliceString(at, ++at);
+    yield 1;
+    if (char === "\\" && at < to) {
+      const next = doc.sliceString(at, ++at);
+      yield 1;
+      if (next === " " || next === "\t") continue;
+      return true;
+    }
+    if (/\S/.test(char)) return true;
+  }
+  return false;
 }
 /** Iterative semantic inline traversal; syntax shells are not visible content. */
 export function* calloutInlineBody(
@@ -141,12 +163,14 @@ export function* calloutInlineBody(
   definitions: ReadonlySet<string>
 ): Work<boolean> {
   yield 0;
-  const frames: Frame[] = [{ child: root.firstChild, at: start, to: root.to }];
+  const frames: Frame[] = [
+    { child: root.firstChild, at: start, to: root.to, subsup: false },
+  ];
   while (frames.length) {
     const frame = frames[frames.length - 1],
       child = frame.child;
     if (!child || child.from >= frame.to) {
-      if (yield* calloutNonblank(doc, frame.at, frame.to)) return true;
+      if (yield* visibleGap(doc, frame.at, frame.to, frame.subsup)) return true;
       frames.pop();
       yield 0;
       continue;
@@ -154,7 +178,14 @@ export function* calloutInlineBody(
     yield 0;
     frame.child = child.nextSibling;
     if (child.to <= frame.at) continue;
-    if (yield* calloutNonblank(doc, frame.at, Math.min(child.from, frame.to)))
+    if (
+      yield* visibleGap(
+        doc,
+        frame.at,
+        Math.min(child.from, frame.to),
+        frame.subsup
+      )
+    )
       return true;
     frame.at = Math.max(frame.at, child.to);
     if (
@@ -168,6 +199,8 @@ export function* calloutInlineBody(
         "EmphasisMark",
         "StrikethroughMark",
         "HighlightMark",
+        "SubscriptMark",
+        "SuperscriptMark",
         "HardBreak",
         "HeaderMark",
       ].includes(child.name)
@@ -188,7 +221,15 @@ export function* calloutInlineBody(
       to = label.to;
     }
     yield 0;
-    frames.push({ child: child.firstChild, at: from, to });
+    frames.push({
+      child: child.firstChild,
+      at: from,
+      to,
+      subsup:
+        frame.subsup ||
+        child.name === "Subscript" ||
+        child.name === "Superscript",
+    });
   }
   return false;
 }

@@ -13,6 +13,7 @@ import type { CanonicalPurpose } from "../shared/markdown-profile";
 import { annotateCallouts } from "./callout-extension";
 import { FrontmatterExtension } from "./frontmatter-extension";
 import { HighlightExtension } from "./highlight-extension";
+import { SubSupExtension } from "./subsup-extension";
 
 const extensions = [
   gfmStrikethrough({ singleTilde: false }),
@@ -41,6 +42,7 @@ export function parseCanonicalMarkdown(
             ...extensions,
             FrontmatterExtension.micromark,
             HighlightExtension.micromark(parseText),
+            SubSupExtension.micromark(parseText),
           ]
         : extensions,
     mdastExtensions:
@@ -49,6 +51,7 @@ export function parseCanonicalMarkdown(
             ...mdastExtensions,
             FrontmatterExtension.mdast,
             HighlightExtension.mdast,
+            SubSupExtension.mdast(parseText),
           ]
         : mdastExtensions,
   });

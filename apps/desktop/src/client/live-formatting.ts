@@ -36,6 +36,11 @@ import {
   unprotectedParts,
 } from "./long-line-protection";
 import { documentMarkdownParser } from "./markdown-grammar";
+import {
+  isSubSup,
+  subSupBudget,
+  subSupPresentation,
+} from "./subsup-presentation";
 import { taskMarkers } from "./task-marker";
 import { invalidateTaskGesture } from "./task-marker-input";
 import { TaskMarkerWidget } from "./task-marker-widget";
@@ -103,10 +108,16 @@ function touched(state: EditorState, from: number, to: number): boolean {
   );
 }
 
-function touchedSetextAncestor(state: EditorState, node: SyntaxNode): boolean {
+function touchedSetextAncestor(
+  state: EditorState,
+  node: SyntaxNode,
+  includeSubSup = false
+): boolean {
   for (let parent = node.parent; parent; parent = parent.parent) {
     if (
-      (parent.name === "SetextHeading1" || parent.name === "SetextHeading2") &&
+      (parent.name === "SetextHeading1" ||
+        parent.name === "SetextHeading2" ||
+        (includeSubSup && isSubSup(parent.name))) &&
       touched(state, parent.from, parent.to)
     )
       return true;
@@ -133,6 +144,7 @@ export function liveDecorations(
     }
   };
   const seen = new Set<string>();
+  const subsupBudget = subSupBudget();
   const tree = syntaxTree(state);
   const tasks = taskMarkers(state, visibleRanges).filter(
     (marker) => !touched(state, marker.from, marker.to)
@@ -491,7 +503,7 @@ export function liveDecorations(
             );
             if (
               !touched(state, from, to) &&
-              !touchedSetextAncestor(state, ref.node)
+              !touchedSetextAncestor(state, ref.node, true)
             ) {
               add(Decoration.replace({}).range(from, labelFrom));
               add(Decoration.replace({}).range(labelTo, to));
@@ -684,6 +696,47 @@ export function liveDecorations(
             line = state.doc.lineAt(line.to + 1);
           }
         }
+        if (isSubSup(name)) {
+          const projection = subSupPresentation(
+            state,
+            tree,
+            ref.node,
+            visible,
+            subsupBudget
+          );
+          if (!projection) return;
+          const present = (
+            kind: string,
+            span: { from: number; to: number },
+            decoration: Decoration
+          ) => {
+            const key = `subsup:${kind}:${span.from}:${span.to}`;
+            if (span.from >= span.to || seen.has(key)) return;
+            seen.add(key);
+            add(decoration.range(span.from, span.to));
+          };
+          present(
+            name,
+            projection.range,
+            Decoration.mark({
+              class:
+                name === "Superscript"
+                  ? "cm-live-superscript"
+                  : "cm-live-subscript",
+            })
+          );
+          for (const marker of projection.markers)
+            present(
+              "marker",
+              marker,
+              projection.reveal
+                ? Decoration.mark({ class: "cm-live-marker" })
+                : Decoration.replace({})
+            );
+          for (const slash of projection.slashes)
+            present("slash", slash, Decoration.replace({}));
+          return;
+        }
         const heading = /^ATXHeading([1-6])$/.exec(name);
         const className = heading
           ? `cm-live-heading cm-live-h${heading[1]}`
@@ -709,7 +762,7 @@ export function liveDecorations(
           touched(state, heading ? line.from : from, heading ? line.to : to);
         for (let parent = ref.node.parent; parent; parent = parent.parent) {
           if (
-            parent.name === "Link" &&
+            (parent.name === "Link" || isSubSup(parent.name)) &&
             touched(state, parent.from, parent.to)
           ) {
             reveal = true;
@@ -759,64 +812,68 @@ export function liveDecorations(
   return Decoration.set(ranges, true);
 }
 
-export const liveFormattingPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    composing = false;
-    timer: ReturnType<typeof setTimeout> | undefined;
-    constructor(view: EditorView) {
-      this.decorations = liveDecorations(view.state, view.visibleRanges);
-    }
-    update(update: ViewUpdate) {
-      if (update.state !== update.startState || update.viewportChanged)
-        invalidateTaskGesture(update.view);
-      if (
-        update.state.field(editorFaultSession, false)?.inject === "presentation"
-      )
-        throw new Error("editor-presentation-test");
-      if (this.composing || update.view.compositionStarted) {
-        this.decorations = this.decorations.map(update.changes);
-        return;
-      }
-      if (
-        update.state !== update.startState ||
-        update.docChanged ||
-        foldedRanges(update.startState) !== foldedRanges(update.state) ||
-        update.selectionSet ||
-        update.viewportChanged ||
-        syntaxTree(update.startState) !== syntaxTree(update.state) ||
-        update.transactions.some((tr) =>
-          tr.effects.some((effect) => effect.is(compositionFinished))
-        )
-      ) {
-        this.decorations = liveDecorations(
-          update.state,
-          update.view.visibleRanges
-        );
-      }
-    }
-    destroy() {
-      clearTimeout(this.timer);
-    }
-  },
-  {
-    decorations: (value) => value.decorations,
-    eventHandlers: {
-      compositionstart() {
-        this.composing = true;
-        clearTimeout(this.timer);
-      },
-      compositionend(_event, view) {
-        this.composing = false;
-        // Let the browser's final composition transaction settle before rebuilding.
-        this.timer = setTimeout(
-          () => view.dispatch({ effects: compositionFinished.of(null) }),
-          0
-        );
-      },
-    },
+export class LiveFormatting {
+  decorations: DecorationSet;
+  composing = false;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  constructor(view: EditorView) {
+    this.decorations = liveDecorations(view.state, view.visibleRanges);
   }
-);
+  update(update: ViewUpdate) {
+    if (update.state !== update.startState || update.viewportChanged)
+      invalidateTaskGesture(update.view);
+    if (
+      update.state.field(editorFaultSession, false)?.inject === "presentation"
+    )
+      throw new Error("editor-presentation-test");
+    if (this.composing || update.view.compositionStarted) {
+      this.decorations = this.decorations.map(update.changes);
+      return;
+    }
+    if (
+      update.state !== update.startState ||
+      update.docChanged ||
+      foldedRanges(update.startState) !== foldedRanges(update.state) ||
+      update.selectionSet ||
+      update.viewportChanged ||
+      syntaxTree(update.startState) !== syntaxTree(update.state) ||
+      update.transactions.some((tr) =>
+        tr.effects.some((effect) => effect.is(compositionFinished))
+      )
+    ) {
+      this.decorations = liveDecorations(
+        update.state,
+        update.view.visibleRanges
+      );
+    }
+  }
+  destroy() {
+    clearTimeout(this.timer);
+  }
+  compositionStart() {
+    this.composing = true;
+    clearTimeout(this.timer);
+  }
+  compositionEnd(view: EditorView) {
+    this.composing = false;
+    this.timer = setTimeout(
+      () => view.dispatch({ effects: compositionFinished.of(null) }),
+      0
+    );
+  }
+}
+export const liveFormattingPlugin = ViewPlugin.fromClass(LiveFormatting, {
+  decorations: (value) => value.decorations,
+  eventHandlers: {
+    compositionstart() {
+      this.compositionStart();
+    },
+    compositionend(_event, view) {
+      // Let the browser's final composition transaction settle before rebuilding.
+      this.compositionEnd(view);
+    },
+  },
+});
 
 const liveTheme = EditorView.baseTheme({
   ".cm-live-quote-line": {
@@ -957,6 +1014,8 @@ const liveTheme = EditorView.baseTheme({
   },
   ".cm-live-emphasis": { fontStyle: "italic" },
   ".cm-live-strike": { textDecoration: "line-through" },
+  ".cm-live-subscript": { fontSize: "0.8em", verticalAlign: "sub" },
+  ".cm-live-superscript": { fontSize: "0.8em", verticalAlign: "super" },
   ".cm-live-highlight": {
     backgroundColor:
       "color-mix(in oklab, var(--primary) 25%, var(--background))",

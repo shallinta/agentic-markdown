@@ -1,5 +1,49 @@
 # AGENTS.md
 
+## F-047b alpha164 非离线有限片正式通过（2026-10-16）
+
+最终独立Spec/Standards均0必要阻断，主线批准受托Agent代验通过，非用户亲验。alpha164/hash1s5t9zpz99ax7，源码1462/35189、包内Bun仓库1462/35190及真实WK前后段/源码/浅深/折叠/复制编辑撤销/只读跨标签证据见唯一迭代。exec62773正常CmdQ退出0、Bun36056消失，两SHA原样、readonly644；alpha163预算红与操作限制保留。Git待实际执行。完整F047/OBL068069/阅读子窗/自然IME/专项/F028c/冻结stash/offline仍开放。
+
+## F-047b 预算窄修构建获准（2026-10-16）
+
+主线原CLI复现修后exit0，全量1462/35189、type/full lint/docs/lock通过；独立Spec130/2201、Standards124/2110均0必要构建阻断。已读shared1024/4096与去重复资格计费，原568bytes、19/200完整及512原子回退覆盖；单次CLI成本不是WK布局测量。批准alpha164 unsigned构建后真实重验，alpha163实际失败保留，不得提前验收/Git。无当前测试实例，冻结stash/完整父/专项/offline边界保持。
+
+## F-047b alpha163 真实显示红例（2026-10-16）
+
+alpha163/hash23h5dybkkp058已构建，源码1460/34228与包内Bun仓库1460/34229通过，但真实568bytes样本后半上下标裸露，不验收/不得Git。真实factory CLI主线复红；最小19短span共享128节点预算只显示18，树完整且单独尾视口正常。唯一顶部已有去重复访问+1024节点/仍4096字符预算窄修待独立确认。实例正常CmdQ exec56619 exit0、Bun34191退出；两个SHA原样，readonly恢复644。曾读build旧直包路径不存在，改从实际wrapper payload解包；另见旧launcher25314未处理，不归因。下一代码包alpha164需主线后续批准。
+
+## F-047b alpha163 构建中（2026-10-16）
+
+主线全量1460/34228、type/full lint/docs/lock均通过；两独立轴六文件128/1239且0剩余必要构建阻断。Link祖先显隐遗漏及首次预算影响普通链接的窄修历史保留，现复用既有遍历并核80普通链接。主线已读核心/显示/消费者并批准alpha163 unsigned构建及有限真实WK，尚未构建成功或验收，不得Git。受控composition class seam非自然IME，完整父/阅读子窗/冻结stash及offline-final保持。
+
+## F-047b 有限生产实施获批（2026-10-16）
+
+主线全文读唯一末节typed T1–T5及Callout空白细化，独立Spec/Standards均0必要路线阻断，批准原子SubSup扩展、编辑用途/profile及局部显示/真实消费者实现和实现后测试。来源128节点/4096单位按单次重算共享、可靠性及节点原子提交、祖先揭示与多visible去重必须落实；不得复制临时同步全文helper。尚无代码验收或新包，下一alpha163/build/GUI/Git由主线后续管理；reading-legacy、冻结F041d、专项和最终离线边界不变。
+
+## F-047b 两栈窄修通过有限复核（2026-10-16）
+
+冻结`/tmp/agentic-f047b-stack.xye6hz`作者/主线/独立Spec及Standards均17语义/0、16成本/0；原16不改，新增转义相邻17。主线C2 canonical32.882ms对10.566ms，旧113.329ms放大收敛但不称全局线性。两栈只保未配对事件、成功消费后截断索引及前邻奇偶均经复核。批准编写typed正式接入方案，尚未批准生产；来源必须同代可靠树/视口预算，完整容器/消费者/wire/只读IME等转正式回归。alpha162/70d81c9仍最新已验已推，下一代码包alpha163由主线后续管理。
+
+## F-047b 语义通过、密集配对成本待窄修（2026-10-16）
+
+完成树公开来源候选`/tmp/agentic-f047b-projection.CMTpV1`作者/主线/两轴均16/0；同底座成本`/tmp/agentic-f047b-cost.w5HaSH`各16/0，但主线C2 canonical113.329ms对9.816ms，两轴亦复现明显增加。不能以绿批准生产。下一仅编写按marker类型保留未配对来源/搜索边界的resolver窄修，须核异型外层及splice索引，不改旧冻结oracle。完整容器/实际消费者/viewport与身份/自然IME/真实WK仍未验；alpha162/70d81c9保持，无新生产/版本/build/Git。
+
+## F-047b 六条窄修实验有限通过（2026-10-16）
+
+新冻结`/tmp/agentic-f047b-texttoken.Uz7IGI`作者/主线/独立Spec与Standards均6/0、退出0；原P2空串红保留。整原data Point+公开专用handler窄修通过平面空格及链接上下文小例，非完整语义/消费者或产品验收。嵌套转义两侧覆盖、tab、opaque/BOM/EOL与密集成本未证，tokenizer内部this捕获需typed前修正。下一先收敛完整固定语义与少量成本方案，不批准生产。alpha162/70d81c9仍最新已验已推，无新包或运行实例。
+
+## F-047b 转义空格探针红例与窄修（2026-10-16）
+
+首批`/tmp/agentic-f047b-context.4qJm9c`作者/主线/独立Spec复跑均P1通过、P2范围正确但canonical文本空串，按首红停P3–P6未跑。失败保留，不补算私有流索引。主线全文读唯一P2四点和官方CompileContext公开接口，批准新目录仅专用文本token/handler窄修：保原data原Point，从同次raw校验值，不经sliceSerialize。原六oracle和15/180边界不改；尚无新生产/版本/构建/验收，alpha162已推状态保持。
+
+## F-047b 六条同上下文探针获批（2026-10-16）
+
+主线全文读取唯一F047b，纠正Lezer叶规则不等于Pandoc递归语义，选择合法内部inline组合；旧24/重入28不执行。最新六条手写oracle已主线认可，两轴0必要实验阻断，批准仅新临时目录公开同Context delimiter/事件探针，15秒/例180秒整批首红停；Element不读私有children，局部转义/引用/链接拓扑仍待证。无新生产/版本/build/GUI/Git，alpha162仍最新已验已推包，所有既定冻结/专项/离线边界不变。
+
+## F-047a Git 收据与下一片（2026-10-16）
+
+已提交推送`70d81c9fec431ebcba7cba83f818e842d33996e3`，主线HTTPS ls-remote核远端main同SHA，origin/main同步，编写本条前工作树clean。按连续授权选择F-047b上下标编辑/源码有限片，先唯一最小方案及公开接口调查，尚未批准实验/生产/新版本构建。alpha162仍最新已验包；reading-legacy、阅读子窗后续、F041d冻结stash、专项/F028c和最终离线边界不变。
+
 ## F-047a alpha162 非离线有限片正式通过（2026-10-16）
 
 真实WK高亮显隐、源码保真、折叠、原生复制/编辑撤销、浅深和只读跨标签完成；最终独立Spec/Standards均0必要阻断，主线批准本片受托Agent代验通过，非用户亲验。源码与包内Bun运行仓库均1410/33788，type/full lint/docs/lock通过；hash1jrx3g6uy44x8。AX选区偏移、主题取消及旧只读测试红保留唯一迭代，不推断根因。正常CmdQ exec26352退出0、Bun21389消失，三SHA原样、readonly恢复644。Git待实际执行；完整F047、阅读子窗、自然IME/极端/竞态/真实图片及最终离线仍开放，F041d冻结stash不动。

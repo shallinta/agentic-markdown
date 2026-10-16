@@ -10,6 +10,18 @@ import { tags } from "@lezer/highlight";
 
 import { editorFaultSession, reportEditorFault } from "./editor-fault";
 import {
+  mode,
+  safe,
+  getEditorMode,
+  isSafeSource,
+  type EditorMode,
+} from "./editor-mode-state";
+export {
+  getEditorMode,
+  isSafeSource,
+  type EditorMode,
+} from "./editor-mode-state";
+import {
   frontmatterPresentation,
   frontmatterTheme,
 } from "./frontmatter-presentation";
@@ -22,10 +34,6 @@ import {
 } from "./live-formatting";
 import { protectedSourceHighlighting } from "./source-highlighting";
 
-export type EditorMode = "editing" | "source";
-const mode = Facet.define<EditorMode, EditorMode>({
-  combine: (values) => values[0] ?? "editing",
-});
 export const sourceHighlightStyle = HighlightStyle.define([
   {
     tag: [
@@ -81,9 +89,6 @@ export const sourceWrappingEffect = (state: EditorState, enabled: boolean) =>
     )
   );
 const parserLanguage = new Compartment();
-const safe = Facet.define<boolean, boolean>({
-  combine: (values) => values.some(Boolean),
-});
 const sourcePresentation = [
   frontmatterEditing.of(false),
   mode.of("source"),
@@ -126,7 +131,6 @@ export const createEditorModeExtensions = (isolated = false) => [
   ),
 ];
 export const editorModeExtensions = createEditorModeExtensions();
-export const isSafeSource = (state: EditorState) => state.facet(safe);
 /** Release/rebuild derived parsing only; never switch mode or lift fault isolation. */
 /** Inactive tabs retain presentation state; fault/explicit pauses must clear it. */
 export const pauseEditorParser = (inactiveTab = false) => [
@@ -147,7 +151,6 @@ export const safeSourceEffects = () => [
 ];
 export const restartParserForFaultTest = () =>
   parserLanguage.reconfigure(createEditingMarkdown());
-export const getEditorMode = (state: EditorState) => state.facet(mode);
 export const switchEditorMode = (next: EditorMode, sourceWrap = true) => [
   ...(next === "source" ? [unfoldFrontmatter.of(null)] : []),
   wrapping.reconfigure(wrapExtension(next, sourceWrap)),

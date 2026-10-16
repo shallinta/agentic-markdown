@@ -30,10 +30,11 @@
     },
     "apps/desktop": {
       "name": "@agentic-markdown/desktop",
-      "version": "0.1.0-alpha.164",
+      "version": "0.1.0-alpha.168",
       "dependencies": {
         "@agentic-markdown/shared": "workspace:*",
         "@agentic-markdown/ui": "workspace:*",
+        "@codemirror/autocomplete": "6.20.3",
         "@codemirror/commands": "6.11.1",
         "@codemirror/lang-markdown": "6.5.2",
         "@codemirror/language": "6.12.4",

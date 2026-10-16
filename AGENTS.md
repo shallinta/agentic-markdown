@@ -1,5 +1,37 @@
 # AGENTS.md
 
+## F-047d alpha168 有限片通过（2026-10-16）
+
+最终独立Spec/Standards均0必要有限验收阻断，主线批准Emoji按需候选非离线受托Agent代验通过，非用户亲验。源码/包内Bun仓库各1522/36559、208文件通过，hash18esct1gd90bm；实际核心/URL/source/list/undo、旧alpha166沿用边界见唯一迭代。正常CmdQ exec36449 exit0、Bun70981消失，两SHA原样。确定性TDZ本轮窄修，TEMP已清；FINAL-ISSUE-001/002按用户允许留最终集中，不称修复。Git待执行；父/自然IME/阅读子窗/冻结stash/专项/offline保持。
+
+## F-047d 清理版循环依赖窄修（2026-10-16）
+
+alpha168尚未构建。逐文件验证发现本片新增live-formatting→completion→context→editor-mode回环导致TDZ；已拆只读mode/safe单例至state叶模块，原API重导出，未改guard。主线全文读窄修、独立两轴各67/478与原链接独立6/87通过，源码最新全量1522/36559、208文件通过。原同进程长空白两红及分组证据仍保留FINAL-ISSUE-002，不因本次绿称修复。待其余检查后主线构建alpha168及真实WK，不预写验收/Git；FINAL-ISSUE-001、冻结/专项/offline保持。
+
+## F-047d 偶发问题延期获用户批准（2026-10-16）
+
+用户明确偶发问题先记录、最后集中解决。原ji持续禁用/退出问题登记docs/deferred-obligations.md的FINAL-ISSUE-001，保持开放但不再阻塞本片有限交付；不称已修复、不取消最终收敛。主线批准按唯一7.5清理TEMP-F047D，保留正式候选及原trace；待独立清理复核、alpha168构建与真实检查再验收/Git。其他冻结/专项/offline边界不变。
+
+## F-047d alpha167 临时诊断首轮（2026-10-16）
+
+唯一7.4方案经独立复核后实施TEMP-F047D仅元数据诊断，不改guard。主线全文读代码；源码首跑1522/1长空白超时保留，同源码复跑1523/36570及包内Bun仓库1523/36571通过，type/lint/docs通过，hash14g1p4pq0icrn。真实四步对照正常、n/i组合→Esc轨迹明确started/composing及canToggle恢复；原ji持续阻断仍未复现、根因未知，不批准验收/Git。逐条摘要可读，完整JSON AX仍约500字符截断，不冒全字段已读。exec43003 exit0/Bun59119消失，两SHA原样；临时诊断待后续取证清理，下一重打包须alpha168。冻结/专项/offline边界保持。
+
+## F-047d alpha166 补验与开放阻断（2026-10-16）
+
+构建成功hash kser9y9ee4p，源码1521/36556、包内仓库1521/36558；真实候选/listEnter/undo/rawcopy/Tab/readonly/跨标签/浅深有限路径已核。首次ji计划外输入及持续禁用/CmdQ失败尚未定位；用户退出后两轮正常重开退出不等于修复。独立Spec/Standards均不支持所有验收问题清零，主线保留阻断、未Git。唯一F047d第7节保留全部失败；下一复现原顺序再定诊断，不改组合guard猜修。exec77940 exit0/Bun55749消失、两SHA原样、readonly644，无运行测试实例。下方构建未完成为历史；冻结/专项/离线边界不变。
+
+## F-047d alpha166 构建获批（2026-10-16）
+
+正式实现后主线全量1521/36556、full lint/type/docs/lock通过；两独立轴最终66/476且0必要构建阻断，late readonly与Esc旧apply原红已修并保留唯一记录。主线已读实现并升alpha166，批准unsigned构建及真实WK；尚未构建成功或验收，不得Git。真实组合Enter/list DOM顺序和鼠标作为必验，不以class seam替代。完整父/自然IME/阅读子窗/冻结/专项/offline保持。
+
+## F-047d 按需候选有限实施获批（2026-10-16）
+
+主线全文读唯一F047d最小方案及本地公开completion契约，两独立轴0必要路线阻断，批准typed有限实现/同锁6.20.3直接依赖/实现后测试。采用编辑单空光标合法prefix按需索引、无默认快捷键、显式选择Enter及高优DOM仲裁、原shortcode单事务和当前身份/IME/readonly守卫。尚未实现/验收；下一alpha166由主线后续管理，旧alpha165已推671e1c6。自然IME/阅读子窗/完整父/冻结F041d/专项/offline不变。
+
+## F-047c Git收据与候选输入下一片（2026-10-16）
+
+已提交推送`671e1c6d458d30ed74ab48db5901c1b2847749f0`，主线HTTPS ls-remote核远端main同SHA，origin/main同步。alpha165显示片已验；下一F047d仅编写Emoji按需候选最小方案，不取消S11责任，不改变固定映射/已验显示。尚未批准下一片生产或新构建；阅读子窗/自然IME/完整父/冻结F041d/专项/offline保持。本收据自身随后续文档提交。
+
 ## F-047c alpha165 非离线有限显示片通过（2026-10-16）
 
 最终独立Spec/Standards均0必要阻断，主线批准受托Agent有限代验通过，非用户亲验。源码1489/36458、包内Bun仓库1489/36460，hash2x826g9z7bw88；真实WK编辑/源码/原文复制/撤销/折叠/查找/只读/浅深及失败边界见唯一第16节。exec37302正常CmdQ退出0、Bun44273消失，两SHA原样、readonly644。Git待实际执行；候选输入下一片、阅读子窗、自然IME/完整父/冻结F041d/专项/offline保持。

@@ -21,6 +21,13 @@ export const emojiNames: Readonly<Record<string, string>> = Object.freeze(${JSON
 `;
 }
 
+export function generatedEmojiIndex() {
+  return `// Generated from gemoji@8.1.0; see emoji-map.LICENSE. Lazy candidate data only.
+export const version = "gemoji@8.1.0";
+export const names: readonly string[] = Object.freeze(${JSON.stringify(Object.keys(nameToEmoji).sort(), null, 2)});
+`;
+}
+
 if (import.meta.main) {
   const output = generatedEmojiMap();
   if (process.argv.includes("--check")) {
@@ -28,6 +35,16 @@ if (import.meta.main) {
       new URL("../src/client/emoji-map.ts", import.meta.url)
     ).text();
     if (output !== actual) throw new Error("Fixed Emoji map is out of date");
+    if (
+      generatedEmojiIndex() !==
+      (await Bun.file(
+        new URL("../src/client/emoji-completion-index.ts", import.meta.url)
+      ).text())
+    )
+      throw new Error("Fixed Emoji candidate index is out of date");
     console.info("Fixed Emoji map is reproducible.");
-  } else process.stdout.write(output);
+  } else
+    process.stdout.write(
+      process.argv.includes("--index") ? generatedEmojiIndex() : output
+    );
 }

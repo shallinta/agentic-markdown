@@ -28,6 +28,10 @@ import {
   editorSurfaceEditable,
 } from "@/client/editor-view-sync";
 import {
+  registerEmojiCompletion,
+  observeEmojiCompletion,
+} from "@/client/emoji-completion";
+import {
   fenceCompletionTransaction,
   isCurrentFenceCompletion,
 } from "@/client/fence-completion";
@@ -89,6 +93,7 @@ export function MemoryEditor({
       observeEditingImages(viewRef.current);
       observeHeadingFolding(viewRef.current);
       observeFrontmatter(viewRef.current);
+      observeEmojiCompletion(viewRef.current);
     }
   });
   const [mountAttempt, setMountAttempt] = useState(0);
@@ -175,6 +180,13 @@ export function MemoryEditor({
         !view.composing
       );
     };
+    const removeEmojiCompletion = registerEmojiCompletion(
+      view,
+      () =>
+        headingReady() &&
+        controller.canWrite(documentId) &&
+        controller.getMode(documentId) === "editing"
+    );
     const removeHeading = registerHeadingView(view, {
       ready: headingReady,
       run: ({ kind, ...action }) =>
@@ -634,6 +646,7 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      removeEmojiCompletion();
       removeCallout();
       removeImages();
       toast.dismiss(imageToast);

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 
+import { CompletionContext } from "@codemirror/autocomplete";
 import { undo, undoDepth } from "@codemirror/commands";
 import {
   foldedRanges,
@@ -7,6 +8,7 @@ import {
   syntaxTreeAvailable,
   unfoldEffect,
 } from "@codemirror/language";
+import { Transaction, type TransactionSpec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import type {
@@ -26,6 +28,11 @@ import { reportEditorFault } from "./editor-fault";
 import { currentTypedFold, editorFoldEntries } from "./editor-fold-state";
 import { prepareEditorViewState } from "./editor-view-sync";
 import {
+  EmojiCompletionSession,
+  registerEmojiCompletion,
+} from "./emoji-completion";
+import { names, version } from "./emoji-completion-index";
+import {
   currentFoldAtSelection,
   currentFoldTarget,
   headingStructureReady,
@@ -34,6 +41,84 @@ import {
 } from "./heading-folding";
 import { headingStructureSteps } from "./heading-structure";
 import { rawText } from "./raw-buffer";
+
+test("Emoji completion uses actual controller dirty/history and refuses stale readonly apply", async () => {
+  for (const readonly of [false, true]) {
+    const { controller, value } = setup();
+    value.text = "\uFEFFfirst\r\n:smi\r\nend";
+    value.byteLength = new TextEncoder().encode(value.text).length;
+    value.fidelity = analyzeTextFidelity(value.text);
+    if (readonly)
+      value.writeCapability = { writable: false, reason: "readonly" };
+    await controller.select();
+    prepareEditorViewState(controller, value.documentId);
+    let state = controller.getEditor(value.documentId)!.state;
+    ensureSyntaxTree(state, state.doc.length, 1000);
+    controller.updateEditor(
+      value.documentId,
+      state.update({
+        selection: { anchor: state.doc.toString().indexOf(":smi") + 4 },
+      })
+    );
+    const view = {
+      get state() {
+        return controller.getEditor(value.documentId)!.state;
+      },
+      compositionStarted: false,
+      composing: false,
+      dispatch(spec: TransactionSpec | Transaction) {
+        const tr =
+          spec instanceof Transaction
+            ? spec
+            : controller.getEditor(value.documentId)!.state.update(spec);
+        controller.updateEditor(value.documentId, tr);
+      },
+    } as unknown as EditorView;
+    const session = new EmojiCompletionSession(view, () =>
+      Promise.resolve({
+        names,
+        version,
+      })
+    );
+    const remove = registerEmojiCompletion(
+      view,
+      () =>
+        controller.canWrite(value.documentId) &&
+        !controller.getSnapshot().frozen
+    );
+    try {
+      state = view.state;
+      expect(state.readOnly).toBe(readonly);
+      const result = await session.query(
+        new CompletionContext(state, state.selection.main.head, false, view)
+      );
+      if (readonly) {
+        expect(result).toBeNull();
+        expect(controller.isDirty(value.documentId)).toBe(false);
+        continue;
+      }
+      const completion = result!.options.find((c) => c.label === ":smile:")!;
+      if (typeof completion.apply !== "function")
+        throw new Error("Expected guarded apply");
+      completion.apply(view, completion, result!.from, result!.to!);
+      expect(controller.isDirty(value.documentId)).toBe(true);
+      expect(view.state.field(rawText)).toBe(
+        value.text.replace(":smi", ":smile:")
+      );
+      expect(undo(view)).toBe(true);
+      expect(view.state.field(rawText)).toBe(value.text);
+      expect(controller.isDirty(value.documentId)).toBe(false);
+      controller.beginDiscard();
+      const before = view.state;
+      completion.apply(view, completion, result!.from, result!.to!);
+      expect(view.state).toBe(before);
+      controller.endDiscard();
+    } finally {
+      remove();
+      session.destroy();
+    }
+  }
+});
 
 test("safe source preserves dirty revision and transfer, waits for interaction, and stays isolated on reload", async () => {
   const { controller, value } = setup();

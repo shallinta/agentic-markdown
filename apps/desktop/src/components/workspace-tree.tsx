@@ -1,4 +1,11 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { documentCapabilitySuffix } from "@/client/document-status-label";
 import type { DocumentEntry } from "@/client/documents";
@@ -6,6 +13,16 @@ import { releaseTreeEditorSelection } from "@/client/tree-editor-selection";
 import type { createFolderWorkspace, FolderState } from "@/client/workspace";
 import { workspaceRevealTarget } from "@/client/workspace-reveal";
 import { rootControlHandlers } from "@/client/workspace-root-control";
+import {
+  rejectedTreeDragHandlers,
+  rootDropPlacement,
+} from "@/client/workspace-root-drop";
+import {
+  createWorkspaceRootOrder,
+  reconcileRootOrder,
+  type RootDragToken,
+  type RootPlacement,
+} from "@/client/workspace-root-order";
 import {
   projectWorkspaceTree,
   treeExpanded,
@@ -15,6 +32,13 @@ import {
   type TreeItem,
 } from "@/client/workspace-tree-model";
 import type { WorkspaceNode, WorkspaceRevealTarget } from "@/shared/workspace";
+
+export interface RootOrderActions {
+  up: () => void;
+  down: () => void;
+  canUp: () => boolean;
+  canDown: () => boolean;
+}
 
 export function WorkspaceTree({
   folders,
@@ -29,6 +53,10 @@ export function WorkspaceTree({
   openStandalone,
   setHidden,
   onRevealSelection,
+  rootOrder: suppliedOrder,
+  canOrder,
+  onOrderActions,
+  subscribeOrderAvailability,
 }: {
   folders: ReturnType<typeof createFolderWorkspace>;
   state: FolderState;
@@ -41,12 +69,26 @@ export function WorkspaceTree({
   open: (root: string, node: WorkspaceNode) => void;
   openStandalone: (entry: DocumentEntry) => void;
   setHidden: (root: string, showHidden: boolean) => void;
-  onRevealSelection?: (target: WorkspaceRevealTarget | null, isFile: boolean) => void;
+  onRevealSelection?: (
+    target: WorkspaceRevealTarget | null,
+    isFile: boolean
+  ) => void;
+  rootOrder?: ReturnType<typeof createWorkspaceRootOrder>;
+  canOrder?: () => boolean;
+  onOrderActions?: (actions: RootOrderActions | null) => void;
+  subscribeOrderAvailability?: (listener: () => void) => () => void;
 }) {
+  const [fallbackOrder] = useState(createWorkspaceRootOrder);
+  const rootOrder = suppliedOrder ?? fallbackOrder;
+  const order = useSyncExternalStore(
+    rootOrder.subscribe,
+    rootOrder.getSnapshot,
+    rootOrder.getSnapshot
+  );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
-  const model = useMemo(
+  const baseModel = useMemo(
     () =>
       projectWorkspaceTree(
         state.roots,
@@ -56,6 +98,90 @@ export function WorkspaceTree({
       ),
     [state.roots, state.nodes, state.coveredHandles, entries]
   );
+  const model = useMemo(
+    () => ({
+      ...baseModel,
+      children: new Map(baseModel.children).set(null, [
+        ...reconcileRootOrder(order, baseModel.children.get(null) ?? []),
+      ]),
+    }),
+    [baseModel, order]
+  );
+  const topIdentity = JSON.stringify(
+    (baseModel.children.get(null) ?? []).map((key) => {
+      const item = baseModel.items.get(key)!;
+      return [key, item.kind === "root" ? item.root.generation : null];
+    })
+  );
+  const drag = useRef<RootDragToken | null>(null);
+  const suppressClick = useRef(false);
+  const interactiveOrigin = useRef(false);
+  const dragWorkspace = useRef("");
+  const workspaceIdentity = useCallback(() => {
+    const latest = folders.getSnapshot();
+    return JSON.stringify([
+      latest.roots.map((root) => [root.handle, root.generation]),
+      latest.coveredHandles,
+    ]);
+  }, [folders]);
+  const [insertion, setInsertion] = useState<{
+    key: string;
+    placement: RootPlacement;
+  } | null>(null);
+  const clearDrag = useCallback(() => {
+    rootOrder.cancelDrag();
+    drag.current = null;
+    setInsertion(null);
+  }, [rootOrder]);
+  const orderAllowed = useCallback(
+    () =>
+      !disabled &&
+      !standaloneDisabled &&
+      !state.busy &&
+      !folders.getSnapshot().busy &&
+      (canOrder?.() ?? true),
+    [disabled, standaloneDisabled, state.busy, folders, canOrder]
+  );
+  useLayoutEffect(() => {
+    rootOrder.reconcile(baseModel.children.get(null) ?? []);
+  }, [baseModel, rootOrder]);
+  useLayoutEffect(() => {
+    clearDrag();
+  }, [topIdentity, disabled, standaloneDisabled, state.busy, clearDrag]);
+  useLayoutEffect(() => {
+    if (drag.current && selected !== drag.current.source) clearDrag();
+  }, [selected, clearDrag]);
+  useLayoutEffect(() => {
+    const check = () => {
+      if (
+        !orderAllowed() ||
+        (drag.current && dragWorkspace.current !== workspaceIdentity())
+      )
+        clearDrag();
+    };
+    const a = folders.subscribe(check),
+      b = subscribeOrderAvailability?.(check);
+    return () => {
+      a();
+      b?.();
+    };
+  }, [
+    folders,
+    subscribeOrderAvailability,
+    orderAllowed,
+    clearDrag,
+    workspaceIdentity,
+  ]);
+  useLayoutEffect(() => {
+    const cancel = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clearDrag();
+    };
+    document.addEventListener("keydown", cancel, true);
+    return () => {
+      document.removeEventListener("keydown", cancel, true);
+      rootOrder.cancelDrag();
+    };
+  }, [rootOrder, clearDrag]);
   const visible = useMemo(
     () => visibleWorkspaceItems(model, expanded, collapsedRoots),
     [model, expanded, collapsedRoots]
@@ -73,7 +199,10 @@ export function WorkspaceTree({
     const item = visible.find((item) => item.key === selected);
     onRevealSelection?.(workspaceRevealTarget(item), !!item && !item.directory);
   }, [selected, visible, onRevealSelection]);
-  useLayoutEffect(() => () => onRevealSelection?.(null, false), [onRevealSelection]);
+  useLayoutEffect(
+    () => () => onRevealSelection?.(null, false),
+    [onRevealSelection]
+  );
   const container = useRef<HTMLDivElement>(null);
   const buttons = useRef(new Map<string, HTMLLIElement>());
   const focused = useRef<{ item: TreeItem; element: HTMLLIElement } | null>(
@@ -87,6 +216,27 @@ export function WorkspaceTree({
     if (key) buttons.current.get(key)?.focus();
     else container.current?.focus();
   };
+  useLayoutEffect(() => {
+    const canMove = (direction: -1 | 1) =>
+      !!selected &&
+      current.current.items.get(selected)?.parent === null &&
+      orderAllowed() &&
+      rootOrder.canMoveBy(selected, direction);
+    const move = (direction: -1 | 1) => {
+      if (canMove(direction) && selected) {
+        clearDrag();
+        rootOrder.moveBy(selected, direction);
+        focus(selected);
+      }
+    };
+    onOrderActions?.({
+      up: () => move(-1),
+      down: () => move(1),
+      canUp: () => canMove(-1),
+      canDown: () => canMove(1),
+    });
+  }, [selected, model, onOrderActions, rootOrder, orderAllowed, clearDrag]);
+  useLayoutEffect(() => () => onOrderActions?.(null), [onOrderActions]);
   useLayoutEffect(() => {
     const oldModel = previousModel.current;
     previousModel.current = model;
@@ -168,6 +318,7 @@ export function WorkspaceTree({
       ref={container}
       tabIndex={-1}
       className="min-h-0 flex-1 overflow-auto"
+      {...rejectedTreeDragHandlers(() => setInsertion(null), clearDrag)}
       onFocusCapture={(event) => {
         releaseTreeEditorSelection(event.currentTarget, event.target);
         const key = (event.target as HTMLElement).dataset.treeKey;
@@ -216,6 +367,10 @@ export function WorkspaceTree({
               }
               className="aria-selected:bg-muted focus-visible:outline-ring rounded text-sm focus-visible:outline-2 aria-disabled:opacity-50"
               onClick={(event) => {
+                if (suppressClick.current) {
+                  event.preventDefault();
+                  return;
+                }
                 if (
                   event.target instanceof HTMLElement &&
                   event.target.closest("button")
@@ -226,6 +381,10 @@ export function WorkspaceTree({
                 focus(item.key);
               }}
               onDoubleClick={(event) => {
+                if (suppressClick.current) {
+                  event.preventDefault();
+                  return;
+                }
                 if (
                   event.target instanceof HTMLElement &&
                   event.target.closest("button")
@@ -254,7 +413,97 @@ export function WorkspaceTree({
                 else activate(item);
               }}
             >
-              <div className="flex items-center gap-1">
+              <div
+                className="relative flex items-center gap-1"
+                onPointerDownCapture={(event) => {
+                  suppressClick.current = false;
+                  interactiveOrigin.current =
+                    event.target instanceof Element &&
+                    !!event.target.closest("button,input,a,[role=switch]");
+                }}
+                draggable={item.parent === null && orderAllowed()}
+                onDragStart={(event) => {
+                  if (
+                    interactiveOrigin.current ||
+                    item.parent !== null ||
+                    !orderAllowed() ||
+                    (event.target instanceof Element &&
+                      event.target.closest("button,input,a,[role=switch]"))
+                  ) {
+                    event.preventDefault();
+                    return;
+                  }
+                  focus(item.key);
+                  drag.current = rootOrder.beginDrag(item.key);
+                  dragWorkspace.current = workspaceIdentity();
+                  if (!drag.current) {
+                    event.preventDefault();
+                    return;
+                  }
+                  suppressClick.current = true;
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData(
+                    "application/x-agentic-root",
+                    "local"
+                  );
+                }}
+                onDragOver={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const placement = rootDropPlacement(
+                    event.clientY - rect.top,
+                    rect.height
+                  );
+                  if (
+                    !placement ||
+                    item.parent !== null ||
+                    !orderAllowed() ||
+                    dragWorkspace.current !== workspaceIdentity() ||
+                    !rootOrder.isDragCurrent(drag.current) ||
+                    (event.target instanceof Element &&
+                      event.target.closest("button,input,a,[role=switch]"))
+                  ) {
+                    setInsertion(null);
+                    event.dataTransfer.dropEffect = "none";
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = "move";
+                  setInsertion({ key: item.key, placement });
+                }}
+                onDragLeave={() => setInsertion(null)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const placement = rootDropPlacement(
+                    event.clientY - rect.top,
+                    rect.height
+                  );
+                  if (
+                    placement &&
+                    item.parent === null &&
+                    orderAllowed() &&
+                    dragWorkspace.current === workspaceIdentity() &&
+                    rootOrder.isDragCurrent(drag.current) &&
+                    !(
+                      event.target instanceof Element &&
+                      event.target.closest("button,input,a,[role=switch]")
+                    )
+                  ) {
+                    event.stopPropagation();
+                    event.dataTransfer.dropEffect = "move";
+                    rootOrder.drop(drag.current, item.key, placement);
+                  }
+                  clearDrag();
+                }}
+                onDragEnd={clearDrag}
+              >
+                {insertion?.key === item.key && (
+                  <span
+                    aria-hidden="true"
+                    className={`bg-ring pointer-events-none absolute inset-x-0 h-0.5 ${insertion.placement === "before" ? "top-0" : "bottom-0"}`}
+                  />
+                )}
                 <span
                   title={item.path}
                   className="hover:bg-muted min-w-0 flex-1 truncate rounded px-2 py-1 text-left"

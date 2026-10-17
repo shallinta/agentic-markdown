@@ -8,6 +8,7 @@ import type { WorkspaceNode, WorkspaceRoot } from "../shared/workspace";
 
 import type { DocumentEntry } from "./documents";
 import { createFolderWorkspace, type FolderState } from "./workspace";
+import { createWorkspaceRootOrder } from "./workspace-root-order";
 import {
   projectWorkspaceTree,
   treeExpanded,
@@ -265,6 +266,7 @@ test("rendered unified tree has one scroll container, one roving entry, and sepa
   expect(html.match(/tabindex="0"/g)).toHaveLength(1);
   expect(html.match(/aria-level="1"/g)).toHaveLength(3);
   expect(html.match(/role="switch"/g)).toHaveLength(2);
+  expect(html.match(/draggable="true"/g)).toHaveLength(3);
   expect(html.match(/<li[^>]*role="treeitem"/g)).toHaveLength(6);
   expect(html).not.toMatch(/<button[^>]*role="treeitem"/);
   expect(html).toMatch(
@@ -296,6 +298,7 @@ test("rendered unified tree has one scroll container, one roving entry, and sepa
   expect(standalone).toContain('tabindex="0"');
   expect(saving.match(/tabindex="0"/g)).toHaveLength(1);
   expect(saving.match(/<button[^>]*disabled=""/g)).toHaveLength(4);
+  expect(saving).not.toContain('draggable="true"');
   const busy = renderToStaticMarkup(
     createElement(WorkspaceTree, {
       folders,
@@ -314,5 +317,59 @@ test("rendered unified tree has one scroll container, one roving entry, and sepa
   expect(busy).not.toMatch(/<button[^>]* disabled=""/);
   expect(busy.match(/aria-expanded="true"/g)).toHaveLength(2);
   expect(busy).not.toContain('aria-selected="true"');
+  expect(busy).not.toContain('draggable="true"');
+  folders.dispose();
+});
+
+test("window order survives tree remount and preserves descendant projection", () => {
+  const f = fixture();
+  const state: FolderState = {
+    ...f,
+    coveredHandles: [],
+    assetEpochs: {},
+    busy: false,
+    error: null,
+  };
+  const folders = createFolderWorkspace(() =>
+    Promise.reject(Error("unexpected RPC"))
+  );
+  const rootOrder = createWorkspaceRootOrder();
+  rootOrder.reconcile(["root:A", "root:B", "file:standalone.md"]);
+  rootOrder.move("file:standalone.md", "root:B", "before");
+  const render = () =>
+    renderToStaticMarkup(
+      createElement(WorkspaceTree, {
+        folders,
+        state,
+        rootOrder,
+        entries: f.entries,
+        disabled: false,
+        standaloneDisabled: false,
+        runAction: (action) => action(),
+        runRescan: (action) => action(),
+        open: () => {
+          throw Error("unexpected open");
+        },
+        openStandalone: () => {
+          throw Error("unexpected activate");
+        },
+        setHidden: () => undefined,
+      })
+    );
+  for (const html of [render(), render()]) {
+    expect(
+      [...html.matchAll(/data-tree-key="([^"]+)"/g)].map((match) => match[1])
+    ).toEqual([
+      "root:A",
+      "node:A:one.md",
+      "node:A:dir",
+      "file:standalone.md",
+      "root:B",
+      "node:B:two.md",
+    ]);
+    expect(html.match(/aria-expanded="true"/g)).toHaveLength(2);
+    expect(html).not.toContain('aria-selected="true"');
+  }
+  expect(f.entries[0].explicitStandalone).toBe(true);
   folders.dispose();
 });

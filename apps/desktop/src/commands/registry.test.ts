@@ -10,6 +10,14 @@ import {
 import type { DocumentRequest, DocumentResponse } from "../shared/documents";
 
 import { createCommandRegistry } from "./registry";
+
+test("root ordering commands are webview actions with explicit labels and no default shortcut", () => {
+  for (const type of ["moveWorkspaceRootUp", "moveWorkspaceRootDown"] as const) {
+    expect(isCommand({ type, args: {} })).toBe(true);
+    expect(COMMAND_META[type]).toEqual({ target: "webview" });
+    expect(PRODUCT_COMMANDS[type]?.label).toBe(type === "moveWorkspaceRootUp" ? "上移选中根" : "下移选中根");
+  }
+});
 test("root hidden command requires opaque root and boolean intent", () => {
   expect(
     isCommand({

@@ -91,6 +91,8 @@ export function CommandPalette({
       type === "dedentSource" ||
       type === "revealDocument" ||
       type === "revealWorkspaceItem" ||
+      type === "moveWorkspaceRootUp" ||
+      type === "moveWorkspaceRootDown" ||
       type === "openDefaultWorkspaceItem" ||
       type === "openDefaultDocument" ||
       type === "reloadDocument" ||

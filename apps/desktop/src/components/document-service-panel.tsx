@@ -32,6 +32,7 @@ import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { createFolderWorkspace } from "@/client/workspace";
 import { createWorkspaceReveal } from "@/client/workspace-reveal";
+import { createWorkspaceRootOrder } from "@/client/workspace-root-order";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { electrobun } from "@/lib/electrobun";
@@ -44,7 +45,7 @@ import { MemoryEditor } from "./memory-editor";
 import { ReadingView } from "./reading-view";
 import { RecentFiles, recentFailureText } from "./recent-files";
 import { TextFidelityDetails } from "./text-fidelity-details";
-import { WorkspaceTree } from "./workspace-tree";
+import { WorkspaceTree, type RootOrderActions } from "./workspace-tree";
 
 const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
   electrobun.rpc
@@ -52,6 +53,7 @@ const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
     : Promise.reject(new Error("RPC unavailable"));
 
 export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
+  const [rootOrder] = useState(createWorkspaceRootOrder);
   useEffect(() => {
     const report = ({
       reason,
@@ -348,6 +350,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
   return {
+    rootOrder,
     controller,
     folders,
     folderState,
@@ -362,6 +365,9 @@ type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
 export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
+  const [orderActions, setOrderActions] = useState<RootOrderActions | null>(null);
+  const notifyOrder = useRegisterCommands({ moveWorkspaceRootUp: () => orderActions?.up(), moveWorkspaceRootDown: () => orderActions?.down() }, true, { moveWorkspaceRootUp: () => orderActions?.canUp() ?? false, moveWorkspaceRootDown: () => orderActions?.canDown() ?? false });
+  useLayoutEffect(() => { notifyOrder(); }, [orderActions, notifyOrder]);
   const [reveal] = useState(() => createWorkspaceReveal({
     available: () => controller.canSelectFolder() && !workspace.folders.getSnapshot().busy,
     reveal: (request) => electrobun.rpc ? electrobun.rpc.request.revealWorkspaceItem(request) : Promise.reject(new Error("RPC unavailable")),
@@ -400,6 +406,10 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         </button>
       </div>
       <WorkspaceTree
+        rootOrder={workspace.rootOrder}
+        canOrder={controller.canSelectFolder}
+        subscribeOrderAvailability={controller.subscribe}
+        onOrderActions={setOrderActions}
         setHidden={(root, showHidden) =>
           executeCommand({ type: "setRootHidden", args: { root, showHidden } })
         }
@@ -423,6 +433,10 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
           else void controller.openWorkspaceEntry(root, node.handle);
         }}
       />
+      <div className="flex gap-2">
+        <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!orderActions?.canUp()} onClick={() => executeCommand({ type: "moveWorkspaceRootUp", args: {} })}>上移选中根</button>
+        <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!orderActions?.canDown()} onClick={() => executeCommand({ type: "moveWorkspaceRootDown", args: {} })}>下移选中根</button>
+      </div>
       <button
         type="button"
         className="hover:bg-muted focus-visible:outline-ring max-w-full rounded border px-2 py-1 text-left text-xs focus-visible:outline-2 disabled:opacity-50"

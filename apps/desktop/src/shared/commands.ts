@@ -42,6 +42,7 @@ export type Command =
     >
   | GenericCommand<"revealDocument">
   | GenericCommand<"revealWorkspaceItem">
+  | GenericCommand<"openDefaultWorkspaceItem">
   | GenericCommand<"openDefaultDocument">
   | GenericCommand<"openSourceSearch">
   | GenericCommand<"closeSourceSearch">
@@ -250,6 +251,7 @@ export const COMMAND_META: Record<
   selectDocument: { target: "webview" },
   revealDocument: { target: "webview" },
   revealWorkspaceItem: { target: "webview" },
+  openDefaultWorkspaceItem: { target: "webview" },
   openDefaultDocument: { target: "webview" },
   selectFolder: { target: "webview" },
   setRootHidden: { target: "webview", palette: false },
@@ -315,6 +317,7 @@ export const PRODUCT_COMMANDS: Partial<
   selectFolder: { label: "加入文件夹" },
   revealDocument: { label: "在 Finder 中显示当前文档" },
   revealWorkspaceItem: { label: "在 Finder 中显示选中项" },
+  openDefaultWorkspaceItem: { label: "用默认应用打开选中文件" },
   openDefaultDocument: { label: "用系统默认应用打开" },
   setRootHidden: { label: "显示隐藏文件" },
   reloadDocument: { label: "重新读取" },

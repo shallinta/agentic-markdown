@@ -365,10 +365,11 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const [reveal] = useState(() => createWorkspaceReveal({
     available: () => controller.canSelectFolder() && !workspace.folders.getSnapshot().busy,
     reveal: (request) => electrobun.rpc ? electrobun.rpc.request.revealWorkspaceItem(request) : Promise.reject(new Error("RPC unavailable")),
+    openDefault: (request) => electrobun.rpc ? electrobun.rpc.request.openDefaultWorkspaceItem(request) : Promise.reject(new Error("RPC unavailable")),
     cancel: (request) => electrobun.rpc ? electrobun.rpc.request.cancelDocument(request) : Promise.reject(new Error("RPC unavailable")),
   }));
   const revealState = useSyncExternalStore(reveal.subscribe, reveal.getSnapshot);
-  const notifyReveal = useRegisterCommands({ revealWorkspaceItem: () => reveal.run() }, true, { revealWorkspaceItem: reveal.canRun });
+  const notifyReveal = useRegisterCommands({ revealWorkspaceItem: () => reveal.run(), openDefaultWorkspaceItem: () => reveal.runDefault() }, true, { revealWorkspaceItem: reveal.canRun, openDefaultWorkspaceItem: reveal.canRunDefault });
   useLayoutEffect(() => { reveal.attach(); return () => reveal.dispose(); }, [reveal]);
   useLayoutEffect(() => {
     const update = () => { reveal.checkAvailability(); notifyReveal(); };
@@ -428,6 +429,13 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         disabled={!reveal.canRun()}
         onClick={() => executeCommand({ type: "revealWorkspaceItem", args: {} })}
       >在 Finder 中显示选中项</button>
+      <button
+        type="button"
+        className="hover:bg-muted focus-visible:outline-ring max-w-full rounded border px-2 py-1 text-left text-xs focus-visible:outline-2 disabled:opacity-50"
+        disabled={!reveal.canRunDefault()}
+        onClick={() => executeCommand({ type: "openDefaultWorkspaceItem", args: {} })}
+      >用默认应用打开选中文件</button>
+      <p className="text-muted-foreground text-xs">打开磁盘版本，不自动保存当前修改</p>
       {revealState.error && <p role="alert" className="text-destructive text-xs">{revealState.error}</p>}
     </nav>
   );

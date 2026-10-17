@@ -9,6 +9,7 @@ import {
   WORKSPACE_PAGE_SIZE,
   validWorkspaceOpen,
   validWorkspaceReveal,
+  validWorkspaceDefaultOpen,
   validWorkspaceRequest,
   type WorkspaceNode,
   type WorkspaceResponse,
@@ -465,6 +466,163 @@ export function createWorkspaceService({
     wake();
     return accepted;
   }
+  async function dispatchWorkspacePath(
+    value: unknown,
+    action: "reveal" | "open-default"
+  ) {
+    const validate =
+      action === "reveal" ? validWorkspaceReveal : validWorkspaceDefaultOpen;
+    const envelope = {
+      protocolVersion: 1 as const,
+      requestId: validate(value) ? value.requestId : "",
+    };
+    if (!validate(value))
+      return {
+        ...envelope,
+        ok: false as const,
+        error: "INVALID_REQUEST" as const,
+      };
+    if (disposed)
+      return {
+        ...envelope,
+        ok: false as const,
+        error: "INVALID_HANDLE" as const,
+      };
+    const target = value.target;
+    if (target.type === "document")
+      return documents[action === "reveal" ? "reveal" : "openDefault"]({
+        ...envelope,
+        handle: target.handle,
+      });
+    const root = roots.find((item) => item.meta.handle === target.root);
+    const node = target.entry
+      ? root?.nodes.find((item) => item.handle === target.entry)
+      : undefined;
+    if (!root || !live(root, target.generation) || (target.entry && !node))
+      return {
+        ...envelope,
+        ok: false as const,
+        error: "INVALID_HANDLE" as const,
+      };
+    if (action === "open-default" && node?.kind !== "file")
+      return {
+        ...envelope,
+        ok: false as const,
+        error: "INVALID_HANDLE" as const,
+      };
+    const files = root.files,
+      byPath = root.byPath;
+    let witness: { handle: string; file: ScanFile } | undefined;
+    const path = node ? node.displayPath : root.authorization.path;
+    const current = () => {
+      if (
+        !live(root, target.generation) ||
+        root.files !== files ||
+        root.byPath !== byPath ||
+        (node && byPath.get(path) !== node) ||
+        (witness && files.get(witness.handle) !== witness.file) ||
+        !visiblePath(root.authorization.path, path, root.meta.showHidden)
+      )
+        throw new DocumentPathError("INVALID_HANDLE");
+    };
+    return documents[
+      action === "reveal" ? "revealAuthorized" : "openDefaultAuthorized"
+    ](
+      envelope,
+      async (check) => {
+        check();
+        if (node?.kind === "file") {
+          const file = files.get(node.handle);
+          if (file?.path !== path)
+            throw new DocumentPathError("INVALID_HANDLE");
+          witness = { handle: node.handle, file };
+          const authorized = await authorizeEntry(
+            root.authorization,
+            file.path,
+            file.fingerprint,
+            file.chain,
+            root.meta.showHidden,
+            check
+          );
+          try {
+            check();
+            return {
+              path: authorized.path,
+              close: () => authorized.file.close(),
+            };
+          } catch (error) {
+            await authorized.file.close();
+            throw error;
+          }
+        }
+        let chain: ScanFile["chain"] = [];
+        if (node) {
+          let found = false,
+            count = 0;
+          for (const [handle, file] of files) {
+            const index = file.chain.findIndex(
+              (directory) => directory.path === path
+            );
+            if (index >= 0) {
+              const prefix = file.chain.slice(0, index + 1);
+              let parent = root.authorization.path;
+              const complete =
+                prefix.length <= 256 &&
+                prefix.every((directory) => {
+                  const valid =
+                    dirname(directory.path) === parent &&
+                    containsPath(root.authorization.path, directory.path);
+                  parent = directory.path;
+                  return valid;
+                });
+              if (complete) {
+                chain = prefix;
+                witness = { handle, file };
+                found = true;
+                break;
+              }
+            }
+            if (++count % 64 === 0) {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              check();
+            }
+          }
+          if (!found) throw new DocumentPathError("INVALID_HANDLE");
+        }
+        check();
+        const entry = directoryNative
+          ? null
+          : resolveSaveWorkerEntry(join(import.meta.dir, "../documents"));
+        const native =
+          directoryNative ??
+          (entry &&
+            (createRequire(import.meta.url)(
+              join(dirname(entry), "save-primitives.node")
+            ) as DirectoryNative));
+        if (!native) throw new DocumentPathError("READ_FAILED");
+        const fd = openDirectoryDescriptor(
+          root.authorization,
+          { path, chain },
+          native
+        );
+        try {
+          check();
+          return {
+            path,
+            close: () => {
+              closeSync(fd);
+              return Promise.resolve();
+            },
+          };
+        } catch (error) {
+          closeSync(fd);
+          throw error;
+        }
+      },
+      current
+    );
+  }
+
   return {
     reconciliation: {
       prepare: (handle) => reconciliation.prepare(handle),
@@ -699,133 +857,8 @@ export function createWorkspaceService({
       restart(root);
       return state(value.requestId);
     },
-    async reveal(value) {
-      const envelope = {
-        protocolVersion: 1 as const,
-        requestId: validWorkspaceReveal(value) ? value.requestId : "",
-      };
-      if (!validWorkspaceReveal(value))
-        return { ...envelope, ok: false, error: "INVALID_REQUEST" };
-      if (disposed) return { ...envelope, ok: false, error: "INVALID_HANDLE" };
-      const target = value.target;
-      if (target.type === "document")
-        return documents.reveal({ ...envelope, handle: target.handle });
-      const root = roots.find((item) => item.meta.handle === target.root);
-      const node = target.entry
-        ? root?.nodes.find((item) => item.handle === target.entry)
-        : undefined;
-      if (!root || !live(root, target.generation) || (target.entry && !node))
-        return { ...envelope, ok: false, error: "INVALID_HANDLE" };
-      const files = root.files,
-        byPath = root.byPath;
-      let witness: { handle: string; file: ScanFile } | undefined;
-      const path = node ? node.displayPath : root.authorization.path;
-      const current = () => {
-        if (
-          !live(root, target.generation) ||
-          root.files !== files ||
-          root.byPath !== byPath ||
-          (node && byPath.get(path) !== node) ||
-          (witness && files.get(witness.handle) !== witness.file) ||
-          !visiblePath(root.authorization.path, path, root.meta.showHidden)
-        )
-          throw new DocumentPathError("INVALID_HANDLE");
-      };
-      return documents.revealAuthorized(
-        envelope,
-        async (check) => {
-          check();
-          if (node?.kind === "file") {
-            const file = files.get(node.handle);
-            if (file?.path !== path)
-              throw new DocumentPathError("INVALID_HANDLE");
-            witness = { handle: node.handle, file };
-            const authorized = await authorizeEntry(
-              root.authorization,
-              file.path,
-              file.fingerprint,
-              file.chain,
-              root.meta.showHidden,
-              check
-            );
-            try {
-              check();
-              return {
-                path: authorized.path,
-                close: () => authorized.file.close(),
-              };
-            } catch (error) {
-              await authorized.file.close();
-              throw error;
-            }
-          }
-          let chain: ScanFile["chain"] = [];
-          if (node) {
-            let found = false,
-              count = 0;
-            for (const [handle, file] of files) {
-              const index = file.chain.findIndex(
-                (directory) => directory.path === path
-              );
-              if (index >= 0) {
-                const prefix = file.chain.slice(0, index + 1);
-                let parent = root.authorization.path;
-                const complete =
-                  prefix.length <= 256 &&
-                  prefix.every((directory) => {
-                    const valid =
-                      dirname(directory.path) === parent &&
-                      containsPath(root.authorization.path, directory.path);
-                    parent = directory.path;
-                    return valid;
-                  });
-                if (complete) {
-                  chain = prefix;
-                  witness = { handle, file };
-                  found = true;
-                  break;
-                }
-              }
-              if (++count % 64 === 0) {
-                await new Promise((resolve) => setTimeout(resolve, 0));
-                check();
-              }
-            }
-            if (!found) throw new DocumentPathError("INVALID_HANDLE");
-          }
-          check();
-          const entry = directoryNative
-            ? null
-            : resolveSaveWorkerEntry(join(import.meta.dir, "../documents"));
-          const native =
-            directoryNative ??
-            (entry &&
-              (createRequire(import.meta.url)(
-                join(dirname(entry), "save-primitives.node")
-              ) as DirectoryNative));
-          if (!native) throw new DocumentPathError("READ_FAILED");
-          const fd = openDirectoryDescriptor(
-            root.authorization,
-            { path, chain },
-            native
-          );
-          try {
-            check();
-            return {
-              path,
-              close: () => {
-                closeSync(fd);
-                return Promise.resolve();
-              },
-            };
-          } catch (error) {
-            closeSync(fd);
-            throw error;
-          }
-        },
-        current
-      );
-    },
+    reveal: (value) => dispatchWorkspacePath(value, "reveal"),
+    openDefault: (value) => dispatchWorkspacePath(value, "open-default"),
     async open(value) {
       const envelope = {
         protocolVersion: 1 as const,

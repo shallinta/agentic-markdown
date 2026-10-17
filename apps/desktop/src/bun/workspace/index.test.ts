@@ -56,6 +56,10 @@ beforeEach(async () => {
     revealPath: (path) => {
       revealed.push(path);
     },
+    openDefaultPath: (path) => {
+      revealed.push(path);
+      return true;
+    },
   });
   workspace = createWorkspaceService({
     pickDirectory: () => Promise.resolve(selected),
@@ -188,76 +192,130 @@ test("reveal rejects replaced directory and revoked root without dispatch", asyn
   ).toBe(false);
   expect(revealed).toEqual([]);
 });
-test("pending workspace reveal cannot cross hidden rescan clear or disposal", async () => {
-  await writeFile(join(directory, "a.md"), "body");
-  const original = documents.revealAuthorized.bind(documents);
-  for (const mode of ["hidden", "rescan", "clear", "dispose"] as const) {
-    await workspace.dispose();
-    workspace = createWorkspaceService({
-      pickDirectory: () => Promise.resolve(directory),
-      documents,
-    });
-    await workspace.request(request("select"));
-    const root = (await settle()).roots[0];
-    const file = (await nodes(root)).find((node) => node.kind === "file")!;
-    let entered!: () => void, resume!: () => void;
-    const ready = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      resume = resolve;
-    });
-    let closed = 0;
-    documents.revealAuthorized = (envelope, authorize, current) =>
-      original(
-        envelope,
-        async (check) => {
-          const resource = await authorize(check);
-          entered();
-          await gate;
-          return {
-            path: resource.path,
-            close: async () => {
-              await resource.close();
-              closed++;
-            },
-          };
-        },
-        current
-      );
-    const pending = workspace.reveal({
+test("default workspace open only accepts files and never grants or opens documents", async () => {
+  await mkdir(join(directory, "nested"));
+  await writeFile(join(directory, "nested", "a.md"), "disk");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0],
+    entries = await nodes(root);
+  const directoryNode = entries.find((node) => node.kind === "directory")!;
+  const file = entries.find((node) => node.kind === "file")!;
+  const call = (target: unknown) =>
+    workspace.openDefault({
       protocolVersion: 1,
-      requestId: `pending-${mode}`,
-      target: {
-        type: "workspace",
-        root: root.handle,
-        generation: root.generation,
-        entry: file.handle,
-      },
+      requestId: `default-${++serial}`,
+      target,
     });
-    await ready;
-    try {
-      if (mode === "dispose") await workspace.dispose();
-      else
-        expect(
-          (
-            await workspace.request(
-              request(mode, {
-                ...(mode === "clear" ? {} : { root: root.handle }),
-                ...(mode === "hidden" ? { showHidden: true } : {}),
-              })
-            )
-          ).ok
-        ).toBe(true);
-    } finally {
-      resume();
-    }
-    expect((await pending).ok).toBe(false);
-    expect(closed).toBe(1);
-  }
-  documents.revealAuthorized = original;
+  const target = {
+    type: "workspace",
+    root: root.handle,
+    generation: root.generation,
+  };
+  expect((await call(target)).ok).toBe(false);
+  expect((await call({ ...target, entry: directoryNode.handle })).ok).toBe(
+    false
+  );
+  expect(
+    (await call({ ...target, entry: file.handle, path: file.displayPath })).ok
+  ).toBe(false);
+  expect(
+    (
+      await call({
+        ...target,
+        entry: file.handle,
+        generation: root.generation + 1,
+      })
+    ).ok
+  ).toBe(false);
   expect(revealed).toEqual([]);
+  expect((await call({ ...target, entry: file.handle })).ok).toBe(true);
+  expect(revealed).toEqual([file.displayPath]);
+  expect(documents.locations()).toEqual([]);
+  selected = file.displayPath;
+  const opened = await documents.select({
+    protocolVersion: 1,
+    requestId: "standalone",
+  });
+  if (!opened.ok || !opened.snapshot) throw Error("fixture");
+  expect(
+    (await call({ type: "document", handle: opened.snapshot.handle })).ok
+  ).toBe(true);
+  expect(revealed).toEqual([file.displayPath, file.displayPath]);
+  expect(await readFile(file.displayPath, "utf8")).toBe("disk");
 });
+for (const action of ["reveal", "openDefault"] as const)
+  test(`${action} pending workspace cannot cross hidden rescan clear or disposal`, async () => {
+    await writeFile(join(directory, "a.md"), "body");
+    const broker =
+      action === "reveal" ? "revealAuthorized" : "openDefaultAuthorized";
+    const original = documents[broker].bind(documents);
+    for (const mode of ["hidden", "rescan", "clear", "dispose"] as const) {
+      await workspace.dispose();
+      workspace = createWorkspaceService({
+        pickDirectory: () => Promise.resolve(directory),
+        documents,
+      });
+      await workspace.request(request("select"));
+      const root = (await settle()).roots[0];
+      const file = (await nodes(root)).find((node) => node.kind === "file")!;
+      let entered!: () => void, resume!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      let closed = 0;
+      documents[broker] = (envelope, authorize, current) =>
+        original(
+          envelope,
+          async (check) => {
+            const resource = await authorize(check);
+            entered();
+            await gate;
+            return {
+              path: resource.path,
+              close: async () => {
+                await resource.close();
+                closed++;
+              },
+            };
+          },
+          current
+        );
+      const pending = workspace[action]({
+        protocolVersion: 1,
+        requestId: `pending-${mode}`,
+        target: {
+          type: "workspace",
+          root: root.handle,
+          generation: root.generation,
+          entry: file.handle,
+        },
+      });
+      await ready;
+      try {
+        if (mode === "dispose") await workspace.dispose();
+        else
+          expect(
+            (
+              await workspace.request(
+                request(mode, {
+                  ...(mode === "clear" ? {} : { root: root.handle }),
+                  ...(mode === "hidden" ? { showHidden: true } : {}),
+                })
+              )
+            ).ok
+          ).toBe(true);
+      } finally {
+        resume();
+      }
+      expect((await pending).ok).toBe(false);
+      expect(closed).toBe(1);
+    }
+    documents[broker] = original;
+    expect(revealed).toEqual([]);
+  });
 test("automatic directory changes publish stable metadata without manual rescan and stop after dispose", async () => {
   await mkdir(join(directory, "empty"));
   await writeFile(join(directory, "keep.md"), "keep");

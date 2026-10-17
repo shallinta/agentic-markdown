@@ -65,3 +65,57 @@ test("uniform selected-item command uses no arguments or implicit path", () => {
   expect(isCommand({ type: "revealWorkspaceItem", args: { path: "/tmp" } })).toBe(false);
   expect(PRODUCT_COMMANDS.revealWorkspaceItem?.label).toBe("在 Finder 中显示选中项");
 });
+
+test("default open is file-only and shares the Finder in-flight slot", async () => {
+  const calls: string[] = [];
+  let resolve: (value: unknown) => void = () => undefined;
+  const owner = createWorkspaceReveal({
+    available: () => true,
+    reveal: () => { calls.push("reveal"); return new Promise((r) => { resolve = r; }); },
+    openDefault: (request) => { calls.push("default"); expect(Object.keys(request.target).sort()).toEqual(["entry", "generation", "root", "type"]); return new Promise((r) => { resolve = r; }); },
+    cancel: () => Promise.resolve(), nextId: () => "action",
+  });
+  owner.setTarget(target); await owner.runDefault(); expect(calls).toEqual([]);
+  owner.setTarget(target, true);
+  const opened = owner.runDefault(); await owner.run(); await owner.runDefault();
+  expect(calls).toEqual(["default"]); expect(owner.canRun()).toBe(false);
+  resolve({ protocolVersion: 1, requestId: "action", ok: true, snapshot: null }); await opened;
+  expect(owner.getSnapshot()).toEqual({ busy: false, error: "" });
+  const revealed = owner.run(); await owner.runDefault(); expect(calls).toEqual(["default", "reveal"]);
+  resolve({ protocolVersion: 1, requestId: "action", ok: true, snapshot: null }); await revealed;
+});
+
+test("file eligibility loss with identical opaque target cancels default open and suppresses stale feedback", async () => {
+  const cancelled: string[] = [];
+  let resolve: (value: unknown) => void = () => undefined;
+  const owner = createWorkspaceReveal({
+    available: () => true, nextId: () => "default-request",
+    reveal: () => Promise.resolve(),
+    openDefault: () => new Promise((r) => { resolve = r; }),
+    cancel: (r) => { cancelled.push(r.requestId); return Promise.resolve(); },
+  });
+  owner.setTarget(target, true); const done = owner.runDefault();
+  owner.setTarget(target, false);
+  expect(cancelled).toEqual(["default-request"]); expect(owner.canRunDefault()).toBe(false); expect(owner.canRun()).toBe(true);
+  resolve({ protocolVersion: 1, requestId: "default-request", ok: false, error: "READ_FAILED" }); await done;
+  expect(owner.getSnapshot().error).toBe("");
+});
+
+test("default action errors remain specific and retry can be accepted without success claims", async () => {
+  let attempt = 0;
+  const owner = createWorkspaceReveal({
+    available: () => true,
+    reveal: () => Promise.resolve(), cancel: () => Promise.resolve(),
+    openDefault: (r) => {
+      attempt++;
+      if (attempt === 1) return Promise.reject(new Error("private system path"));
+      return Promise.resolve({ protocolVersion: 1, requestId: r.requestId, ok: attempt > 2, ...(attempt > 2 ? { snapshot: null } : { error: "READ_FAILED" }) });
+    },
+  });
+  owner.setTarget({ type: "document", handle: "standalone" }, true);
+  await owner.runDefault(); expect(owner.getSnapshot().error).toBe("默认应用打开请求失败，请重试。");
+  await owner.runDefault(); expect(owner.getSnapshot().error).toContain("无法用默认应用");
+  await owner.runDefault(); expect(owner.getSnapshot().error).toBe("");
+  expect(isCommand({ type: "openDefaultWorkspaceItem", args: {} })).toBe(true);
+  expect(isCommand({ type: "openDefaultWorkspaceItem", args: { action: "reveal" } })).toBe(false);
+});

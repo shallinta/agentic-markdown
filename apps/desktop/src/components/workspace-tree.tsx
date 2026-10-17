@@ -41,7 +41,7 @@ export function WorkspaceTree({
   open: (root: string, node: WorkspaceNode) => void;
   openStandalone: (entry: DocumentEntry) => void;
   setHidden: (root: string, showHidden: boolean) => void;
-  onRevealSelection?: (target: WorkspaceRevealTarget | null) => void;
+  onRevealSelection?: (target: WorkspaceRevealTarget | null, isFile: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(new Set());
@@ -70,9 +70,10 @@ export function WorkspaceTree({
   const tabStop =
     available.find((item) => item.key === selected)?.key ?? available[0]?.key;
   useLayoutEffect(() => {
-    onRevealSelection?.(workspaceRevealTarget(visible.find((item) => item.key === selected)));
+    const item = visible.find((item) => item.key === selected);
+    onRevealSelection?.(workspaceRevealTarget(item), !!item && !item.directory);
   }, [selected, visible, onRevealSelection]);
-  useLayoutEffect(() => () => onRevealSelection?.(null), [onRevealSelection]);
+  useLayoutEffect(() => () => onRevealSelection?.(null, false), [onRevealSelection]);
   const container = useRef<HTMLDivElement>(null);
   const buttons = useRef(new Map<string, HTMLLIElement>());
   const focused = useRef<{ item: TreeItem; element: HTMLLIElement } | null>(

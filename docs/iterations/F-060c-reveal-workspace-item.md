@@ -1,13 +1,15 @@
 # F-060c：在 Finder 中显示文件树选中项
 
-> 状态：alpha169 非离线有限片受托代验通过；独立最终复核通过，待提交
+> 状态：alpha169 非离线有限片受托代验通过；已提交并推送 `85b3ba67025df93c6102aca31f9e3107fedb4fde`
 
 <!-- obligations: OBL-060 -->
 <!-- deferred-obligations: none -->
 
 ## 当前状态（2026-10-17）
 
-独立Spec最终0必要有限验收阻断，另核PID消失、三SHA及权限和包内日志；Standards无新增代码阻断，要求修正手册单击预览旧措辞并同步交付状态，已落实。主线批准本片非离线受托Agent代验通过，非用户亲验；不关闭完整F-060/OBL-060或已列未测边界，不称全量测试绿。Git尚待实际执行。
+Git提交钩子前后tree均`fb5521d6d6bc3c19c77ebec9ade60c024dca9a6a`，无额外源码改写。首次SSH22连接关闭；HTTPS远端读取成功但push无可用Username；SSH443首次未知主机标识验证失败，随后仅该命令使用既有github.com的HostKeyAlias并保持StrictHostKeyChecking=yes，push exit0；未改持久Git/系统网络或跳过主机校验。远端收据随后核对。下方Git待执行为历史。
+
+独立Spec最终0必要有限验收阻断，另核PID消失、三SHA及权限和包内日志；Standards无新增代码阻断，要求修正手册单击预览旧措辞并同步交付状态，已落实。主线批准本片非离线受托Agent代验通过，非用户亲验；不关闭完整F-060/OBL-060或已列未测边界，不称全量测试绿。Git已执行且HTTPS ls-remote远端main与origin/main均核为上述85b3ba6完整SHA。
 
 alpha169 unsigned 构建 exit0，payload hash `1ka88jt8lsqh0`；直接解包至 `/tmp/agentic-direct169.4hh99w`，使用独立测试数据区，没有运行安装完成窗口。包内Bun运行仓库测试1533通过/1失败/36612断言/209文件，46.21秒exit1；唯一相同long-whitespace用例17.850秒触发5秒时限，日志`/tmp/f060c-alpha169-bundled-tests.log`。与源码失败均保留FINAL-ISSUE-002，不称全量绿或修复。
 

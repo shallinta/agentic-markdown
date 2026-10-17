@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## F-060d alpha170 非离线有限片通过（2026-10-17）
+
+两轴最终0必要阻断，主线批准树选中文件默认应用打开受托代验，非用户亲验。真实Xcode三目标/磁盘版与dirty隔离/undo/只读/键盘、目录禁用、浅深、Finder回归及正常CmdQ通过；session45502 exit0、Bun12723消失、三SHA原样、readonly644。hash2jlf1dbdgs58m，包内仓库1542/0/36665；源码1541/1同长空白超时保留FINAL002不称修复。Git待执行，完整父/自然IME/阅读子窗/冻结/专项/F047e/offline保持。
+
+## F-060d alpha170 构建获准（2026-10-17）
+
+文件树默认应用入口已实现，主线已读代码，两轴各59/350通过；补默认动作SDK计数桩后主线/Standards各14/81。最终0必要构建阻断，type/full lint/docs/lock通过。源码全量1541/1/36665、209文件，唯一原long-whitespace超时18.975s仍FINAL002，非全绿。主线升alpha170批准unsigned构建/真实验收，尚未验收或Git；alpha169/85b3ba6仍最新已验已推，其他既定边界保持。
+
+## F-060d 文件默认应用入口有限实施获批（2026-10-17）
+
+主线全文读唯一F060d与公开SDK/broker/controller，独立两轴0必要实施阻断，批准树选中文件默认应用入口及实现后测试。根/目录服务端拒绝、与Finder共槽、可信授权与保存代数、dirty仅磁盘版不保存保持。尚未代码验收/新版本/build，下一alpha170由主线后续管理；alpha169/85b3ba6仍最新已验已推。F047e及其余冻结/专项/最终离线边界不变。
+
+## F-060c Git 收据与下一片（2026-10-17）
+
+alpha169已提交推送`85b3ba67025df93c6102aca31f9e3107fedb4fde`，HTTPS ls-remote与origin/main均同SHA；钩子前后tree一致。SSH22关闭、HTTPSpush缺凭据、SSH443首次主机标识失败均保留唯一记录；最终仅命令级443+既有github.com HostKeyAlias严格校验推送成功，未改网络或持久配置。下一F060d树选中文件默认应用打开仅最小方案，主线已全文读，独立路线复核中，尚未实施/构建。F047e/最终问题/完整父/阅读子窗/冻结/专项/offline保持。
+
 ## F-060c alpha169 有限片通过（2026-10-17）
 
 文件树选中项Finder定位完成真实WK/Finder非离线受托代验，非用户亲验；Spec最终0必要阻断，Standards手册单击措辞纠正已落实。根/目录/未打开/独立/只读、键盘、dirty与undo、浅深及正常CmdQ通过；session15757 exit0、Bun10552消失、三SHA原样、readonly644。hash1ka88jt8lsqh0；源码及包内仓库各1533/1/36612，唯一既有long-whitespace超时保留FINAL002，不能冒全量绿或修复。Git待执行；F047e兼容红、完整父/自然IME/阅读子窗/冻结/专项/offline保持。下方旧用户dirty等待为历史，用户已自行退出后使用独立测试数据区。

@@ -72,6 +72,11 @@ export interface TrustedDocumentService extends DocumentService {
   ): Promise<DocumentResponse>;
 
   reveal(request: unknown): Promise<DocumentResponse>;
+  openDefaultAuthorized(
+    request: unknown,
+    authorize: (check: () => void) => Promise<{ path: string; close(): Promise<void> }>,
+    current: () => void
+  ): Promise<DocumentResponse>;
   openDefault(request: unknown): Promise<DocumentResponse>;
   select(request: unknown, prepareStartingFolder?: (check: () => void) => Promise<string | undefined>): Promise<DocumentResponse>;
   acceptRefreshCandidate(request: unknown): Promise<RefreshAcceptanceResult>;
@@ -610,6 +615,8 @@ export function createDocumentService({
   return {
     revealAuthorized: (request, authorize, current) =>
       dispatchAuthorizedPath(request, "reveal", authorize, current),
+    openDefaultAuthorized: (request, authorize, current) =>
+      dispatchAuthorizedPath(request, "open-default", authorize, current),
     reveal: (request) => dispatchDocumentPath(request, "reveal"),
     openDefault: (request) => dispatchDocumentPath(request, "open-default"),
     async acceptRefreshCandidate(request) {

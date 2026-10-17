@@ -59,6 +59,15 @@ export type WorkspaceRevealTarget =
 export interface WorkspaceRevealRequest extends DocumentRequest {
   target: WorkspaceRevealTarget;
 }
+export type WorkspaceDefaultOpenRequest = WorkspaceRevealRequest;
+export function validWorkspaceDefaultOpen(
+  value: unknown
+): value is WorkspaceDefaultOpenRequest {
+  return (
+    validWorkspaceReveal(value) &&
+    (value.target.type === "document" || value.target.entry !== undefined)
+  );
+}
 export function validWorkspaceReveal(
   value: unknown
 ): value is WorkspaceRevealRequest {
@@ -121,6 +130,7 @@ export interface WorkspaceService {
   request(value: unknown): Promise<WorkspaceResponse>;
   open(value: unknown): Promise<DocumentResponse>;
   reveal(value: unknown): Promise<DocumentResponse>;
+  openDefault(value: unknown): Promise<DocumentResponse>;
   dispose(): Promise<void>;
 }
 export const WORKSPACE_PAGE_SIZE = 128;

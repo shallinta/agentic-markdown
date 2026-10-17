@@ -154,6 +154,9 @@ export function createMainWindowRPC({
                 ok: false as const,
                 error: "INVALID_HANDLE" as const,
               }),
+        openDefaultWorkspaceItem: (request) => workspace
+          ? workspace.openDefault(request)
+          : Promise.resolve({ protocolVersion: 1 as const, requestId: request.requestId, ok: false as const, error: "INVALID_HANDLE" as const }),
         perfLabStatus: () => ({ enabled, autorun }),
         perfLabRequest: async (request) => {
           if (!enabled) return { ok: false, error: "DISABLED" as const };

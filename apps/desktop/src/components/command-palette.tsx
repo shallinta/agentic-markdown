@@ -93,6 +93,7 @@ export function CommandPalette({
       type === "revealWorkspaceItem" ||
       type === "moveWorkspaceRootUp" ||
       type === "moveWorkspaceRootDown" ||
+      type === "removeStandaloneRoot" ||
       type === "openDefaultWorkspaceItem" ||
       type === "openDefaultDocument" ||
       type === "reloadDocument" ||

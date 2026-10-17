@@ -1,6 +1,6 @@
 # F-061a：窗口顶层根展示排序
 
-> 状态：alpha173 非离线有限片通过（用户两项实体反馈＋Agent补验），Git待执行
+> 状态：alpha173 非离线有限片通过（用户两项实体反馈＋Agent补验），已提交推送51be4d8
 
 <!-- obligations: none -->
 <!-- deferred-obligations: none -->
@@ -99,3 +99,5 @@ alpha172构建exit0/hash `1shqq94p6encq`，直接解包`/tmp/agentic-direct172.b
 有限交付候选由alpha172用户实体拖动两项、alpha171/173上述实际路径及模型/handler定向证据共同支撑；不是全部用户亲验或完整输入设备矩阵。清理包未重复实体拖动，真实外来drop/根中部与子项拒绝/控件拖动/Escape中途取消/浅深插入线，以及自然IME和精准竞态仍缺实际证据；单元测试不替代这些路径，留后续可用输入工具或人工集中回归。完整F061移除/跨重启恢复、其他既定边界保持开放。待最终两轴范围复核及主线决定，不预写Git。
 
 最终Spec/Standards均0必要有限交付阻断，独立核全量日志、进程退出和三SHA；主线批准上述有限组合证据范围通过。未测输入矩阵已在deferred登记为开放，非全部功能或全部用户亲验。Git尚待实际执行。
+
+Git收据：提交`51be4d8f7ca981666cf3827c1741565f02146ffd`，钩子前后tree均`557913af8c656d818fb11e46f7db07f8258d3a44`；严格host校验的命令级SSH443 push成功，HTTPS ls-remote及origin/main均同SHA，未改持久网络/Git配置。

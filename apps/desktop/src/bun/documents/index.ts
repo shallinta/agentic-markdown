@@ -62,6 +62,8 @@ export interface DocumentScope {
   release?(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  inspectStandaloneRemoval(handle: string, eligible: (path: string) => boolean): object | null;
+  commitStandaloneRemoval(handle: string, identity: object, eligible: (path: string) => boolean, committed: () => void): boolean;
   /** Bun-only authority callback; never a renderer-supplied path. */
   revealAuthorized(
     request: unknown,
@@ -613,6 +615,22 @@ export function createDocumentService({
     );
   }
   return {
+    inspectStandaloneRemoval(handle, eligible) {
+      const grant = grants.get(handle);
+      return !disposed && !saving && !writeBarrier && !selecting && !running && !pending && !acceptance.busy() && grant?.explicitStandalone === true && !grant.scope && eligible(grant.path) ? grant : null;
+    },
+    commitStandaloneRemoval(handle, identity, eligible, committed) {
+      const grant = grants.get(handle);
+      if (disposed || saving || writeBarrier || selecting || running || pending || acceptance.busy() || grant !== identity || grant?.explicitStandalone !== true || grant.scope || !eligible(grant.path)) return false;
+      // Synchronous authority revocation: no await between final binding check and removal.
+      grants.delete(handle);
+      committed();
+      if (revealing?.handle === handle) cancel(revealing);
+      releaseObservation(handle);
+      mirrors.release(handle);
+      unwatch(handle);
+      return true;
+    },
     revealAuthorized: (request, authorize, current) =>
       dispatchAuthorizedPath(request, "reveal", authorize, current),
     openDefaultAuthorized: (request, authorize, current) =>

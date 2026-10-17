@@ -24,6 +24,7 @@ import type {
 } from "../documents";
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 import { DocumentPathError } from "../documents/path-authorization";
+import { createStandaloneRemoval } from "../documents/standalone-removal";
 
 import {
   authorizeRoot,
@@ -623,7 +624,13 @@ export function createWorkspaceService({
     );
   }
 
+  const standaloneEligible = (path: string) => !disposed && !selecting && !roots.some(root => root.live && root.byPath.get(path)?.kind === "file");
+  const removeStandalone = createStandaloneRemoval(
+    handle => documents.inspectStandaloneRemoval(handle, standaloneEligible),
+    (handle, identity, committed) => documents.commitStandaloneRemoval(handle, identity, standaloneEligible, () => { assetOwners.delete(handle); committed(); })
+  );
   return {
+    removeStandalone,
     reconciliation: {
       prepare: (handle) => reconciliation.prepare(handle),
       get: (token) => reconciliation.get(token),

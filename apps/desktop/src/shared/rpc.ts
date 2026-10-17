@@ -23,6 +23,7 @@ import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      removeStandalone: { params: import("./standalone-removal").RemovalRequest; response: import("./standalone-removal").RemovalResponse };
       revealDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       openDefaultDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       recentFiles: {

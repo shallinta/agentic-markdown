@@ -44,6 +44,7 @@ export type Command =
   | GenericCommand<"revealWorkspaceItem">
   | GenericCommand<"moveWorkspaceRootUp">
   | GenericCommand<"moveWorkspaceRootDown">
+  | GenericCommand<"removeStandaloneRoot">
   | GenericCommand<"openDefaultWorkspaceItem">
   | GenericCommand<"openDefaultDocument">
   | GenericCommand<"openSourceSearch">
@@ -255,6 +256,7 @@ export const COMMAND_META: Record<
   revealWorkspaceItem: { target: "webview" },
   moveWorkspaceRootUp: { target: "webview" },
   moveWorkspaceRootDown: { target: "webview" },
+  removeStandaloneRoot: { target: "webview" },
   openDefaultWorkspaceItem: { target: "webview" },
   openDefaultDocument: { target: "webview" },
   selectFolder: { target: "webview" },
@@ -323,6 +325,7 @@ export const PRODUCT_COMMANDS: Partial<
   revealWorkspaceItem: { label: "在 Finder 中显示选中项" },
   moveWorkspaceRootUp: { label: "上移选中根" },
   moveWorkspaceRootDown: { label: "下移选中根" },
+  removeStandaloneRoot: { label: "从窗口移除选中文件" },
   openDefaultWorkspaceItem: { label: "用默认应用打开选中文件" },
   openDefaultDocument: { label: "用系统默认应用打开" },
   setRootHidden: { label: "显示隐藏文件" },

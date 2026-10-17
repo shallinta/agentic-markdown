@@ -4,7 +4,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@agentic-markdown/ui/ui/dialog";
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import CurrentCanonicalWorker from "@/client/current-canonical.worker?worker&inline";
@@ -33,12 +33,14 @@ import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { createFolderWorkspace } from "@/client/workspace";
 import { createWorkspaceReveal } from "@/client/workspace-reveal";
 import { createWorkspaceRootOrder } from "@/client/workspace-root-order";
+import { projectWorkspaceTree } from "@/client/workspace-tree-model";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
 import type { LocalImageRequest } from "@/shared/local-images";
 import { analyzeTextFidelity } from "@/shared/text-fidelity";
+import type { WorkspaceRevealTarget } from "@/shared/workspace";
 
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
@@ -69,6 +71,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     const rpc = electrobun.rpc;
     const unavailable = () => Promise.reject(new Error("RPC unavailable"));
     const transport: DocumentTransport = {
+      removeStandalone: request => rpc ? rpc.request.removeStandalone(request) : unavailable(),
       observeDocument: (request) =>
         rpc
           ? rpc.request.observeDocument(request, { maxRequestTime: 4000 })
@@ -110,6 +113,22 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
+  useLayoutEffect(() => {
+    let previous: { folder: ReturnType<typeof folders.getSnapshot>; entries: ReturnType<typeof controller.getSnapshot>["entries"] } | null = null;
+    let standaloneHandles = new Set<string>();
+    controller.setStandaloneRemovalEligibility(handle => {
+      const latest = folders.getSnapshot();
+      if (latest.busy) return false;
+      const entries = controller.getSnapshot().entries;
+      if (previous?.folder.roots !== latest.roots || previous.folder.nodes !== latest.nodes || previous.folder.coveredHandles !== latest.coveredHandles || previous.entries !== entries) {
+        const model = projectWorkspaceTree(latest.roots, latest.nodes, latest.coveredHandles, entries);
+        standaloneHandles = new Set((model.children.get(null) ?? []).flatMap(key => { const item = model.items.get(key); return item?.kind === "standalone" ? [item.entry.handle] : []; }));
+        previous = { folder: latest, entries };
+      }
+      return standaloneHandles.has(handle);
+    });
+    return () => controller.setStandaloneRemovalEligibility(() => false);
+  }, [controller, folders]);
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -365,6 +384,7 @@ type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
 export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
+  const [removalHandle, setRemovalHandle] = useState<string | null>(null);
   const [orderActions, setOrderActions] = useState<RootOrderActions | null>(null);
   const notifyOrder = useRegisterCommands({ moveWorkspaceRootUp: () => orderActions?.up(), moveWorkspaceRootDown: () => orderActions?.down() }, true, { moveWorkspaceRootUp: () => orderActions?.canUp() ?? false, moveWorkspaceRootDown: () => orderActions?.canDown() ?? false });
   useLayoutEffect(() => { notifyOrder(); }, [orderActions, notifyOrder]);
@@ -375,6 +395,12 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
     cancel: (request) => electrobun.rpc ? electrobun.rpc.request.cancelDocument(request) : Promise.reject(new Error("RPC unavailable")),
   }));
   const revealState = useSyncExternalStore(reveal.subscribe, reveal.getSnapshot);
+  const selectTreeItem = useCallback((target: WorkspaceRevealTarget | null, isFile: boolean) => {
+    reveal.setTarget(target, isFile);
+    setRemovalHandle(target?.type === "document" && isFile ? target.handle : null);
+  }, [reveal]);
+  const notifyRemoval = useRegisterCommands({ removeStandaloneRoot: () => removalHandle ? controller.removeStandalone(removalHandle) : undefined }, true, { removeStandaloneRoot: () => controller.canRemoveStandalone(removalHandle) });
+  useLayoutEffect(() => { notifyRemoval(); }, [state, workspace.folderState, removalHandle, notifyRemoval]);
   const notifyReveal = useRegisterCommands({ revealWorkspaceItem: () => reveal.run(), openDefaultWorkspaceItem: () => reveal.runDefault() }, true, { revealWorkspaceItem: reveal.canRun, openDefaultWorkspaceItem: reveal.canRunDefault });
   useLayoutEffect(() => { reveal.attach(); return () => reveal.dispose(); }, [reveal]);
   useLayoutEffect(() => {
@@ -414,7 +440,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
           executeCommand({ type: "setRootHidden", args: { root, showHidden } })
         }
         folders={workspace.folders}
-        onRevealSelection={reveal.setTarget}
+        onRevealSelection={selectTreeItem}
         state={workspace.folderState}
         entries={state.entries}
         activeHandle={state.snapshot?.handle}
@@ -450,6 +476,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         onClick={() => executeCommand({ type: "openDefaultWorkspaceItem", args: {} })}
       >用默认应用打开选中文件</button>
       <p className="text-muted-foreground text-xs">打开磁盘版本，不自动保存当前修改</p>
+      <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-left text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!controller.canRemoveStandalone(removalHandle)} onClick={() => executeCommand({ type: "removeStandaloneRoot", args: {} })}>从窗口移除选中文件</button>
       {revealState.error && <p role="alert" className="text-destructive text-xs">{revealState.error}</p>}
     </nav>
   );
@@ -700,6 +727,11 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         <p className="text-destructive text-sm" role="alert">
           {state.error}
         </p>
+      )}
+      {state.removalPending && (
+        <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => void controller.retryStandaloneRemoval()}>
+          重试确认移除结果
+        </button>
       )}
       {snapshot && controller.externalMessage(snapshot.documentId) && (
         <p role="status" className="text-muted-foreground text-sm">

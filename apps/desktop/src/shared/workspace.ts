@@ -127,6 +127,7 @@ export type WorkspaceResponse = { protocolVersion: 1; requestId: string } & (
     }
 );
 export interface WorkspaceService {
+  removeStandalone(value: unknown): import("./standalone-removal").RemovalResponse;
   request(value: unknown): Promise<WorkspaceResponse>;
   open(value: unknown): Promise<DocumentResponse>;
   reveal(value: unknown): Promise<DocumentResponse>;

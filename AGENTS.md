@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## F-061b alpha174 有限片通过（2026-10-17）
+
+最终独立Spec/Standards均0必要有限非离线验收阻断，主线批准受托代验通过，非用户亲验。实际clean/dirty取消放弃/另一文档undo/readonly隐藏侧栏命令/闭标签/目录吸收禁用/最近保留/浅深与正常退出完成；session39862 exit0、Bun28455消失、三SHA原样。hash2obx7iez0wn0d，包内仓库1565/0/36886；源码两次仅原FINAL002红仍开放。真实断链未注入，组合证据边界见唯一。Git待执行；完整folder/父/冻结/专项/最终离线保持。
+
+## F-061b alpha174 构建获准（2026-10-17）
+
+主线已读协议/ledger/controller/真实接线与保存交错测试，独立Spec/Standards最终0必要构建阻断；隐藏侧栏恢复入口缺口已迁主文档区并复核7/59。最终源码1564/1/36885、215文件，唯一原long whitespace18.866s仍FINAL002，非全绿；type/full lint/docs/lock/diff通过。按用户允许最终集中该旧项，批准alpha174 unsigned构建及真实WK；尚未验收不得Git，alpha173仍最新已验包。完整父及既定边界保持。
+
+## F-061b 独立根移除有限实施获准（2026-10-17）
+
+主线全文读唯一F061b及protect/release/树投影/资产接口，独立Spec与Standards均0必要实施阻断，批准单独顶层文件移除、单槽收据与独立pending冻结、原关闭保护和实现后测试。后端最终资格须在保存排空后同步检查提交，unknown不冒拒绝或成功；不删除磁盘、不清最近、不实现folder迁移。尚未代码验收；下一alpha174/build/真实WK/Git由主线管理。alpha173/51be4d8仍最新有限已验已推，既定父/冻结/专项/最终问题/offline保持。
+
+## F-061a Git 收据与下一片（2026-10-17）
+
+已提交推送`51be4d8f7ca981666cf3827c1741565f02146ffd`，主线HTTPS ls-remote与origin/main同SHA，提交钩子前后tree557913af8c656d818fb11e46f7db07f8258d3a44一致。alpha173仍最新有限已验包。连续授权下下一F061b先收敛独立顶层文件从窗口移除最小方案；完整folder移除/授权迁移另片，未批准生产/新版本。原输入缺证登记及全部既定边界保持。
+
 ## F-061a alpha173 有限片通过（2026-10-17）
 
 最终Spec/Standards均0必要有限交付阻断，主线批准组合证据范围通过：alpha172用户实体两项、alpha173命令/dirtyundo/焦点/隐藏折叠/吸收/浅深按钮与正常CmdQ。源码1551/36765、包内仓库1551/36766，hash7lppb3bfj5wx；session39098 exit0/Bun25257消失三SHA原样。非全部用户亲验，清理包实体drag及非法落点等缺证已登记deferred、工具失败不推因。Git待执行，完整父/恢复/专项/冻结/最终问题/offline保持。

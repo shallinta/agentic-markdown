@@ -18,6 +18,7 @@ import {
   type SaveDocumentRequest,
 } from "../shared/documents";
 import { validMirror } from "../shared/save-content";
+import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
 import { isTextFidelity } from "../shared/text-fidelity";
 import type { WorkspaceOpenRequest } from "../shared/workspace";
 
@@ -43,6 +44,7 @@ import { incrementalSave } from "./save-channel";
 import { createSearchStore } from "./source-search-store";
 
 export interface DocumentTransport {
+  removeStandalone?(request: RemovalRequest): Promise<unknown>;
   observeDocument?(request: import("../shared/document-observation").ObservationRequest): Promise<unknown>;
   openWorkspaceDocument?(request: WorkspaceOpenRequest): Promise<unknown>;
   checkDocumentWriteCapability?(
@@ -59,6 +61,7 @@ export interface DocumentTransport {
 }
 
 export interface DocumentViewState {
+  removalPending?: "confirming" | "ack";
   entries: DocumentEntry[];
   tabs: DocumentSnapshot[];
   snapshot: DocumentSnapshot | null;
@@ -184,6 +187,11 @@ export function createDocumentController(
   };
   let generation = 0;
   let pending: DocumentRequest | null = null;
+  let removalGate = false;
+  let discardActive = false;
+  let removalEligible: (handle: string) => boolean = () => false;
+  let removal: { entry: DocumentEntry; phase: "state" | "begin" | "commit" | "query" | "ack"; operation?: RemovalOperation; finalError: string | null } | null = null;
+  let removalRunning = false;
   const staleDocuments = new Set<string>();
   const scrollPositions = new Map<string, number>();
   const scrollSnapshots = new Map<
@@ -400,10 +408,12 @@ export function createDocumentController(
   const needsDiscard = (documentId: string) => isDirty(documentId) || observation.atRisk(documentId);
   function beginDiscard() {
     if (state.frozen || state.busy || !canLeaveEditor()) return false;
+    discardActive = true;
     publish({ ...state, frozen: true });
     return true;
   }
   function endDiscard() {
+    discardActive = false;
     publish({ ...state, frozen: false });
   }
   function reportDiscardFailure() {
@@ -455,6 +465,7 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
+    if (removalGate) next = { ...next, frozen: true };
     if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
       const old = revealPending; revealPending = null;
       void transport.cancelDocument({ protocolVersion: 1, requestId: old.requestId }).catch(() => undefined);
@@ -764,9 +775,12 @@ export function createDocumentController(
       elapsedMs: null,
     });
   }
-  function closeTab(documentId: string) {
+  function closeTab(documentId: string, removeHandle?: string) {
     const index = state.tabs.findIndex((tab) => tab.documentId === documentId);
-    if (index < 0) return;
+    if (index < 0) {
+      if (removeHandle) publish({ ...state, entries: state.entries.filter(entry => entry.handle !== removeHandle), frozen: discardActive, removalPending: "ack" });
+      return;
+    }
     ++generation;
     cancelPending();
     const tabs = state.tabs.filter((tab) => tab.documentId !== documentId);
@@ -789,6 +803,7 @@ export function createDocumentController(
     uncertain.delete(documentId);
     publish({
       ...state,
+      ...(removeHandle ? { entries: state.entries.filter(entry => entry.handle !== removeHandle), frozen: discardActive, removalPending: "ack" as const } : {}),
       tabs,
       snapshot,
       busy: false,
@@ -796,6 +811,51 @@ export function createDocumentController(
       stale: !!snapshot && staleDocuments.has(snapshot.documentId),
       elapsedMs: null,
     });
+  }
+  async function settleRemoval() {
+    if (!removal || removalRunning || !transport.removeStandalone || metadataDisposed) return;
+    const captured = removal;
+    removalRunning = true;
+    try {
+      for (let step = 0; step < 5 && removal === captured; step++) {
+        const params: RemovalRequest = captured.phase === "state" ? { ...request(), op: "state" } : { ...request(), op: captured.phase, ...captured.operation! };
+        let value: unknown;
+        try { value = await transport.removeStandalone(params); }
+        catch (error) { if (captured.phase === "commit") captured.phase = "query"; throw error; }
+        if (metadataDisposed || removal !== captured) return;
+        if (!validRemovalResponse(value, params)) { if (captured.phase === "commit") captured.phase = "query"; throw Error("Invalid removal response"); }
+        if (value.status === "state") {
+          captured.operation = { session: value.session, sequence: value.sequence, handle: captured.entry.handle };
+          captured.phase = "begin";
+          continue;
+        }
+        if (captured.phase === "ack") {
+          if (value.status !== "acked") throw Error("Removal acknowledgement unknown");
+          removal = null;
+          publish({ ...state, removalPending: undefined, error: captured.finalError });
+          return;
+        }
+        if (value.status === "issued") { captured.phase = "commit"; continue; }
+        if (value.status === "committed" || value.status === "rejected" || (value.status === "busy" && captured.phase === "begin")) {
+          const current = state.entries.find(entry => entry.handle === captured.entry.handle);
+          if (current?.documentId !== captured.entry.documentId || locationKey(current) !== locationKey(captured.entry)) throw Error("Removal target changed");
+          const needsAck = captured.phase !== "begin" || value.status === "committed";
+          removalGate = false;
+          captured.phase = "ack";
+          captured.finalError = value.status === "committed" ? null : "无法移除：文件归属或授权状态已变化，窗口内容完整保留。";
+          if (value.status === "committed") closeTab(current.documentId, current.handle);
+          else publish({ ...state, frozen: discardActive, error: captured.finalError, removalPending: needsAck ? "ack" : undefined });
+          if (!needsAck) { removal = null; return; }
+          continue;
+        }
+        throw Error("Removal outcome unknown");
+      }
+    } catch {
+      if (metadataDisposed || removal !== captured) return;
+      if (captured.phase === "state") { removalGate = false; removal = null; }
+      publish({ ...state, frozen: removalGate || discardActive, removalPending: removal ? (captured.phase === "ack" ? "ack" : "confirming") : undefined,
+        error: captured.phase === "ack" ? "移除结果已确认，但收据尚未确认回收。可重试；暂不能移除其他文件。" : removal ? "移除结果尚未确认，内存内容已保留并锁定。请重试确认结果，勿关闭应用。" : "无法开始移除，窗口内容完整保留。请重试。" });
+    } finally { removalRunning = false; }
   }
   let historyDispatch: ((transaction: Transaction) => void) | undefined;
   let captureScroll: (() => StateEffect<unknown>) | undefined;
@@ -842,6 +902,21 @@ export function createDocumentController(
     );
   };
   const controller = {
+    setStandaloneRemovalEligibility: (eligible: (handle: string) => boolean) => { removalEligible = eligible; },
+    canRemoveStandalone: (handle: string | null) => !!handle && !!transport.removeStandalone && !metadataDisposed && !removal && !state.busy && !state.frozen && canLeaveEditor() && state.entries.some(entry => entry.handle === handle && entry.explicitStandalone !== false) && removalEligible(handle),
+    removeStandalone: (handle: string) => {
+      if (!controller.canRemoveStandalone(handle)) return;
+      const entry = state.entries.find(entry => entry.handle === handle)!;
+      return protect([entry.documentId], async () => {
+        const current = state.entries.find(candidate => candidate.handle === handle);
+        if (metadataDisposed || removal || current?.documentId !== entry.documentId || locationKey(current) !== locationKey(entry) || !removalEligible(handle) || !canLeaveEditor()) return;
+        removalGate = true;
+        removal = { entry: current, phase: "state", finalError: null };
+        publish({ ...state, frozen: true, error: null, removalPending: "confirming" });
+        await settleRemoval();
+      });
+    },
+    retryStandaloneRemoval: () => settleRemoval(),
     search,
     /** Release only a derived view-owned extension, including during frozen teardown. */
     releaseSearchPresentation: (

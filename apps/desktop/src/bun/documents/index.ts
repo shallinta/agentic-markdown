@@ -61,7 +61,29 @@ export interface DocumentScope {
   verify(): Promise<void>;
   release?(): void;
 }
+export interface FolderGrantBinding {
+  handle: string;
+  path: string;
+  fingerprint: string;
+  documentId: string;
+  explicitStandalone: boolean;
+  observedActive: boolean;
+  scope?: DocumentScope;
+}
+export interface FolderGrantChange {
+  handle: string;
+  action: "retain" | "standalone" | "migrate" | "revoke";
+  scope?: DocumentScope;
+  assetScope?: AssetScope;
+}
+export interface FolderMutationLease {
+  current(): boolean;
+  bindings(): readonly FolderGrantBinding[];
+  prepare(changes: readonly FolderGrantChange[]): Promise<{ assetEpochs: Record<string, string>; commit(markCommitted: () => void): void }>;
+  release(): void;
+}
 export interface TrustedDocumentService extends DocumentService {
+  acquireFolderMutationLease(): Promise<FolderMutationLease | null>;
   inspectStandaloneRemoval(handle: string, eligible: (path: string) => boolean): object | null;
   commitStandaloneRemoval(handle: string, identity: object, eligible: (path: string) => boolean, committed: () => void): boolean;
   /** Bun-only authority callback; never a renderer-supplied path. */
@@ -238,7 +260,8 @@ export function createDocumentService({
     const identity = identities.get(grant.identityKey);
     if (identity?.documentId !== binding.documentId || identity.hash !== binding.hash || identity.revision !== binding.revision) return;
     const fingerprint = grant.fingerprint, commit = commits.get(identity.documentId);
-    const live = () => !disposed && !saving && observations.get(handle) === binding && grants.get(handle) === grant && grant.fingerprint === fingerprint && identities.get(grant.identityKey) === identity;
+    const barrierGeneration = selectBarrierGeneration;
+    const live = () => !disposed && !saving && !writeBarrier && selectBarrierGeneration === barrierGeneration && observations.get(handle) === binding && grants.get(handle) === grant && grant.fingerprint === fingerprint && identities.get(grant.identityKey) === identity;
     const checked = await probe({ ...grant }, identity.hash, live).catch(() => ({ status: "unavailable" as const, hash: undefined, fingerprint: undefined }));
     if (!live()) { observationQueue.hint(handle); return; }
     // A recorded durable transaction is only an echo after actual identity/hash verification.
@@ -268,10 +291,14 @@ export function createDocumentService({
   const hints = new Map<string, ReturnType<typeof setTimeout>>();
   const unwatch = (handle: string) => {
     capabilityVersions.delete(handle);
-    watchers.get(handle)?.forEach((watcher) => watcher.close());
+    const attached = watchers.get(handle);
     watchers.delete(handle);
     clearTimeout(hints.get(handle));
     hints.delete(handle);
+    for (const watcher of attached ?? []) {
+      try { watcher.close(); }
+      catch { console.warn("Document watcher cleanup failed"); }
+    }
   };
   const watchGrant = (grant: Grant) => {
     unwatch(grant.handle);
@@ -323,6 +350,7 @@ export function createDocumentService({
   let saving = 0;
   const acceptance = createRefreshAcceptanceLedger();
   let writeBarrier = false;
+  let folderMutationLease: object | null = null;
   let selectBarrierGeneration = 0;
   let saveStartGeneration = 0;
   const uncertain = new Set<string>();
@@ -615,6 +643,84 @@ export function createDocumentService({
     );
   }
   return {
+    async acquireFolderMutationLease() {
+      if (disposed || writeBarrier || folderMutationLease || running || pending || selecting || revealing) return null;
+      const token = {};
+      // Initialize missing legacy metadata before read-only leased state requests.
+      for (const grant of grants.values()) grant.assetEpoch ??= randomUUID();
+      folderMutationLease = token;
+      writeBarrier = true;
+      selectBarrierGeneration++;
+      const current = () => !disposed && folderMutationLease === token;
+      const release = () => {
+        if (folderMutationLease !== token) return;
+        folderMutationLease = null; writeBarrier = false; candidates.wake();
+      };
+      try {
+        await saveTail;
+        await acceptance.settled();
+        if (!current() || running || pending || selecting || revealing) { release(); return null; }
+        const captured = new Map(grants);
+        const bindings: FolderGrantBinding[] = [];
+        for (const grant of captured.values()) {
+          const identity = identities.get(grant.identityKey);
+          if (!identity) { release(); return null; }
+          bindings.push({ handle: grant.handle, path: grant.path, fingerprint: grant.fingerprint, documentId: identity.documentId, explicitStandalone: grant.explicitStandalone === true, observedActive: observations.get(grant.handle)?.documentId === identity.documentId, scope: grant.scope });
+        }
+        return {
+          current,
+          bindings: () => bindings,
+          release,
+          async prepare(changes) {
+            if (!current()) throw Error("Invalid folder mutation lease");
+            const seen = new Set<string>();
+            const prepared: { change: FolderGrantChange; grant: Grant; assetEpoch: string }[] = [];
+            for (const change of changes) {
+              const grant = captured.get(change.handle);
+              if (!grant || seen.has(change.handle) || grants.get(change.handle) !== grant) throw Error("Invalid folder grant binding");
+              seen.add(change.handle);
+              if (change.action === "migrate" && !change.scope) throw Error("Missing destination scope");
+              if (change.action === "standalone" || change.action === "migrate") {
+                await grant.scope?.verify();
+                const file = await open(grant.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+                try { await verify({ ...grant, file }); } finally { await file.close(); }
+                await change.scope?.verify();
+              }
+              if (!current() || grants.get(change.handle) !== grant) throw Error("Stale folder mutation");
+              prepared.push({ change, grant, assetEpoch: randomUUID() });
+            }
+            let committed = false;
+            const assetEpochs = Object.fromEntries([...grants.values()].map(grant => [grant.handle, grant.assetEpoch!])) as Record<string, string>;
+            for (const { change, grant, assetEpoch } of prepared) {
+              if (change.action === "revoke") delete assetEpochs[grant.handle];
+              else assetEpochs[grant.handle] = assetEpoch;
+            }
+            return { assetEpochs, commit(markCommitted) {
+              if (committed || !current()) throw Error("Stale folder commit");
+              for (const { grant } of prepared) if (grants.get(grant.handle) !== grant) throw Error("Stale folder binding");
+              for (const { change, grant, assetEpoch } of prepared) {
+                if (change.action === "revoke") grants.delete(grant.handle);
+                else {
+                  if (change.action === "standalone") { grant.scope = undefined; grant.explicitStandalone = true; }
+                  else if (change.action === "migrate") grant.scope = change.scope;
+                  grant.assetScope = change.assetScope;
+                  grant.assetEpoch = assetEpoch;
+                }
+              }
+              committed = true; markCommitted();
+              for (const { change, grant } of prepared) {
+                candidates.discardHandle(grant.handle);
+                acceptance.release(grant.handle);
+                if (change.action !== "revoke") continue;
+                for (const cleanup of [() => releaseObservation(grant.handle), () => mirrors.release(grant.handle), () => unwatch(grant.handle)]) {
+                  try { cleanup(); } catch { console.warn("Folder removal document cleanup failed"); }
+                }
+              }
+            } };
+          },
+        };
+      } catch { release(); return null; }
+    },
     inspectStandaloneRemoval(handle, eligible) {
       const grant = grants.get(handle);
       return !disposed && !saving && !writeBarrier && !selecting && !running && !pending && !acceptance.busy() && grant?.explicitStandalone === true && !grant.scope && eligible(grant.path) ? grant : null;
@@ -690,8 +796,8 @@ export function createDocumentService({
       if (identity.revision !== binding.expectedRevision || identity.hash !== binding.expectedHash)
         return { ok: false, error: "CONFLICT" };
       if (saving || writeBarrier || acceptance.busy() || uncertain.has(identity.documentId)) return { ok: false, error: "BUSY" };
-      const fingerprint = grant.fingerprint, generation = epoch;
-      const current = () => !disposed && epoch === generation && !saving && !writeBarrier &&
+      const fingerprint = grant.fingerprint, generation = epoch, barrierGeneration = selectBarrierGeneration;
+      const current = () => !disposed && epoch === generation && selectBarrierGeneration === barrierGeneration && !saving && !writeBarrier &&
         grants.get(binding.handle) === grant && grant.fingerprint === fingerprint &&
         identities.get(grant.identityKey) === identity && !uncertain.has(identity.documentId);
       return candidates.request({
@@ -726,6 +832,7 @@ export function createDocumentService({
         forgetObservation(binding.handle);
         return Promise.resolve({ ok: true, requestId });
       }
+      if (folderMutationLease) return Promise.resolve({ ok: false, requestId });
       if (disposed || !grant || identity?.documentId !== binding.documentId || identity.revision !== binding.revision || identity.hash !== binding.hash) return Promise.resolve({ ok: false, requestId });
       observationEpochs.set(binding.handle, { epoch: binding.watchEpoch, token: binding.watchToken, active: true });
       const old = observations.get(binding.handle);
@@ -742,6 +849,7 @@ export function createDocumentService({
         documentId: identities.get(grant.identityKey)?.documentId,
       })),
     setAssetScope(handle, scope) {
+      if (folderMutationLease) return;
       const grant = grants.get(handle);
       if (grant && grant.assetScope !== scope) {
         grant.assetScope = scope;
@@ -752,10 +860,11 @@ export function createDocumentService({
       Object.fromEntries(
         [...grants.values()].map((grant) => [
           grant.handle,
-          (grant.assetEpoch ??= randomUUID()),
+          folderMutationLease ? grant.assetEpoch! : (grant.assetEpoch ??= randomUUID()),
         ])
       ),
     revokeScope(scope) {
+      if (folderMutationLease) return;
       for (const [handle, grant] of grants)
         if (grant.scope === scope) {
           grants.delete(handle);
@@ -892,11 +1001,14 @@ export function createDocumentService({
         handle: valid ? request.handle : "",
       };
       const grant = valid && grants.get(request.handle);
+      const barrierGeneration = selectBarrierGeneration;
+      const blocked = () => folderMutationLease !== null || selectBarrierGeneration !== barrierGeneration;
       if (disposed || !grant)
         return {
           ...response,
           capability: { writable: false, reason: "invalid" },
         };
+      if (blocked()) return { ...response, capability: { writable: false, reason: "unavailable" } };
       let job = capabilityJobs.get(grant.handle);
       if (!job) {
         if (capabilityJobs.size >= 2)
@@ -906,7 +1018,7 @@ export function createDocumentService({
           };
         job = (async (): Promise<WriteCapability> => {
           await saveTail;
-          if (disposed || grants.get(grant.handle) !== grant)
+          if (disposed || blocked() || grants.get(grant.handle) !== grant)
             return { writable: false, reason: "invalid" };
           const fingerprint = grant.fingerprint;
           const version = capabilityVersions.get(grant.handle);
@@ -914,6 +1026,7 @@ export function createDocumentService({
             const checked = await capability(grant);
             if (
               disposed ||
+              blocked() ||
               grants.get(grant.handle) !== grant ||
               grant.fingerprint !== fingerprint ||
               capabilityVersions.get(grant.handle) !== version
@@ -931,7 +1044,7 @@ export function createDocumentService({
         });
       }
       const checked = await job;
-      if (disposed || grants.get(grant.handle) !== grant)
+      if (disposed || blocked() || grants.get(grant.handle) !== grant)
         return {
           ...response,
           capability: { writable: false, reason: "unavailable" },

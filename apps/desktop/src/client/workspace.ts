@@ -1,3 +1,4 @@
+import type { FolderRemovalPublication } from "../shared/folder-removal";
 import type {
   WorkspaceNode,
   WorkspaceRequest,
@@ -161,6 +162,7 @@ export function createFolderWorkspace(
     { root: string; operation: DirectoryOperation } | undefined;
   let rescanNotice: string | null = null;
   let confirmedCommit = false;
+  let removalPaused = false;
   const publish = (next: FolderState) => {
     if (disposed) return;
     state = next;
@@ -193,6 +195,7 @@ export function createFolderWorkspace(
     return response;
   }
   function enqueue(action: () => Promise<void>, busy = false) {
+    if (removalPaused) return Promise.resolve();
     const expectedEpoch = epoch;
     if (busy) publish({ ...state, busy: true });
     const operation = tail.then(async () => {
@@ -203,6 +206,7 @@ export function createFolderWorkspace(
     });
     tail = operation
       .catch((error: unknown) => {
+        if (disposed || expectedEpoch !== epoch) return;
         publish({
           ...state,
           error:
@@ -212,7 +216,7 @@ export function createFolderWorkspace(
         });
       })
       .finally(() => {
-        if (busy) publish({ ...state, busy: false });
+        if (busy && !disposed && expectedEpoch === epoch) publish({ ...state, busy: false });
       });
     return operation;
   }
@@ -225,7 +229,8 @@ export function createFolderWorkspace(
         captured.coveredHandles,
         captured.assetEpochs,
       ]) ===
-      JSON.stringify([state.roots, state.coveredHandles, state.assetEpochs])
+      JSON.stringify([state.roots, state.coveredHandles, state.assetEpochs]) &&
+      captured.roots.every(root => (state.nodes[root.handle]?.length ?? 0) === root.entries)
     ) {
       if (state.error !== rescanNotice)
         publish({ ...state, error: rescanNotice });
@@ -427,6 +432,41 @@ export function createFolderWorkspace(
       );
   }
   return {
+    beginFolderRemoval() {
+      if (disposed || removalPaused || state.busy || pendingRescan) return false;
+      removalPaused = true;
+      epoch++;
+      refreshPending = undefined;
+      publish({ ...state, busy: true });
+      return true;
+    },
+    prepareFolderRemoval(result: FolderRemovalPublication) {
+      if (disposed || !removalPaused || !state.roots.some(root => root.handle === result.root)) throw Error("folder-removal-binding");
+      if (result.roots.length !== state.roots.length - 1 || result.roots.some(root => {
+        const old = state.roots.find(item => item.handle === root.handle);
+        return !old || root.handle === result.root || root.generation < old.generation || (root.generation === old.generation && (root.entries < old.entries || old.showHidden !== root.showHidden));
+      })) throw Error("folder-removal-roots");
+      const nodes = { ...state.nodes };
+      delete nodes[result.root];
+      for (const root of result.roots) {
+        if (state.roots.find(item => item.handle === root.handle)?.generation !== root.generation) nodes[root.handle] = [];
+      }
+      const next: FolderState = { ...state, roots: result.roots, nodes, coveredHandles: result.coveredHandles, assetEpochs: result.assetEpochs, busy: false, error: null };
+      return { next, epoch };
+    },
+    swapPrepared(prepared: { next: FolderState; epoch: number }) {
+      state = prepared.next;
+    },
+    flushPreparedEffects() {
+      removalPaused = false;
+      for (const listener of listeners) { try { listener(); } catch { console.error("folder-removal-listener"); } }
+      void enqueue(refresh).catch(() => undefined);
+    },
+    cancelFolderRemoval() {
+      if (!removalPaused) return;
+      removalPaused = false;
+      publish({ ...state, busy: false });
+    },
     subscribe(this: void, listener: () => void) {
       listeners.add(listener);
       return () => {
@@ -435,11 +475,13 @@ export function createFolderWorkspace(
     },
     getSnapshot: () => state,
     refresh: () => {
+      if (removalPaused) return Promise.resolve();
       if (!refreshPending) {
-        refreshPending = enqueue(refresh);
-        void refreshPending
+        const refreshing = enqueue(refresh);
+        refreshPending = refreshing;
+        void refreshing
           .finally(() => {
-            refreshPending = undefined;
+            if (refreshPending === refreshing) refreshPending = undefined;
           })
           .catch(() => undefined);
       }
@@ -477,6 +519,7 @@ export function createFolderWorkspace(
         await refresh();
       }),
     clear: () => {
+      if (removalPaused) return Promise.resolve();
       epoch++;
       return enqueue(async () => {
         await request({ op: "clear" });

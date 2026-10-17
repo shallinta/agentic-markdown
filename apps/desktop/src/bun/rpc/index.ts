@@ -157,6 +157,10 @@ export function createMainWindowRPC({
         openDefaultWorkspaceItem: (request) => workspace
           ? workspace.openDefault(request)
           : Promise.resolve({ protocolVersion: 1 as const, requestId: request.requestId, ok: false as const, error: "INVALID_HANDLE" as const }),
+        removeFolderRoot: (request) => {
+          if (!workspace) throw Error("Workspace unavailable");
+          return workspace.removeFolderRoot(request);
+        },
         removeStandalone: (request) => {
           if (!workspace) throw Error("Workspace unavailable");
           return workspace.removeStandalone(request);

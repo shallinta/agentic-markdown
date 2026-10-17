@@ -5,6 +5,32 @@ import { dirname, resolve } from "node:path";
 
 const queues = new Map<string, Promise<unknown>>();
 
+export type PersistedSettings<T> =
+  | { status: "valid"; data: T; format: "legacy" | "version1" }
+  | { status: "missing" | "corrupt" | "future" | "too-large" | "io" };
+
+/** Called only after JSON.parse validated syntax. Detect duplicates before projection. */
+function duplicateObjectKey(source: string): boolean {
+  const objects: Set<string>[] = [];
+  const tokens = /"(?:[^"\\]|\\.)*"|[{}]/g;
+  for (const match of source.matchAll(tokens)) {
+    const token = match[0];
+    if (token === "{") objects.push(new Set());
+    else if (token === "}") objects.pop();
+    else {
+      let next = match.index + token.length;
+      while (/\s/.test(source[next] ?? "") && next < source.length) next++;
+      if (source[next] !== ":") continue;
+      const keys = objects[objects.length - 1];
+      const key: unknown = JSON.parse(token);
+      if (typeof key !== "string" || !keys) return true;
+      if (keys.has(key)) return true;
+      keys.add(key);
+    }
+  }
+  return false;
+}
+
 export function isSettingsObject(
   value: unknown
 ): value is Record<string, unknown> {
@@ -88,6 +114,7 @@ export function createSettingsStore<T>(
     let valid = versioned
       ? !unsupported && isSettingsObject(object.data)
       : object !== undefined;
+    if (options && original !== undefined && parsed !== undefined && duplicateObjectKey(original)) valid = false;
     if (
       valid &&
       options &&
@@ -136,7 +163,40 @@ export function createSettingsStore<T>(
     await atomicWrite(statePath, contents);
   };
 
+  const readPersisted = async (): Promise<PersistedSettings<T>> => {
+    try {
+      const value = await inspect();
+      if (value.original === undefined) return { status: "missing" };
+      if (value.unsupported) return { status: "future" };
+      if (!value.valid) return { status: "corrupt" };
+      return { status: "valid", data: value.data, format: value.legacy ? "legacy" : "version1" };
+    } catch (error) {
+      return { status: error instanceof Error && error.message === "SETTINGS_TOO_LARGE" ? "too-large" : error instanceof Error && error.message === "SETTINGS_CORRUPT" ? "corrupt" : "io" };
+    }
+  };
+
   return {
+    /** No migration, backup or write. Same-path ordering is retained. */
+    readPersisted: () => enqueue(readPersisted),
+    /** One bounded write and observation, including a write that threw after rename. */
+    updateObserved: (update: (state: T, format: "missing" | "legacy" | "version1") => T) => enqueue(async () => {
+      let before: T, expected: T;
+      let beforeFormat: "missing" | "legacy" | "version1";
+      let confirmed = false;
+      try {
+        const state = await inspect();
+        if (state.unsupported || (state.original !== undefined && !state.valid))
+          return { attempted: false as const };
+        before = state.data;
+        beforeFormat = state.original === undefined ? "missing" : state.legacy ? "legacy" : "version1";
+        expected = update(before, beforeFormat);
+        if (options && !options.validateData(expected)) return { attempted: false as const };
+        // No nested public enqueue: the complete operation owns this queue turn.
+        try { await commit(expected, state.original); confirmed = true; }
+        catch { /* The post-write observation decides; rejection alone is not proof. */ }
+      } catch { return { attempted: false as const }; }
+      return { attempted: true as const, before, beforeFormat, expected, confirmed, persisted: confirmed ? { status: "valid" as const, data: expected, format: "version1" as const } : await readPersisted() };
+    }),
     inspectState: () =>
       enqueue(
         async (): Promise<

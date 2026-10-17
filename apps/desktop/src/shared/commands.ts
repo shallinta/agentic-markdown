@@ -45,6 +45,7 @@ export type Command =
   | GenericCommand<"moveWorkspaceRootUp">
   | GenericCommand<"moveWorkspaceRootDown">
   | GenericCommand<"removeStandaloneRoot">
+  | GenericCommand<"removeFolderRoot">
   | GenericCommand<"openDefaultWorkspaceItem">
   | GenericCommand<"openDefaultDocument">
   | GenericCommand<"openSourceSearch">
@@ -257,6 +258,7 @@ export const COMMAND_META: Record<
   moveWorkspaceRootUp: { target: "webview" },
   moveWorkspaceRootDown: { target: "webview" },
   removeStandaloneRoot: { target: "webview" },
+  removeFolderRoot: { target: "webview" },
   openDefaultWorkspaceItem: { target: "webview" },
   openDefaultDocument: { target: "webview" },
   selectFolder: { target: "webview" },
@@ -326,6 +328,7 @@ export const PRODUCT_COMMANDS: Partial<
   moveWorkspaceRootUp: { label: "上移选中根" },
   moveWorkspaceRootDown: { label: "下移选中根" },
   removeStandaloneRoot: { label: "从窗口移除选中文件" },
+  removeFolderRoot: { label: "从窗口移除选中目录" },
   openDefaultWorkspaceItem: { label: "用默认应用打开选中文件" },
   openDefaultDocument: { label: "用系统默认应用打开" },
   setRootHidden: { label: "显示隐藏文件" },

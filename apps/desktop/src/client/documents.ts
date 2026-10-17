@@ -17,6 +17,7 @@ import {
   type DocumentSnapshot,
   type SaveDocumentRequest,
 } from "../shared/documents";
+import type { FolderRemovalPublication, FolderRemovalDocument } from "../shared/folder-removal";
 import { validMirror } from "../shared/save-content";
 import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
 import { isTextFidelity } from "../shared/text-fidelity";
@@ -61,6 +62,7 @@ export interface DocumentTransport {
 }
 
 export interface DocumentViewState {
+  folderRemovalPending?: "confirming" | "ack";
   removalPending?: "confirming" | "ack";
   entries: DocumentEntry[];
   tabs: DocumentSnapshot[];
@@ -188,6 +190,7 @@ export function createDocumentController(
   let generation = 0;
   let pending: DocumentRequest | null = null;
   let removalGate = false;
+  let folderRemovalGate = false;
   let discardActive = false;
   let removalEligible: (handle: string) => boolean = () => false;
   let removal: { entry: DocumentEntry; phase: "state" | "begin" | "commit" | "query" | "ack"; operation?: RemovalOperation; finalError: string | null } | null = null;
@@ -201,7 +204,7 @@ export function createDocumentController(
       effect: StateEffect<unknown>;
     }
   >();
-  const editors = new Map<string, { state: EditorState; revision: number }>();
+  let editors = new Map<string, { state: EditorState; revision: number }>();
   const search = createSearchStore(id=>editors.has(id) && !metadataDisposed);
   const reading = new Set<string>();
   const sourceReturn = new Map<string, "editing" | "reading">();
@@ -465,7 +468,7 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
-    if (removalGate) next = { ...next, frozen: true };
+    if (removalGate || folderRemovalGate) next = { ...next, frozen: true };
     if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
       const old = revealPending; revealPending = null;
       void transport.cancelDocument({ protocolVersion: 1, requestId: old.requestId }).catch(() => undefined);
@@ -902,8 +905,63 @@ export function createDocumentController(
     );
   };
   const controller = {
+    canBeginFolderRemoval: () => !metadataDisposed && !removal && !state.folderRemovalPending && !state.busy && !state.frozen && canLeaveEditor(),
+    beginFolderRemoval: async () => {
+      if (!controller.canBeginFolderRemoval()) return false;
+      folderRemovalGate = true;
+      publish({ ...state, frozen: true, folderRemovalPending: "confirming", error: null });
+      try { await waitForSaves(); return !metadataDisposed; }
+      catch { folderRemovalGate = false; publish({ ...state, frozen: discardActive, folderRemovalPending: undefined }); reportDiscardFailure(); return false; }
+    },
+    confirmFolderRemovalClose: async (documents: FolderRemovalDocument[]) => {
+      if (!folderRemovalGate || metadataDisposed) return false;
+      const risky = documents.filter(item => needsDiscard(item.documentId));
+      return !risky.length || await confirmDiscard(`是否放弃以下文档的未保存变更或尚未接受外部变化的内存内容并关闭？放弃后无法恢复。\n${risky.map(item => item.fileName).join("\n")}`);
+    },
+    setFolderRemovalStatus: (phase: "confirming" | "ack" | null, error: string | null = null) => {
+      folderRemovalGate = phase === "confirming";
+      publish({ ...state, frozen: folderRemovalGate || discardActive, folderRemovalPending: phase ?? undefined, error });
+    },
+    prepareFolderRemoval: (result: FolderRemovalPublication) => {
+      if (!folderRemovalGate || metadataDisposed) throw Error("folder-removal-gate");
+      const known = new Map(state.entries.map(entry => [entry.handle, entry]));
+      if ([...result.closed, ...result.standalone].some(handle => !known.has(handle))) throw Error("folder-removal-identity");
+      const closed = new Set(result.closed), revoked = new Set(result.revoked), standalone = new Set(result.standalone);
+      if (result.closed.some(handle => !state.tabs.some(tab => tab.handle === handle)) || result.revoked.some(handle => state.tabs.some(tab => tab.handle === handle) && !closed.has(handle)) || result.standalone.some(handle => revoked.has(handle))) throw Error("folder-removal-membership");
+      const promote = <T extends DocumentEntry>(entry: T): T => standalone.has(entry.handle) && entry.explicitStandalone !== true ? { ...entry, explicitStandalone: true } : entry;
+      const tabs = state.tabs.filter(tab => !closed.has(tab.handle)).map(promote);
+      const oldIndex = state.tabs.findIndex(tab => tab.documentId === state.snapshot?.documentId);
+      const snapshot = state.snapshot && !closed.has(state.snapshot.handle) ? tabs.find(tab => tab.documentId === state.snapshot!.documentId)! : (state.tabs.slice(oldIndex + 1).map(tab => tabs.find(item => item.documentId === tab.documentId)).find(Boolean) ?? [...state.tabs.slice(0, oldIndex)].reverse().map(tab => tabs.find(item => item.documentId === tab.documentId)).find(Boolean) ?? null);
+      const removedIds = state.tabs.filter(tab => closed.has(tab.handle)).map(tab => tab.documentId);
+      const nextEditors = new Map(editors);
+      captureCurrentViewport();
+      for (const id of removedIds) nextEditors.delete(id);
+      if (snapshot?.documentId !== state.snapshot?.documentId && snapshot) {
+        const editor = nextEditors.get(snapshot.documentId);
+        if (editor) nextEditors.set(snapshot.documentId, { ...editor, state: editor.state.update({ effects: resumeEditorParser(editor.state), annotations: Transaction.addToHistory.of(false) }).state });
+      }
+      const next: DocumentViewState = { ...state, entries: state.entries.filter(entry => !revoked.has(entry.handle)).map(promote), tabs, snapshot, frozen: discardActive, folderRemovalPending: "ack", busy: false, error: null, stale: !!snapshot && staleDocuments.has(snapshot.documentId), elapsedMs: null };
+      return { next, nextEditors, removedIds, closed: result.closed };
+    },
+    swapPrepared: (prepared: { next: DocumentViewState; nextEditors: typeof editors }) => {
+      state = prepared.next;
+      editors = prepared.nextEditors;
+      folderRemovalGate = false;
+      generation++;
+    },
+    flushPreparedEffects: (prepared: { removedIds: string[]; closed: string[] }) => {
+      const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
+      for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
+      for (const id of prepared.removedIds) {
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); transfers.delete(id); saveResults.delete(id); uncertain.delete(id);
+        safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
+      }
+      safely(() => observation.sync(state.tabs));
+      for (const listener of listeners) safely(listener);
+      safely(scheduleFaultRecovery);
+    },
     setStandaloneRemovalEligibility: (eligible: (handle: string) => boolean) => { removalEligible = eligible; },
-    canRemoveStandalone: (handle: string | null) => !!handle && !!transport.removeStandalone && !metadataDisposed && !removal && !state.busy && !state.frozen && canLeaveEditor() && state.entries.some(entry => entry.handle === handle && entry.explicitStandalone !== false) && removalEligible(handle),
+    canRemoveStandalone: (handle: string | null) => !!handle && !!transport.removeStandalone && !metadataDisposed && !removal && !state.folderRemovalPending && !state.busy && !state.frozen && canLeaveEditor() && state.entries.some(entry => entry.handle === handle && entry.explicitStandalone !== false) && removalEligible(handle),
     removeStandalone: (handle: string) => {
       if (!controller.canRemoveStandalone(handle)) return;
       const entry = state.entries.find(entry => entry.handle === handle)!;

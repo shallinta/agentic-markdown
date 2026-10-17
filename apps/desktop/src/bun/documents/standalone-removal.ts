@@ -18,7 +18,7 @@ export function createStandaloneRemoval<Identity>(
     identity: Identity;
     status: "issued" | "committed" | "rejected";
   } | null = null;
-  return (value: unknown): RemovalResponse => {
+  const request = (value: unknown): RemovalResponse => {
     if (!validRemovalRequest(value)) throw Error("Invalid removal request");
     const envelope = {
       protocolVersion: 1 as const,
@@ -79,4 +79,5 @@ export function createStandaloneRemoval<Identity>(
     }
     return reply(slot.status);
   };
+  return Object.assign(request, { busy: () => slot !== null });
 }

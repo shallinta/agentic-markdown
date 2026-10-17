@@ -24,6 +24,7 @@ export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
       removeStandalone: { params: import("./standalone-removal").RemovalRequest; response: import("./standalone-removal").RemovalResponse };
+      removeFolderRoot: { params: import("./folder-removal").FolderRemovalRequest; response: import("./folder-removal").FolderRemovalResponse };
       revealDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       openDefaultDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       recentFiles: {

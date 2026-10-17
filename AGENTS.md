@@ -1,5 +1,25 @@
 # AGENTS.md
 
+## F-061c alpha175 非离线有限片通过（2026-10-17）
+
+真实WK及最终独立Spec/Standards均0必要有限验收阻断，主线批准目录根保留/关闭/取消有限片受托Agent代验通过，非用户亲验。源码1594/0/37093、包内Bun运行仓库1594/0/37094，hash3tok0hhs1vjb4；type/full lint/docs/lock/diff通过。exec11747与84197正常CmdQ退出0，PID32825/33434消失，五SHA原样、readonly恢复644。无独占打开文档与欢迎页最近入口已补验；精确选区/自然IME/真实剩余根迁移未测。原AX隐藏设置不明观察、IMK退出stderr及FINAL001002保留不归因；完整父/阅读子窗/专项/冻结/offline仍开放。Git待执行。
+
+## F-061c alpha175 构建获准（2026-10-17）
+
+主线读正式生产差异与关键接点，最终全量1594/0/37093、219文件32.10s；type/full lint/docs/lock/diff通过。独立Spec40/274，Standards后端57/716及前端16/117各自运行均0必要构建阻断。扫描批次park、save排空、迟到观察/候选/旧图、设置异常和清理隔离已有限验证，真实迁移/OS拒close及最终问题不扩证。批准递增alpha175并unsigned构建及真实WK，尚未验收不得Git；alpha174仍最新已验包，冻结/专项/offline保持。
+
+## F-061c 有限实施获准（2026-10-17）
+
+主线全文读修订唯一方案及实际调度/设置/store接口，两独立轴均0必要路线阻断，批准单目录移除的保留/保护关闭路径与实现后测试。采用完整批次后park、跨query服务端lease、严格设置删除核对和双store prepare/swap/effects；不改用户磁盘文档，不将设计可行冒运行证据。alpha174/4e56f1e仍最新有限已验已推，下一代码包alpha175由主线后续批准，当前未批准build/验收/Git。父/冻结/专项/最终问题/offline边界保持。
+
+## F-061c 目录根移除路线复核（2026-10-17）
+
+主线全文读唯一F061c与实际barrier/publish/preferences接口，两独立轴发现必要路线缺口，尚不批准实施。失效root-only可依内存绑定关闭撤权、原独立授权关闭仅关标签须明确；settings严格原始状态核对、跨query持有fence及双store准备/同步替换/通知接点正在同一文档收敛。现state默认syncAssets并非纯读，须避免冻结旁路。未新增生产/实验/版本/build；alpha174/4e56f1e仍最新有限已验已推，无运行测试实例，其余父/冻结/专项/最终问题/offline边界保持。
+
+## F-061b Git 收据与目录移除下一片（2026-10-17）
+
+已提交推送`4e56f1ea6879d22c011f0374d7815da7c32e9e28`，主线HTTPS ls-remote与origin/main同SHA，提交钩子前后tree b3f168b38e7d6437cbed69c767a1da2c65cea0ca一致。alpha174最新有限已验已推包。下一F061c仅起单目录根移除最小方案，包含独占打开文档保留独立或保护关闭与剩余根保身份迁移；尚未批准生产/新版本/build。原父/输入缺证/最终问题/冻结/专项/offline边界保持。
+
 ## F-061b alpha174 有限片通过（2026-10-17）
 
 最终独立Spec/Standards均0必要有限非离线验收阻断，主线批准受托代验通过，非用户亲验。实际clean/dirty取消放弃/另一文档undo/readonly隐藏侧栏命令/闭标签/目录吸收禁用/最近保留/浅深与正常退出完成；session39862 exit0、Bun28455消失、三SHA原样。hash2obx7iez0wn0d，包内仓库1565/0/36886；源码两次仅原FINAL002红仍开放。真实断链未注入，组合证据边界见唯一。Git待执行；完整folder/父/冻结/专项/最终离线保持。

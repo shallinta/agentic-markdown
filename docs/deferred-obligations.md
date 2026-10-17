@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-061c 目录根移除有限交付（2026-10-17，完整义务开放）
+
+[唯一迭代](iterations/F-061c-remove-folder-root.md)alpha175经真实WK及独立最终两轴0必要阻断，主线批准有限非离线受托Agent代验通过，非用户亲验，Git待执行。OBL-007仅补根撤销消费者，不关闭F-025主责及真实卷语义/后续索引义务；F-061a未测输入矩阵、OBL-033/040完整恢复与OBL-061/F-075键盘汇合仍开放。无独占打开文档与欢迎页最近入口已补验；精确选区、自然IME及真实并存剩余根迁移未GUI测。`F-061c-offline-final`留最终人工，不断网；FINAL-ISSUE-001/002、阅读子窗、专项和冻结stash均保持。
+
 ## F-061b 独立根移除有限交付（2026-10-17）
 
 [唯一迭代](iterations/F-061b-remove-standalone-root.md)alpha174独立文件根解除窗口引用已受托Agent有限非离线代验，不关闭完整F-061或既有义务。目录根移除、OBL-007根派生授权撤销仍归原主责F-025及后续消费者；OBL-033/040完整恢复、OBL-061/F-075键盘汇合继续开放。失联恢复只有controller/service+结构组合证据，不冒真实断链；自然IME/极端竞态/真实图片解码不扩证。`F-061b-offline-final`留最终人工，不断网执行；FINAL-ISSUE-001/002及其余专项/冻结边界保持。
@@ -254,7 +258,7 @@ OBL-065 的当前编辑/源码/安全源码保存链路已有 [F-013b 受托窗�
 | OBL-004 | F-003 / G-01、G-02 | F-025 | scan 受控服务、请求大小和授权校验 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
 | OBL-005 | F-003 / G-01、G-02、G-04 | F-027 | watch 受控服务与 identity/revision/hash 防陈旧提交 | 实现中 | [F-027a](./iterations/F-027a-open-document-external-changes.md)、[F-027b](./iterations/F-027b-controlled-directory-reconciliation.md)、[F-027c](./iterations/F-027c-directory-candidate-acceptance.md)、[F-027d](./iterations/F-027d-atomic-folder-rescan.md)、[F-027e](./iterations/F-027e-descriptor-directory-watch.md) | F-027a/b非离线局部已代验；F-027c内部安全接受/CASalpha.94非离线局部已受托代验通过，已提交推送d801710；F-027d可见安全重扫/原子分页alpha.96非离线局部已受托代验通过，已提交推送a635538，无自动watch。完整义务及各片offline-final开放，首次权限红未归因观察保留。 F-027e alpha.97 安全目录自动观察非离线本片经最终独立复核与主线确认受托代验通过，非用户亲验、Git待执行；仅局部承接，F-027e-offline-final开放。 |
 | OBL-006 | F-003 / G-01、G-02 | F-064 | search/index 受控服务、运行时校验和稳定错误 | 待承接 | — | — |
-| OBL-007 | F-004 / G-03、G-12、G-13 | F-025 | 目录根 opaque capability 与派生句柄生命周期；移除根撤销全部派生授权；真实卷语义去重 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
+| OBL-007 | F-004 / G-03、G-12、G-13 | F-025 | 目录根 opaque capability 与派生句柄生命周期；移除根撤销全部派生授权；真实卷语义去重 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | F-025a alpha.73非离线有限片已受托代验；协作消费者[F-061c](./iterations/F-061c-remove-folder-root.md)alpha175非离线有限片已受托代验，不迁移主责，不关闭完整责任、真实卷语义或后续消费者。两片offline-final均留最终人工，不断网。 |
 | OBL-008 | F-004 / W-18、G-12 | F-025 | 首次目录扫描即不递归目录 symlink；文件 symlink 仅授权内普通文件，越界/失效/循环排除；F-026 消费同一过滤结果并验证文件树展示，不重复实现授权规则 | 实现中 | [F-025a](./iterations/F-025a-safe-folder-workspace.md) | 2026-10-04 alpha.73 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中；本片局部承接，完整责任及后续消费者开放，F-025a-offline-final留最终人工，不断网。 |
 | OBL-009 | F-004 / G-12、G-13 | F-015 | 写入前复核目标及父目录，防路径替换，大小写/Unicode 碰撞按真实卷语义 | 已验收 | [F-015a](./iterations/F-015a-manual-save.md) | 2026-09-22 用户明确确认 F-015a 验收通过；见迭代第 7 节，安全及卷边界不变。 |
 | OBL-010 | F-004 / G-12、G-13 | F-022 | 资产授权与 realpath 越界检查，不继承未授权 scope | 实现中 | [F-022a](./iterations/F-022a-local-reading-images.md)、[F-022b](./iterations/F-022b-directory-reading-images.md)、[F-022c](./iterations/F-022c-local-editing-images.md) | F-022c alpha142编辑PNG/JPEG非离线有限片受托Agent代验通过，非用户亲验；本轮授权/执行网络边界局部结果见唯一，Git待执行，完整义务、自然IME/极端canonical及offline-final仍开放。 F-022b alpha.74 非离线本片受托 Agent 代验通过，非用户亲验；完整义务仍实现中。F-022b-offline-final 留最终人工。 2026-10-04 alpha.69 非离线本片受托Agent代验通过，非用户亲验，独立双轴0阻断；局部承接单独文档 PNG/JPEG 只读资产，目录根等后续范围开放；子项 F-022a-offline-final 留最终人工，不执行断网，完整义务不关闭。 |

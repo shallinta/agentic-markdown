@@ -3,6 +3,7 @@ import { closeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 
+import type { FolderRemovalPublication } from "../../shared/folder-removal";
 import {
   WORKSPACE_CACHE_BYTES,
   WORKSPACE_MAX_ROOTS,
@@ -21,6 +22,8 @@ import type {
   TrustedDocumentService,
   DocumentScope,
   AssetScope,
+  FolderMutationLease,
+  FolderGrantChange,
 } from "../documents";
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 import { DocumentPathError } from "../documents/path-authorization";
@@ -35,7 +38,9 @@ import {
   type RootAuthorization,
 } from "./authorization";
 import { createAutomaticObservation } from "./automatic-observation";
+import { createFolderRemoval } from "./folder-removal";
 import type { HiddenPreferences } from "./preferences";
+import type { HiddenRemoval } from "./preferences";
 import { createReconciliation } from "./reconciliation";
 import {
   openDirectoryDescriptor,
@@ -77,6 +82,7 @@ export function createWorkspaceService({
   preferences = {
     get: () => Promise.resolve(false),
     set: () => Promise.resolve(),
+    remove: () => Promise.resolve({ status: "committed" as const, query: () => Promise.resolve("committed" as const) }),
   },
 }: {
   pickDirectory: () => Promise<string | null>;
@@ -90,9 +96,13 @@ export function createWorkspaceService({
 }): TrustedWorkspaceService {
   const roots: Root[] = [];
   let preferenceTail: Promise<unknown> = Promise.resolve();
+  let preferencePending = 0;
+  let removalAdmission = false;
+  let scanParked = false;
+  let reachedPark: (() => void) | undefined;
+  let releaseFolderRemoval: (() => void) | undefined;
   const assetOwners = new Map<string, { root: Root; scope: AssetScope }>();
-  function bindAssets(handle: string, root: Root) {
-    if (assetOwners.get(handle)?.root === root) return;
+  function makeAssetScope(root: Root) {
     const scope: AssetScope = {
       path: root.authorization.path,
       directories: root.authorization.directories.map((directory) => ({
@@ -106,6 +116,11 @@ export function createWorkspaceService({
           throw new DocumentPathError("INVALID_HANDLE");
       },
     };
+    return scope;
+  }
+  function bindAssets(handle: string, root: Root) {
+    if (assetOwners.get(handle)?.root === root) return;
+    const scope = makeAssetScope(root);
     assetOwners.set(handle, { root, scope });
     documents.setAssetScope(handle, scope);
   }
@@ -140,7 +155,7 @@ export function createWorkspaceService({
   };
   const key = (root: Root) => `${root.meta.handle}:${root.meta.generation}`;
   const state = (id: string, sync = true): WorkspaceResponse => {
-    if (sync) syncAssets();
+    if (sync && !removalAdmission) syncAssets();
     return {
       protocolVersion: 1,
       requestId: id,
@@ -196,6 +211,7 @@ export function createWorkspaceService({
     worker,
     wake: () => wake(),
     publish(binding, publication) {
+      if (scanParked && !running) return "busy";
       const root = roots.find((item) => item.meta.handle === binding.handle);
       if (root && openingRoots.has(root)) return "busy";
       if (
@@ -331,7 +347,7 @@ export function createWorkspaceService({
     syncAssets();
   }
   async function drain() {
-    if (running || disposed) return;
+    if (running || disposed || scanParked) return;
     running = true;
     try {
       let observationTurn = true;
@@ -341,6 +357,7 @@ export function createWorkspaceService({
         reconciliation.hasWork() ||
         observation.hasCleanup()
       ) {
+        if (scanParked) break;
         const stale = cleanup.shift();
         if (stale) {
           await worker.call({ op: "close", key: stale }).catch(() => undefined);
@@ -421,6 +438,7 @@ export function createWorkspaceService({
       }
     } finally {
       running = false;
+      reachedPark?.(); reachedPark = undefined;
       if (disposed) worker.dispose();
     }
   }
@@ -483,6 +501,7 @@ export function createWorkspaceService({
         ok: false as const,
         error: "INVALID_REQUEST" as const,
       };
+    if (removalAdmission) return { ...envelope, ok: false as const, error: "BUSY" as const };
     if (disposed)
       return {
         ...envelope,
@@ -624,24 +643,151 @@ export function createWorkspaceService({
     );
   }
 
-  const standaloneEligible = (path: string) => !disposed && !selecting && !roots.some(root => root.live && root.byPath.get(path)?.kind === "file");
+  const standaloneEligible = (path: string) => !disposed && !selecting && !removalAdmission && !roots.some(root => root.live && root.byPath.get(path)?.kind === "file");
   const removeStandalone = createStandaloneRemoval(
     handle => documents.inspectStandaloneRemoval(handle, standaloneEligible),
     (handle, identity, committed) => documents.commitStandaloneRemoval(handle, identity, standaloneEligible, () => { assetOwners.delete(handle); committed(); })
   );
+  const folderRemoval = createFolderRemoval(async (rootHandle, generation, opened) => {
+    const root = roots.find(item => item.meta.handle === rootHandle);
+    if (disposed || removeStandalone.busy() || removalAdmission || selecting || preferencePending || openingRoots.size || manualCandidates.size || !root?.live || root.meta.generation !== generation || !preferences.remove)
+      throw Error("Folder removal busy");
+    removalAdmission = true;
+    scanParked = true;
+    let lease: FolderMutationLease | null = null;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true; lease?.release(); removalAdmission = false; scanParked = false;
+      if (releaseFolderRemoval === release) releaseFolderRemoval = undefined;
+      wake();
+    };
+    releaseFolderRemoval = release;
+    try {
+      if (running) await new Promise<void>(resolve => { reachedPark = resolve; });
+      if (disposed || !root.live || !roots.includes(root) || root.meta.generation !== generation) throw Error("Root changed");
+      lease = await documents.acquireFolderMutationLease();
+      if (released) { lease?.release(); throw Error("Removal disposed"); }
+      if (!lease) throw Error("Document mutation busy");
+      const bindings = lease.bindings();
+      const byHandle = new Map(bindings.map(binding => [binding.handle, binding]));
+      for (const item of opened) if (byHandle.get(item.handle)?.documentId !== item.documentId) throw Error("Open binding changed");
+      const openHandles = new Set(opened.map(item => item.handle));
+      if (bindings.some(binding => binding.observedActive && !openHandles.has(binding.handle))) throw Error("Registered open binding omitted");
+      const remaining = roots.filter(item => item !== root);
+      const entries = bindings.filter(binding => root.scopes.has(binding.scope as Owner) || assetOwners.get(binding.handle)?.root === root || (binding.explicitStandalone && root.byPath.get(binding.path)?.kind === "file"));
+      const destinations = new Map<string, Root>();
+      for (const binding of entries) {
+        const destination = remaining.find(item => item.live && visiblePath(item.authorization.path, binding.path, item.meta.showHidden));
+        if (destination) { await verifyRoot(destination.authorization); destinations.set(binding.handle, destination); }
+      }
+      const exclusive = entries.filter(binding => openHandles.has(binding.handle) && !destinations.has(binding.handle));
+      const listed = exclusive.map(binding => ({ handle: binding.handle, documentId: binding.documentId, fileName: basename(binding.path), explicitStandalone: binding.explicitStandalone }));
+      // Charge all retained metadata, including unrelated binding references and
+      // the ledger's serialized request. No document text is copied by this plan.
+      const planBytes = JSON.stringify([opened, listed, bindings.map(({ scope: _scope, ...binding }) => { void _scope; return binding; })]).length * 4
+        + bindings.length * 256 + entries.length * 128 + roots.length * 256;
+      const baseBytes = planBytes + cacheBytes + observation.bytes() + reconciliation.bytes();
+      if (baseBytes > cacheLimit) throw Error("Removal budget");
+      let settingsBudget = cacheLimit - baseBytes;
+      let setting: HiddenRemoval | undefined;
+      let publication: FolderRemovalPublication | undefined;
+      let apply: (() => void) | undefined;
+      let terminal: "rejected" | undefined;
+      const settle = (status: HiddenRemoval["status"]): FolderRemovalPublication | "rejected" | "pending" => {
+        if (status === "unknown") return "pending";
+        if (status === "rejected") { terminal = "rejected"; release(); return terminal; }
+        try { apply!(); }
+        finally { if (publication) release(); }
+        return publication!;
+      };
+      return {
+        documents: listed,
+        cancel: release,
+        async commit(decision) {
+          if (released || !lease?.current()) return "rejected";
+          try {
+            const changes: FolderGrantChange[] = [];
+            const newOwners: { root: Root; owner: Owner }[] = [];
+            const nextAssets = new Map(assetOwners);
+            const closed: string[] = [], revoked: string[] = [], standalone: string[] = [];
+            for (const binding of entries) {
+              const destination = destinations.get(binding.handle);
+              const close = decision === "close" && openHandles.has(binding.handle) && !destination;
+              if (close) closed.push(binding.handle);
+              if (destination) {
+                const owner: Owner = { root: destination, release() { this.root.scopes.delete(this); }, async verify() { if (!this.root.live || !roots.includes(this.root)) throw Error("Invalid destination"); await verifyRoot(this.root.authorization); } };
+                const assetScope = makeAssetScope(destination);
+                if (!binding.explicitStandalone) newOwners.push({ root: destination, owner });
+                changes.push({ handle: binding.handle, action: binding.explicitStandalone ? "retain" : "migrate", scope: owner, assetScope });
+                nextAssets.set(binding.handle, { root: destination, scope: assetScope });
+              } else {
+                nextAssets.delete(binding.handle);
+                if (binding.explicitStandalone) changes.push({ handle: binding.handle, action: "retain" });
+                else if (decision === "keep" && openHandles.has(binding.handle)) { changes.push({ handle: binding.handle, action: "standalone" }); standalone.push(binding.handle); }
+                else { changes.push({ handle: binding.handle, action: "revoke" }); revoked.push(binding.handle); }
+              }
+            }
+            const prepared = await lease.prepare(changes);
+            if (!lease.current() || !root.live || root.meta.generation !== generation) throw Error("Plan changed");
+            const revokedSet = new Set(revoked);
+            const result: FolderRemovalPublication = {
+              root: rootHandle, closed, revoked, standalone,
+              roots: remaining.map(item => ({ ...item.meta })),
+              coveredHandles: bindings.filter(binding => !revokedSet.has(binding.handle) && remaining.some(item => item.byPath.get(binding.path)?.kind === "file")).map(binding => binding.handle),
+              assetEpochs: prepared.assetEpochs,
+              cacheBytes: cacheBytes - root.bytes,
+              queueBytes: remaining.reduce((sum, item) => sum + item.queueBytes, 0),
+            };
+            const commitBytes = JSON.stringify(result).length * 4 + nextAssets.size * 128 + changes.length * 192 + newOwners.length * 128;
+            settingsBudget = cacheLimit - baseBytes - commitBytes;
+            if (settingsBudget < 0) throw Error("Removal commit metadata budget");
+            apply = () => {
+              prepared.commit(() => {
+                for (const item of newOwners) item.root.scopes.add(item.owner);
+                root.scopes.clear();
+                assetOwners.clear(); for (const [handle, asset] of nextAssets) assetOwners.set(handle, asset);
+                roots.splice(roots.indexOf(root), 1);
+                root.live = false;
+                cacheBytes -= root.bytes; root.bytes = 0; root.queueBytes = 0;
+                root.nodes = []; root.byPath.clear(); root.files.clear();
+                manualCandidates.delete(root.meta.handle);
+                queueCleanup(key(root));
+                publication = result;
+              });
+              for (const cleanup of [() => observation.cancel(root.meta.handle, true), () => reconciliation.invalidate(root.meta.handle)]) {
+                try { cleanup(); } catch { console.warn("Folder removal workspace cleanup failed"); }
+              }
+            };
+          } catch { terminal = "rejected"; release(); return terminal; }
+          // From this point failure may be post-rename: keep both leases until queried.
+          setting = await preferences.remove!(root.authorization.path, settingsBudget);
+          return settle(setting.status);
+        },
+        async query() {
+          if (publication) { release(); return publication; }
+          if (terminal) return terminal;
+          if (!setting) return "pending";
+          return settle(await setting.query());
+        },
+      };
+    } catch (error) { release(); throw error; }
+  });
   return {
     removeStandalone,
+    removeFolderRoot: (value) => folderRemoval.request(value),
     reconciliation: {
-      prepare: (handle) => reconciliation.prepare(handle),
+      prepare: (handle) => removalAdmission ? Promise.resolve({ ok: false as const, reason: "NOT_READY" as const }) : reconciliation.prepare(handle),
       get: (token) => reconciliation.get(token),
       release: (token) => reconciliation.release(token),
-      issue: (token) => reconciliation.issue(token),
-      accept: (operation) => reconciliation.accept(operation),
+      issue: (token) => removalAdmission ? undefined : reconciliation.issue(token),
+      accept: (operation) => removalAdmission ? Promise.resolve({ status: "busy" as const }) : reconciliation.accept(operation),
       query: (operation) => reconciliation.query(operation),
     },
     async request(value) {
       if (!validWorkspaceRequest(value)) return failure("", "INVALID_REQUEST");
       if (disposed) return failure(value.requestId, "UNAVAILABLE");
+      if (removalAdmission && !["state", "page", "queryRescan"].includes(value.op)) return failure(value.requestId, "BUSY");
       if (
         workerStopped &&
         !["state", "page", "queryRescan", "clear"].includes(value.op)
@@ -797,6 +943,7 @@ export function createWorkspaceService({
       const root = roots.find((item) => item.meta.handle === value.root);
       if (!root) return failure(value.requestId, "INVALID_HANDLE");
       if (value.op === "hidden") {
+        preferencePending++;
         observation.cancel(root.meta.handle, true);
         const currentEpoch = epoch;
         const task = preferenceTail.then(async () => {
@@ -824,7 +971,7 @@ export function createWorkspaceService({
             return failure(value.requestId, "UNAVAILABLE");
           }
         });
-        preferenceTail = task.catch(() => undefined);
+        preferenceTail = task.catch(() => undefined).finally(() => { preferencePending--; });
         return task;
       }
       if (value.op === "page") {
@@ -873,6 +1020,7 @@ export function createWorkspaceService({
       };
       if (!validWorkspaceOpen(value))
         return { ...envelope, ok: false, error: "INVALID_REQUEST" };
+      if (removalAdmission) return { ...envelope, ok: false, error: "BUSY" };
       const root = roots.find((item) => item.meta.handle === value.root),
         file = root?.files.get(value.entry);
       if (disposed || !root || !file)
@@ -923,6 +1071,8 @@ export function createWorkspaceService({
       }
     },
     async dispose() {
+      folderRemoval.dispose();
+      releaseFolderRemoval?.();
       observation.dispose();
       reconciliation.dispose();
       await removeAll();

@@ -21,6 +21,7 @@ import {
   createDocumentController,
   type DocumentTransport,
 } from "@/client/documents";
+import { createFolderRemoval } from "@/client/folder-removal";
 import { isExternalTextTarget } from "@/client/history-target";
 import {
   runInlineFormat,
@@ -38,6 +39,7 @@ import { useCommands, useRegisterCommands } from "@/commands";
 import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
+import type { FolderRemovalDocument } from "@/shared/folder-removal";
 import type { LocalImageRequest } from "@/shared/local-images";
 import { analyzeTextFidelity } from "@/shared/text-fidelity";
 import type { WorkspaceRevealTarget } from "@/shared/workspace";
@@ -55,6 +57,7 @@ const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
     : Promise.reject(new Error("RPC unavailable"));
 
 export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
+  const [folderRemovalDialog, setFolderRemovalDialog] = useState<{ documents: FolderRemovalDocument[]; respond: (choice: "keep" | "close" | "cancel") => void } | null>(null);
   const [rootOrder] = useState(createWorkspaceRootOrder);
   useEffect(() => {
     const report = ({
@@ -113,6 +116,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
+  const [folderRemoval] = useState(() => createFolderRemoval(controller, folders, request => electrobun.rpc ? electrobun.rpc.request.removeFolderRoot(request) : Promise.reject(Error("RPC unavailable")), documents => new Promise(resolve => setFolderRemovalDialog({ documents, respond: choice => { setFolderRemovalDialog(null); resolve(choice); } }))));
+  useEffect(() => () => folderRemoval.dispose(), [folderRemoval]);
   useLayoutEffect(() => {
     let previous: { folder: ReturnType<typeof folders.getSnapshot>; entries: ReturnType<typeof controller.getSnapshot>["entries"] } | null = null;
     let standaloneHandles = new Set<string>();
@@ -369,6 +374,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
   return {
+    folderRemoval,
+    folderRemovalDialog,
     rootOrder,
     controller,
     folders,
@@ -385,6 +392,7 @@ type Workspace = ReturnType<typeof useDocumentWorkspace>;
 export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
   const [removalHandle, setRemovalHandle] = useState<string | null>(null);
+  const [folderRemovalHandle, setFolderRemovalHandle] = useState<string | null>(null);
   const [orderActions, setOrderActions] = useState<RootOrderActions | null>(null);
   const notifyOrder = useRegisterCommands({ moveWorkspaceRootUp: () => orderActions?.up(), moveWorkspaceRootDown: () => orderActions?.down() }, true, { moveWorkspaceRootUp: () => orderActions?.canUp() ?? false, moveWorkspaceRootDown: () => orderActions?.canDown() ?? false });
   useLayoutEffect(() => { notifyOrder(); }, [orderActions, notifyOrder]);
@@ -398,9 +406,12 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const selectTreeItem = useCallback((target: WorkspaceRevealTarget | null, isFile: boolean) => {
     reveal.setTarget(target, isFile);
     setRemovalHandle(target?.type === "document" && isFile ? target.handle : null);
+    setFolderRemovalHandle(target?.type === "workspace" && !target.entry ? target.root : null);
   }, [reveal]);
   const notifyRemoval = useRegisterCommands({ removeStandaloneRoot: () => removalHandle ? controller.removeStandalone(removalHandle) : undefined }, true, { removeStandaloneRoot: () => controller.canRemoveStandalone(removalHandle) });
   useLayoutEffect(() => { notifyRemoval(); }, [state, workspace.folderState, removalHandle, notifyRemoval]);
+  const notifyFolderRemoval = useRegisterCommands({ removeFolderRoot: () => folderRemovalHandle ? workspace.folderRemoval.remove(folderRemovalHandle) : undefined }, true, { removeFolderRoot: () => workspace.folderRemoval.canRemove(folderRemovalHandle) });
+  useLayoutEffect(() => { notifyFolderRemoval(); }, [state, workspace.folderState, folderRemovalHandle, notifyFolderRemoval]);
   const notifyReveal = useRegisterCommands({ revealWorkspaceItem: () => reveal.run(), openDefaultWorkspaceItem: () => reveal.runDefault() }, true, { revealWorkspaceItem: reveal.canRun, openDefaultWorkspaceItem: reveal.canRunDefault });
   useLayoutEffect(() => { reveal.attach(); return () => reveal.dispose(); }, [reveal]);
   useLayoutEffect(() => {
@@ -477,6 +488,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
       >用默认应用打开选中文件</button>
       <p className="text-muted-foreground text-xs">打开磁盘版本，不自动保存当前修改</p>
       <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-left text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!controller.canRemoveStandalone(removalHandle)} onClick={() => executeCommand({ type: "removeStandaloneRoot", args: {} })}>从窗口移除选中文件</button>
+      <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-left text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!workspace.folderRemoval.canRemove(folderRemovalHandle)} onClick={() => executeCommand({ type: "removeFolderRoot", args: {} })}>从窗口移除选中目录</button>
       {revealState.error && <p role="alert" className="text-destructive text-xs">{revealState.error}</p>}
     </nav>
   );
@@ -733,6 +745,9 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           重试确认移除结果
         </button>
       )}
+      {state.folderRemovalPending && (
+        <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => void workspace.folderRemoval.retry()}>重试确认目录移除结果</button>
+      )}
       {snapshot && controller.externalMessage(snapshot.documentId) && (
         <p role="status" className="text-muted-foreground text-sm">
           {controller.externalMessage(snapshot.documentId)}
@@ -838,6 +853,18 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           </div>
         </>
       )}
+      <Dialog open={!!workspace.folderRemovalDialog} onOpenChange={open => { if (!open) workspace.folderRemovalDialog?.respond("cancel"); }}>
+        <DialogContent showCloseButton={false} onInteractOutside={event => event.preventDefault()}>
+          <DialogTitle>从窗口移除目录</DialogTitle>
+          <DialogDescription>{workspace.folderRemovalDialog?.documents.length ? "以下已打开文档仅由此目录覆盖。选择保留为独立文件，或关闭这些文档；不会删除或改写磁盘文件。" : "确认从当前窗口移除此目录？不会删除磁盘目录或文件，最近文件历史仍保留。"}</DialogDescription>
+          {!!workspace.folderRemovalDialog?.documents.length && <ul className="max-h-60 overflow-auto text-sm">{workspace.folderRemovalDialog.documents.map(item => <li key={item.handle}>{item.fileName} · {item.explicitStandalone ? "已有独立授权（关闭仅关闭标签）" : "仅目录授权"}</li>)}</ul>}
+          <div className="flex flex-wrap justify-end gap-3">
+            <button className={buttonClass} onClick={() => workspace.folderRemovalDialog?.respond("cancel")}>取消</button>
+            {!!workspace.folderRemovalDialog?.documents.length && <button className={buttonClass} onClick={() => workspace.folderRemovalDialog?.respond("close")}>关闭这些文档并移除</button>}
+            <button className={buttonClass} onClick={() => workspace.folderRemovalDialog?.respond("keep")}>{workspace.folderRemovalDialog?.documents.length ? "保留为独立文件并移除" : "移除目录"}</button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={!!dialog}
         onOpenChange={(open) => {

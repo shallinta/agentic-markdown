@@ -64,6 +64,10 @@ export interface DesktopRPCType {
         params: import("./workspace").WorkspaceOpenRequest;
         response: DocumentResponse;
       };
+      revealWorkspaceItem: {
+        params: import("./workspace").WorkspaceRevealRequest;
+        response: DocumentResponse;
+      };
       readLocalImage: {
         params: import("./local-images").LocalImageRequest;
         response: import("./local-images").LocalImageResponse;

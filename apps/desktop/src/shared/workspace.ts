@@ -53,6 +53,48 @@ export interface WorkspaceOpenRequest extends DocumentRequest {
   root: string;
   entry: string;
 }
+export type WorkspaceRevealTarget =
+  | { type: "document"; handle: string }
+  | { type: "workspace"; root: string; generation: number; entry?: string };
+export interface WorkspaceRevealRequest extends DocumentRequest {
+  target: WorkspaceRevealTarget;
+}
+export function validWorkspaceReveal(
+  value: unknown
+): value is WorkspaceRevealRequest {
+  if (
+    !record(value) ||
+    Object.keys(value).length !== 3 ||
+    !Object.keys(value).every((key) =>
+      ["protocolVersion", "requestId", "target"].includes(key)
+    ) ||
+    value.protocolVersion !== 1 ||
+    typeof value.requestId !== "string" ||
+    value.requestId.length === 0 ||
+    value.requestId.length > 80 ||
+    !record(value.target)
+  )
+    return false;
+  const target = value.target;
+  if (target.type === "document")
+    return Object.keys(target).length === 2 && uuid(target.handle);
+  if (
+    target.type !== "workspace" ||
+    !uuid(target.root) ||
+    !Number.isSafeInteger(target.generation) ||
+    Number(target.generation) <= 0
+  )
+    return false;
+  const fields =
+    target.entry === undefined
+      ? ["type", "root", "generation"]
+      : ["type", "root", "generation", "entry"];
+  return (
+    Object.keys(target).length === fields.length &&
+    Object.keys(target).every((key) => fields.includes(key)) &&
+    (target.entry === undefined || uuid(target.entry))
+  );
+}
 export type WorkspaceResponse = { protocolVersion: 1; requestId: string } & (
   | {
       ok: false;
@@ -78,6 +120,7 @@ export type WorkspaceResponse = { protocolVersion: 1; requestId: string } & (
 export interface WorkspaceService {
   request(value: unknown): Promise<WorkspaceResponse>;
   open(value: unknown): Promise<DocumentResponse>;
+  reveal(value: unknown): Promise<DocumentResponse>;
   dispose(): Promise<void>;
 }
 export const WORKSPACE_PAGE_SIZE = 128;

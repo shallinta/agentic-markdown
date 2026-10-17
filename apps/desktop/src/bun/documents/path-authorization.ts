@@ -32,11 +32,13 @@ const isMarkdown = (path: string): boolean =>
 
 async function rememberDirectoryChain(
   path: string,
-  directories: Map<string, DirectoryIdentity>
+  directories: Map<string, DirectoryIdentity>,
+  check: () => void = () => undefined
 ): Promise<void> {
   let cursor = path;
   while (!directories.has(cursor)) {
     const stat = await lstat(cursor, { bigint: true });
+    check();
     if (!stat.isDirectory() || stat.isSymbolicLink())
       throw new DocumentPathError("FILE_CHANGED");
     directories.set(cursor, {
@@ -51,7 +53,8 @@ async function rememberDirectoryChain(
 
 export async function canonicalizeSelectedPath(
   path: string,
-  directories?: Map<string, DirectoryIdentity>
+  directories?: Map<string, DirectoryIdentity>,
+  check: () => void = () => undefined
 ): Promise<string> {
   const components = path.split("/");
   // Bun 1.3.14 realpath collapses symlink/.. lexically. Resolve each ordinary
@@ -60,36 +63,45 @@ export async function canonicalizeSelectedPath(
   let cursor = "/";
   for (const component of components.slice(1)) {
     const current = await lstat(cursor, { bigint: true });
+    check();
     if (!current.isDirectory() || current.isSymbolicLink())
       throw new DocumentPathError("READ_FAILED");
     if (directories) {
       const previous = directories.get(cursor);
       if (previous && previous.fingerprint !== fileFingerprint(current))
         throw new DocumentPathError("FILE_CHANGED");
-      await rememberDirectoryChain(cursor, directories);
+      await rememberDirectoryChain(cursor, directories, check);
+      check();
     }
     if (!component || component === ".") continue;
     cursor =
       component === ".."
         ? dirname(cursor)
         : await realpath(`${cursor}/${component}`);
+    check();
   }
   return cursor;
 }
 
 /** Check only explicitly selected paths and ancestors, never directory contents. */
 export async function verifySingleFileAuthorization(
-  grant: SingleFileAuthorization
+  grant: SingleFileAuthorization,
+  check: () => void = () => undefined
 ): Promise<BigIntStats> {
   try {
     if (
-      (await canonicalizeSelectedPath(grant.selectedPath)) !== grant.path ||
-      (await canonicalizeSelectedPath(dirname(grant.selectedPath))) !==
-        grant.selectedParent
+      (await canonicalizeSelectedPath(grant.selectedPath, undefined, check)) !==
+        grant.path ||
+      (await canonicalizeSelectedPath(
+        dirname(grant.selectedPath),
+        undefined,
+        check
+      )) !== grant.selectedParent
     )
       throw new DocumentPathError("FILE_CHANGED");
     for (const directory of grant.directories) {
       const current = await lstat(directory.path, { bigint: true });
+      check();
       if (
         !current.isDirectory() ||
         current.isSymbolicLink() ||
@@ -98,7 +110,9 @@ export async function verifySingleFileAuthorization(
         throw new DocumentPathError("FILE_CHANGED");
     }
     const current = await lstat(grant.path, { bigint: true });
+    check();
     const opened = await grant.file.stat({ bigint: true });
+    check();
     if (
       !current.isFile() ||
       !opened.isFile() ||
@@ -114,7 +128,8 @@ export async function verifySingleFileAuthorization(
 }
 
 export async function authorizeSingleFile(
-  selectedPath: string
+  selectedPath: string,
+  check: () => void = () => undefined
 ): Promise<SingleFileAuthorization> {
   if (!isAbsolute(selectedPath) || selectedPath.includes("\0"))
     throw new DocumentPathError("READ_FAILED");
@@ -125,24 +140,30 @@ export async function authorizeSingleFile(
   // Preserve the selected spelling: lexical resolution of symlink/.. changes
   // filesystem semantics. Native realpath supplies volume-aware canonicalization.
   const directories = new Map<string, DirectoryIdentity>();
-  const path = await canonicalizeSelectedPath(selectedPath, directories);
+  const path = await canonicalizeSelectedPath(selectedPath, directories, check);
+  check();
   if (path.split("/").includes(".git"))
     throw new DocumentPathError("UNSUPPORTED_FILE");
   if (!isMarkdown(path)) throw new DocumentPathError("UNSUPPORTED_FILE");
   const initial = await lstat(path, { bigint: true });
+  check();
   if (!initial.isFile()) throw new DocumentPathError("UNSUPPORTED_FILE");
   const selectedParent = await canonicalizeSelectedPath(
     dirname(selectedPath),
-    directories
+    directories,
+    check
   );
+  check();
   for (const parent of [dirname(path), selectedParent]) {
-    await rememberDirectoryChain(parent, directories);
+    await rememberDirectoryChain(parent, directories, check);
+    check();
   }
   const file = await open(
     path,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
   );
   try {
+    check();
     const grant: SingleFileAuthorization = {
       selectedPath,
       path,
@@ -151,7 +172,8 @@ export async function authorizeSingleFile(
       directories: [...directories.values()],
       file,
     };
-    await verifySingleFileAuthorization(grant);
+    await verifySingleFileAuthorization(grant, check);
+    check();
     return grant;
   } catch (error) {
     await file.close().catch(() => undefined);

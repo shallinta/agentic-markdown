@@ -22,6 +22,121 @@ function deferred() {
     resolve: () => resolve(),
   };
 }
+test("trusted reveal broker rejects a completed save and closes its resource", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "reveal-broker-")),
+    path = join(dir, "a.md");
+  await writeFile(path, "body");
+  const resume = deferred();
+  let calls = 0,
+    closed = 0;
+  const service = createDocumentService({
+    pickFile: () => Promise.resolve(path),
+    revealPath: () => {
+      calls++;
+    },
+    write: (input) =>
+      Promise.resolve({
+        ok: true,
+        fingerprint: "changed",
+        hash: createHash("sha256").update(input.text).digest("hex"),
+        byteLength: Buffer.byteLength(input.text),
+      }),
+  });
+  try {
+    const opened = await service.select({
+      protocolVersion: 1,
+      requestId: "open",
+    });
+    if (!opened.ok || !opened.snapshot) throw Error("fixture");
+    const base = opened.snapshot,
+      text = "new";
+    const pending = service.revealAuthorized(
+      { protocolVersion: 1, requestId: "broker" },
+      async () => {
+        await resume.promise;
+        return {
+          path,
+          close: () => {
+            closed++;
+            return Promise.resolve();
+          },
+        };
+      },
+      () => undefined
+    );
+    expect(
+      (
+        await service.save({
+          protocolVersion: 1,
+          requestId: "save",
+          handle: base.handle,
+          documentId: base.documentId,
+          expectedHash: base.hash,
+          expectedRevision: base.revision,
+          bufferRevision: 1,
+          mirror: base.mirror,
+          content: {
+            kind: "patch",
+            ...rawPatch(base.text, text),
+            targetHash: createHash("sha256").update(text).digest("hex"),
+          },
+        })
+      ).ok
+    ).toBe(true);
+    resume.resolve();
+    expect((await pending).ok).toBe(false);
+    expect(calls).toBe(0);
+    expect(closed).toBe(1);
+  } finally {
+    resume.resolve();
+    await service.dispose();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test("trusted reveal shares a single slot and cancellation releases resources", async () => {
+  const resume = deferred();
+  const cleanup = deferred();
+  let closed = 0,
+    calls = 0;
+  const service = createDocumentService({
+    pickFile: () => Promise.resolve(null),
+    revealPath: () => {
+      calls++;
+    },
+  });
+  const authorize = async () => {
+    await resume.promise;
+    return {
+      path: "/trusted",
+      close: () => {
+        closed++;
+        cleanup.resolve();
+        return Promise.resolve();
+      },
+    };
+  };
+  const pending = service.revealAuthorized(
+    { protocolVersion: 1, requestId: "pending" },
+    authorize,
+    () => undefined
+  );
+  expect(
+    (
+      await service.revealAuthorized(
+        { protocolVersion: 1, requestId: "second" },
+        authorize,
+        () => undefined
+      )
+    ).ok
+  ).toBe(false);
+  await service.cancel({ protocolVersion: 1, requestId: "pending" });
+  resume.resolve();
+  expect((await pending).ok).toBe(false);
+  await cleanup.promise;
+  expect(calls).toBe(0);
+  expect(closed).toBe(1);
+  await service.dispose();
+});
 for (const action of ["reveal", "openDefault"] as const) {
   test(`${action} dispatches canonical path without writing; readonly allowed; forged path and missing rejected`, async () => {
     const dir = await mkdtemp(join(tmpdir(), "reveal-")),

@@ -12,7 +12,7 @@ unsigned构建exit0，产物version.json确认0.1.0-alpha.168/hash18esct1gd90bm�
 
 此清理版补验沿alpha166已取得的鼠标、Tab、只读、跨标签和浅深有限证据，未冒这些在alpha168逐项重新执行；新state单例及readonly/source/safe由定向回归覆盖。自然IME、完整竞态/首载成本和最终离线仍未测。FINAL-ISSUE-001/002保持最终收敛开放；等待独立最终复核，不预写验收/Git。
 
-> 状态：alpha168有限候选片已受托Agent代验通过；临时诊断已清理，确定性循环依赖已修并复验。偶发问题FINAL-ISSUE-001/002留最终集中处理，未称已修复。尚未提交推送。
+> 状态：alpha168有限候选片已受托Agent代验通过，已提交推送`1c874564a121a4c6859db344370a7e0b36e11350`，主线ls-remote核远端main同SHA、origin/main同步。临时诊断已清理，确定性循环依赖已修并复验。偶发问题FINAL-ISSUE-001/002留最终集中处理，未称已修复。
 
 ## 主线实施批准（2026-10-16）
 

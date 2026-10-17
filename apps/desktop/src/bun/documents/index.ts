@@ -62,6 +62,15 @@ export interface DocumentScope {
   release?(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  /** Bun-only authority callback; never a renderer-supplied path. */
+  revealAuthorized(
+    request: unknown,
+    authorize: (
+      check: () => void
+    ) => Promise<{ path: string; close(): Promise<void> }>,
+    current: () => void
+  ): Promise<DocumentResponse>;
+
   reveal(request: unknown): Promise<DocumentResponse>;
   openDefault(request: unknown): Promise<DocumentResponse>;
   select(request: unknown, prepareStartingFolder?: (check: () => void) => Promise<string | undefined>): Promise<DocumentResponse>;
@@ -308,6 +317,7 @@ export function createDocumentService({
   const acceptance = createRefreshAcceptanceLedger();
   let writeBarrier = false;
   let selectBarrierGeneration = 0;
+  let saveStartGeneration = 0;
   const uncertain = new Set<string>();
   const savingRequests = new Set<string>();
   const result = (
@@ -487,34 +497,96 @@ export function createDocumentService({
     next.mirror = mirrors.put(grant.handle, next.text, 0);
   }
 
-  function dispatchDocumentPath(request: unknown, action: "reveal" | "open-default"): Promise<DocumentResponse> {
-      if (!validate(request, true))
-        return Promise.resolve(failure("", "INVALID_REQUEST"));
-      if (revealing || duplicate(request.requestId) || saving || writeBarrier)
-        return Promise.resolve(failure(request.requestId, "BUSY"));
-      const grant = grants.get(request.handle);
-      if (disposed || !grant) return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
-      const { task, promise } = taskFor(request.requestId);
-      task.handle = request.handle;
-      revealing = task;
-      const generation = epoch;
-      const barrier = selectBarrierGeneration;
-      const fingerprint = grant.fingerprint;
-      const identityKey = grant.identityKey;
-      const scope = grant.scope;
-      const check = () => {
-        checkTask(task, generation);
-        if (
-          writeBarrier || saving || barrier !== selectBarrierGeneration ||
-          grants.get(request.handle) !== grant ||
-          grant.fingerprint !== fingerprint || grant.identityKey !== identityKey ||
-          grant.scope !== scope
-        )
-          throw new DocumentPathError("FILE_CHANGED");
-      };
-      void (async () => {
+  function dispatchAuthorizedPath(
+    request: unknown,
+    action: "reveal" | "open-default",
+    authorize: (
+      check: () => void
+    ) => Promise<{ path: string; close(): Promise<void> }>,
+    current: () => void,
+    handle?: string
+  ): Promise<DocumentResponse> {
+    if (!validate(request, false))
+      return Promise.resolve(failure("", "INVALID_REQUEST"));
+    if (disposed)
+      return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
+    if (revealing || duplicate(request.requestId) || saving || writeBarrier)
+      return Promise.resolve(failure(request.requestId, "BUSY"));
+    const { task, promise } = taskFor(request.requestId);
+    task.handle = handle;
+    revealing = task;
+    const generation = epoch,
+      barrier = selectBarrierGeneration,
+      saveGeneration = saveStartGeneration;
+    const check = () => {
+      checkTask(task, generation);
+      if (
+        writeBarrier ||
+        saving ||
+        barrier !== selectBarrierGeneration ||
+        saveGeneration !== saveStartGeneration
+      )
+        throw new DocumentPathError("FILE_CHANGED");
+      current();
+    };
+    void (async () => {
+      let resource: { path: string; close(): Promise<void> } | undefined;
+      let response: DocumentResponse;
+      try {
+        check();
+        resource = await authorize(check);
+        check();
+        if (action === "reveal") {
+          if (!revealPath) throw Error("Unavailable");
+          revealPath(resource.path);
+        } else if (
+          !openDefaultPath ||
+          openDefaultPath(resource.path) !== true
+        ) {
+          throw Error("Unavailable");
+        }
+        task.committed = true;
+        response = result(task.id, null);
+      } catch {
+        response = failure(
+          task.id,
+          task.cancelled ? "CANCELLED" : "READ_FAILED"
+        );
+      } finally {
+        await resource?.close().catch(() => undefined);
+        if (revealing === task) revealing = null;
+      }
+      task.resolve(response);
+    })();
+    return promise;
+  }
+
+  function dispatchDocumentPath(
+    request: unknown,
+    action: "reveal" | "open-default"
+  ): Promise<DocumentResponse> {
+    if (!validate(request, true))
+      return Promise.resolve(failure("", "INVALID_REQUEST"));
+    const grant = grants.get(request.handle);
+    if (disposed || !grant)
+      return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
+    const fingerprint = grant.fingerprint;
+    const identityKey = grant.identityKey;
+    const scope = grant.scope;
+    const current = () => {
+      if (
+        grants.get(request.handle) !== grant ||
+        grant.fingerprint !== fingerprint ||
+        grant.identityKey !== identityKey ||
+        grant.scope !== scope
+      )
+        throw new DocumentPathError("FILE_CHANGED");
+    };
+    return dispatchAuthorizedPath(
+      { protocolVersion: 1, requestId: request.requestId },
+      action,
+      async (check) => {
         let file: Awaited<ReturnType<typeof open>> | undefined;
-        let response: DocumentResponse;
         try {
           check();
           file = await open(
@@ -524,25 +596,20 @@ export function createDocumentService({
           check();
           await verify({ ...grant, file });
           check();
-          if (action === "reveal") {
-            if (!revealPath) throw Error("Unavailable");
-            revealPath(grant.path);
-          } else if (!openDefaultPath || openDefaultPath(grant.path) !== true) {
-            throw Error("Unavailable");
-          }
-          task.committed = true;
-          response = result(task.id, null);
-        } catch {
-          response = failure(task.id, task.cancelled ? "CANCELLED" : "READ_FAILED");
-        } finally {
+          const owned = file;
+          return { path: grant.path, close: () => owned.close() };
+        } catch (error) {
           await file?.close().catch(() => undefined);
-          if (revealing === task) revealing = null;
+          throw error;
         }
-        task.resolve(response);
-      })();
-      return promise;
+      },
+      current,
+      request.handle
+    );
   }
   return {
+    revealAuthorized: (request, authorize, current) =>
+      dispatchAuthorizedPath(request, "reveal", authorize, current),
     reveal: (request) => dispatchDocumentPath(request, "reveal"),
     openDefault: (request) => dispatchDocumentPath(request, "open-default"),
     async acceptRefreshCandidate(request) {
@@ -875,6 +942,7 @@ export function createDocumentService({
       )
         return failure(request.requestId, "BUSY");
       saving++;
+      saveStartGeneration++;
       candidates.invalidate(request.documentId);
       savingRequests.add(request.requestId);
       const previous = saveTail;

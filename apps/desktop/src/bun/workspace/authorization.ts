@@ -51,9 +51,13 @@ export async function authorizeRoot(
   await verifyRoot(grant);
   return grant;
 }
-export async function verifyRoot(root: RootAuthorization): Promise<void> {
+export async function verifyRoot(
+  root: RootAuthorization,
+  check: () => void = () => undefined
+): Promise<void> {
   for (const dir of root.directories) {
     const stat = await lstat(dir.path, { bigint: true });
+    check();
     if (
       !stat.isDirectory() ||
       stat.isSymbolicLink() ||
@@ -67,13 +71,16 @@ export async function authorizeEntry(
   path: string,
   fingerprint: string,
   chain: DirectoryIdentity[],
-  showHidden = false
+  showHidden = false,
+  check: () => void = () => undefined
 ) {
-  await verifyRoot(root);
+  await verifyRoot(root, check);
+  check();
   if (!visiblePath(root.path, path, showHidden))
     throw new DocumentPathError("INVALID_HANDLE");
-  const candidate = await authorizeSingleFile(path);
+  const candidate = await authorizeSingleFile(path, check);
   try {
+    check();
     if (candidate.path !== path || candidate.fingerprint !== fingerprint)
       throw new DocumentPathError("FILE_CHANGED");
     for (const expected of [...root.directories, ...chain])
@@ -85,7 +92,8 @@ export async function authorizeEntry(
         )
       )
         throw new DocumentPathError("FILE_CHANGED");
-    await verifyRoot(root);
+    await verifyRoot(root, check);
+    check();
     return candidate;
   } catch (error) {
     await candidate.file.close();

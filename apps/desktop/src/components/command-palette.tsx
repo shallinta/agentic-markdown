@@ -90,6 +90,7 @@ export function CommandPalette({
       type === "indentSource" ||
       type === "dedentSource" ||
       type === "revealDocument" ||
+      type === "revealWorkspaceItem" ||
       type === "openDefaultDocument" ||
       type === "reloadDocument" ||
       type === "saveDocument" ||

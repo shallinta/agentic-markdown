@@ -1,5 +1,37 @@
 # AGENTS.md
 
+## F-060c alpha169 有限片通过（2026-10-17）
+
+文件树选中项Finder定位完成真实WK/Finder非离线受托代验，非用户亲验；Spec最终0必要阻断，Standards手册单击措辞纠正已落实。根/目录/未打开/独立/只读、键盘、dirty与undo、浅深及正常CmdQ通过；session15757 exit0、Bun10552消失、三SHA原样、readonly644。hash1ka88jt8lsqh0；源码及包内仓库各1533/1/36612，唯一既有long-whitespace超时保留FINAL002，不能冒全量绿或修复。Git待执行；F047e兼容红、完整父/自然IME/阅读子窗/冻结/专项/offline保持。下方旧用户dirty等待为历史，用户已自行退出后使用独立测试数据区。
+
+## F-060c 代码候选与安全切换前置（2026-10-17）
+
+文件树Finder定位已实现，主线读实际代码，两独立轴各51/297、0必要代码阻断，full type/lint/docs/lock/diff通过。源码全量1533/1/36612、209文件，唯一既有long-whitespace超时18.584秒保留FINAL002；同源码单文件96/659通过不等于修复。当前用户非自建文档在运行旧包中未保存，已异步请求其保存并正常退出；不得自动关闭/保存/丢弃或覆盖运行包。尚未新版本/build/真实WK/Finder/验收/Git，alpha168/1c87456仍最新已验已推。用户安全退出后继续alpha169构建及实际代验，不回到方案讨论；F047e技术待收敛与全部既定开放边界保持。
+
+## F-060c 文件树定位有限实施获批（2026-10-17）
+
+主线全文读唯一F060c及现有公开SDK/授权/descriptor/文档调度，两独立轴0必要路线阻断，批准文件树选中项Finder定位有限实现与实现后测试。采用同文档任务/保存屏障的可信broker、现有有界files分批按需目录证明，不新增长期proof map、不创建文档grant。源码尚未完成/验收；下一alpha169及构建/真实WK/Finder/Git由主线后续管理。F047e表格兼容红例和原需求保持开放，alpha168/1c87456仍最新已验已推；最终问题/阅读子窗/冻结/专项/offline不变。
+
+## F-047e 容器路线红例保留，转独立候选（2026-10-17）
+
+主线与独立Spec复跑`/tmp/agentic-f047e-docguard.xvpkTa`均P0 exit1/no timeout，表格仅[0,10)，row1被抢成DL；P1–3未跑。公开interrupt不等于完整flow归属，停止在同接点猜修；固定14例局部证据不冒完整定义列表。F047e继续开放、无生产/构建/Git，恢复须先确定不破坏宿主语义的完整路线并重新验证原红。按持续授权准备不依赖它的F060c文件树Finder定位最小方案，尚未批准代码。alpha168/1c87456与FINAL001002/父/阅读子窗/冻结/专项/offline边界不变。
+
+## F-047e 双栈十四例增强断言通过（2026-10-17）
+
+主线及独立Spec/Standards复跑`/tmp/agentic-f047e-cellfix.3odr3l`均14/0、exit0、无timeout，四非case与原dual逐字相同，case仅修新增canonical cell误写；原assert红和尾空行执行偏差完整保留。原E12 Lezer非table基线差异明确，新增X2双栈表格、E8/E9直接归属及精确范围通过。只认可固定核心语料，不批准生产；下一收敛空DD/续行/缩进及完整定义列表规则，再定typed接入。alpha168/1c87456不变，无生产/依赖/版本/build/Git，FINAL001002、父/阅读子窗/冻结/专项/offline保持。
+
+## F-047e 公开 contentInitial 四例有限通过（2026-10-17）
+
+主线全文读取唯一第9节及四文件，作者/主线/独立Spec与Standards实际复跑新目录`/tmp/agentic-f047e-content.FpONom`均4/0、exit0、无timeout。E12表格与E4回退完整AST保真，E1基本定义及X1独立行内域通过；space仅由相邻范围推定，原Point临时日志不迁生产。旧第三方表格红保留。下一仅收敛双栈贯穿方案，尚未批准生产/依赖/版本/build；alpha168/1c87456仍最新已验已推。完整语义、Lezer/消费者/成本/真实WK与父义务未完成；FINAL001002、阅读子窗/冻结/专项/offline保持。
+
+## F-047e 定义列表首个兼容红（2026-10-16）
+
+主线全文读唯一F047e与公开接口，两轴批准仅临时E12。原调用把对象当工厂初始化失败保留；主线核公开声明后批准新目录仅去两处括号，作者/主线/独立Spec复跑均exit1无timeout：固定第三方扩展截断既有GFM表格末行，不能直接生产。E1–11/Lezer/其它消费者未跑，不推断所有路线无解。下一只读收敛兼容替代，未改仓库生产/依赖/版本/build；alpha168/1c87456仍最新已验已推。FINAL001002、完整父/阅读子窗/冻结/专项/offline不变。
+
+## F-047d Git 收据与定义列表下一片（2026-10-16）
+
+已提交推送`1c874564a121a4c6859db344370a7e0b36e11350`，主线HTTPS ls-remote核远端main同SHA，origin/main已同步；提交钩子源码与暂存前tree无差异。alpha168仍最新有限已验包。下一F-047e定义列表仅最小方案与公开接口调查，尚未批准实验/生产/依赖/新构建；FINAL001/002、完整父/自然IME/阅读子窗/冻结stash/专项/offline保持。本收据自身随后续文档提交。
+
 ## F-047d alpha168 有限片通过（2026-10-16）
 
 最终独立Spec/Standards均0必要有限验收阻断，主线批准Emoji按需候选非离线受托Agent代验通过，非用户亲验。源码/包内Bun仓库各1522/36559、208文件通过，hash18esct1gd90bm；实际核心/URL/source/list/undo、旧alpha166沿用边界见唯一迭代。正常CmdQ exec36449 exit0、Bun70981消失，两SHA原样。确定性TDZ本轮窄修，TEMP已清；FINAL-ISSUE-001/002按用户允许留最终集中，不称修复。Git待执行；父/自然IME/阅读子窗/冻结stash/专项/offline保持。

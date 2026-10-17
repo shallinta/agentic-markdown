@@ -4,7 +4,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@agentic-markdown/ui/ui/dialog";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import CurrentCanonicalWorker from "@/client/current-canonical.worker?worker&inline";
@@ -31,6 +31,7 @@ import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { createFolderWorkspace } from "@/client/workspace";
+import { createWorkspaceReveal } from "@/client/workspace-reveal";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { electrobun } from "@/lib/electrobun";
@@ -361,6 +362,20 @@ type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
 export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
+  const [reveal] = useState(() => createWorkspaceReveal({
+    available: () => controller.canSelectFolder() && !workspace.folders.getSnapshot().busy,
+    reveal: (request) => electrobun.rpc ? electrobun.rpc.request.revealWorkspaceItem(request) : Promise.reject(new Error("RPC unavailable")),
+    cancel: (request) => electrobun.rpc ? electrobun.rpc.request.cancelDocument(request) : Promise.reject(new Error("RPC unavailable")),
+  }));
+  const revealState = useSyncExternalStore(reveal.subscribe, reveal.getSnapshot);
+  const notifyReveal = useRegisterCommands({ revealWorkspaceItem: () => reveal.run() }, true, { revealWorkspaceItem: reveal.canRun });
+  useLayoutEffect(() => { reveal.attach(); return () => reveal.dispose(); }, [reveal]);
+  useLayoutEffect(() => {
+    const update = () => { reveal.checkAvailability(); notifyReveal(); };
+    const a = controller.subscribe(update), b = workspace.folders.subscribe(update);
+    return () => { a(); b(); };
+  }, [controller, workspace.folders, reveal, notifyReveal]);
+  useLayoutEffect(() => { notifyReveal(); }, [revealState, notifyReveal]);
   return (
     <nav
       aria-label="工作区文件树"
@@ -388,6 +403,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
           executeCommand({ type: "setRootHidden", args: { root, showHidden } })
         }
         folders={workspace.folders}
+        onRevealSelection={reveal.setTarget}
         state={workspace.folderState}
         entries={state.entries}
         activeHandle={state.snapshot?.handle}
@@ -406,6 +422,13 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
           else void controller.openWorkspaceEntry(root, node.handle);
         }}
       />
+      <button
+        type="button"
+        className="hover:bg-muted focus-visible:outline-ring max-w-full rounded border px-2 py-1 text-left text-xs focus-visible:outline-2 disabled:opacity-50"
+        disabled={!reveal.canRun()}
+        onClick={() => executeCommand({ type: "revealWorkspaceItem", args: {} })}
+      >在 Finder 中显示选中项</button>
+      {revealState.error && <p role="alert" className="text-destructive text-xs">{revealState.error}</p>}
     </nav>
   );
 }

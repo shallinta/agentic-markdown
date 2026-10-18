@@ -340,6 +340,8 @@ export function createDocumentController(
     saveDrainRequired = false;
   };
   let canLeaveEditor = () => true;
+  let quickFocusTarget: { documentId: string; ready(): boolean; focus(): void } | undefined;
+  const quickFocusListeners = new Set<() => void>();
   // Fault ownership outlives EditorView (reading has no view). Only faults enter
   // this pending set; ordinary edits neither scan tabs nor schedule recovery.
   const faultOwners = new Map<
@@ -1364,25 +1366,42 @@ export function createDocumentController(
       await protect([], () => { ready = true; });
       if (ready && expected === metadataEpoch && controller.canSelectFolder()) await action();
     },
-    openWorkspaceEntry: (root: string, entry: string) => {
+    openWorkspaceEntry: (root: string, entry: string, current: () => boolean = () => true) => {
+      if (!current()) return;
       if (!controller.canSelectFolder() || !transport.openWorkspaceDocument)
         return;
       const open = (params: DocumentRequest) =>
         transport.openWorkspaceDocument!({ ...params, root, entry });
-      return protect([], () => load(true, undefined, open));
+      return protect([], () => current() ? load(true, undefined, open) : undefined);
     },
     reload: () =>
       protect(state.snapshot ? [state.snapshot.documentId] : [], () =>
         load(false)
       ),
-    activate: async (entry: DocumentEntry) => {
+    activate: async (entry: DocumentEntry, current: () => boolean = () => true) => {
+      if (!current()) return;
       if (state.frozen || !canLeaveEditor()) return;
       if (state.tabs.some((tab) => tab.documentId === entry.documentId))
         activateTab(entry.documentId);
       else if (state.entries.some((value) => value.handle === entry.handle))
-        await protect([], () => load(false, entry));
+        await protect([], () => current() ? load(false, entry) : undefined);
     },
     activateTab,
+    registerQuickFocusTarget(target: NonNullable<typeof quickFocusTarget>) {
+      quickFocusTarget = target;
+      for (const listener of quickFocusListeners) listener();
+      return () => { if (quickFocusTarget === target) quickFocusTarget = undefined; };
+    },
+    subscribeQuickFocus(listener: () => void) {
+      quickFocusListeners.add(listener);
+      return () => { quickFocusListeners.delete(listener); };
+    },
+    focusQuickDocument(documentId: string): "missing" | "blocked" | "focused" {
+      if (metadataDisposed || editorInputBlocked || saving.size || state.snapshot?.documentId !== documentId || state.busy || state.frozen || !canLeaveEditor()) return "blocked";
+      if (quickFocusTarget?.documentId !== documentId) return "missing";
+      if (!quickFocusTarget.ready()) return "blocked";
+      quickFocusTarget.focus(); return "focused";
+    },
     closeTab: (documentId: string) =>
       protect([documentId], () => closeTab(documentId)),
     closeActive: () => {
@@ -1432,6 +1451,8 @@ export function createDocumentController(
         revealPending = null;
       }
       metadataDisposed = true;
+      quickFocusTarget = undefined;
+      quickFocusListeners.clear();
       for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();
       metadataEpoch++;

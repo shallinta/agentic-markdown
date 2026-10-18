@@ -153,6 +153,7 @@ export function createFolderWorkspace(
     error: null,
   };
   const listeners = new Set<() => void>();
+  const queryListeners = new Set<() => void>();
   let disposed = false;
   let tail = Promise.resolve();
   let epoch = 0;
@@ -162,10 +163,21 @@ export function createFolderWorkspace(
     { root: string; operation: DirectoryOperation } | undefined;
   let rescanNotice: string | null = null;
   let confirmedCommit = false;
+  let metadataOwners = 0;
+  let probing = false;
+  let queryRevision = 0;
+  let queryLease: { cancel(): void; bytes: number } | undefined;
+  let queryBaseCost = metadataBytes(state);
+  let queryHeaderCost = metadataBytes([state.roots, state.coveredHandles, state.assetEpochs]);
+  const invalidateQuery = () => { const old = queryLease; queryLease = undefined; old?.cancel(); };
+  const invalidateMetadata = () => { queryRevision++; invalidateQuery(); };
   let removalPaused = false;
   const publish = (next: FolderState) => {
     if (disposed) return;
+    invalidateMetadata();
     state = next;
+    queryBaseCost = metadataBytes(next);
+    queryHeaderCost = metadataBytes([next.roots, next.coveredHandles, next.assetEpochs]);
     listeners.forEach((listener) => listener());
   };
   async function request(
@@ -201,20 +213,20 @@ export function createFolderWorkspace(
     const operation = tail.then(async () => {
       if (!disposed && expectedEpoch === epoch) {
         activeEpoch = expectedEpoch;
-        await action();
+        probing = action === refresh && !pendingRescan && !confirmedCommit && !busy;
+        metadataOwners++;
+        if (probing) queryRevision++; else invalidateMetadata();
+        try {
+          if (probing && queryBaseCost + (queryLease?.bytes ?? 0) + 1024 > WORKSPACE_CACHE_BYTES) throw Error("workspace-probe-budget");
+          await action();
+        } catch (error) {
+          if (!disposed && expectedEpoch === epoch) publish({ ...state, error: error instanceof WorkspaceError ? error.message : "目录更新未完成，保留上次可见结果；请重试。" });
+          throw error;
+        } finally { probing = false; metadataOwners--; for (const listener of queryListeners) listener(); }
       }
     });
     tail = operation
-      .catch((error: unknown) => {
-        if (disposed || expectedEpoch !== epoch) return;
-        publish({
-          ...state,
-          error:
-            error instanceof WorkspaceError
-              ? error.message
-              : "目录更新未完成，保留上次可见结果；请重试。",
-        });
-      })
+      .catch(() => undefined)
       .finally(() => {
         if (busy && !disposed && expectedEpoch === epoch) publish({ ...state, busy: false });
       });
@@ -223,6 +235,7 @@ export function createFolderWorkspace(
   async function refreshSnapshot() {
     const captured = await request({ op: "state" });
     if (!captured) return;
+    if (probing && queryBaseCost + (queryLease?.bytes ?? 0) + 1024 + queryHeaderCost + 3 * metadataBytes(captured) > WORKSPACE_CACHE_BYTES) throw Error("workspace-probe-response-budget");
     if (
       JSON.stringify([
         captured.roots,
@@ -236,6 +249,7 @@ export function createFolderWorkspace(
         publish({ ...state, error: rescanNotice });
       return;
     }
+    if (probing) { probing = false; invalidateMetadata(); }
     const compatible = (response: typeof captured) => {
       if (
         response.roots.length !== captured.roots.length ||
@@ -432,15 +446,38 @@ export function createFolderWorkspace(
       );
   }
   return {
+    queryVersion: () => queryRevision,
+    subscribeQueryAvailability(listener: () => void) {
+      queryListeners.add(listener);
+      return () => { queryListeners.delete(listener); };
+    },
+    queryAvailable: () => !disposed && !metadataOwners && !removalPaused && !state.busy && !state.error,
+    acquireQueryBudget(cancel: () => void) {
+      if (disposed || metadataOwners || removalPaused || state.busy || state.error) return null;
+      invalidateQuery();
+      const base = queryBaseCost;
+      const lease = { cancel, bytes: 0 }; queryLease = lease;
+      return {
+        current: () => queryLease === lease && !disposed && !removalPaused,
+        runnable: () => queryLease === lease && !disposed && !metadataOwners && !removalPaused,
+        reserve: (bytes: number) => {
+          if (queryLease !== lease || metadataOwners || !Number.isSafeInteger(bytes) || bytes < 0 || base + bytes > WORKSPACE_CACHE_BYTES) return false;
+          lease.bytes = bytes; return true;
+        },
+        release: () => { if (queryLease === lease) queryLease = undefined; },
+      };
+    },
     beginFolderRemoval() {
       if (disposed || removalPaused || state.busy || pendingRescan) return false;
       removalPaused = true;
+      invalidateMetadata();
       epoch++;
       refreshPending = undefined;
       publish({ ...state, busy: true });
       return true;
     },
     prepareFolderRemoval(result: FolderRemovalPublication) {
+      invalidateMetadata();
       if (disposed || !removalPaused || !state.roots.some(root => root.handle === result.root)) throw Error("folder-removal-binding");
       if (result.roots.length !== state.roots.length - 1 || result.roots.some(root => {
         const old = state.roots.find(item => item.handle === root.handle);
@@ -455,7 +492,10 @@ export function createFolderWorkspace(
       return { next, epoch };
     },
     swapPrepared(prepared: { next: FolderState; epoch: number }) {
+      invalidateMetadata();
       state = prepared.next;
+      queryBaseCost = metadataBytes(state);
+      queryHeaderCost = metadataBytes([state.roots, state.coveredHandles, state.assetEpochs]);
     },
     flushPreparedEffects() {
       removalPaused = false;
@@ -530,9 +570,11 @@ export function createFolderWorkspace(
       }, true);
     },
     dispose() {
+      invalidateQuery();
       disposed = true;
       epoch++;
       listeners.clear();
+      queryListeners.clear();
     },
   };
 }

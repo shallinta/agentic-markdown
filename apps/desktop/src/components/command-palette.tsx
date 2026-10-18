@@ -81,6 +81,7 @@ export function CommandPalette({
       type === "createMarkdown" ||
       type === "duplicateMarkdown" ||
       type === "createFolder" ||
+      type === "quickOpen" ||
       type === "setRootHidden" ||
       type === "toggleReadingMode" ||
       type === "undoDocument" ||

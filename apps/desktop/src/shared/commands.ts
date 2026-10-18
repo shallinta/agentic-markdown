@@ -86,6 +86,7 @@ export type Command =
   | GenericCommand<"createMarkdown">
   | GenericCommand<"duplicateMarkdown">
   | GenericCommand<"createFolder">
+  | GenericCommand<"quickOpen">
   | GenericCommand<"saveDocument">
   | GenericCommand<"reloadDocument">
   | GenericCommand<"clearDocument">
@@ -268,6 +269,7 @@ export const COMMAND_META: Record<
   createMarkdown: { target: "webview" },
   duplicateMarkdown: { target: "webview" },
   createFolder: { target: "webview" },
+  quickOpen: { target: "webview" },
   setRootHidden: { target: "webview", palette: false },
   saveDocument: { target: "webview" },
   reloadDocument: { target: "webview" },
@@ -332,6 +334,7 @@ export const PRODUCT_COMMANDS: Partial<
   createMarkdown: { label: "新建 Markdown 文件" },
   duplicateMarkdown: { label: "复制当前文档" },
   createFolder: { label: "新建文件夹" },
+  quickOpen: { label: "快速打开文件", accelerator: "CommandOrControl+P", shortcut: "⌘P" },
   revealDocument: { label: "在 Finder 中显示当前文档" },
   revealWorkspaceItem: { label: "在 Finder 中显示选中项" },
   moveWorkspaceRootUp: { label: "上移选中根" },

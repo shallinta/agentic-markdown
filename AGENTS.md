@@ -1,5 +1,41 @@
 # AGENTS.md
 
+## F-063a alpha183 有限片通过（2026-10-18）
+
+独立最终Spec/Standards均0必要有限非离线验收阻断，主线批准受托Agent组合证据范围通过，非用户亲验：alpha183选择稳定/焦点/精确选区及直接undo-redo补验，alpha182其他路径沿用详见唯一记录。hash2zyx0tmpacvox，源码1715/1/37902唯一原FINAL002，包内Bun运行仓库1716/0/37902；不称源码全绿或最终问题修复。正常CmdQ session61866 exit0/Bun73591消失、50SHA原样、readonly644。Git待执行；完整父/MRU/区域消费者、未测自然IME/极端树、冻结/专项/最终问题/offline保持。
+
+## F-063a alpha183 焦点窄修构建获准（2026-10-18）
+
+主线读最终focus注册/门禁/ticket/scope调用，独立Spec73/462与Standards33/204均0必要构建阻断。源码1715/1/37902、228文件52.52秒，唯一原long-whitespace18.613秒保留FINAL002，非全绿；type/full lint/docs/lock/diff通过。批准alpha183 unsigned构建与真实焦点原步骤复验；alpha182焦点红未闭，不得提前验收/Git。最新有限已验已推仍alpha180/00b9e60，既定边界保持。
+
+## F-063a alpha182 焦点红例与有限窄修获准（2026-10-18）
+
+alpha182/hash2badjvbrze0qc实际选择复位已过，浅深/折叠路径鼠标/45项导航滚动/只读/独立查询有限完成；已有源码dirty标签Quick激活后focusHTML，CmdZ无效，手动聚焦正文则undo正常。主线与两轴读唯一焦点合同，批准仅身份化一次ticket汇合scope关闭/目标成功激活/view就绪，不延时抢焦、不改变普通activate；尚未修后验收或Git，下一代码包alpha183。正常CmdQ session32306 exit0/Bun72169消失、50SHA原样、readonly644；两次pickertoast与路径paste未生效观察保留，不推产品根因，准确setValue后加入成功。包内Bun仓库1709/0/37875，原FINAL与父/冻结/专项/offline保持，alpha180仍最新已验已推。
+
+## F-063a alpha182 窄修构建获准（2026-10-18）
+
+主线读最终probe/lease/恢复代码，原选择回归独立1/0/5；最终源码1709/0/37877、228文件35.67秒，type/full lint/docs/lock/diff通过。独立Spec31/194与Standards37/219均0必要构建阻断。批准递增alpha182 unsigned构建及原真实红例重验，尚未验收不得Git；本次全绿不关闭旧FINAL002，alpha181失败保留。alpha180/00b9e60仍最新已验已推，既定边界保持。
+
+## F-063a 无变化探测窄修获准（2026-10-18）
+
+主线独立复红0/1/4并读唯一末节与真实控制器，两轴0必要路线阻断，批准probe/staging分层有限修复及回归。无变化保持结果/选中与游标，独立派发代数阻迟到打开；响应后联合成本准入不冒IPC前分配控制。失败先失效再恢复通知，真实staging先释放查询账再分配。尚未修复验收或批准构建/Git，下一代码包alpha182；alpha180/00b9e60仍最新已验已推，alpha181红保留。
+
+## F-063a alpha181 真实选择重置红例（2026-10-18）
+
+alpha181/hashj4bofezmqfxk构建成功、包内Bun仓库1705/0/37848，但真实WK查询两根重复.md后Down选择被周期刷新重置至首项，暂不验收/不得Git。独立数据区/tmp/agentic-f063a-wk.dx50EH，主线正常撤销测试dirty至clean后CmdQ，session75831 exit0/PID70930消失、样本SHA均原样，readonly恢复644，IMK stderr保留不归因。作者真实controller最小回归两次0/1/4确认同key丢失，下一仅收敛无变化轮询/真正staging与预算边界窄修；未批准新包。alpha180/00b9e60仍最新已验已推。
+
+## F-063a alpha181 构建获准（2026-10-18）
+
+主线读最终核心/预算/打开/命令/UI接线，两独立轴及非UI作者复核均0必要构建阻断。首全量1703/2中新增workspace重复通知已原oracle复红5/1后窄拆query订阅，未放宽测试；最终源码1704/1/37848、228文件53.28秒，唯一原long-whitespace18.819秒仍FINAL002，非全绿。type/full lint/docs/lock/diff通过。批准递增alpha181 unsigned构建及实际WK，尚未验收不得Git；alpha180/00b9e60仍最新已验已推，所有既定边界保持。
+
+## F-063a 当前主区 Quick Open 有限实施获准（2026-10-18）
+
+主线全文读唯一修订路线及workspace分页/staging、protect/load/命令接点，独立Spec/Standards均0必要路线阻断，批准非空元数据查询、虚拟列表与现有主区持久打开有限实现及实现后测试。OBL017/025已承接；联合4MiB成本模型同步互斥释放覆盖后台refresh/prepare/swap，query4096整拒，七条匹配oracle冻结。取消只未确认查询；确认后保护回调前再核，派发后沿原load代际，不扩createdIntent。alpha180/00b9e60仍最新有限已验已推，下一alpha181/build/真实WK/Git由主线后续批准。MRU/完整区域与父、冻结/专项/最终问题/offline保持。
+
+## F-058b Git 收据与 Quick Open 下一片（2026-10-18）
+
+已提交推送`00b9e608fed5f331f000c3dcbf09ed9094c7a334`，HTTPS ls-remote与origin/main同SHA，hook前后tree b0834b5b10d6ee6886f18413b33dbdeecea128cc一致，核验时工作树clean。alpha180最新有限已验包。下一F-063a仅收敛当前主区非空Quick Open最小方案，OBL017/025必须承接；完整F032区域路由/MRU空态与同分后续明确登记，不声称完整父前置齐备。尚未批准新生产/版本/build。全部冻结/专项/最终问题/offline边界保持。本收据随下一文档提交。
+
 ## F-058b alpha180 有限非离线片通过（2026-10-18）
 
 主线实际WK及最终独立Spec/Standards均0必要有限验收阻断，批准普通dirty显式内存/磁盘复制受托代验通过，非用户亲验。hash2rf0tzashp6xm；源码1688/1/37738唯一原FINAL002，包内Bun仓库1689/0/37738，不关闭FINAL001002003。两副本字节、源dirty/选区/undo/redo、取消/浅深/退出保护已核，session36295正常CmdQ exit0、PID68014消失、三原SHA原样。首构建hdiutil资源忙保留，同源码重试成功不推根因。只读dirty组合、真实1MiB桥接/自然IME/跨卷等未测，完整父/异常消费者/阅读子窗/冻结/专项/offline保持。Git待执行。

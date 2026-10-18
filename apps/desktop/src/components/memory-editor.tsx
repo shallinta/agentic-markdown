@@ -460,6 +460,11 @@ export function MemoryEditor({
       });
     }
     view.focus();
+    const releaseQuickFocus = controller.registerQuickFocusTarget({
+      documentId,
+      ready: () => currentView() && view.contentDOM.isConnected && !view.compositionStarted && !view.composing && controller.getEditor(documentId)?.state === view.state,
+      focus: () => view.focus(),
+    });
     const saveScroll = () =>
       controller.setScrollPosition(documentId, view.scrollDOM.scrollTop);
     view.scrollDOM.addEventListener("scroll", saveScroll);
@@ -646,6 +651,7 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      releaseQuickFocus();
       removeEmojiCompletion();
       removeCallout();
       removeImages();

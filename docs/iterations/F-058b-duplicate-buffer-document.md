@@ -1,5 +1,9 @@
 # F-058b：普通 dirty 文档的显式版本复制
 
+## Git 收据（2026-10-18）
+
+已提交推送`00b9e608fed5f331f000c3dcbf09ed9094c7a334`；HTTPS远端main与origin/main同SHA，hook前后tree b0834b5b10d6ee6886f18413b33dbdeecea128cc一致，核验时工作树clean。下方待Git为历史；本收据随下一文档提交。
+
 ## alpha180 有限非离线代验通过（2026-10-18）
 
 > 状态：有限非离线受托代验通过，Git 待执行；完整父与未测边界保持开放。

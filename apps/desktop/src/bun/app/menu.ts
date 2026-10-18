@@ -173,6 +173,7 @@ function buildMenu(
           action: "commandPalette",
           accelerator: PRODUCT_COMMANDS.openCommandPalette!.accelerator,
         },
+        { label: PRODUCT_COMMANDS.quickOpen!.label, action: "quickOpen", accelerator: PRODUCT_COMMANDS.quickOpen!.accelerator, enabled: commandAvailability.selectFolder },
         { type: "divider" },
         {
           label: t("menu:view.reload"),
@@ -260,6 +261,7 @@ const MENU_ACTION_COMMANDS: Record<string, Command> = {
   closeDocument: { type: "closeDocument", args: {} },
   settings: { type: "openSettings", args: {} },
   commandPalette: { type: "openCommandPalette", args: {} },
+  quickOpen: { type: "quickOpen", args: {} },
   toggleSidebar: { type: "toggleSidebar", args: {} },
   reload: { type: "reload", args: {} },
   zoomIn: { type: "zoomIn", args: {} },

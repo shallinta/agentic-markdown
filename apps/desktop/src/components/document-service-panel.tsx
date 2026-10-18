@@ -29,6 +29,7 @@ import {
   runNativeInlineFormat,
 } from "@/client/inline-format-input";
 import { longLineProtection } from "@/client/long-line-protection";
+import { createQuickOpen } from "@/client/quick-open";
 import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
@@ -49,6 +50,7 @@ import type { WorkspaceRevealTarget } from "@/shared/workspace";
 import { CreateMarkdownDialog } from "./create-markdown-dialog";
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
+import { QuickOpenDialog } from "./quick-open-dialog";
 import { ReadingView } from "./reading-view";
 import { RecentFiles, recentFailureText } from "./recent-files";
 import { TextFidelityDetails } from "./text-fidelity-details";
@@ -119,6 +121,10 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
+  const [quickOpen] = useState(() => createQuickOpen(folders, controller, rootOrder));
+  useEffect(() => { quickOpen.attach(); return () => quickOpen.dispose(); }, [quickOpen]);
+  const notifyQuick = useRegisterCommands({ quickOpen: () => quickOpen.open() }, true, { quickOpen: () => quickOpen.canOpen() });
+  useLayoutEffect(() => { const off = controller.subscribe(notifyQuick); notifyQuick(); return off; }, [controller, notifyQuick]);
   const creationTarget = useRef<CreateTarget | null>(null);
   const setCreationTarget = useCallback((target: CreateTarget | null) => { creationTarget.current = target; }, []);
   const [createdLocation, setCreatedLocation] = useState<{ root: string; entry: string; intent: number } | null>(null);
@@ -427,7 +433,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
   return {
-    creation, creationState, duplication, duplicationState, folderCreation, folderCreationState, setCreationTarget, createdLocation, clearCreatedLocation,
+    quickOpen, creation, creationState, duplication, duplicationState, folderCreation, folderCreationState, setCreationTarget, createdLocation, clearCreatedLocation,
     folderRemoval,
     folderRemovalDialog,
     rootOrder,
@@ -917,6 +923,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       <CreateMarkdownDialog controller={workspace.creation} state={workspace.creationState} folders={workspace.folderState} />
       <CreateMarkdownDialog controller={workspace.duplication} state={workspace.duplicationState} folders={workspace.folderState} />
       <CreateMarkdownDialog controller={workspace.folderCreation} state={workspace.folderCreationState} folders={workspace.folderState} />
+      <QuickOpenDialog controller={workspace.quickOpen} />
       <Dialog open={!!workspace.folderRemovalDialog} onOpenChange={open => { if (!open) workspace.folderRemovalDialog?.respond("cancel"); }}>
         <DialogContent showCloseButton={false} onInteractOutside={event => event.preventDefault()}>
           <DialogTitle>从窗口移除目录</DialogTitle>

@@ -28,7 +28,7 @@ import type {
   FolderGrantChange,
 } from "../documents";
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
-import { DocumentPathError } from "../documents/path-authorization";
+import { DocumentPathError, authorizeSingleFile } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
 
 import {
@@ -55,6 +55,7 @@ import {
   type ScanDirectory,
 } from "./scan";
 import { validScanBatch } from "./scan-protocol";
+import { createTrashService } from "./trash-document";
 import { createScanWorker } from "./worker";
 
 interface Root {
@@ -77,10 +78,12 @@ interface Owner extends DocumentScope {
   root: Root;
 }
 export interface TrustedWorkspaceService extends WorkspaceService {
+  trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   duplicateMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   createFolder(value: unknown): Promise<CreateFolderResponse>;
+  trashDocument(value: unknown): Promise<import("../../shared/trash-document").TrashResponse>;
   reconciliation: Pick<
     ReturnType<typeof createReconciliation>,
     "prepare" | "get" | "release" | "issue" | "accept" | "query"
@@ -93,6 +96,7 @@ export function createWorkspaceService({
   cacheLimit = WORKSPACE_CACHE_BYTES,
   manualLeaseMs = 30_000,
   directoryNative,
+  trashRun,
   preferences = {
     get: () => Promise.resolve(false),
     set: () => Promise.resolve(),
@@ -106,6 +110,7 @@ export function createWorkspaceService({
   /** Bounded lifetime for an issued but never accepted manual operation. */
   manualLeaseMs?: number;
   directoryNative?: DirectoryNative;
+  trashRun?: (input: import("../documents/trash-operation").TrashInput) => Promise<import("../documents/trash-operation").TrashResult>;
   preferences?: HiddenPreferences;
 }): TrustedWorkspaceService {
   const roots: Root[] = [];
@@ -927,6 +932,51 @@ export function createWorkspaceService({
   };
   const creation = createMarkdownService(creationHost);
   const duplication = createMarkdownService(creationHost, true);
+  const trash=createTrashService({documents,run:trashRun,async acquire(target){
+    if(disposed||removalAdmission||removeStandalone.busy()||folderRemoval.busy()||selecting||preferencePending||openingRoots.size||manualCandidates.size)throw Error("Workspace busy");
+    const owner={};createOwner=owner;removalAdmission=true;scanParked=true;
+    let released=false;
+    const release=()=>{if(released)return;released=true;if(createOwner===owner){createOwner=undefined;removalAdmission=false;scanParked=false;releaseCreation=undefined;wake();}};
+    releaseCreation=release;
+    const current=()=>{if(disposed||released||createOwner!==owner||!scanParked)throw Error("Trash owner changed");};
+    try{
+      if(running)await new Promise<void>(resolve=>{reachedPark=resolve;});current();
+      let input:import("../documents/trash-operation").TrashInput;
+      let checkTarget:()=>void;
+      if(target.kind==="root"){
+        const root=roots.find(item=>item.meta.handle===target.root),file=root?.files.get(target.entry);
+        if(!root||!file||!live(root,target.generation))throw Error("Stale target");
+        checkTarget=()=>{current();if(!live(root,target.generation)||root.files.get(target.entry)!==file)throw Error("Stale trash target");};
+        const auth=await authorizeEntry(root.authorization,file.path,file.fingerprint,file.chain,root.meta.showHidden,checkTarget);
+        try{checkTarget();input={path:auth.path,selectedPath:auth.selectedPath,selectedParent:auth.selectedParent,fingerprint:auth.fingerprint,directories:auth.directories};}finally{await auth.file.close();}
+      }else{
+        const captured=documents.inspectTrash(target.handle,target.documentId);if(!captured)throw Error("Unknown document");
+        checkTarget=()=>{current();const now=documents.inspectTrash(target.handle,target.documentId);if(now?.path!==captured.path||now.fingerprint!==captured.fingerprint)throw Error("Changed document");};
+        const auth=await authorizeSingleFile(captured.selectedPath);
+        try{checkTarget();if(auth.path!==captured.path||auth.fingerprint!==captured.fingerprint)throw Error("Replaced target");input=captured;}finally{await auth.file.close();}
+      }
+      checkTarget();
+      const projections=roots.flatMap(root=>{
+        const node=root.byPath.get(input.path),file=node&&root.files.get(node.handle);
+        return node&&file?.fingerprint===input.fingerprint?[{root,node,file,generation:root.meta.generation}]:[];
+      });
+      const reservation=1024+projections.reduce((sum,p)=>sum+p.root.nodes.length*8+256,0);
+      if(projections.length>32||workspaceUsed()+reconciliation.bytes()+reservation>cacheLimit)throw Error("Trash projection budget");
+      const prepared=projections.map(p=>({...p,nodes:p.root.nodes.filter(item=>item!==p.node),oldKey:key(p.root)}));
+      const check=()=>{checkTarget();for(const p of projections)if(!live(p.root,p.generation)||p.root.files.get(p.node.handle)!==p.file)throw Error("Projection changed");};
+      return {input,current:check,release,publish(){
+        check();
+        const files=prepared.map(({root,node,generation,nodes})=>{
+          root.nodes=nodes;root.files.delete(node.handle);root.byPath.delete(input.path);
+          // Retain the previous conservative charge until the normal rescan
+          // rebuilds the graph; do not undercount retained ancestor proofs.
+          root.meta.entries=root.nodes.length;root.meta.generation++;root.started=false;
+          return {root:root.meta.handle,previousGeneration:generation,generation:root.meta.generation,entries:[node.handle]};
+        });
+        return {files,effects(){for(const {root,oldKey}of prepared){queueCleanup(oldKey);reconciliation.invalidate(root.meta.handle);manualCandidates.delete(root.meta.handle);observation.cancel(root.meta.handle,true);}}};
+      }};
+    }catch(error){release();throw error;}
+  }});
   const folders=createFolderService({
     ...creationHost,native:()=>creationHost.native() as FolderNative,
     registered(lifetime,token){const root=roots.find(item=>item===lifetime);return !!root?.live&&root.registry.has(token);},
@@ -968,6 +1018,8 @@ export function createWorkspaceService({
       const current=()=>{check();for(const validate of validations)validate();};current();return {items,incomplete:incomplete||roots.some(root=>root.meta.status!=="complete"),current};
     },
     createFolder:(value)=>folders.request(value),
+    trashDocument:(value)=>trash.request(value),
+    trashLifecycle:trash,
     createMarkdown: (value) => creation.request(value),
     duplicateMarkdown: (value) => duplication.request(value),
     removeStandalone,
@@ -1270,6 +1322,7 @@ export function createWorkspaceService({
       }
     },
     async dispose() {
+      trash.dispose();
       creation.dispose();
       duplication.dispose();
       folders.dispose();

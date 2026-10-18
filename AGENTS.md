@@ -1,5 +1,29 @@
 # AGENTS.md
 
+## F-059a alpha185 有限片通过（2026-10-18）
+
+最终独立Spec及交叉Standards均0必要有限非离线验收阻断，主线批准受托Agent代验通过，非用户亲验。源码与包内Bun运行仓库各1763/0/38195，hash162uj70jg4o32；真实取消/先保存取消/dirty放弃二次确认、只读/独立文件Trash、旁路源码精确选区undo/浅深与正常CmdQ完成。session7221 exit0、PID83271消失，三份Trash及保留文件四SHA与baseline一致，readonly恢复644；测试物料可从系统废纸篓恢复，未清空。TabReturn未证确认、OSNO/unknown/自然IME等未测及FINAL001002003保留。Git待执行，完整目录/父/冻结/专项/offline保持。
+
+## F-059a alpha185 构建获准（2026-10-18）
+
+主线全文读正式native/worker/单槽/创建隔离/退出与前端接线，最终源码1763/0/38195、236文件38.28s，type/full lint/docs/lock/diff通过。独立Spec全片及交叉Standards均0必要构建阻断，名称等价及旧结构测试采样红已窄修复核，原FINAL002不称修复。批准递增alpha185 unsigned构建及仅自建物料真实WK验收，尚未验收不得Git；alpha184/1feac5a仍最新已验已推，完整目录/父/专项/冻结/最终离线保持。
+
+## F-059a 单文件废纸篓有限实施获准（2026-10-18）
+
+主线全文读唯一typed T1–T5及窄补，独立Spec/Standards均0必要实施路线阻断，批准窄NodeAPI后台worker、实际实体双确认、版本owner、平台单槽与unknown原身份隔离、双store收口及实现后测试。退出前先交接本方lease，既有dirty保护许可后一次2秒软收尾，不无限等/不假取消；reload不清原后端未知槽。不提供永久删除/目录删除，不冒CAS。尚未验收或新包，alpha185/build/真实WK/Git由主线管理，alpha184/1feac5a仍最新有限已验已推，其余边界保持。
+
+## F-059a 平台四例有限通过（2026-10-18）
+
+主线全文读隔离probe及两runner并实际复跑，作者/主线/独立Spec与Standards新captured均4/0、exit0、无timeout，stderr实捕空。原成功stderr未捕获缺口与旧run不改。只证同卷临时reference建立后受控改名/替换，非CAS/NodeAPI/产品；自建样本留系统Trash，不清理。批准编写同唯一typed窄桥/后台worker/操作收据最小方案，尚不批准生产或新构建；alpha184/1feac5a保持，其余既定边界不变。
+
+## F-059a 隔离平台探针获准（2026-10-18）
+
+主线全文读唯一四例固定计划，独立Spec/Standards均0必要探针阻断，批准仅新mktemp自建夹具Foundation CLI P1–P4。真实临时fileReferenceURL、结果URL身份/摘要、替换B守恒、15/180首红停，不回退path、不清系统废纸篓；不冒取得引用前无竞态/CAS/NodeAPI或产品已验。官方SDK路径NSLog及丢结果细节使直接路线不采用，窄桥仍待探针与typed方案，未批准生产/版本/build。alpha184/1feac5a仍最新有限已验已推，其余边界保持。
+
+## F-062a Git收据与废纸篓路线调查（2026-10-18）
+
+已提交推送`1feac5a2f155e30bb50e57a5eef7caba267a7119`，HTTPS ls-remote与origin/main同SHA；hook前后tree `64b8d12149e1dd3000825f0c013d65fccc220c07`一致。alpha184最新有限已验已推。下一F059a仅单Markdown移入系统废纸篓最小方案/官方接口只读调查，尚未批准探针、生产或新包；不将路径预检冒原子对象保证，也不凭空增加产品从未承诺的绝对CAS门槛。全部既定父/冻结/专项/FINAL/offline保持。本收据随后续文档提交。
+
 ## F-062a alpha184 有限片通过（2026-10-18）
 
 独立最终Spec及交叉Standards前后端均0必要有限非离线验收阻断，主线批准受托Agent代验通过，非用户亲验。hash16x4mfcqck1do，源码1735/0/38019、包内Bun运行仓库1735/0/38018；真实MRU排序/关标签保留/源码dirty选区undo/只读/保存证明迁移与重启重授权原ID/移除过滤/浅深及正常CmdQ两轮通过。session43750/17545 exit0、PID76893/77345消失，三SHA原样、甲仅计划内保存、readonly644。未测及操作观察见唯一，不关闭完整父/FINAL001002003/冻结/专项/offline。Git待执行。

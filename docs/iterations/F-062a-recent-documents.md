@@ -1,5 +1,9 @@
 # F-062a：当前窗口持久文档 MRU 与 Quick Open 空查询
 
+## Git收据（2026-10-18）
+
+已提交推送`1feac5a2f155e30bb50e57a5eef7caba267a7119`，HTTPS ls-remote及origin/main核同SHA。hook前后tree `64b8d12149e1dd3000825f0c013d65fccc220c07`一致；以下尚未Git均为阶段历史。本收据自身随后续文档提交，不扩大有限验收范围。
+
 ## alpha184 有限非离线片批准通过（2026-10-18）
 
 最终独立Spec及交叉Standards前后端均0必要有限验收阻断；主线核实际证据与剩余边界，批准受托Agent有限代验通过，非用户亲验。Git待实际执行。下段待批准为批准前阶段记录，不扩大未测范围。

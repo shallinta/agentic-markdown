@@ -23,6 +23,7 @@ import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      trashDocument: { params: import("./trash-document").TrashRequest; response: import("./trash-document").TrashResponse };
       beginMRUSession: { params: import("./document-mru").MRUEnvelope; response: import("./document-mru").MRUSessionResponse };
       recordDocumentActivation: { params: import("./document-mru").MRURecordRequest; response: import("./document-mru").MRUAck };
       resolveDocumentMRU: { params: import("./document-mru").MRUResolveRequest; response: import("./document-mru").MRUResolveResponse };
@@ -154,6 +155,7 @@ export interface DesktopRPCType {
     };
     messages: {
       finishDiscard: { requestId: string };
+      trashNotice: { reason: "exit-pending" };
       documentCapabilityChanged: { handle: string };
       recentFilesFailed: { reason: import("./recent-files").RecentFailure };
       documentExternalChanged: import("./document-observation").ObservationEvent;

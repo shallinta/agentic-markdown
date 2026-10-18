@@ -99,6 +99,7 @@ export function CommandPalette({
       type === "moveWorkspaceRootDown" ||
       type === "removeStandaloneRoot" ||
       type === "removeFolderRoot" ||
+      type === "trashDocument" ||
       type === "openDefaultWorkspaceItem" ||
       type === "openDefaultDocument" ||
       type === "reloadDocument" ||

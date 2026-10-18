@@ -114,6 +114,7 @@ export function createMarkdownService(host: {
         await openCreated(s, lease); return;
       }
       s.proof = lease.target;
+      if(host.documents.trashBlocked(join(lease.target.path,s.name)))throw Error("Trash target remains isolated");
       if (!lease.target.showHidden && s.name.startsWith(".")) { s.status = "rejected-before-create"; s.message = "请先开启该目录的隐藏文件显示。"; return; }
       if (await equivalent(lease.target, s.name, () => current(s))) { s.status = "rejected-before-create"; s.message = "已存在同名或等价名称，未创建文件。"; return; }
       const activeLease = lease;

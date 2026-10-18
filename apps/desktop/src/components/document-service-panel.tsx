@@ -34,6 +34,7 @@ import { createQuickOpen } from "@/client/quick-open";
 import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
+import { createTrashDocument, type TrashChoice, type TrashDialog } from "@/client/trash-document";
 import { createFolderWorkspace } from "@/client/workspace";
 import { createWorkspaceReveal } from "@/client/workspace-reveal";
 import { createWorkspaceRootOrder } from "@/client/workspace-root-order";
@@ -46,6 +47,7 @@ import type { CreateTarget } from "@/shared/create-markdown";
 import type { FolderRemovalDocument } from "@/shared/folder-removal";
 import type { LocalImageRequest } from "@/shared/local-images";
 import { analyzeTextFidelity } from "@/shared/text-fidelity";
+import type { TrashTarget } from "@/shared/trash-document";
 import type { WorkspaceRevealTarget } from "@/shared/workspace";
 
 import { CreateMarkdownDialog } from "./create-markdown-dialog";
@@ -63,6 +65,13 @@ const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
     : Promise.reject(new Error("RPC unavailable"));
 
 export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
+  const [trashDialog, setTrashDialog] = useState<(TrashDialog & { respond(choice: TrashChoice): void }) | null>(null);
+  const cancelTrashDialog = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    const notice = (event: { reason: "exit-pending" }) => { if (event.reason === "exit-pending") toast.warning("系统操作可能已完成或仍在收尾，请在系统中核对。", { id: "trash-exit-pending" }); };
+    electrobun.rpc?.addMessageListener("trashNotice", notice);
+    return () => { electrobun.rpc?.removeMessageListener("trashNotice", notice); };
+  }, []);
   const [folderRemovalDialog, setFolderRemovalDialog] = useState<{ documents: FolderRemovalDocument[]; respond: (choice: "keep" | "close" | "cancel") => void } | null>(null);
   const [rootOrder] = useState(createWorkspaceRootOrder);
   useEffect(() => {
@@ -183,6 +192,13 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     notifyCreation(); return () => { a(); b(); c(); d(); e(); };
   }, [controller, folders, creation, duplication, folderCreation, notifyCreation]);
   const [folderRemoval] = useState(() => createFolderRemoval(controller, folders, request => electrobun.rpc ? electrobun.rpc.request.removeFolderRoot(request) : Promise.reject(Error("RPC unavailable")), documents => new Promise(resolve => setFolderRemovalDialog({ documents, respond: choice => { setFolderRemovalDialog(null); resolve(choice); } }))));
+  const [trash] = useState(() => createTrashDocument(controller, folders, request => electrobun.rpc ? electrobun.rpc.request.trashDocument(request, { maxRequestTime: 5000 }) : Promise.reject(Error("RPC unavailable")), dialog => new Promise(resolve => {
+    const respond = (choice: TrashChoice) => { cancelTrashDialog.current = null; setTrashDialog(null); resolve(choice); };
+    cancelTrashDialog.current = () => respond("cancel");
+    setTrashDialog({ ...dialog, respond });
+  })));
+  const trashState = useSyncExternalStore(trash.subscribe, trash.getSnapshot);
+  useEffect(() => { trash.attach(); return () => { cancelTrashDialog.current?.(); trash.dispose(); }; }, [trash]);
   useEffect(() => () => folderRemoval.dispose(), [folderRemoval]);
   useLayoutEffect(() => {
     let previous: { folder: ReturnType<typeof folders.getSnapshot>; entries: ReturnType<typeof controller.getSnapshot>["entries"] } | null = null;
@@ -375,17 +391,17 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   );
   useEffect(() => folders.subscribe(notifyCommands), [folders, notifyCommands]);
   useEffect(
-    () =>
-      discardGuard.register(
-        canonicalDiscardParticipant(
+    () => {
+      const participant = canonicalDiscardParticipant(
           controller,
           canonical,
           beforeDiscard,
           controller.hasDiscardable,
           budgetMs => mru.flush(budgetMs)
-        )
-      ),
-    [controller, canonical, beforeDiscard, mru]
+        );
+      return discardGuard.register({ ...participant, beginDiscard: () => { trash.beforeWindowDiscard(); cancelTrashDialog.current?.(); return participant.beginDiscard(); } });
+    },
+    [controller, canonical, beforeDiscard, mru, trash]
   );
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) =>
@@ -443,6 +459,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   return {
     quickOpen, creation, creationState, duplication, duplicationState, folderCreation, folderCreationState, setCreationTarget, createdLocation, clearCreatedLocation,
     folderRemoval,
+    trash, trashState, trashDialog,
     folderRemovalDialog,
     rootOrder,
     controller,
@@ -461,6 +478,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const { state, controller, executeCommand, isCommandEnabled, folders, setCreationTarget } = workspace;
   const [removalHandle, setRemovalHandle] = useState<string | null>(null);
   const [folderRemovalHandle, setFolderRemovalHandle] = useState<string | null>(null);
+  const [trashTarget, setTrashTarget] = useState<TrashTarget | null>(null);
   const [orderActions, setOrderActions] = useState<RootOrderActions | null>(null);
   const notifyOrder = useRegisterCommands({ moveWorkspaceRootUp: () => orderActions?.up(), moveWorkspaceRootDown: () => orderActions?.down() }, true, { moveWorkspaceRootUp: () => orderActions?.canUp() ?? false, moveWorkspaceRootDown: () => orderActions?.canDown() ?? false });
   useLayoutEffect(() => { notifyOrder(); }, [orderActions, notifyOrder]);
@@ -475,9 +493,14 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
     reveal.setTarget(target, isFile);
     setRemovalHandle(target?.type === "document" && isFile ? target.handle : null);
     setFolderRemovalHandle(target?.type === "workspace" && !target.entry ? target.root : null);
+    const entry = target?.type === "document" ? controller.getSnapshot().entries.find(entry => entry.handle === target.handle) : undefined;
+    const fileRoot = target?.type === "workspace" ? folders.getSnapshot().roots.find(root => root.handle === target.root) : undefined;
+    setTrashTarget(!isFile ? null : entry ? { kind: "standalone", handle: entry.handle, documentId: entry.documentId } : target?.type === "workspace" && target.entry && fileRoot ? { kind: "root", root: fileRoot.handle, entry: target.entry, generation: fileRoot.generation } : null);
     const root = target?.type === "workspace" && !isFile ? folders.getSnapshot().roots.find(root => root.handle === target.root) : undefined;
     setCreationTarget(root && target?.type === "workspace" ? { rootHandle: root.handle, generation: root.generation, ...(target.entry ? { directoryHandle: target.entry } : {}) } : null);
-  }, [reveal, folders, setCreationTarget]);
+  }, [reveal, folders, setCreationTarget, controller]);
+  const notifyTrash = useRegisterCommands({ trashDocument: () => trashTarget ? workspace.trash.start(trashTarget) : undefined }, true, { trashDocument: () => workspace.trash.canStart(trashTarget) });
+  useLayoutEffect(() => { notifyTrash(); }, [state, workspace.folderState, workspace.trashState, trashTarget, notifyTrash]);
   const notifyRemoval = useRegisterCommands({ removeStandaloneRoot: () => removalHandle ? controller.removeStandalone(removalHandle) : undefined }, true, { removeStandaloneRoot: () => controller.canRemoveStandalone(removalHandle) });
   useLayoutEffect(() => { notifyRemoval(); }, [state, workspace.folderState, removalHandle, notifyRemoval]);
   const notifyFolderRemoval = useRegisterCommands({ removeFolderRoot: () => folderRemovalHandle ? workspace.folderRemoval.remove(folderRemovalHandle) : undefined }, true, { removeFolderRoot: () => workspace.folderRemoval.canRemove(folderRemovalHandle) });
@@ -543,6 +566,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         }}
       />
       <div className="flex flex-wrap gap-2">
+        <button type="button" className="text-destructive hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("trashDocument")} onClick={() => executeCommand({ type: "trashDocument", args: {} })}>移入废纸篓</button>
         <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("createMarkdown")} onClick={() => executeCommand({ type: "createMarkdown", args: {} })}>新建 Markdown 文件</button>
         <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("duplicateMarkdown")} onClick={() => executeCommand({ type: "duplicateMarkdown", args: {} })}>复制当前文档</button>
         <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("createFolder")} onClick={() => executeCommand({ type: "createFolder", args: {} })}>新建文件夹</button>
@@ -823,6 +847,8 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       {state.folderRemovalPending && (
         <button type="button" className="rounded border px-2 py-1 text-xs" onClick={() => void workspace.folderRemoval.retry()}>重试确认目录移除结果</button>
       )}
+      {workspace.trashState.message && <p role="status" className="text-sm">{workspace.trashState.message}</p>}
+      {workspace.trashState.pending && <button type="button" className="rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!workspace.trashState.canQuery} onClick={() => void workspace.trash.retry()}>查询废纸篓操作结果</button>}
       {snapshot && controller.externalMessage(snapshot.documentId) && (
         <p role="status" className="text-muted-foreground text-sm">
           {controller.externalMessage(snapshot.documentId)}
@@ -932,6 +958,20 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       <CreateMarkdownDialog controller={workspace.duplication} state={workspace.duplicationState} folders={workspace.folderState} />
       <CreateMarkdownDialog controller={workspace.folderCreation} state={workspace.folderCreationState} folders={workspace.folderState} />
       <QuickOpenDialog controller={workspace.quickOpen} />
+      <Dialog open={!!workspace.trashDialog} onOpenChange={open => { if (!open) workspace.trashDialog?.respond("cancel"); }}>
+        <DialogContent>
+          <DialogTitle>{workspace.trashDialog?.stage === "dirty" ? "确认未保存内容" : "移入系统废纸篓"}</DialogTitle>
+          <DialogDescription>{workspace.trashDialog?.stage === "dirty" ? "此文件仍有未保存或尚未接受的内存内容。取消可完整保留；先保存会结束本次操作，请保存后重新确认。选择放弃仅在移入废纸篓成功后关闭文档。" : "将以下实际文件移入系统废纸篓，不会永久删除。系统成功后关闭相关标签；失败或结果未知时保留内存内容。"}</DialogDescription>
+          <p className="text-sm break-all">{workspace.trashDialog?.prepared.canonicalPath}</p>
+          {workspace.trashDialog && workspace.trashDialog.prepared.selectedPath !== workspace.trashDialog.prepared.canonicalPath && <p className="text-sm break-all">链接入口：{workspace.trashDialog.prepared.selectedPath}。操作的是上方实际文件，不是链接入口。</p>}
+          {!!workspace.trashDialog?.prepared.affected.length && <ul className="max-h-48 overflow-auto text-sm">{workspace.trashDialog.prepared.affected.map(item => <li className="break-all" key={item.handle}>{item.fileName}</li>)}</ul>}
+          <div className="flex flex-wrap gap-2">
+            <button className={buttonClass} onClick={() => workspace.trashDialog?.respond("cancel")}>取消</button>
+            {workspace.trashDialog?.stage === "dirty" && <button className={buttonClass} onClick={() => workspace.trashDialog?.respond("save-first")}>先保存（取消本次操作）</button>}
+            <button className={`${buttonClass} text-destructive`} onClick={() => workspace.trashDialog?.respond("discard")}>{workspace.trashDialog?.stage === "dirty" ? "放弃并继续确认" : "移入系统废纸篓"}</button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={!!workspace.folderRemovalDialog} onOpenChange={open => { if (!open) workspace.folderRemovalDialog?.respond("cancel"); }}>
         <DialogContent showCloseButton={false} onInteractOutside={event => event.preventDefault()}>
           <DialogTitle>从窗口移除目录</DialogTitle>

@@ -170,6 +170,10 @@ export function createMainWindowRPC({
           if (!workspace) throw Error("Workspace unavailable");
           return workspace.removeFolderRoot(request);
         },
+        trashDocument: request => {
+          if (!workspace?.trashDocument) throw Error("Workspace unavailable");
+          return workspace.trashDocument(request);
+        },
         createMarkdown: (request) => {
           if (!workspace?.createMarkdown) throw Error("Workspace unavailable");
           return workspace.createMarkdown(request);

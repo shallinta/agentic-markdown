@@ -22,6 +22,7 @@ import type { FolderRemovalPublication, FolderRemovalDocument } from "../shared/
 import { validMirror } from "../shared/save-content";
 import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
 import { isTextFidelity } from "../shared/text-fidelity";
+import type { TrashAffected, TrashPublication } from "../shared/trash-document";
 import type { WorkspaceOpenRequest } from "../shared/workspace";
 
 import { createDocumentObservation } from "./document-observation";
@@ -194,6 +195,9 @@ export function createDocumentController(
   let folderRemovalGate = false;
   let duplicateGate: { source: DuplicateSource; cancelled: boolean } | null = null;
   let creationGate: { token: string; cancelled: boolean } | null = null;
+  interface TrashGate { token: string; cancelled: boolean; captured: { handle: string; documentId: string; revision: number; hash: string; editor: EditorState | undefined; buffer: number | undefined; dirty: boolean }[] }
+  let trashGate: TrashGate | null = null;
+  const trashUncertain = new Set<string>();
   let discardActive = false;
   let removalEligible: (handle: string) => boolean = () => false;
   let removal: { entry: DocumentEntry; phase: "state" | "begin" | "commit" | "query" | "ack"; operation?: RemovalOperation; finalError: string | null } | null = null;
@@ -480,7 +484,7 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
-    if (removalGate || folderRemovalGate || duplicateGate || creationGate) next = { ...next, frozen: true };
+    if (removalGate || folderRemovalGate || duplicateGate || creationGate || (trashGate && !trashGate.cancelled)) next = { ...next, frozen: true };
     if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
       const old = revealPending; revealPending = null;
       void transport.cancelDocument({ protocolVersion: 1, requestId: old.requestId }).catch(() => undefined);
@@ -966,6 +970,7 @@ export function createDocumentController(
     // Keep its freeze until the receipt settles; cancellation cannot revive an
     // old auto-activation intent or send an as-yet unsent publication.
     beginWindowDiscard: () => {
+      if (trashGate && !trashGate.cancelled) { trashGate.cancelled = true; publish({ ...state, frozen: discardActive }); }
       if (!duplicateGate && !creationGate) return beginDiscard();
       if (removalGate || folderRemovalGate || discardActive || state.busy || !canLeaveEditor()) return false;
       if (duplicateGate) duplicateGate.cancelled = true;
@@ -973,6 +978,70 @@ export function createDocumentController(
       discardActive = true;
       publish({ ...state, frozen: true });
       return true;
+    },
+    beginTrashProtection: async () => {
+      if (metadataDisposed || trashGate || state.busy || state.frozen || editorInputBlocked || !canLeaveEditor()) return null;
+      const gate: TrashGate = { token: crypto.randomUUID(), cancelled: false, captured: [] };
+      trashGate = gate;
+      let acquired = false;
+      publish({ ...state, frozen: true });
+      try {
+        await waitForSaves();
+        if (metadataDisposed || trashGate !== gate || gate.cancelled || editorInputBlocked || !canLeaveEditor()) return null;
+        gate.captured = state.tabs.map(tab => ({ handle: tab.handle, documentId: tab.documentId, revision: tab.revision, hash: tab.hash, editor: editors.get(tab.documentId)?.state, buffer: editors.get(tab.documentId)?.revision, dirty: needsDiscard(tab.documentId) }));
+        acquired = true;
+        return gate.token;
+      } catch { controller.releaseTrashProtection(gate.token); reportDiscardFailure(); return null;
+      } finally {
+        if (!acquired) controller.releaseTrashProtection(gate.token);
+      }
+    },
+    trashProtectionCurrent: (token: string) => {
+      const gate = trashGate;
+      return !metadataDisposed && !!gate && gate.token === token && !gate.cancelled && !discardActive && !editorInputBlocked && !saving.size && canLeaveEditor() && gate.captured.length === state.tabs.length && gate.captured.every(old => {
+        const tab = state.tabs.find(tab => tab.handle === old.handle && tab.documentId === old.documentId), editor = editors.get(old.documentId);
+        return !!tab && tab.revision === old.revision && tab.hash === old.hash && editor?.state === old.editor && editor?.revision === old.buffer && needsDiscard(old.documentId) === old.dirty;
+      });
+    },
+    trashNeedsDiscard: (items: TrashAffected[]) => items.some(item => needsDiscard(item.documentId)),
+    releaseTrashProtection: (token: string) => {
+      if (trashGate?.token !== token) return;
+      trashGate = null;
+      publish({ ...state, frozen: discardActive });
+    },
+    suspendTrashProtection: (token: string) => { if (trashGate?.token === token) { trashGate.cancelled = true; publish({ ...state, frozen: discardActive }); } },
+    resumeTrashProtection: (token: string) => {
+      if (trashGate?.token !== token || state.frozen || state.busy || discardActive) return false;
+      trashGate.cancelled = false;
+      if (!controller.trashProtectionCurrent(token)) { trashGate.cancelled = true; return false; }
+      publish({ ...state, frozen: true }); return true;
+    },
+    markTrashUncertain: (items: { documentId: string }[]) => { for (const item of items) trashUncertain.add(item.documentId); publish({ ...state }); },
+    clearTrashUncertain: (items: { documentId: string }[]) => { for (const item of items) trashUncertain.delete(item.documentId); publish({ ...state }); },
+    prepareTrashedDocument: (token: string, result: TrashPublication) => {
+      if (!controller.trashProtectionCurrent(token)) throw Error("trash-confirmation-changed");
+      for (const item of result.documents) {
+        const entry = state.entries.find(entry => entry.handle === item.handle);
+        if (entry && entry.documentId !== item.documentId) throw Error("trash-document-binding");
+      }
+      const removed = new Set(result.documents.map(item => item.handle));
+      const tabs = state.tabs.filter(tab => !removed.has(tab.handle));
+      const oldIndex = state.tabs.findIndex(tab => tab.documentId === state.snapshot?.documentId);
+      const snapshot = state.snapshot && !removed.has(state.snapshot.handle) ? state.snapshot : tabs[Math.min(Math.max(0, oldIndex), tabs.length - 1)] ?? null;
+      const removedIds = state.tabs.filter(tab => removed.has(tab.handle)).map(tab => tab.documentId);
+      const nextEditors = new Map(editors);
+      captureCurrentViewport();
+      for (const id of removedIds) nextEditors.delete(id);
+      if (snapshot && snapshot.documentId !== state.snapshot?.documentId) {
+        const editor = nextEditors.get(snapshot.documentId);
+        if (editor) nextEditors.set(snapshot.documentId, { ...editor, state: editor.state.update({ effects: resumeEditorParser(editor.state), annotations: Transaction.addToHistory.of(false) }).state });
+      }
+      const next: DocumentViewState = { ...state, entries: state.entries.filter(entry => !removed.has(entry.handle)), tabs, snapshot, frozen: discardActive, error: null, stale: !!snapshot && staleDocuments.has(snapshot.documentId), elapsedMs: null };
+      return { next, nextEditors, removedIds, closed: result.documents.map(item => item.handle), trashToken: token };
+    },
+    swapTrashedDocument: (prepared: { next: DocumentViewState; nextEditors: typeof editors; trashToken: string }) => {
+      state = prepared.next; editors = prepared.nextEditors; generation++;
+      if (trashGate?.token === prepared.trashToken) trashGate = null;
     },
     canBeginFolderRemoval: () => !metadataDisposed && !removal && !state.folderRemovalPending && !state.busy && !state.frozen && canLeaveEditor(),
     beginFolderRemoval: async () => {
@@ -1022,7 +1091,7 @@ export function createDocumentController(
       const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
       for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
       for (const id of prepared.removedIds) {
-        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); transfers.delete(id); saveResults.delete(id); uncertain.delete(id);
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
         safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
       }
       safely(() => observation.sync(state.tabs));
@@ -1497,6 +1566,7 @@ export function createDocumentController(
       canWrite(state.snapshot.documentId) &&
       !saving.size &&
       !uncertain.has(state.snapshot.documentId) &&
+      !trashUncertain.has(state.snapshot.documentId) &&
       isDirty(state.snapshot.documentId),
     getSaveStatus: (documentId: string): SaveViewStatus =>
       saving.has(documentId)
@@ -1517,6 +1587,7 @@ export function createDocumentController(
         state.busy ||
         saving.size ||
         uncertain.has(baseline.documentId) ||
+        trashUncertain.has(baseline.documentId) ||
         !isDirty(baseline.documentId) ||
         !canLeaveEditor()
       )

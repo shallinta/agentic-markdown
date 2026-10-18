@@ -79,14 +79,18 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     release: (requestId) => getRpc().send.finishDiscard({ requestId }),
   });
   const lifecycle = createLifecycleGuard({
-    guard: (reason, execute) =>
-      documents.withWriteBarrier(() =>
+    guard: async (reason, execute) => {
+      workspace.trashLifecycle.beforeExit();
+      try { return await documents.withWriteBarrier(() =>
         guard(reason, async (requestId) => {
+          const settled=await workspace.trashLifecycle.finishExit(Date.now()+2_000);
+          if(!settled){console.warn("Trash operation result remains unknown during exit");try{getRpc().send.trashNotice({reason:"exit-pending"});}catch{/* Exit notice is best effort; never restart the receipt deadline. */}}
           await recent.drain();
           await mru.drainUntil(mruDeadline);
           return execute(requestId);
         })
-      ),
+      ); } finally { workspace.trashLifecycle.cancelExit(); }
+    },
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.
     stop: async () => {

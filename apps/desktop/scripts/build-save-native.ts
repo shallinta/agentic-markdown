@@ -28,6 +28,18 @@ const build = Bun.spawnSync([
   join(output, "save-primitives.node"),
 ]);
 if (build.exitCode !== 0) throw new Error(build.stderr.toString());
+const trashNative = Bun.spawnSync([
+  "xcrun", "clang", "-bundle", "-undefined", "dynamic_lookup",
+  "-DNAPI_VERSION=8", "-Wall", "-Wextra", "-Werror", "-fobjc-arc",
+  "-framework", "Foundation", "-I", headers,
+  join(root, "native/trash-primitives.m"), "-o", join(output, "trash-primitives.node"),
+]);
+if (trashNative.exitCode !== 0) throw new Error(trashNative.stderr.toString());
+const trashWorker = await Bun.build({
+  entrypoints: [join(root, "src/bun/documents/trash-worker.ts")],
+  outdir: output, target: "bun", naming: "trash-worker.js",
+});
+if (!trashWorker.success) throw new AggregateError(trashWorker.logs, "Trash worker build failed");
 const worker = await Bun.build({
   entrypoints: [join(root, "src/bun/documents/save-worker.ts")],
   outdir: output,

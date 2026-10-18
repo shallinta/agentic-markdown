@@ -1,5 +1,49 @@
 # AGENTS.md
 
+## F-064b 证据归档与最终复核完成，Git待执行（2026-10-19）
+
+主线pack.py实际exit0，完整核164成员/1,223,070原bytes及XZ EOF/tar零尾；包100,084bytes、SHA c44a3ceea313f1d0bbd81f51ce1960adf4fa386f0556160064579a780b03d768。两轴事前逐原文件SHA与固定pack源核同，research/f064b五件已持久化且独立最终复核0必要阻断，不带native/target/cache/index、不造通用重放框架。type/full lint/docs/obligations/lock/diff通过，Git待执行；有限桥结论不扩大，alpha186与父/冻结/专项/离线边界保持。
+
+## F-064b 固定桥接实验有限通过（2026-10-19）
+
+主线regression.tQc04Q/run-1792341527379330000六组均自然exit0/无残组，独立Spec与Standards核实际双流、终态与全部源/native SHA均0必要有限阻断，批准受托Agent有限代验，非用户亲验。严格观察器无迟到错误/未完成请求，case4最终state-free2/2/2，case6两匿名panic及一次unknown属固定注入。原close未定义红及旧绿观察盲点保留；未证明App资源打包/授权dirty/UI/执行中抢占，四父义务保持开放。下一收尾持久实验材料和文档后再Git，后继F064c仅最小正式构建/资源/typed方案，不先复制实验hook或注入接口为生产。alpha186不变。
+
+## F-064b 关闭 API 调用错误已定位（2026-10-19）
+
+主线实际catch-kind.t3taIm/run-1792341116467553000：匿名stderr为ReferenceError=true、mentionsClose=true、globalThis.close类型undefined；首两成功回执后第三条BRIDGE_ERROR，仍15秒超时。原实验误用不存在的global close且catch吞入普通错误路径，不能归因Rust析构或Bun缺陷。批准仅新候选在原生显式close/ACK后解除唯一onmessage监听器自然drain，严格全事件/自然exit oracle不放宽；须先有限对照再完整六组回归，尚未修复验收/生产/Git。原错误及旧绿观察盲点均保留。
+
+## F-064b 退出探针观察缺口（2026-10-19）
+
+原direct-audit/async/stack均ACK后15秒超时且audit仅open/close；最小两消息live-two自然exit0。随后主线与作者/独立审查发现原probe只resolve/reject当前Promise，成功后的同ID错误回执或worker error可能被忽略。因此此前绿仅证自然进程退出，不证明worker无异常；不删除原证据，也不据绿批准桥接。先在新目录加全程有限消息/错误与终态判定，再验证catch边界；根因未知，不改native/生产/版本，不强退造绿。
+
+## F-064b 退出链对照继续（2026-10-19）
+
+主线执行原二进制的audit无GC、zero-yield、live调用、closed wrapper强引用四个独立对照，均自然exit0且cleanup/finalize/state-free完整；retain.Nk6EWR/run-1792340330179498000为0.114秒、无残组。不能将原红归因必须GC、让出或单独live调用，也不称已修复。原两消息worker红仍保留，下一仅在原失败路径新增已有audit取证；先审新源再执行，不改原源/二进制、不给强退或放宽deadline。未生产/新包/验收/Git，alpha186保持。
+
+## F-064b 退出链减法结果（2026-10-19）
+
+主线按独立审查逐项执行exit.QZhTo0：client-open-close与direct-open-close各ACK完成仍15.067秒DEADLINE/-15；bare-close自然exit0/0.148秒。随后独立审load.4EcutT，仅加载原addon/version的run-1792339785412019000自然exit0/0.077秒。各组均无残留，原全部源/产物不改；只能缩到创建过会话的worker路径，未证唯一根因。已向用户展示wrapper回收、Rust资源、close时序三假设，批准仅新诊断源准备，用原audit/stats区分生命周期，GC仅诊断非修复；不改生产或旧验收结论。
+
+## F-064b 首次运行退出链红例（2026-10-19）
+
+bridge.w0G13h/run-1792339463364777000实际diagnose exit1：case1 exit0/2.229秒；case2虽stdout complete，但15.061秒DEADLINE退出-15，精确进程组清理后无残留。case3–6未跑，不能以断言完成冒整组通过。原源/二进制/收据冻结；批准仅新目录最小退出链对照源准备，先减CRUD至worker open/close及无addon对照，源码审后另批执行，不归因Bun或native。不得用process.exit/unref掩盖正常退出义务。未生产/新包/Git，alpha186及全部既定边界保持。
+
+## F-064b 原生桥编译完成，有限诊断获准（2026-10-19）
+
+主线exec28330 exit0，bridge.w0G13h/run-1792339410377845000编译complete；实际native-static-libs为iconv/System/c/m，otool仅系统iconv与System，duplicate System警告保留。`.node` SHA `6589e6ea852dce773d6a46bea665f6c00a95dda0094069fcde591e529fc8dd78`，所有源/原锁/header核同。两轴源码边界已复核，批准同源六组diagnose，15秒每例/180秒批首红停，不放宽oracle。编译不是运行验收，未生产/新包/Git。
+
+## F-064b 隔离编译获准（2026-10-19）
+
+主线全文读bridge.w0G13h全部源及固定六组，两轴最终0必要有限编译阻断；ABI先核、按操作回执形状与重开真实generation窄补亦复核通过。批准`run.py compile`固定Rust1.90/Tantivy0.27原锁、600秒共享截止的staticlib与Node-API8链接；实际系统库输出和产物SHA须核后再六组diagnose。未改生产/版本/应用build，未运行通过或验收；alpha186与所有既定边界保持。
+
+## F-064b 有限桥接源准备获准（2026-10-18）
+
+主线全文读唯一F064b及实际Node-API/worker/构建接点，核Tantivy0.27的reader META_LOCK和write/create锁实现。两轴修订终核0必要临时源码准备阻断，批准仅新临时目录Rust staticlib/C Node-API8/Bun worker与六组固定oracle源准备，不运行编译或实验、不改生产依赖/版本/build。累计live准入、busy前拒、完整固定代查询、wrapper所有权与panic边界必须照方案落实；reader-only非OS只读介质，既有meta锁预检非TOCTOU安全。源码冻结后另审再运行，alpha186/0f1d113及完整父/冻结/专项/最终问题/offline保持。
+
+## F-064a Git 收据与桥接下一片（2026-10-18）
+
+有限全文索引研究已提交推送`0f1d113055330d5e058447293e86a28bd4b499f5`，主线HTTPS ls-remote、origin/main与HEAD同SHA；hook前后tree均`902355dd77b613be39f6614eda47d3b5f34f7fe5`，核验时工作树clean。最终Spec与Standards均0必要研究交付阻断；staged检查新增发现的普通文档EOF已修，两个固定SHA证据原件仅精确路径空白规则例外，未改原件。alpha186不变。连续授权下下一F-064b先调查Node-API窄桥与后台Worker的持久索引接入最小方案，尚未批准生产、依赖、实验或新构建；Tantivy仍为集成候选，完整搜索、四项父义务、原200次超时、冻结/专项/最终问题/offline保持。
+
 ## F-064a 有限研究与迁移通过，批准持久材料入仓（2026-10-18）
 
 XZ实际20包2584成员9061444bytes完成；主线三步迁移exec33685 exit0/preflight complete且engineExecuted:false。两轴独立逐历史2584项/78派生及11364正文输入SHA、所有阶段pins和精确6文件路径补丁核同，无target/run产物。批准仅research/f064a约9MB证据及受控复跑入口入仓，原gz保留但不提交；不复制展开history/raw/cache。采纳Tantivy为下一集成候选，保SQLite优势与Rust桥接未验，不称生产搜索或原200红已修。入仓后最终复核再Git，alpha186及完整父/离线/既定冻结不变。

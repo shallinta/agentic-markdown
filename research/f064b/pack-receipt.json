@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "inventorySHA": "bac8ca269150f2d75d420dad1e16807abe2cf850e6d64d24b7b0963e0589af6a",
+  "scriptSHA": "9f0533b55bf4f3deea1834cddbf88f1c84b839faa4959ffc78dac7188b65d39b",
+  "members": 164,
+  "originalBytes": 1223070,
+  "archive": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064b-pack.i5f9ib5o/evidence.tar.xz",
+  "archiveBytes": 100084,
+  "archiveSHA": "c44a3ceea313f1d0bbd81f51ce1960adf4fa386f0556160064579a780b03d768",
+  "expandedTarBytes": 1351680,
+  "verifiedMembers": 164,
+  "verifiedBytes": 1223070
+}

@@ -67,6 +67,6 @@ python3 replay.py run --paths /absolute/paths.json --inventory /absolute/researc
 
 ## 迁移验证和许可边界
 
-主线在全新`/private/tmp/agentic-f064a-replay-check.rxgBGU/work`执行materialize/inputs/preflight，session33685 exit0，输出`preflight:complete, engineExecuted:false`；145行迁移diff仅6源路径/cache调整。迁移版完整引擎未运行，不能以历史临时源绿冒迁移引擎复跑证据；两轴终核0必要阻断，主线已批准一次入仓；Git尚未执行。
+主线在全新`/private/tmp/agentic-f064a-replay-check.rxgBGU/work`执行materialize/inputs/preflight，session33685 exit0，输出`preflight:complete, engineExecuted:false`；145行迁移diff仅6源路径/cache调整。迁移版完整引擎未运行，不能以历史临时源绿冒迁移引擎复跑证据；两轴终核0必要阻断，研究材料已随`0f1d113055330d5e058447293e86a28bd4b499f5`提交推送，远端main核同SHA。
 
 五许可原件位于解包后的`history/corpus-extract.kTIP71/run-1792330318024936000/`：l1.raw=Vue中文LICENSE、l2.raw=Vue英文LICENSE（CC BY4.0，图片例外）；l3.raw=Rust book COPYRIGHT、l4.raw=LICENSE-MIT、l5.raw=LICENSE-APACHE（MIT OR Apache-2.0）。相同包的allowlist.json及提取receipt保每篇repo/commit/path/bytes/SHA与归属。inputs也还原五许可到inputs/real。第三方正文不改用本项目许可证，不下载图片或嵌入资源；不能将许可证核对冒新的再授权结论。

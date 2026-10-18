@@ -1,8 +1,10 @@
 # 产品功能手册
 
-## 全文索引有限研究（F-064a，非可用功能）
+## 全文索引有限研究（F-064a／F-064b，非可用功能）
 
 F-064a有限研究已受托Agent代验通过，非用户亲验；真实36篇与合成三档的固定同义验证及有限成本支持Tantivy作为下一持久索引集成候选，尚未交付搜索功能。SQLite初建／长查询回退仍有优势，Rust应用集成成本尚未验证，原200次超时证据保留。授权、未保存内容覆盖、搜索界面及完整F-064仍开放。见[唯一迭代](iterations/F-064a-fulltext-index-evaluation.md)与[可追溯研究物料](../research/f064a/README.md)。
+
+F-064b固定桥可行性实验亦经两轴复核及主线批准受托代验通过：自建小缓存的Rust稳定C ABI→NodeAPI8→Bun worker持久CRUD、重开和严格自然退出六组通过，非用户亲验／正式app验收。原实验未定义close调用及漏观测首红保留；正式typed构建／包内资源接入由后继F-064c方案推进，尚无搜索入口。四项索引服务／调度／缓存／schema义务仍deferred。见[F-064b唯一迭代](iterations/F-064b-tantivy-native-bridge.md)及[持久研究证据](../research/f064b/README.md)。
 
 ## 完整目录移入系统废纸篓（F-059b，alpha186有限可用）
 

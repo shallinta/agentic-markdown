@@ -50,7 +50,7 @@ export function createFolderService(host:FolderHost){
       const entered=await host.documents.withCreateBarrier(()=>{
         current(s);verifyFolderTarget(active.target);
         if(!retry){
-          if(host.documents.trashBlocked(join(active.target.path,s.name)))throw Error("Trash target remains isolated");
+          if(host.documents.trashBlocked(join(active.target.path,s.name),undefined,[...active.target.root.directories,...active.target.chain]))throw Error("Trash target remains isolated");
           reservation=active.reserve({path:join(active.target.path,s.name),fingerprint:"9".repeat(96),chain:active.target.chain});
           createFolderOnDisk({native:host.native(),target:active.target,name:s.name,check:()=>current(s),committed:proof=>{s.proof=proof;s.status="created";},unknown:()=>{s.status="unknown";}});
         }

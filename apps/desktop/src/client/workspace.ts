@@ -513,18 +513,21 @@ export function createFolderWorkspace(
       const preparedCost = 3 * metadataBytes(result) + 1024
         + Object.keys(state.nodes).reduce((bytes, key) => bytes + 64 + key.length * 2, 0)
         + result.files.reduce((bytes, item) => bytes + (state.nodes[item.root]?.length ?? 0) * 8, 0)
-        + state.roots.length * 256 + state.coveredHandles.length * 8;
+        + state.roots.length * 256 + state.coveredHandles.length * 8 + metadataBytes(state.assetEpochs ?? {});
       if (queryBaseCost + mruBytes + preparedCost > WORKSPACE_CACHE_BYTES) throw Error("trash-publication-budget");
       const changed = new Map(result.files.map(item => [item.root, item]));
       if (changed.size !== result.files.length || result.files.some(item => item.generation <= item.previousGeneration || !state.roots.some(root => root.handle === item.root && root.generation === item.previousGeneration))) throw Error("trash-workspace-binding");
       const nodes = { ...state.nodes };
       for (const item of result.files) {
         const removed = new Set(item.entries);
-        if (removed.size !== item.entries.length || item.entries.some(handle => !nodes[item.root]?.some(node => node.handle === handle && node.kind === "file"))) throw Error("trash-entry-binding");
-        nodes[item.root] = (nodes[item.root] ?? []).filter(node => !removed.has(node.handle));
+        if (removed.size !== item.entries.length || item.entries.some(handle => !nodes[item.root]?.some(node => node.handle === handle))) throw Error("trash-entry-binding");
+        if (item.removed) delete nodes[item.root];
+        else nodes[item.root] = (nodes[item.root] ?? []).filter(node => !removed.has(node.handle));
       }
       const removedHandles = new Set(result.documents.map(item => item.handle));
-      const next: FolderState = { ...state, roots: state.roots.map(root => { const update = changed.get(root.handle); return update ? { ...root, generation: update.generation, entries: Math.max(0, root.entries - update.entries.length) } : root; }), nodes, coveredHandles: state.coveredHandles.filter(handle => !removedHandles.has(handle)), busy: false, error: null };
+      const assetEpochs = { ...state.assetEpochs };
+      for (const handle of removedHandles) delete assetEpochs[handle];
+      const next: FolderState = { ...state, roots: state.roots.filter(root => !changed.get(root.handle)?.removed).map(root => { const update = changed.get(root.handle); return update ? { ...root, generation: update.generation, entries: Math.max(0, root.entries - update.entries.length) } : root; }), nodes, assetEpochs, coveredHandles: state.coveredHandles.filter(handle => !removedHandles.has(handle)), busy: false, error: null };
       if (queryBaseCost + mruBytes + 3 * metadataBytes(result) + metadataBytes(next) > WORKSPACE_CACHE_BYTES) throw Error("trash-publication-budget");
       return { next, epoch };
     },

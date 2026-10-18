@@ -495,7 +495,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
     setFolderRemovalHandle(target?.type === "workspace" && !target.entry ? target.root : null);
     const entry = target?.type === "document" ? controller.getSnapshot().entries.find(entry => entry.handle === target.handle) : undefined;
     const fileRoot = target?.type === "workspace" ? folders.getSnapshot().roots.find(root => root.handle === target.root) : undefined;
-    setTrashTarget(!isFile ? null : entry ? { kind: "standalone", handle: entry.handle, documentId: entry.documentId } : target?.type === "workspace" && target.entry && fileRoot ? { kind: "root", root: fileRoot.handle, entry: target.entry, generation: fileRoot.generation } : null);
+    setTrashTarget(!isFile && target?.type === "workspace" && fileRoot ? { kind: "directory", root: fileRoot.handle, generation: fileRoot.generation, ...(target.entry ? { entry: target.entry } : {}) } : isFile && entry ? { kind: "standalone", handle: entry.handle, documentId: entry.documentId } : isFile && target?.type === "workspace" && target.entry && fileRoot ? { kind: "root", root: fileRoot.handle, entry: target.entry, generation: fileRoot.generation } : null);
     const root = target?.type === "workspace" && !isFile ? folders.getSnapshot().roots.find(root => root.handle === target.root) : undefined;
     setCreationTarget(root && target?.type === "workspace" ? { rootHandle: root.handle, generation: root.generation, ...(target.entry ? { directoryHandle: target.entry } : {}) } : null);
   }, [reveal, folders, setCreationTarget, controller]);
@@ -961,9 +961,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       <Dialog open={!!workspace.trashDialog} onOpenChange={open => { if (!open) workspace.trashDialog?.respond("cancel"); }}>
         <DialogContent>
           <DialogTitle>{workspace.trashDialog?.stage === "dirty" ? "确认未保存内容" : "移入系统废纸篓"}</DialogTitle>
-          <DialogDescription>{workspace.trashDialog?.stage === "dirty" ? "此文件仍有未保存或尚未接受的内存内容。取消可完整保留；先保存会结束本次操作，请保存后重新确认。选择放弃仅在移入废纸篓成功后关闭文档。" : "将以下实际文件移入系统废纸篓，不会永久删除。系统成功后关闭相关标签；失败或结果未知时保留内存内容。"}</DialogDescription>
+          <DialogDescription>{workspace.trashDialog?.stage === "dirty" ? "此文件仍有未保存或尚未接受的内存内容。取消可完整保留所有文档；先保存会结束整个操作，请保存后重新确认。选择放弃仅记录本次意图，移入废纸篓成功后才关闭文档。" : workspace.trashDialog?.prepared.kind === "directory" ? "将下方整个实际目录移入系统废纸篓，包括所有子目录、隐藏文件、图片等资产及非 Markdown 文件，不会永久删除。相关目录将从窗口移除，成功后关闭受影响标签；失败或结果未知时保留内存内容。下方文档列表仅为已打开文档，并非目录全部内容。" : "将以下实际文件移入系统废纸篓，不会永久删除。系统成功后关闭相关标签；失败或结果未知时保留内存内容。"}</DialogDescription>
+          {workspace.trashDialog?.stage === "dirty" && <p className="text-sm font-medium break-all">当前确认文档：{workspace.trashDialog.document?.fileName}</p>}
           <p className="text-sm break-all">{workspace.trashDialog?.prepared.canonicalPath}</p>
-          {workspace.trashDialog && workspace.trashDialog.prepared.selectedPath !== workspace.trashDialog.prepared.canonicalPath && <p className="text-sm break-all">链接入口：{workspace.trashDialog.prepared.selectedPath}。操作的是上方实际文件，不是链接入口。</p>}
+          {workspace.trashDialog && workspace.trashDialog.prepared.selectedPath !== workspace.trashDialog.prepared.canonicalPath && <p className="text-sm break-all">链接入口：{workspace.trashDialog.prepared.selectedPath}。操作的是上方实际目标，不是链接入口。</p>}
           {!!workspace.trashDialog?.prepared.affected.length && <ul className="max-h-48 overflow-auto text-sm">{workspace.trashDialog.prepared.affected.map(item => <li className="break-all" key={item.handle}>{item.fileName}</li>)}</ul>}
           <div className="flex flex-wrap gap-2">
             <button className={buttonClass} onClick={() => workspace.trashDialog?.respond("cancel")}>取消</button>

@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## F-059b alpha186 有限片通过（2026-10-18）
+
+最终独立Spec全片及交叉Standards均0必要有限非离线验收阻断，主线批准受托Agent代验通过，非用户亲验。真实两dirty逐一取消/save-first/子树成功、隐藏资产/link本体/外部哨兵守恒、无关source选区undo、乙root键盘OptionTabReturn、浅深及正常CmdQ已核。47152 exit0/PID86440及86455消失，两目录Trash可恢复，七SHA及两inode相同；hash3ujyygu2swigz，包内1780/0/38314，源码1779/1原FINAL002保持。Git待执行，父/冻结/专项/未测真实故障/自然IME/跨卷/offline及FINAL001003仍开放。
+
+## F-059b alpha186 构建获准（2026-10-18）
+
+主线读正式native/descriptor/单槽/联合预算/前端接线，独立Spec全片与交叉Standards均0必要构建阻断，后端各31/155、前端37/271。最终源码1779/1/38314、237文件56.63秒，唯一原long-whitespace18.711秒仍FINAL002，非全绿；type/full lint/docs/lock/diff通过。收据持久计费与assetEpochs键错误已窄修并保留原失败。批准alpha186 unsigned构建与仅自建物料真实WK，尚未验收不得Git；alpha185/19d4b7b仍最新有限已验已推，父/冻结/专项/最终问题/offline保持。
+
+## F-059b 完整目录有限实施获准（2026-10-18）
+
+主线全文读修订唯一方案、实际native/descriptor/授权及单槽/双store接点，独立Spec与Standards均0必要路线阻断。批准目录typed分支、逐一dirty保护、真实完整子树一次Trash、可信祖先隔离与所有可达投影同步收口及实现后自建测试；不跟随内部symlink、不枚举磁盘资产全集、不冒CAS。尚未代码或平台目录验收；下一alpha186/build/真实WK/Git仍由主线管理。alpha185/19d4b7b仍最新有限已验已推，全部既定边界保持。
+
+## F-059a Git收据与目录下一片（2026-10-18）
+
+已提交推送`19d4b7b6cd104dfaeb047676f4f53919bfa969bd`，HTTPS ls-remote与origin/main同SHA；hook前后tree `b24d669ef5730771ac412216d495210173a53333`一致，核验时clean。alpha185最新有限已验已推。连续授权下下一F059b仅完整目录移入废纸篓最小方案与实际接口只读核对，未批准实验/生产/版本/build。逐一dirty保护、真实子树含未显示资产、未知结果后代隔离须先收敛，完整父/冻结/专项/FINAL/offline保持。本收据随后续文档提交。
+
 ## F-059a alpha185 有限片通过（2026-10-18）
 
 最终独立Spec及交叉Standards均0必要有限非离线验收阻断，主线批准受托Agent代验通过，非用户亲验。源码与包内Bun运行仓库各1763/0/38195，hash162uj70jg4o32；真实取消/先保存取消/dirty放弃二次确认、只读/独立文件Trash、旁路源码精确选区undo/浅深与正常CmdQ完成。session7221 exit0、PID83271消失，三份Trash及保留文件四SHA与baseline一致，readonly恢复644；测试物料可从系统废纸篓恢复，未清空。TabReturn未证确认、OSNO/unknown/自然IME等未测及FINAL001002003保留。Git待执行，完整目录/父/冻结/专项/offline保持。

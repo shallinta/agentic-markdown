@@ -114,6 +114,7 @@ export function createWorkspaceService({
   preferences?: HiddenPreferences;
 }): TrustedWorkspaceService {
   const roots: Root[] = [];
+  let trashReceiptBytes=0;
   let preferenceTail: Promise<unknown> = Promise.resolve();
   let preferencePending = 0;
   let removalAdmission = false;
@@ -182,7 +183,7 @@ export function createWorkspaceService({
       requestId: id,
       ok: true,
       roots: roots.map((root) => ({ ...root.meta })),
-      cacheBytes,
+      cacheBytes:cacheBytes+trashReceiptBytes,
       assetEpochs: documents.assetEpochs(),
       queueBytes: roots.reduce((sum, root) => sum + root.queueBytes, 0),
       coveredHandles: documents
@@ -279,7 +280,7 @@ export function createWorkspaceService({
     call: (request) => worker.call(request),
     reconciliation,
     wake: () => wake(),
-    budget: () => cacheLimit - cacheBytes - scanQueues() - reconciliation.bytes(),
+    budget: () => cacheLimit - cacheBytes - scanQueues() - reconciliation.bytes() - trashReceiptBytes,
     terminate: () => {
       workerStopped = true;
       reconciliation.invalidate();
@@ -309,7 +310,7 @@ export function createWorkspaceService({
   });
   let candidateTurn = true;
   function scanQueues(){return roots.reduce((sum,root)=>sum+root.queueBytes,0);}
-  function workspaceUsed(){return cacheBytes+observation.bytes()+scanQueues();}
+  function workspaceUsed(){return cacheBytes+observation.bytes()+scanQueues()+trashReceiptBytes;}
   const invalidate = (root: Root) => {
     manualCandidates.delete(root.meta.handle);
     observation.cancel(root.meta.handle, true);
@@ -932,7 +933,7 @@ export function createWorkspaceService({
   };
   const creation = createMarkdownService(creationHost);
   const duplication = createMarkdownService(creationHost, true);
-  const trash=createTrashService({documents,run:trashRun,async acquire(target){
+  const trash=createTrashService({documents,run:trashRun,receiptBytes(bytes){if(workspaceUsed()-trashReceiptBytes+reconciliation.bytes()+bytes>cacheLimit)throw Error("Trash receipt budget");trashReceiptBytes=bytes;},async acquire(target){
     if(disposed||removalAdmission||removeStandalone.busy()||folderRemoval.busy()||selecting||preferencePending||openingRoots.size||manualCandidates.size)throw Error("Workspace busy");
     const owner={};createOwner=owner;removalAdmission=true;scanParked=true;
     let released=false;
@@ -943,7 +944,17 @@ export function createWorkspaceService({
       if(running)await new Promise<void>(resolve=>{reachedPark=resolve;});current();
       let input:import("../documents/trash-operation").TrashInput;
       let checkTarget:()=>void;
-      if(target.kind==="root"){
+      if(target.kind==="directory"){
+        const directory=await creationTarget({rootHandle:target.root,generation:target.generation,...(target.entry?{directoryHandle:target.entry}:{})});
+        checkTarget=()=>{current();directory.check();};
+        const identities=[...directory.root.directories,...directory.chain];
+        if(identities.length>256)throw Error("Directory proof depth");
+        const fd=openDirectoryDescriptor(directory.root,{path:directory.path,chain:directory.chain},creationHost.native());
+        try{await verifyRoot({path:directory.path,directories:identities});checkTarget();}finally{closeSync(fd);}
+        const identity=identities[identities.length-1];
+        if(identity?.path!==directory.path)throw Error("Missing directory identity");
+        input={kind:"directory",path:directory.path,selectedPath:directory.path,selectedParent:dirname(directory.path),fingerprint:identity.fingerprint,directories:identities};
+      }else if(target.kind==="root"){
         const root=roots.find(item=>item.meta.handle===target.root),file=root?.files.get(target.entry);
         if(!root||!file||!live(root,target.generation))throw Error("Stale target");
         checkTarget=()=>{current();if(!live(root,target.generation)||root.files.get(target.entry)!==file)throw Error("Stale trash target");};
@@ -956,24 +967,46 @@ export function createWorkspaceService({
         try{checkTarget();if(auth.path!==captured.path||auth.fingerprint!==captured.fingerprint)throw Error("Replaced target");input=captured;}finally{await auth.file.close();}
       }
       checkTarget();
-      const projections=roots.flatMap(root=>{
-        const node=root.byPath.get(input.path),file=node&&root.files.get(node.handle);
-        return node&&file?.fingerprint===input.fingerprint?[{root,node,file,generation:root.meta.generation}]:[];
-      });
-      const reservation=1024+projections.reduce((sum,p)=>sum+p.root.nodes.length*8+256,0);
+      const projections:{root:Root;selected:WorkspaceNode[];removed:boolean;generation:number;original:WorkspaceNode[]}[]=[];
+      const available=cacheLimit-workspaceUsed()-reconciliation.bytes();let reservation=1024;
+      if(reservation>available)throw Error("Trash projection budget");
+      for(const root of roots){
+        const removed=input.kind==="directory"&&containsPath(input.path,root.authorization.path);
+        const selected:WorkspaceNode[]=[];let examined=0;
+        if(!removed)for(const node of root.nodes){
+          const file=root.files.get(node.handle);
+          if(input.kind==="directory"?containsPath(input.path,node.displayPath):node.displayPath===input.path&&file?.fingerprint===input.fingerprint){
+            if(selected.length>=1024||reservation+192>available)throw Error("Trash publication entry capacity or budget");
+            reservation+=192;selected.push(node);
+          }
+          if(++examined%64===0){await new Promise(resolve=>setTimeout(resolve,0));checkTarget();}
+        }
+        if(!removed&&selected.length>1024)throw Error("Trash publication entry capacity");
+        if(removed||selected.length){
+          const extra=removed?256:root.nodes.length*16+256;
+          if(projections.length>=32||reservation+extra>available)throw Error("Trash projection budget");
+          reservation+=extra;projections.push({root,selected,removed,generation:root.meta.generation,original:root.nodes});
+        }
+      }
       if(projections.length>32||workspaceUsed()+reconciliation.bytes()+reservation>cacheLimit)throw Error("Trash projection budget");
-      const prepared=projections.map(p=>({...p,nodes:p.root.nodes.filter(item=>item!==p.node),oldKey:key(p.root)}));
-      const check=()=>{checkTarget();for(const p of projections)if(!live(p.root,p.generation)||p.root.files.get(p.node.handle)!==p.file)throw Error("Projection changed");};
-      return {input,current:check,release,publish(){
+      const prepared=projections.map(p=>{const selected=new Set(p.selected);return {...p,nodes:p.removed?[]:p.root.nodes.filter(item=>!selected.has(item)),oldKey:key(p.root)};});
+      const check=()=>{checkTarget();for(const p of projections)if(!live(p.root,p.generation)||p.root.nodes!==p.original)throw Error("Projection changed");};
+      return {input,current:check,release,publicationBytes:1024+prepared.reduce((sum,p)=>sum+256+(p.removed?0:p.selected.length*192),0),reserveBindings(bytes){if(workspaceUsed()+reconciliation.bytes()+reservation+bytes>cacheLimit)throw Error("Trash binding budget");},publish(){
         check();
-        const files=prepared.map(({root,node,generation,nodes})=>{
-          root.nodes=nodes;root.files.delete(node.handle);root.byPath.delete(input.path);
+        const files=prepared.map(({root,selected,removed,generation,nodes})=>{
+          for(const node of selected){root.files.delete(node.handle);root.directories.delete(node.handle);root.byPath.delete(node.displayPath);}
+          root.nodes=nodes;
+          if(removed){
+            roots.splice(roots.indexOf(root),1);root.live=false;root.scopes.clear();
+            root.registry.dispose();cacheBytes-=root.bytes;root.bytes=0;root.queueBytes=0;
+            root.nodes=[];root.files.clear();root.directories.clear();root.byPath.clear();
+          }else if(input.kind==="directory")root.registry.revokeSubtree(input.path);
           // Retain the previous conservative charge until the normal rescan
           // rebuilds the graph; do not undercount retained ancestor proofs.
           root.meta.entries=root.nodes.length;root.meta.generation++;root.started=false;
-          return {root:root.meta.handle,previousGeneration:generation,generation:root.meta.generation,entries:[node.handle]};
+          return {root:root.meta.handle,previousGeneration:generation,generation:root.meta.generation,entries:removed?[]:selected.map(node=>node.handle),...(removed?{removed:true as const}:{})};
         });
-        return {files,effects(){for(const {root,oldKey}of prepared){queueCleanup(oldKey);reconciliation.invalidate(root.meta.handle);manualCandidates.delete(root.meta.handle);observation.cancel(root.meta.handle,true);}}};
+        return {files,effects(){for(const {root,oldKey,removed}of prepared){queueCleanup(oldKey);reconciliation.invalidate(root.meta.handle);manualCandidates.delete(root.meta.handle);observation.cancel(root.meta.handle,true);if(removed&&preferences.remove)void preferences.remove(root.authorization.path,Math.max(0,cacheLimit-workspaceUsed())).then(async result=>{if(await result.query()!=="committed")console.warn("Trash preference cleanup incomplete");}).catch(()=>console.warn("Trash preference cleanup failed"));}}};
       }};
     }catch(error){release();throw error;}
   }});

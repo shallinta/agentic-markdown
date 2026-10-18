@@ -5,15 +5,15 @@ import type { createFolderWorkspace } from "./workspace";
 
 type Prepared = Extract<TrashResponse, { status: "prepared" }>;
 export type TrashChoice = "discard" | "save-first" | "cancel";
-export interface TrashDialog { prepared: Prepared; dirty: boolean; stage: "dirty" | "disk" }
+export interface TrashDialog { prepared: Prepared; dirty: boolean; stage: "dirty" | "disk"; document?: TrashAffected }
 export function createTrashDocument(documents: ReturnType<typeof createDocumentController>, folders: ReturnType<typeof createFolderWorkspace>, transport: (request: TrashRequest) => Promise<unknown>, confirm: (dialog: TrashDialog) => Promise<TrashChoice>) {
   let disposed = false, running = false, recoverRequested = false;
   let state = { pending: false, working: false, message: "", canQuery: false };
   const listeners = new Set<() => void>();
   let slot: { target: TrashTarget | null; token: string; parked: boolean; operation?: TrashOperation; phase: "state" | "prepare" | "commit" | "query" | "cancel" | "ack"; prepared?: Prepared; dispatched: boolean; interrupted: boolean; applied: boolean; failed?: boolean; succeeded?: boolean } | undefined;
   const publish = (patch: Partial<typeof state>) => { state = { ...state, ...patch }; for (const listener of listeners) listener(); };
-  const targetCurrent = (target: TrashTarget) => target.kind === "root"
-    ? folders.getSnapshot().roots.some(root => root.handle === target.root && root.generation === target.generation) && !!folders.getSnapshot().nodes[target.root]?.some(node => node.handle === target.entry && node.kind === "file")
+  const targetCurrent = (target: TrashTarget) => target.kind !== "standalone"
+    ? folders.getSnapshot().roots.some(root => root.handle === target.root && root.generation === target.generation) && (target.kind === "directory" && !target.entry || !!folders.getSnapshot().nodes[target.root]?.some(node => node.handle === target.entry && node.kind === (target.kind === "directory" ? "directory" : "file")))
     : documents.getSnapshot().entries.some(entry => entry.handle === target.handle && entry.documentId === target.documentId && entry.explicitStandalone !== false);
   const unpark = (current: NonNullable<typeof slot>) => { if (current.parked) { current.parked = false; folders.cancelFolderRemoval(); } };
   const release = (current: NonNullable<typeof slot>) => { documents.releaseTrashProtection(current.token); unpark(current); };
@@ -45,16 +45,23 @@ export function createTrashDocument(documents: ReturnType<typeof createDocumentC
           if (current.dispatched) { current.phase = "query"; unknown(current, false); return; }
           current.prepared = value;
           if (current.interrupted || !current.target || !documents.trashProtectionCurrent(current.token) || !targetCurrent(current.target)) { current.phase = "cancel"; continue; }
+          if ((value.kind === "directory") !== (current.target.kind === "directory")) { current.phase = "cancel"; continue; }
           // Closed grants are also returned; only existing tabs can have drafts.
           const affected: TrashAffected[] = value.affected;
           let decision: TrashChoice = "discard";
-          if (documents.trashNeedsDiscard(affected)) decision = await confirm({ prepared: value, dirty: true, stage: "dirty" });
+          for (const document of affected) {
+            if (!documents.trashNeedsDiscard([document])) continue;
+            decision = await confirm({ prepared: value, dirty: true, stage: "dirty", document });
+            if (disposed || slot !== current) return;
+            if (current.interrupted || !documents.trashProtectionCurrent(current.token) || !targetCurrent(current.target)) decision = "cancel";
+            if (decision !== "discard") break;
+          }
           if (disposed || slot !== current) return;
           if (current.interrupted || !documents.trashProtectionCurrent(current.token) || !targetCurrent(current.target)) decision = "cancel";
           if (decision === "discard") decision = await confirm({ prepared: value, dirty: documents.trashNeedsDiscard(affected), stage: "disk" });
           if (disposed || slot !== current) return;
           if (current.interrupted || !documents.trashProtectionCurrent(current.token) || !targetCurrent(current.target)) decision = "cancel";
-          if (decision === "save-first") publish({ message: "本次操作已取消。请先正常保存，再重新选择文件并确认移入废纸篓。" });
+          if (decision === "save-first") publish({ message: "本次操作已取消。请先正常保存，再重新选择目标并确认移入废纸篓。" });
           current.phase = decision === "discard" ? "commit" : "cancel"; continue;
         }
         if (value.status === "trashed") {

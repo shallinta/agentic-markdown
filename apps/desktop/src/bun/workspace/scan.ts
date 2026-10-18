@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, openSync } from "node:fs";
+import { closeSync, fstatSync } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { extname, join, relative } from "node:path";
@@ -10,6 +10,8 @@ import {
   type DirectoryIdentity,
   type RootAuthorization,
 } from "./authorization";
+import { openDirectoryDescriptor, type DirectoryNative, type PendingDirectory } from "./directory-descriptor";
+export { openDirectoryDescriptor, type DirectoryNative, type PendingDirectory } from "./directory-descriptor";
 
 export const SCAN_BATCH_SIZE = 128;
 export const SCAN_QUEUE_BYTES = 2 * 1024 * 1024;
@@ -29,53 +31,12 @@ export interface ScanBatch {
   paused: boolean;
   queueBytes: number;
 }
-export interface DirectoryNative {
-  openDirectoryAt(fd: number, name: string): number;
-}
 interface Native extends DirectoryNative {
   scanOpen(fd: number): object;
   scanBatch(cursor: object, limit: number): { names: string[]; done: boolean };
   scanClose(cursor: object): void;
   scanStat(fd: number, name: string): { kind: string; fingerprint: string };
   scanReadlink(fd: number, name: string): string;
-}
-export interface PendingDirectory {
-  path: string;
-  chain: DirectoryIdentity[];
-}
-export function openDirectoryDescriptor(
-  root: RootAuthorization,
-  directory: PendingDirectory,
-  native: DirectoryNative
-) {
-  let fd = openSync(
-    "/",
-    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW
-  );
-  try {
-    const identities = [...root.directories, ...directory.chain];
-    let path = "/";
-    if (
-      fileFingerprint(fstatSync(fd, { bigint: true })) !==
-      identities.find((d) => d.path === path)?.fingerprint
-    )
-      throw Error();
-    for (const part of directory.path.split("/").filter(Boolean)) {
-      const next = native.openDirectoryAt(fd, part);
-      closeSync(fd);
-      fd = next;
-      path = join(path, part);
-      if (
-        fileFingerprint(fstatSync(fd, { bigint: true })) !==
-        identities.find((d) => d.path === path)?.fingerprint
-      )
-        throw Error();
-    }
-    return fd;
-  } catch (error) {
-    closeSync(fd);
-    throw error;
-  }
 }
 /** One owned cursor per session; all filtered entries consume batch capacity. */
 export function createScan(

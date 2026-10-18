@@ -66,6 +66,7 @@ export interface FolderGrantBinding {
   handle: string;
   path: string;
   fingerprint: string;
+  directories: SingleFileAuthorization["directories"];
   documentId: string;
   explicitStandalone: boolean;
   observedActive: boolean;
@@ -84,8 +85,8 @@ export interface FolderMutationLease {
   release(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
-  setTrashGuard(guard: (path: string, fingerprint?: string) => boolean): void;
-  trashBlocked(path: string, fingerprint?: string): boolean;
+  setTrashGuard(guard: (path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]) => boolean): void;
+  trashBlocked(path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]): boolean;
   inspectTrash(handle: string, documentId: string): Omit<SingleFileAuthorization,"file"> | null;
   withDuplicateBuffer(source: DuplicateSource, payload: { text: string; hash: string }, action: Parameters<TrustedDocumentService["withDuplicateSource"]>[1]): Promise<boolean>;
   withDuplicateSource(source: DuplicateSource, action: (source: { bytes: Uint8Array; hash: string; fileName: string; checkCurrent(): void; revalidate(): Promise<void> }) => Promise<void>): Promise<boolean>;
@@ -263,7 +264,7 @@ export function createDocumentService({
     })();
   };
   const grants = new Map<string, Grant>();
-  let trashGuard: (path: string, fingerprint?: string) => boolean = () => false;
+  let trashGuard: (path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]) => boolean = () => false;
   const observations = new Map<string, ObservationBinding & { last?: string }>();
   const observationEpochs = new Map<string, { epoch: number; token: string; active: boolean }>();
   const commits = new Map<string, { token: string; fingerprint: string; revision: number; hash: string }>();
@@ -494,7 +495,7 @@ export function createDocumentService({
     return content;
   }
   async function snapshot(grant: Grant, generation: number, task: Task): Promise<DocumentSnapshot> {
-    if (trashGuard(grant.path, grant.fingerprint)) throw new DocumentFailure("BUSY");
+    if (trashGuard(grant.path, grant.fingerprint, grant.directories)) throw new DocumentFailure("BUSY");
     const content = await stableBytes(grant, () => checkTask(task, generation));
     const length = content.length;
     const decodeStart = onTiming ? performance.now() : 0;
@@ -668,7 +669,7 @@ export function createDocumentService({
   }
   const service: TrustedDocumentService = {
     setTrashGuard(guard) { trashGuard = guard; },
-    trashBlocked(path, fingerprint) { return trashGuard(path, fingerprint); },
+    trashBlocked(path, fingerprint, directories) { return trashGuard(path, fingerprint, directories); },
     inspectTrash(handle, documentId) {
       const grant=grants.get(handle);
       if(!grant||identities.get(grant.identityKey)?.documentId!==documentId)return null;
@@ -696,7 +697,7 @@ export function createDocumentService({
         for (const grant of captured.values()) {
           const identity = identities.get(grant.identityKey);
           if (!identity) { release(); return null; }
-          bindings.push({ handle: grant.handle, path: grant.path, fingerprint: grant.fingerprint, documentId: identity.documentId, explicitStandalone: grant.explicitStandalone === true, observedActive: observations.get(grant.handle)?.documentId === identity.documentId, scope: grant.scope });
+          bindings.push({ handle: grant.handle, path: grant.path, fingerprint: grant.fingerprint, directories: grant.directories, documentId: identity.documentId, explicitStandalone: grant.explicitStandalone === true, observedActive: observations.get(grant.handle)?.documentId === identity.documentId, scope: grant.scope });
         }
         return {
           current,
@@ -779,7 +780,7 @@ export function createDocumentService({
       const params = { ...request };
       if (disposed || !grants.has(params.handle)) return { status: "unknown" };
       const blockedGrant=grants.get(params.handle)!;
-      if(trashGuard(blockedGrant.path,blockedGrant.fingerprint))return {status:"unknown"};
+      if(trashGuard(blockedGrant.path,blockedGrant.fingerprint,blockedGrant.directories))return {status:"unknown"};
       const result = await acceptance.run(params, !disposing && !createAdmissionOwner && !saving && !writeBarrier && !running && !pending && !selecting, async () => {
         const lease = candidates.acquire(params.token, params.handle), grant = grants.get(params.handle);
         if (!lease || !grant) return { status: "rejected", error: "INVALID_HANDLE" };
@@ -1223,7 +1224,7 @@ export function createDocumentService({
         const grant = grants.get(request.handle);
         if (!grant || disposed)
           return failure(request.requestId, "INVALID_HANDLE");
-        if(trashGuard(grant.path,grant.fingerprint))return failure(request.requestId,"BUSY");
+        if(trashGuard(grant.path,grant.fingerprint,grant.directories))return failure(request.requestId,"BUSY");
         const identity = identities.get(grant.identityKey);
         if (identity?.documentId !== request.documentId)
           return failure(request.requestId, "INVALID_HANDLE");
@@ -1444,7 +1445,7 @@ export function createDocumentService({
         return failure(request.requestId, "BUSY");
       const grant = grants.get(request.handle);
       const generation = epoch;
-      if(grant&&trashGuard(grant.path,grant.fingerprint))return failure(request.requestId,"BUSY");
+      if(grant&&trashGuard(grant.path,grant.fingerprint,grant.directories))return failure(request.requestId,"BUSY");
       if (disposed || request.handle !== grant?.handle)
         return failure(request.requestId, "INVALID_HANDLE");
       const { task, promise } = taskFor(request.requestId);

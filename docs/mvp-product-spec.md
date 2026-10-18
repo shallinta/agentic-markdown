@@ -1,5 +1,11 @@
 # Agentic Markdown MVP 产品规格
 
+## F-059b 完整目录有限通过（2026-10-18）
+
+最终独立Spec及交叉Standards均0必要有限阻断，主线批准alpha186有限非离线受托代验通过；下段待批准为实测阶段收据，完整父及未测保持开放，Git待执行。
+
+[F-059b](iterations/F-059b-trash-directory.md)alpha186已真实WK受托代验逐篇dirty取消/先保存、完整子树及根目录回收、未显示资产/链接本体保真、无关选区undo及正常退出，待最终独立批准，非用户亲验。完整父、后续区域消费者、自然IME/真实OS故障/跨卷及最终离线继续开放。下方F059a为alpha185历史范围。
+
 ## F-059a 单文件废纸篓有限通过（2026-10-18）
 
 [F-059a](iterations/F-059a-trash-markdown-file.md) alpha185经真实WK及最终独立Spec/交叉Standards复核，主线批准有限非离线受托代验通过，非用户亲验；取消、dirty二次确认、只读与独立文件、无关文档状态及正常退出已核。完整目录/父功能与未测边界继续开放，Git待执行。
@@ -574,7 +580,7 @@ L3 包含两条可以独立推进的主干：阅读与规范 Markdown、目录�
 |---|---:|---|---|---|---|---|
 | F-057 | 1 | 新建文件和文件夹 | W-08 | 硬前置：F-004 授权、F-015 受限写入、F-026 目标选择；共享约定：排他创建与身份分配；后续接入：F-058 复制、文件树及监听同步 | F-057a/F-057b有限片通过；父未完成 | [F-057a](iterations/F-057a-create-markdown-file.md)alpha177授权根内空白Markdown排他创建有限代验通过并已推送；先选位置名称、默认补 `.md`，不产生未命名文档。[F-057b](iterations/F-057b-create-folder.md)alpha179文件夹创建及本会话空目录展示经有限真实WK代验及最终独立复核，主线批准本片通过；中文/嵌套/重扫/隐藏/dirty与undo/保存/根重加和重启已核。精确选区、自然IME/跨卷/真实OS故障及最终离线仍开放，手动接受仅正式自动测试，完整父项不关闭。 |
 | F-058 | 2 | Duplicate | W-11 | 硬前置：F-015 安全写入、F-057 排他创建；对应状态版本选择；共享约定：F-027 自身写入识别与新身份；后续接入：F-066 恢复副本入口 | F-058a/b有限片通过；父未完成 | [F-058a](iterations/F-058a-duplicate-disk-document.md)已验clean磁盘原字节复制；[F-058b](iterations/F-058b-duplicate-buffer-document.md)alpha180经有限真实WK受托代验及最终独立复核，主线批准普通dirty显式内存/磁盘复制，非用户亲验。新文件和新documentId，原状态/选区/历史保留，两副本字节、取消/浅深/退出保护已核。只读dirty组合、真实1MiB桥接、自然IME/真实OS故障/跨卷/离线未验；异常状态与F028/F066消费者后续，F028c不绕过，完整父不关闭，FINAL001002003保留。 |
-| F-059 | 3 | 删除到系统废纸篓 | W-12 | 硬前置：F-004 授权、F-017a 未保存保护、F-026 目标选择；共享约定：删除成功再变更状态；后续接入：目录/副区/监听与索引消费者接入 | F-059a alpha185 有限实测待最终批准，父项开放 | 文件或完整目录只进入系统废纸篓；失败不移除 UI 或索引状态。[F-059a](iterations/F-059a-trash-markdown-file.md)当前授权单 Markdown 的显式确认、只读/独立目标及结果收口已有限真实 WK 代验，非用户亲验；真实 unknown/OS NO/自然IME/离线未测，完整目录及其他消费者仍开放。 |
+| F-059 | 3 | 删除到系统废纸篓 | W-12 | 硬前置：F-004 授权、F-017a 未保存保护、F-026 目标选择；共享约定：删除成功再变更状态；后续接入：副区/监听与索引消费者接入 | F-059a/b有限通过，父项开放 | 文件或完整目录只进入系统废纸篓；失败不移除 UI 或索引状态。[F-059a](iterations/F-059a-trash-markdown-file.md)单Markdown已有限通过；[F-059b](iterations/F-059b-trash-directory.md)alpha186目录根/子树、逐篇dirty保护、未显示资产整体移动和无关状态保持经有限真实WK及最终独立复核，主线批准非离线通过，非用户亲验。真实unknown/OS NO/自然IME/跨卷/离线及后续区域消费者未测，完整父仍开放。 |
 | F-060 | 4 | Finder 显示与系统默认编辑器打开 | W-13、W-14 | 硬前置：F-004a 受控路径授权；共享约定：用户显式系统打开、禁止 shell 拼接；后续接入：F-027 / F-028 外部修改刷新；不作基础系统打开前置 | 部分完成 | [F-060a](iterations/F-060a-reveal-current-document.md) alpha146当前文档Finder定位及[F-060b](iterations/F-060b-open-current-default-app.md) alpha147系统默认应用打开已有限代验；[F-060c](iterations/F-060c-reveal-workspace-item.md) alpha169文件树选中项Finder定位及[F-060d](iterations/F-060d-open-workspace-default-app.md) alpha170选中文件默认应用打开已真实非离线受托代验。公开原生API、结构化路径，无shell；系统请求返回不等于应用实际展示保证。完整父项及最终离线开放。 |
 | F-061 | 5 | 顶层根排序与从窗口移除 | W-15、W-26 | 硬前置：F-025 根集合、F-017a 保护；当前 F-029 / F-032 状态；共享约定：授权撤销与打开文档归属；后续接入：F-027 监听撤销、索引消费者；相关区域关闭验收 | 实施中 | [F-061a](iterations/F-061a-top-level-display-order.md)alpha173排序有限片通过，未测输入矩阵保留；[F-061b](iterations/F-061b-remove-standalone-root.md)alpha174独立根移除有限片通过；[F-061c](iterations/F-061c-remove-folder-root.md)alpha175经真实WK和最终独立两轴复核，主线批准非离线有限受托代验通过，Git待执行。跨重启恢复仍F-029，完整父与后续消费者不关闭。 |
 | F-063 | 6 | Quick Open | N-01 | 硬前置：F-005a 调度、F-006a 命令、F-026 文件集合、F-032 打开；共享约定：文件名/路径匹配与区域可用性；后续接入：F-062 最近文档空状态 | 实施中 | [F-063a](iterations/F-063a-quick-open.md)alpha183深色原红补验与alpha182沿用路径经独立最终复核与主线有限批准通过，非最新包全矩阵重跑；复用现有主区打开不称完整F032前置完成。MRU同分/空态、主副区规则及未测自然IME/离线/极端实际大树继续承接，完整父开放。 |

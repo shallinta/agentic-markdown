@@ -343,7 +343,7 @@ export const PRODUCT_COMMANDS: Partial<
   moveWorkspaceRootDown: { label: "下移选中根" },
   removeStandaloneRoot: { label: "从窗口移除选中文件" },
   removeFolderRoot: { label: "从窗口移除选中目录" },
-  trashDocument: { label: "将选中文件移入系统废纸篓" },
+  trashDocument: { label: "将选中文件或目录移入系统废纸篓" },
   openDefaultWorkspaceItem: { label: "用默认应用打开选中文件" },
   openDefaultDocument: { label: "用系统默认应用打开" },
   setRootHidden: { label: "显示隐藏文件" },

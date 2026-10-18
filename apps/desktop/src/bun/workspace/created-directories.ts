@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 
-import { visiblePath } from "./authorization";
+import { containsPath, visiblePath } from "./authorization";
 import type { ScanDirectory, CreatedDirectorySnapshot } from "./scan";
 
 export const CREATED_DIRECTORY_LIMIT = 1024;
@@ -36,6 +36,9 @@ export function createDirectoryRegistry(rootPath: string, charge: (delta: number
         if(matches.get(path)===JSON.stringify(record.proof))continue;
         records.delete(path);bytes-=record.bytes;charge(-record.bytes);version++;
       }
+    },
+    revokeSubtree(path:string) {
+      for(const [key,record] of records)if(containsPath(path,key)){records.delete(key);bytes-=record.bytes;charge(-record.bytes);version++;}
     },
     dispose() { if(disposed)return;disposed=true;charge(-bytes);bytes=0;records.clear();reservations.clear();version++; },
   };

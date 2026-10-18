@@ -8,6 +8,96 @@ import { rawText } from "./raw-buffer";
 import { createTrashDocument, type TrashChoice, type TrashDialog } from "./trash-document";
 import { createFolderWorkspace } from "./workspace";
 
+async function directoryFixture(confirm: (value: TrashDialog) => Promise<TrashChoice>, child = false, names = ["甲.md", "乙.md", "无关.md"]) {
+  const root = crypto.randomUUID(), directory = crypto.randomUUID();
+  const snapshots = names.map((fileName, i) => ({ handle: crypto.randomUUID(), documentId: crypto.randomUUID(), fileName, displayPath: i < 2 ? `/root/sub/${fileName}` : `/outside/${fileName}`, text: fileName, byteLength: new TextEncoder().encode(fileName).length, hash: "a".repeat(64), revision: 1, fidelity: analyzeTextFidelity(fileName), writeCapability: { writable: true, reason: "writable" as const } }));
+  let selected = 0, saves = 0, commits = 0;
+  const documents = createDocumentController({ selectDocument: request => Promise.resolve({ ...request, ok: true, snapshot: snapshots[selected++] }), readDocument: request => Promise.resolve({ ...request, ok: true, snapshot: snapshots[0] }), releaseDocument: request => Promise.resolve({ ...request, ok: true, snapshot: null }), cancelDocument: () => Promise.resolve(), saveDocument: () => { saves++; return Promise.reject(Error("unexpected-save")); } });
+  for (const snapshot of snapshots) { await documents.select(); const editor = documents.getEditor(snapshot.documentId)!; documents.updateEditor(snapshot.documentId, editor.state.update({ changes: { from: 0, insert: "草稿" }, selection: { anchor: 1, head: 2 } })); }
+  const folders = createFolderWorkspace(request => Promise.resolve({ ...request, ok: true, roots: [], coveredHandles: [], cacheBytes: 0 }));
+  await folders.refresh();
+  folders.swapPrepared({ epoch: 0, next: { ...folders.getSnapshot(), roots: [{ handle: root, name: "root", displayPath: "/root", generation: 1, entries: 3, examined: 3, errors: 0, status: "complete" }], nodes: { [root]: [{ handle: directory, parent: root, kind: "directory", name: "sub", displayPath: "/root/sub" }, ...snapshots.slice(0, 2).map(snapshot => ({ handle: snapshot.handle, parent: directory, kind: "file" as const, name: snapshot.fileName, displayPath: snapshot.displayPath }))] }, assetEpochs: Object.fromEntries(snapshots.map(snapshot => [snapshot.handle, "original"])), coveredHandles: snapshots.slice(0, 2).map(snapshot => snapshot.handle) } });
+  const session = crypto.randomUUID(), confirmationToken = crypto.randomUUID(), calls: TrashRequest[] = [];
+  const trash = createTrashDocument(documents, folders, request => {
+    calls.push(request); const base = { protocolVersion: 1 as const, requestId: request.requestId, session, sequence: 1 };
+    if (request.op === "state") return Promise.resolve({ ...base, status: "state" });
+    if (request.op === "prepare") return Promise.resolve({ ...base, status: "prepared", working: false, kind: "directory", confirmationToken, canonicalPath: child ? "/root/sub" : "/root", selectedPath: child ? "/root/sub" : "/root", affected: snapshots.slice(0, 2).map(({ handle, documentId, fileName }) => ({ handle, documentId, fileName })) });
+    if (request.op === "cancel" || request.op === "ack") return Promise.resolve({ ...base, status: "acked", working: false });
+    if (request.op === "commit") commits++;
+    return Promise.resolve({ ...base, status: "trashed", working: false, publication: { documents: snapshots.slice(0, 2).map(({ handle, documentId }) => ({ handle, documentId })), files: [{ root, previousGeneration: 1, generation: 2, entries: child ? [directory, ...snapshots.slice(0, 2).map(s => s.handle)] : [], ...(!child ? { removed: true } : {}) }] } });
+  }, confirm);
+  return { root, directory, snapshots, documents, folders, trash, calls, commits: () => commits, saves: () => saves, target: { kind: "directory" as const, root, generation: 1, ...(child ? { entry: directory } : {}) }, dispose() { trash.dispose(); folders.dispose(); documents.dispose(); } };
+}
+
+test("directory per-document choices cancel all intentions without touching any draft/history", async () => {
+  for (const choices of [["discard", "cancel"], ["discard", "save-first"], ["discard", "discard", "cancel"]] as TrashChoice[][]) {
+    const dialogs: TrashDialog[] = [];
+    const f = await directoryFixture(dialog => { dialogs.push(dialog); return Promise.resolve(choices[dialogs.length - 1]); });
+    try {
+      const states = f.snapshots.map(s => f.documents.getEditor(s.documentId)!.state);
+      await f.trash.start(f.target);
+      expect(dialogs.filter(d => d.stage === "dirty").map(d => d.document?.fileName)).toEqual(["甲.md", "乙.md"]);
+      expect(f.commits()).toBe(0); expect(f.saves()).toBe(0);
+      expect(f.calls.some(c => c.op === "cancel")).toBe(true);
+      f.snapshots.forEach((s, i) => expect(f.documents.getEditor(s.documentId)!.state).toBe(states[i]));
+      expect(f.folders.getSnapshot().roots).toHaveLength(1);
+    } finally { f.dispose(); }
+  }
+});
+
+test("directory root and subtree success atomically close only confirmed bindings and preserve unrelated dirty history", async () => {
+  for (const child of [false, true]) {
+    const dialogs: TrashDialog[] = [];
+    const f = await directoryFixture(dialog => { dialogs.push(dialog); return Promise.resolve("discard"); }, child);
+    try {
+      const other = f.documents.getEditor(f.snapshots[2].documentId)!.state;
+      const seen: boolean[] = [];
+      const off = f.documents.subscribe(() => { if (f.documents.getSnapshot().tabs.length === 1) seen.push(!f.folders.getSnapshot().nodes[f.root]?.length); });
+      await f.trash.start(f.target); off();
+      expect(dialogs.map(d => d.stage)).toEqual(["dirty", "dirty", "disk"]);
+      expect(f.commits()).toBe(1); expect(f.documents.getSnapshot().tabs).toHaveLength(1);
+      expect(f.documents.getEditor(f.snapshots[2].documentId)!.state).toBe(other);
+      expect(seen.length).toBeGreaterThan(0); expect(seen.every(Boolean)).toBe(true);
+      expect(f.folders.getSnapshot().coveredHandles).toHaveLength(0);
+      if (child) { expect(f.folders.getSnapshot().roots[0]?.generation).toBe(2); expect(f.folders.getSnapshot().roots[0]?.entries).toBe(0); }
+      else expect(f.folders.getSnapshot().roots).toHaveLength(0);
+      for (const snapshot of f.snapshots.slice(0, 2)) expect(f.folders.getSnapshot().assetEpochs?.[snapshot.handle]).toBeUndefined();
+      expect(f.folders.getSnapshot().assetEpochs?.[f.snapshots[2].handle]).toBe("original");
+    } finally { f.dispose(); }
+  }
+});
+
+test("directory confirmation rechecks all original bindings after each awaited decision", async () => {
+  const waiting = Promise.withResolvers<void>(), finish = Promise.withResolvers<TrashChoice>();
+  let count = 0;
+  const f = await directoryFixture(() => { if (++count === 2) { waiting.resolve(); return finish.promise; } return Promise.resolve("discard"); });
+  try {
+    const before = f.snapshots.map(s => f.documents.getEditor(s.documentId)!.state);
+    const pending = f.trash.start(f.target); await waiting.promise;
+    f.trash.beforeWindowDiscard(); finish.resolve("discard"); await pending;
+    expect(count).toBe(2); expect(f.commits()).toBe(0);
+    f.snapshots.forEach((s, i) => expect(f.documents.getEditor(s.documentId)!.state).toBe(before[i]));
+  } finally { finish.resolve("cancel"); f.dispose(); }
+});
+
+test("directory target rejects stale generations and wrong node kinds before confirmation", async () => {
+  const f = await directoryFixture(() => Promise.resolve("discard"), true);
+  try {
+    expect(f.trash.canStart(f.target)).toBe(true);
+    expect(f.trash.canStart({ ...f.target, generation: 2 })).toBe(false);
+    expect(f.trash.canStart({ ...f.target, entry: f.snapshots[0].handle })).toBe(false);
+    expect(f.trash.canStart({ ...f.target, kind: "root", entry: f.directory })).toBe(false);
+    expect(f.calls).toHaveLength(0);
+  } finally { f.dispose(); }
+});
+
+test("directory dirty prompts retain distinguishable trusted relative names", async () => {
+  const names: string[] = [];
+  const f = await directoryFixture(dialog => { if (dialog.document) names.push(dialog.document.fileName); return Promise.resolve(dialog.stage === "disk" ? "cancel" : "discard"); }, true, ["a/same.md", "b/same.md", "无关.md"]);
+  try { await f.trash.start(f.target); expect(names).toEqual(["a/same.md", "b/same.md"]); expect(f.commits()).toBe(0); }
+  finally { f.dispose(); }
+});
+
 async function fixture(confirm: (value: TrashDialog) => Promise<TrashChoice>, outcome: "trashed" | "failed" | "unknown" = "trashed", override?: (request: TrashRequest, response: TrashResponse) => Promise<TrashResponse>) {
   const snapshot = { handle: crypto.randomUUID(), documentId: crypto.randomUUID(), fileName: "原文.md", displayPath: "/test/原文.md", text: "原文", byteLength: 6, hash: "a".repeat(64), revision: 1, fidelity: analyzeTextFidelity("原文"), writeCapability: { writable: true, reason: "writable" as const } };
   let saves = 0;

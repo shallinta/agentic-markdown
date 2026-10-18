@@ -330,7 +330,7 @@ export const PRODUCT_COMMANDS: Partial<
   },
   selectFolder: { label: "加入文件夹" },
   createMarkdown: { label: "新建 Markdown 文件" },
-  duplicateMarkdown: { label: "复制当前已保存文档" },
+  duplicateMarkdown: { label: "复制当前文档" },
   createFolder: { label: "新建文件夹" },
   revealDocument: { label: "在 Finder 中显示当前文档" },
   revealWorkspaceItem: { label: "在 Finder 中显示选中项" },

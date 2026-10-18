@@ -3,7 +3,7 @@ import { constants, watch, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
-import type { DuplicateSource } from "../../shared/create-markdown";
+import { validDuplicateVersion, type DuplicateSource } from "../../shared/create-markdown";
 import { validObservationRequest, type ObservationBinding, type ObservationEvent } from "../../shared/document-observation";
 import {
   DOCUMENT_PROTOCOL_VERSION,
@@ -84,6 +84,7 @@ export interface FolderMutationLease {
   release(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  withDuplicateBuffer(source: DuplicateSource, payload: { text: string; hash: string }, action: Parameters<TrustedDocumentService["withDuplicateSource"]>[1]): Promise<boolean>;
   withDuplicateSource(source: DuplicateSource, action: (source: { bytes: Uint8Array; hash: string; fileName: string; checkCurrent(): void; revalidate(): Promise<void> }) => Promise<void>): Promise<boolean>;
   withCreateBarrier(action: () => Promise<void> | void): Promise<boolean>;
   openCreatedAuthorized(request: unknown, authorize: () => Promise<SingleFileAuthorization>, scope: DocumentScope, sink: (snapshot: DocumentSnapshot) => void): Promise<DocumentResponse>;
@@ -888,6 +889,23 @@ export function createDocumentService({
           }
         }
       scope.release?.();
+    },
+    async withDuplicateBuffer(source, payload, action) {
+      if (!validDuplicateVersion({ kind: "buffer", ...payload })) throw new DocumentFailure("INVALID_REQUEST");
+      const bytes = new TextEncoder().encode(payload.text);
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      if (hash !== payload.hash) throw new DocumentFailure("INVALID_REQUEST");
+      return service.withCreateBarrier(async () => {
+        const owner = createAdmissionOwner, grant = grants.get(source.handle), generation = epoch;
+        const check = () => {
+          const identity = grant && identities.get(grant.identityKey);
+          if (!grant || disposed || disposing || epoch !== generation || createAdmissionOwner !== owner || grants.get(source.handle) !== grant || identity?.documentId !== source.documentId || identity.revision !== source.expectedRevision || identity.hash !== source.expectedHash || uncertain.has(source.documentId)) throw new DocumentFailure("CONFLICT");
+          const observation = observations.get(source.handle);
+          if (observation?.documentId === source.documentId && observation.revision === source.expectedRevision && observation.hash === source.expectedHash && observation.last && observation.last !== "unchanged") throw new DocumentFailure("CONFLICT");
+        };
+        check();
+        await action({ bytes, hash, fileName: basename(grant!.path), checkCurrent: check, revalidate: () => { check(); return Promise.resolve(); } });
+      });
     },
     async withDuplicateSource(source, action) {
       return service.withCreateBarrier(async () => {

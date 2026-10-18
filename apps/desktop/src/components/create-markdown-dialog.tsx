@@ -44,11 +44,22 @@ export function CreateMarkdownDialog({
       }}
     >
       <DialogContent>
-        <DialogTitle>{folder ? "新建文件夹" : duplicate ? "复制当前已保存文档" : "新建 Markdown 文件"}</DialogTitle>
+        <DialogTitle>{folder ? "新建文件夹" : duplicate ? "复制当前文档" : "新建 Markdown 文件"}</DialogTitle>
         <DialogDescription>
-          {folder ? "在已授权目录中新建文件夹，不覆盖已有项目。本会话新建的空目录在重扫后仍显示；不会打开或修改文档。" : duplicate ? "复制磁盘中已保存的完整内容，源文档保持不变，不覆盖已有项目。图片等资产不复制，相对链接不改写；更换目录后链接可能失效。" : "在已授权目录中创建空白文件，不覆盖已有项目。"}
+          {folder ? "在已授权目录中新建文件夹，不覆盖已有项目。本会话新建的空目录在重扫后仍显示；不会打开或修改文档。" : duplicate ? "选择要复制的内容，源文档与未保存修改保持不变，不覆盖已有项目。图片等资产不复制，相对链接不改写；更换目录后链接可能失效。" : "在已授权目录中创建空白文件，不覆盖已有项目。"}
         </DialogDescription>
         {duplicate && <p className="text-sm break-all">源文件：{state.sourceName}</p>}
+        {duplicate && <label className="grid gap-2 text-sm">
+          复制版本
+          <select aria-label="复制版本" className="bg-background rounded border p-2" disabled={state.busy || pending} value={state.duplicateVersion ?? ""} onChange={event => {
+            const value = event.target.value;
+            if (value === "disk" || value === "buffer") controller.setDuplicateVersion(value);
+          }}>
+            <option value="" disabled>请选择复制版本</option>
+            <option value="buffer">当前未保存内容</option>
+            <option value="disk">磁盘版本</option>
+          </select>
+        </label>}
         <label className="grid gap-2 text-sm">
           目标目录
           <select
@@ -129,7 +140,7 @@ export function CreateMarkdownDialog({
           {!pending && (
             <button
               className={button}
-              disabled={state.busy || state.preview !== "available"}
+              disabled={state.busy || state.preview !== "available" || (duplicate && !state.duplicateVersion)}
               onClick={() => void controller.create()}
             >
               {folder ? "创建并定位" : duplicate ? "复制并打开" : "创建并打开"}

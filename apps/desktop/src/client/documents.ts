@@ -931,7 +931,7 @@ export function createDocumentController(
     canDuplicate: () => {
       const snapshot = state.snapshot;
       const editor = snapshot && editors.get(snapshot.documentId);
-      return !metadataDisposed && !state.frozen && !state.busy && !saving.size && !editorInputBlocked && canLeaveEditor() && !!snapshot && !!editor && !editor.state.field(editorFaultSession).fault && !state.stale && !observation.atRisk(snapshot.documentId) && controller.getSaveStatus(snapshot.documentId).status === "saved";
+      return !metadataDisposed && !state.frozen && !state.busy && !saving.size && !editorInputBlocked && canLeaveEditor() && !!snapshot && !!editor && !editor.state.field(editorFaultSession).fault && !state.stale && !observation.atRisk(snapshot.documentId) && ["saved", "dirty"].includes(controller.getSaveStatus(snapshot.documentId).status);
     },
     acquireDuplicateSource: (handle: string, documentId: string): DuplicateSource | null => {
       if (!controller.canDuplicate() || state.snapshot?.handle !== handle || state.snapshot.documentId !== documentId) return null;
@@ -941,8 +941,9 @@ export function createDocumentController(
       publish({ ...state, frozen: true });
       return source;
     },
-    matchesDuplicateSource: (source: DuplicateSource) => !metadataDisposed && !discardActive && !editorInputBlocked && canLeaveEditor() && state.snapshot?.handle === source.handle && state.snapshot.documentId === source.documentId && state.snapshot.revision === source.expectedRevision && state.snapshot.hash === source.expectedHash && editors.get(source.documentId)?.revision === source.bufferRevision && !editors.get(source.documentId)?.state.field(editorFaultSession).fault && !needsDiscard(source.documentId),
+    matchesDuplicateSource: (source: DuplicateSource) => !metadataDisposed && !discardActive && !editorInputBlocked && !saving.size && !state.stale && !observation.atRisk(source.documentId) && canLeaveEditor() && state.snapshot?.handle === source.handle && state.snapshot.documentId === source.documentId && state.snapshot.revision === source.expectedRevision && state.snapshot.hash === source.expectedHash && editors.get(source.documentId)?.revision === source.bufferRevision && !editors.get(source.documentId)?.state.field(editorFaultSession).fault && ["saved", "dirty"].includes(controller.getSaveStatus(source.documentId).status),
     duplicateSourceCurrent: (source: DuplicateSource) => duplicateGate?.source === source && !duplicateGate.cancelled && controller.matchesDuplicateSource(source),
+    duplicateRawText: (source: DuplicateSource): string | null => controller.duplicateSourceCurrent(source) ? editors.get(source.documentId)!.state.field(rawText) : null,
     releaseDuplicateSource: (source: DuplicateSource) => {
       if (duplicateGate?.source !== source) return;
       duplicateGate = null;

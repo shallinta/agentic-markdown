@@ -1,16 +1,21 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+
+import { isolateHistory } from "@codemirror/commands";
 
 import type {
   CreateMarkdownRequest,
   CreateMarkdownResponse,
 } from "../shared/create-markdown";
+import type { ObservationRequest } from "../shared/document-observation";
 import type { DocumentSnapshot } from "../shared/documents";
+import { rawHash } from "../shared/save-content";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
 import { createMarkdownController, duplicateDefaultTarget } from "./create-markdown";
 import { createDiscardGuard } from "./discard-guard";
 import { canonicalDiscardParticipant } from "./document-canonical";
 import { createDocumentController } from "./documents";
+import { rawText } from "./raw-buffer";
 import type { FolderState } from "./workspace";
 
 function deferred<T>() {
@@ -41,7 +46,7 @@ test("duplicate gate rejects actual transactions, history and navigation; settle
   const f = await fixture(true);
   let editor = f.documents.getEditor(f.old.documentId)!;
   f.documents.updateEditor(f.old.documentId, editor.state.update({ changes: { from: 0, insert: "x" } }));
-  expect(f.documents.canDuplicate()).toBe(false);
+  expect(f.documents.canDuplicate()).toBe(true);
   expect(f.documents.runHistory("undo")).toBe(true);
   editor = f.documents.getEditor(f.old.documentId)!;
   const originalState = editor.state;
@@ -187,7 +192,7 @@ test("a copied response without explicit terminal working flag cannot unfreeze o
   expect(f.documents.getSnapshot().tabs).toHaveLength(2);
 });
 
-test("draft editing does not freeze; dirty or IME state prevents submitting a duplicate", async () => {
+test("draft editing does not freeze; dirty requires explicit version and IME blocks submission", async () => {
   const f = await fixture(true);
   await f.ready();
   expect(f.documents.getSnapshot().frozen).toBe(false);
@@ -196,6 +201,7 @@ test("draft editing does not freeze; dirty or IME state prevents submitting a du
   await f.controller.create();
   expect(f.calls.some(r => r.op === "create" || r.op === "state")).toBe(false);
   expect(f.documents.runHistory("undo")).toBe(true);
+  f.controller.setDuplicateVersion("disk");
   const release = f.documents.setInteractionCheck(() => false);
   await f.controller.create();
   expect(f.calls.some(r => r.op === "create" || r.op === "state")).toBe(false);
@@ -223,6 +229,155 @@ test("source edit during gate release prevents late adoption and releases only t
   expect(f.documents.getEditor(f.old.documentId)?.state.doc.toString()).toBe("after-release");
   expect(f.documents.getSnapshot().tabs).toHaveLength(1);
 });
+test("ordinary dirty explicitly chooses raw buffer or disk without changing source baseline, selection or history", async () => {
+  for (const kind of ["buffer", "disk"] as const) {
+    const f = await fixture(true, false, "\ufeff第一行\r\n第二行\r末行");
+    const editor = f.documents.getEditor(f.old.documentId)!;
+    f.documents.updateEditor(f.old.documentId, editor.state.update({ changes: { from: editor.state.doc.length, insert: "未保存😀" }, selection: { anchor: 1, head: 3 } }));
+    const before = f.documents.getEditor(f.old.documentId)!;
+    const raw = before.state.field(rawText);
+    await f.ready();
+    expect(f.controller.getSnapshot().duplicateVersion).toBeNull();
+    await f.controller.create();
+    expect(f.counts().creates).toBe(0);
+    f.controller.setDuplicateVersion(kind);
+    await f.controller.create();
+    const request = f.calls.find(r => r.op === "create");
+    if (request?.op !== "create") throw Error("No create");
+    expect(request.version).toEqual(kind === "disk" ? { kind } : { kind, text: raw, hash: await rawHash(raw) });
+    expect(Object.keys(request.source!).sort()).toEqual(["bufferRevision", "documentId", "expectedHash", "expectedRevision", "gateToken", "handle"]);
+    expect(f.documents.getSnapshot().snapshot?.documentId).toBe(f.created.documentId);
+    const after = f.documents.getEditor(f.old.documentId)!;
+    expect(after.state.field(rawText)).toBe(raw);
+    expect(after.state.selection.toJSON()).toEqual(before.state.selection.toJSON());
+    expect(after.revision).toBe(before.revision);
+    expect(f.documents.getSaveStatus(f.old.documentId).status).toBe("dirty");
+    f.documents.activateTab(f.old.documentId);
+    expect(f.documents.getSnapshot().snapshot).toEqual(f.old);
+    expect(f.documents.runHistory("undo")).toBe(true);
+    expect(f.documents.getEditor(f.old.documentId)!.state.field(rawText)).toBe(f.old.text);
+    expect(f.documents.runHistory("redo")).toBe(true);
+    expect(f.documents.getEditor(f.old.documentId)!.state.field(rawText)).toBe(raw);
+    expect(f.calls.filter(r => r.op !== "create").every(r => !("version" in r))).toBe(true);
+  }
+});
+
+test("clean default disk becomes unselected on dirty transition and cannot silently publish", async () => {
+  const f = await fixture(true);
+  await f.ready();
+  expect(f.controller.getSnapshot().duplicateVersion).toBe("disk");
+  const editor = f.documents.getEditor(f.old.documentId)!;
+  f.documents.updateEditor(f.old.documentId, editor.state.update({ changes: { from: 0, insert: "dirty" } }));
+  expect(f.controller.getSnapshot().duplicateVersion).toBeNull();
+  await f.controller.create();
+  expect(f.counts().creates).toBe(0);
+  f.controller.setDuplicateVersion("disk");
+  await f.controller.create();
+  expect(f.counts().creates).toBe(1);
+  expect(f.documents.getSaveStatus(f.old.documentId).status).toBe("dirty");
+});
+
+test("closing during raw hashing releases only the gate and never sends a copy", async () => {
+  const f = await fixture(true);
+  const editor = f.documents.getEditor(f.old.documentId)!;
+  f.documents.updateEditor(f.old.documentId, editor.state.update({ changes: { from: 0, insert: "pending hash" } }));
+  await f.ready();
+  f.controller.setDuplicateVersion("buffer");
+  const digest = deferred<ArrayBuffer>();
+  const mocked = spyOn(crypto.subtle, "digest").mockImplementation(() => digest.promise);
+  try {
+    const pending = f.controller.create();
+    await Bun.sleep(0);
+    expect(f.documents.getSnapshot().frozen).toBe(true);
+    await f.controller.close();
+    digest.resolve(new ArrayBuffer(32));
+    await pending;
+    expect(f.counts().creates).toBe(0);
+    expect(f.controller.hasPending()).toBe(false);
+    expect(f.documents.getSnapshot().frozen).toBe(false);
+    expect(f.documents.getEditor(f.old.documentId)!.state.field(rawText)).toBe("pending hash");
+  } finally { mocked.mockRestore(); }
+});
+
+test("largest permitted raw snapshot is sent once and editor refuses growth beyond its existing limit", async () => {
+  for (const size of [1024 * 1024, 1024 * 1024 + 1]) {
+    const f = await fixture(true, false, "x".repeat(1024 * 1024));
+    if (size > 1024 * 1024) {
+      const editor = f.documents.getEditor(f.old.documentId)!;
+      expect(f.documents.updateEditor(f.old.documentId, editor.state.update({ changes: { from: editor.state.doc.length, insert: "x" } }))).toBe(false);
+    }
+    await f.ready();
+    f.controller.setDuplicateVersion("buffer");
+    const started = performance.now();
+    await f.controller.create();
+    console.info("F058b finite frontend raw copy", { attemptedBytes: size, payloadBytes: 1024 * 1024, elapsedMs: performance.now() - started });
+    expect(f.counts().creates).toBe(1);
+    const request = f.calls.find(r => r.op === "create");
+    if (request?.op !== "create" || request.version?.kind !== "buffer") throw Error();
+    expect(request.version.text.length).toBe(1024 * 1024);
+    const serializationStarted = performance.now();
+    const wire = JSON.stringify(request);
+    console.info("F058b finite request JSON", { wireBytes: new TextEncoder().encode(wire).length, elapsedMs: performance.now() - serializationStarted });
+    expect(f.documents.getSnapshot().frozen).toBe(false);
+  }
+});
+
+test("raw capture boundary refuses injected oversized or malformed text before any request", async () => {
+  for (const text of ["x".repeat(1024 * 1024 + 1), "\ud800"]) {
+    const f = await fixture(true);
+    await f.ready();
+    f.controller.setDuplicateVersion("buffer");
+    const mocked = spyOn(f.documents, "duplicateRawText").mockReturnValue(text);
+    try {
+      await f.controller.create();
+      expect(f.calls.some(r => r.op === "create" || r.op === "state")).toBe(false);
+      expect(f.documents.getSnapshot().frozen).toBe(false);
+      expect(f.controller.hasPending()).toBe(false);
+    } finally { mocked.mockRestore(); }
+  }
+});
+
+test("explicit buffer selection cannot bypass a later known external risk", async () => {
+  const f = await fixture(true);
+  const editor = f.documents.getEditor(f.old.documentId)!;
+  f.documents.updateEditor(f.old.documentId, editor.state.update({ changes: { from: 0, insert: "dirty" } }));
+  await f.ready();
+  f.controller.setDuplicateVersion("buffer");
+  const { active: _active, requestId: _request, ...binding } = f.observed[0];
+  void _active; void _request;
+  f.documents.applyExternalObservation({ ...binding, status: "content-changed", generation: 1 });
+  expect(f.documents.canDuplicate()).toBe(false);
+  await f.controller.create();
+  expect(f.counts().creates).toBe(0);
+  expect(f.documents.getEditor(f.old.documentId)!.state.field(rawText)).toBe("dirty");
+});
+
+test("dirty buffer release listener edit cannot activate or discard the original document", async () => {
+  const f = await fixture(true);
+  const editor = f.documents.getEditor(f.old.documentId)!;
+  f.documents.updateEditor(f.old.documentId, editor.state.update({ changes: { from: 0, insert: "captured" } }));
+  await f.ready();
+  f.controller.setDuplicateVersion("buffer");
+  let frozen = false, edited = false;
+  const unsubscribe = f.documents.subscribe(() => {
+    if (f.documents.getSnapshot().frozen) frozen = true;
+    else if (frozen && !edited) {
+      edited = true;
+      const current = f.documents.getEditor(f.old.documentId)!;
+      f.documents.updateEditor(f.old.documentId, current.state.update({ changes: { from: 0, insert: "later-" }, annotations: isolateHistory.of("full") }));
+    }
+  });
+  await f.controller.create();
+  unsubscribe();
+  expect(edited).toBe(true);
+  expect(f.counts().releases).toBe(1);
+  expect(f.documents.getSnapshot().snapshot?.documentId).toBe(f.old.documentId);
+  expect(f.documents.getEditor(f.old.documentId)!.state.field(rawText)).toBe("later-captured");
+  expect(f.documents.getSaveStatus(f.old.documentId).status).toBe("dirty");
+  expect(f.documents.runHistory("undo")).toBe(true);
+  expect(f.documents.getEditor(f.old.documentId)!.state.field(rawText)).toBe("captured");
+});
+
 function snapshot(name: string): DocumentSnapshot {
   return {
     handle: crypto.randomUUID(),
@@ -237,13 +392,18 @@ function snapshot(name: string): DocumentSnapshot {
     writeCapability: { writable: true, reason: "writable" },
   };
 }
-async function fixture(duplicate = false, readonly = false) {
+async function fixture(duplicate = false, readonly = false, initial = "") {
   const old = snapshot("old.md"),
     created = snapshot("new.md"),
     calls: CreateMarkdownRequest[] = [];
+  old.text = initial;
+  old.byteLength = new TextEncoder().encode(initial).length;
+  old.fidelity = analyzeTextFidelity(initial);
   if (readonly) old.writeCapability = { writable: false, reason: "readonly" };
+  const observed: ObservationRequest[] = [];
   const documents = createDocumentController(
     {
+      observeDocument: request => { observed.push(request); return Promise.resolve({ ok: true, requestId: request.requestId }); },
       selectDocument: (r) => Promise.resolve({ ...r, ok: true, snapshot: old }),
       readDocument: (r) => Promise.resolve({ ...r, ok: true, snapshot: old }),
       cancelDocument: () => Promise.resolve(),
@@ -327,6 +487,7 @@ async function fixture(duplicate = false, readonly = false) {
     old,
     created,
     calls,
+    observed,
     ready,
     target,
     counts: () => ({ creates, releases, acks, located }),

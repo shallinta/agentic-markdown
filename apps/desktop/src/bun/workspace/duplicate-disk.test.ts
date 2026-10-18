@@ -1,4 +1,5 @@
 import { beforeAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { closeSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -17,7 +18,39 @@ type Native=CreationNative&{publishExclusive(fd:number,src:string,dst:string):un
 let native:Native;
 const envelope=()=>({protocolVersion:1 as const,requestId:crypto.randomUUID()});
 const bytes=Buffer.from("efbbbf2320e4b8ad0d0a410a42","hex");
+const bufferVersion = (text: string) => ({kind:"buffer" as const,text,hash:createHash("sha256").update(text).digest("hex")});
 beforeAll(()=>{const desktop=fileURLToPath(new URL("../../../",import.meta.url));expect(Bun.spawnSync([process.execPath,"scripts/build-save-native.ts"],{cwd:desktop}).exitCode).toBe(0);native=createRequire(import.meta.url)(join(desktop,"dist-native/save-primitives.node")) as Native;});
+test("buffer copy preserves raw bytes and source baseline; replay binds verified content", async () => {
+ const f=await fixture(); try {
+  const version=bufferVersion("\ufeff# 当前\r\n第二行\r尾行"), request={...f.request,version};
+  const result=await f.workspace.duplicateMarkdown(request);
+  expect(result).toMatchObject({status:"opened",working:false});
+  expect(await readFile(join(f.dir,request.name))).toEqual(Buffer.from(version.text));
+  expect(await readFile(f.path)).toEqual(bytes);
+  expect(await f.workspace.duplicateMarkdown(request)).toMatchObject({status:"opened"});
+  expect(await f.workspace.duplicateMarkdown({...request,version:bufferVersion("different")})).toMatchObject({status:"stale"});
+  expect(await f.workspace.duplicateMarkdown(f.request)).toMatchObject({status:"stale"});
+  expect(await f.docs.read({...envelope(),handle:f.source.handle})).toMatchObject({ok:true,snapshot:{revision:f.source.expectedRevision,hash:f.source.expectedHash}});
+ } finally {await f.dispose();}
+});
+test("buffer endpoint rejects false digest, surrogate, overflow and missing version without writing", async () => {
+ const f=await fixture(); try {
+  for(const version of [{kind:"buffer",text:"x",hash:"0".repeat(64)},bufferVersion("\ud800"),bufferVersion("x".repeat(1024*1024+1)),bufferVersion("😀".repeat(262145)),{kind:"disk",text:"extra"}])
+   expect(await f.workspace.duplicateMarkdown({...f.request,version})).toMatchObject({status:"stale"});
+  const {version:_,...missing}=f.request;void _;
+  expect(await f.workspace.duplicateMarkdown(missing)).toMatchObject({status:"stale"});
+  expect(await readdir(f.dir)).toEqual(["source.markdown"]);
+ } finally {await f.dispose();}
+});
+test("maximum legal buffer publishes exact bytes through workspace",async()=>{
+ const f=await fixture();try{
+  const version=bufferVersion("line123\n".repeat(131072));
+  expect(Buffer.byteLength(version.text)).toBe(1024*1024);
+  expect(await f.workspace.duplicateMarkdown({...f.request,version})).toMatchObject({status:"opened",working:false});
+  expect(await readFile(join(f.dir,f.request.name))).toEqual(Buffer.from(version.text));
+  expect(await readFile(f.path)).toEqual(bytes);
+ }finally{await f.dispose();}
+});
 function injected(publish:(fd:number,src:string,dst:string)=>unknown):Native{return {openDirectoryAt:(fd,n)=>native.openDirectoryAt(fd,n),scanOpen:fd=>native.scanOpen(fd),scanBatch:(c,l)=>native.scanBatch(c,l),scanClose:c=>native.scanClose(c),createFileExclusive:(fd,n)=>native.createFileExclusive(fd,n),createTemp:(fd,n)=>native.createTemp(fd,n),openFileAt:(fd,n)=>native.openFileAt(fd,n),scanStat:(fd,n)=>native.scanStat(fd,n),publishExclusive:publish};}
 async function fixture(replace?:Native, content=bytes){
  const dir=await mkdtemp(join(tmpdir(),"f058-disk-")),path=join(dir,"source.markdown");await writeFile(path,content);
@@ -29,7 +62,7 @@ async function fixture(replace?:Native, content=bytes){
  const receipt=await workspace.duplicateMarkdown({...envelope(),op:"state"});if(receipt.status!=="state")throw Error();
  const operation={session:receipt.session,sequence:receipt.sequence},target={rootHandle:selected.roots[0].handle,generation:selected.roots[0].generation};
  const source:DuplicateSource={handle:original.handle,documentId:original.documentId,expectedRevision:original.revision,expectedHash:original.hash,bufferRevision:0,gateToken:crypto.randomUUID()};
- const request={...envelope(),...operation,op:"create" as const,target,name:"source copy.markdown",source};
+ const request={...envelope(),...operation,op:"create" as const,target,name:"source copy.markdown",source,version:{kind:"disk" as const}};
  return {dir,path,docs,workspace,source,original,request,operation,target,async dispose(){await workspace.dispose();await docs.dispose();await rm(dir,{recursive:true,force:true});}};
 }
 test("real duplicate preserves bytes/BOM/EOL and original identity; suggestion skips collisions",async()=>{

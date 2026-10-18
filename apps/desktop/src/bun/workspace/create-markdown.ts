@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeSync, fstatSync, fsyncSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 
-import { markdownFileName, markdownNameKey, validCreateMarkdownRequest, type DuplicateSource, type CreateMarkdownRequest, type CreateMarkdownResponse, type CreateOperation, type CreateTarget, type CreateOutcome } from "../../shared/create-markdown";
+import { markdownFileName, markdownNameKey, validCreateMarkdownRequest, type DuplicateVersion, type DuplicateSource, type CreateMarkdownRequest, type CreateMarkdownResponse, type CreateOperation, type CreateTarget, type CreateOutcome } from "../../shared/create-markdown";
 import type { DocumentSnapshot } from "../../shared/documents";
 import type { TrustedDocumentService, DocumentScope } from "../documents";
 import { fileFingerprint } from "../documents/path-authorization";
@@ -44,6 +44,7 @@ interface Slot {
   message?: string;
   working: boolean;
   source?: DuplicateSource;
+  versionKey?: string;
 }
 export function createMarkdownService(host: {
   native(): CreationNative;
@@ -101,7 +102,7 @@ export function createMarkdownService(host: {
     if (!s.snapshot) { scope.release?.(); s.message = "文件已创建，但暂时无法打开；可重试打开。"; }
     void response;
   }
-  async function execute(s: Slot, retry: boolean) {
+  async function execute(s: Slot, retry: boolean, version?: DuplicateVersion) {
     let lease: CreationLease | undefined;
     try {
       lease = await host.acquire(s.target); current(s);
@@ -116,11 +117,12 @@ export function createMarkdownService(host: {
       if (!lease.target.showHidden && s.name.startsWith(".")) { s.status = "rejected-before-create"; s.message = "请先开启该目录的隐藏文件显示。"; return; }
       if (await equivalent(lease.target, s.name, () => current(s))) { s.status = "rejected-before-create"; s.message = "已存在同名或等价名称，未创建文件。"; return; }
       const activeLease = lease;
-      const entered = s.source ? await host.documents.withDuplicateSource(s.source, async source => {
+      const publishSource: Parameters<TrustedDocumentService["withDuplicateSource"]>[1] = async source => {
         const check = () => { current(s);source.checkCurrent();verify(activeLease.target); };
         await publishDuplicate({native:host.native(),target:activeLease.target,name:s.name,bytes:source.bytes,hash:source.hash,check,revalidate:()=>source.revalidate(),
           committed:()=>{s.status="created";},unknown:()=>{s.status="unknown";},identified:value=>{s.fingerprint=value;}});
-      }) : await host.documents.withCreateBarrier(() => {
+      };
+      const entered = s.source ? (version?.kind === "buffer" ? await host.documents.withDuplicateBuffer(s.source, version, publishSource) : await host.documents.withDuplicateSource(s.source, publishSource)) : await host.documents.withCreateBarrier(() => {
         current(s); const native = host.native(); verify(activeLease.target);
         const dir = openDirectoryDescriptor(activeLease.target.root, activeLease.target, native);
         let file: number | undefined;
@@ -191,12 +193,19 @@ export function createMarkdownService(host: {
       if (v.sequence <= highwater) return status(v.op === "query" || v.op === "ack" ? "acked" : "stale");
       if (slot && (slot.operation.sequence !== v.sequence || slot.operation.session !== v.session)) return status("busy");
       if (v.op === "create") {
-        if (slot) return JSON.stringify(slot.source) === JSON.stringify(v.source) && slot.rawName === v.name && slot.target.rootHandle === v.target.rootHandle && slot.target.generation === v.target.generation && slot.target.directoryHandle === v.target.directoryHandle ? response(v.requestId, slot) : status("stale");
+        let versionKey: string | undefined;
+        if (v.version?.kind === "buffer") {
+          const bytes = new TextEncoder().encode(v.version.text);
+          const digest = createHash("sha256").update(bytes).digest("hex");
+          if (digest !== v.version.hash) return status("stale");
+          versionKey = `buffer:${digest}:${bytes.length}`;
+        } else if (v.version) versionKey = "disk";
+        if (slot) return slot.versionKey === versionKey && JSON.stringify(slot.source) === JSON.stringify(v.source) && slot.rawName === v.name && slot.target.rootHandle === v.target.rootHandle && slot.target.generation === v.target.generation && slot.target.directoryHandle === v.target.directoryHandle ? response(v.requestId, slot) : status("stale");
         if (v.sequence !== highwater + 1) return status("stale");
         const parsed = markdownFileName(v.name);
-        slot = {operation, source:v.source ? {...v.source}:undefined, target: {...v.target}, rawName: v.name, name: parsed.ok ? parsed.name : v.name, status: parsed.ok ? "pending" : "rejected-before-create", message: parsed.ok ? undefined : parsed.message, working: parsed.ok};
+        slot = {operation, source:v.source ? {...v.source}:undefined, versionKey, target: {...v.target}, rawName: v.name, name: parsed.ok ? parsed.name : v.name, status: parsed.ok ? "pending" : "rejected-before-create", message: parsed.ok ? undefined : parsed.message, working: parsed.ok};
         if (preview) preview.active = false;
-        if (parsed.ok) await execute(slot, false);
+        if (parsed.ok) await execute(slot, false, v.version);
         return response(v.requestId, slot);
       }
       if (!slot) return status("stale");

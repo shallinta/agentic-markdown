@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## F-058b alpha180 有限非离线片通过（2026-10-18）
+
+主线实际WK及最终独立Spec/Standards均0必要有限验收阻断，批准普通dirty显式内存/磁盘复制受托代验通过，非用户亲验。hash2rf0tzashp6xm；源码1688/1/37738唯一原FINAL002，包内Bun仓库1689/0/37738，不关闭FINAL001002003。两副本字节、源dirty/选区/undo/redo、取消/浅深/退出保护已核，session36295正常CmdQ exit0、PID68014消失、三原SHA原样。首构建hdiutil资源忙保留，同源码重试成功不推根因。只读dirty组合、真实1MiB桥接/自然IME/跨卷等未测，完整父/异常消费者/阅读子窗/冻结/专项/offline保持。Git待执行。
+
+## F-058b alpha180 构建获准（2026-10-18）
+
+主线已读正式接线及已知observation风险窄修，独立Spec修后43/254、后端Standards48/1188、前端独立52/445均0必要构建阻断。主线冻结全量1688/1/37738、226文件52秒，唯一原long-whitespace18.814秒仍FINAL002；修前1688全绿不抵消修后红，FINAL001003亦开放。type/full lint/docs/lock/diff通过，批准递增alpha180 unsigned构建及真实WK，尚未验收不得Git；alpha179/ef9456c仍最新已验已推，完整父/专项/冻结/offline保持。
+
+## F-058b 普通未保存文档复制有限实施获准（2026-10-18）
+
+主线全文读唯一F058b、rawText/rawHash、来源barrier/单槽/实际gate，独立Spec与Standards均0必要typed路线阻断，批准普通dirty显式内存/磁盘版本复制及实现后测试。clean转dirty须显式重选；正文仅执行期、固定快照不推进原mirror/基线/history，后端仅核可见资格，不冒renderer可撤回已发发布。无需新C探针，尚未版本/build/验收/Git；alpha179/ef9456c仍最新有限已验已推。异常状态复制/完整父/FINAL001002003/阅读子窗/冻结/专项/offline保持。
+
+## F-057b Git 收据与下一片（2026-10-18）
+
+已提交推送`ef9456cd5ffab72b10b76f155d7358e53f99c4b3`，HTTPS ls-remote与origin/main同SHA，hook前后tree c007af54641f4485114b7a115077d4f797bec450一致，核验时工作树clean。alpha179最新有限已验包。按连续授权下一F-058b先收敛当前内存内容复制最小方案，复核W11/第347条与保存/冲突状态接口，尚未批准生产/新版本/build。完整父/FINAL001002003/阅读子窗/专项/冻结/offline保持。本收据随下一文档提交。
+
 ## F-057b alpha179 非离线有限片通过（2026-10-18）
 
 最终独立Spec/Standards均0必要有限交付阻断，主线批准受托Agent代验通过，非用户亲验。alpha179/hash3ajblxtn34q5g，包内Bun仓库1674/0/37616，源码1673/1仅原FINAL002；FINAL001003保持。真实中文根/子目录/newmd/dirtyundo/保存/隐藏冲突取消/命令主题/自动观察/根重加与重启已核，exec60411/39964正常CmdQ退出0、PID64525/64930消失、三SHA原样。精确选区/自然IME/真实OS/跨卷未实际验，manualaccept仅正式测试；父/专项/冻结/offline保持。Git待执行。

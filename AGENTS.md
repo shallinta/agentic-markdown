@@ -1,5 +1,41 @@
 # AGENTS.md
 
+## F-064c alpha189 最终有限通过，Git待执行（2026-10-19）
+
+两轴独立末核0必要有限阻断，主线批准alpha189/hash2p9sykdjetquk受托代验通过，非用户亲验。包内正式CRUD自然exit0/gen4、包Bun定向19/0/134、10源及三资源SHA核同；相对188仅bridge.c尾空格源hash变化，三产物同。实际独立空WK欢迎页/CmdQ，launcher10234exit0/PID97053消失，IMK仅观察。未称189全量重跑；187全量、源码FINAL002、并发与暂存首红保留。完整父/授权dirty/UI/x64/CI实装/冻结/专项/offline开放，Git待执行。
+
+## F-064c 暂存空白修正与alpha189重包（2026-10-19）
+
+git diff --cached --check首次覆盖新文件发现bridge.c第15行尾空格，已仅删一个空格，不修改检查规则。此前普通diff未含untracked，首红保留；主线批准alpha189重包与资源重验以维持源码SHA对应，alpha188证据原样保留但不直接冒189。尚未Git；父/冻结/专项/最终问题/offline保持。
+
+## F-064c alpha188 有限内部接入通过（2026-10-19）
+
+两轴最终0必要有限验收阻断，主线批准受托Agent非离线有限通过，非用户亲验。alpha188/hash1gcixb7tv1lyn实际包内正式host CRUD自然exit0/gen4，包Bun定向19/0/134，10源/三资源SHA核同且无testaddon；真实WK独立空数据欢迎页、CmdQ后launcher26648 exit0/PID96202消失。alpha187全量1799/38446仅历史组合证据，源码FINAL002与并行测试红不抹；IMKstderr仅观察。无搜索UI/授权dirty，x64/CI实装及四父义务仍开放，Git待执行，冻结/专项/offline保持。
+
+## F-064c alpha188 命名清理构建获准（2026-10-19）
+
+新两变量统一AGENTIC_MARKDOWN_INDEX_前缀，Standards按旧名归一后核正式10源及setup旧SHA精确同，Spec/Standards/主线各19/0/134串行通过。原构建与测试重叠18/1/130断言失败保留，未改oracle；type/full lint/docs/lock/diff通过。主线批准递增alpha188重包及实际包资源重验，不以alpha187证据替代；尚未验收/Git，父/冻结/专项/最终问题/offline不变。
+
+## F-064c alpha187 实际通过，环境前缀窄修待重包（2026-10-19）
+
+alpha187/hash5lvf8caidut3实际构建exit0、包Bun1.4.0正式host CRUD至generation4并自然退出，包内运行仓库1799/0/38446；独立空数据真实WK欢迎页与CmdQ退出0/PID95101消失。两轴核包资源无测试接口混入，主线发现新构建变量AGENTIC_INDEX_*不符合F001的AGENTIC_MARKDOWN_前缀，暂不批准Git；仅机械改为AGENTIC_MARKDOWN_INDEX_RUST_BIN/TARGET并补定向复核，下一代码包alpha188。旧187证据及IMK stderr观察原样保留，不冒清理包通过；原FINAL002、父/冻结/专项/offline开放。
+
+## F-064c alpha187 构建获准（2026-10-19）
+
+补齐正式候选后验/129grams与资源损坏拒绝、隔离工具配置前拒，作者/主线/独立Spec及Standards各19/0/134通过，最终0必要有限构建阻断。主线全量1795/1仍仅原FINAL002，type/full lint/docs/obligations/lock/diff通过；新增测试不改原语义或生产产物。主线已读关键源码，批准递增alpha187 unsigned构建及包内Bun/正式host资源有限CRUD；无新用户UI，不据此称完整搜索/授权/dirty实现。尚未构建完成/验收/Git，alpha186仍最新已验包；x64与全部既定边界保留。
+
+## F-064c 正式模块候选与边界补验（2026-10-19）
+
+原生正式/test独立产物已编译，作者及两独立轴各16/0/101定向通过；主线已读正式Rust/C/worker/host/resource及构建，Cargo锁仅根包改名。主线全量1795/1/38414、240文件58秒，唯一既有long-whitespace18.764秒仍FINAL002，非全绿；type/full lint/docs/lock/diff通过。Spec要求补候选假阳性、超过128grams回退与实际资源损坏拒绝，正在补，不提前批准应用build/验收/Git。CI供给由另一作者实施、Spec与主线独立复核；五合成夹具主线复跑通过，x64仅官方pin及源码未运行。alpha186保持，完整父/冻结/专项/最终问题/offline开放。
+
+## F-064c 有限内部模块实施获准（2026-10-19）
+
+主线全文读唯一F064c修订及真实构建/resolver/双架构release接点，两独立轴最终0必要有限路线阻断，批准Rust/C NodeAPI正式构建源、index专属资源定位与typed内部会话实现及实现后测试。首次mutation后失败保持unknown/faulted且不自动重放，关闭取消latest并等待active、一次原生收尾后自然drain；实验注入须Rust/C双层裁剪。limited-v1不冒产品容量，未接窗口/授权/dirty/UI；CI工具供给实际URL/SHA须先核。尚未代码验收，应用版本/build/真实包测试由主线后续管理，alpha186保持；四父义务及冻结/专项/最终问题/offline开放。
+
+## F-064b Git收据与正式接入下一片（2026-10-19）
+
+已提交推送`cd6ddf2464593017a4714699c6967138733ec59c`，主线HTTPS远端main、origin/main与HEAD核同；hook前后tree均`7baf1d9a415711b49a706457322d36852a3d9977`，核验时clean。alpha186保持，只有有限桥实验/材料通过。连续授权下下一F064c先收敛Rust/C NodeAPI构建、index专属资源定位与typed worker最小方案，未批准生产/依赖/版本/build；真实app资源链、四父义务及授权dirty/UI仍开放。一次全局panic hook与目标架构风险须显式评估，不把实验接口原样带入产品。其他冻结/专项/最终问题/offline保持。
+
 ## F-064b 证据归档与最终复核完成，Git待执行（2026-10-19）
 
 主线pack.py实际exit0，完整核164成员/1,223,070原bytes及XZ EOF/tar零尾；包100,084bytes、SHA c44a3ceea313f1d0bbd81f51ce1960adf4fa386f0556160064579a780b03d768。两轴事前逐原文件SHA与固定pack源核同，research/f064b五件已持久化且独立最终复核0必要阻断，不带native/target/cache/index、不造通用重放框架。type/full lint/docs/obligations/lock/diff通过，Git待执行；有限桥结论不扩大，alpha186与父/冻结/专项/离线边界保持。

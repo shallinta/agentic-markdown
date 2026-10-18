@@ -115,6 +115,17 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - name: Supply fixed Rust for the index bridge
+        env:
+          INDEX_BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          case "$INDEX_BUILD_ARCH" in
+            arm64) INDEX_BUILD_TARGET=aarch64-apple-darwin ;;
+            x64) INDEX_BUILD_TARGET=x86_64-apple-darwin ;;
+            *) exit 1 ;;
+          esac
+          python3 apps/desktop/scripts/setup-index-rust.py --target "$INDEX_BUILD_TARGET"
+
       # Electrobun images the app with `hdiutil create -srcfolder .dmg-staging`,
       # which can fail with "Resource busy" while Spotlight indexes it.
       - name: Disable Spotlight indexing (hdiutil "Resource busy")

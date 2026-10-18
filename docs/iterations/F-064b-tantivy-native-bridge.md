@@ -1,9 +1,11 @@
 # F-064b：Tantivy Node-API 持久索引窄桥
 
-> 状态：两独立轴实际终核0必要有限实验及归档交付阻断，主线批准固定桥可行性片受托Agent代验通过，非用户亲验／正式应用验收。完整六组及严格终态通过，原退出首红／漏观测历史保留。正式typed构建／资源接入移至后继F-064c最小方案；最小持久证据已入research/f064b并完成独立最终复核，Git待执行，不交付全文搜索UI。
+> 状态：两独立轴实际终核0必要有限实验及归档交付阻断，主线批准固定桥可行性片受托Agent代验通过，非用户亲验／正式应用验收。完整六组及严格终态通过，原退出首红／漏观测历史保留。最小持久证据已入research/f064b并完成独立最终复核，已提交推送cd6ddf2；正式typed构建／资源接入见后继F-064c最小方案，不交付全文搜索UI。
 
 <!-- obligations: none -->
 <!-- deferred-obligations: OBL-006, OBL-018, OBL-026, OBL-035 -->
+
+主线Git收据：本片已提交推送`cd6ddf2464593017a4714699c6967138733ec59c`，HTTPS远端／origin/main同SHA，hook前后tree `7baf1d9a415711b49a706457322d36852a3d9977`一致、当时clean。下方Git待执行文字是历史阶段；下一仅编写[F-064c正式接入方案](F-064c-index-native-integration.md)，未授权生产或构建。
 
 F-064a已提交推送`0f1d113055330d5e058447293e86a28bd4b499f5`，主线核HEAD／origin/main／HTTPS远端一致，hook前后tree `902355dd77b613be39f6614eda47d3b5f34f7fe5`一致、当时clean。本条引用主线Git收据，不扩展实验结论；alpha186仍为已有应用包。
 

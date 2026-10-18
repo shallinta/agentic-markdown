@@ -1,6 +1,6 @@
 # F-057a：授权根内排他新建空白 Markdown 文件
 
-> 状态：2026-10-18 alpha177 有限非离线受托Agent代验通过，非用户亲验；最终独立Spec/Standards均0必要阻断，主线批准。Git待执行，完整父及未测边界保持。下文早期记录保留历史。
+> 状态：2026-10-18 alpha177 有限非离线受托Agent代验通过，非用户亲验；最终独立Spec/Standards均0必要阻断，主线批准。已提交推送e52beb4，完整父及未测边界保持。下文早期记录保留历史。
 
 <!-- obligations: none -->
 <!-- deferred-obligations: none -->
@@ -247,3 +247,5 @@ alpha176正常CmdQ，session79661退出0；A.md SHA `71c6fe035fa390e44f40677b982
 最终独立Spec复跑相关三文件30/0/171，并独立核原SHA/新文件尺寸权限；Standards复核代码、构建/运行日志及边界。两轴均0必要有限非离线验收阻断，GUI是主线真实执行记录的独立复核，非两代理重复操作。主线据组合证据批准F057a有限片受托代验通过，2026-10-18；不关闭完整父或其他未测责任，Git按连续授权随后执行。
 
 提交前再次源码全量 `/tmp/f057a-alpha177-source-tests.log`：1623通过/1失败/37264断言、222文件47.02秒，唯一仍同 `long whitespace eventually completes in bounded slices` 18.233秒超时；不是全绿，继续FINAL002最终集中责任。最新docs/obligations/lock/diff通过，未改失败oracle或源码测试时限。
+
+Git收据：`e52beb44f176a47f096620051342b000e9526da5`已提交推送，hook前后tree `3157a40ee9ca31dfc552d8420b1eb7d6fde5806e`一致。默认SSH22 banner超时；仅命令级SSH443、既有github.com HostKeyAlias严格校验push成功，随后同路径ls-remote与origin/main核同SHA。原HTTPS调用受既有`url.git@github.com:.insteadof https://github.com/`改写而仍连22失败；用命令级完整仓库URL精确insteadOf覆盖后，真实HTTPS ls-remote同SHA成功。未改系统/进程网络或持久Git配置。工作树当时clean，冻结stash未动；本收据随后续文档提交。

@@ -39,7 +39,7 @@ export function createDocumentCanonical(
 export function canonicalDiscardParticipant(
   controller: Pick<
     ReturnType<typeof createDocumentController>,
-    | "beginDiscard"
+    | "beginWindowDiscard"
     | "endDiscard"
     | "hasDirty"
     | "waitForSaves"
@@ -50,7 +50,7 @@ export function canonicalDiscardParticipant(
   hasDiscardable?: () => boolean
 ) {
   return {
-    beginDiscard: controller.beginDiscard,
+    beginDiscard: controller.beginWindowDiscard,
     endDiscard: controller.endDiscard,
     hasDirty: hasDiscardable ?? controller.hasDirty,
     reportDiscardFailure: controller.reportDiscardFailure,

@@ -5,12 +5,28 @@ import {
   type CreateMarkdownResponse,
   type CreateOperation,
   type CreateTarget,
+  type DuplicateSource,
 } from "../shared/create-markdown";
 
 import { isDocumentResponse, type createDocumentController } from "./documents";
+import type { FolderState } from "./workspace";
+
+/** Only already authorized, currently projected directories are eligible. */
+export function duplicateDefaultTarget(path: string | undefined, folders: FolderState): CreateTarget | null {
+  if (!path) return null;
+  const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+  for (const root of folders.roots) {
+    const target = { rootHandle: root.handle, generation: root.generation };
+    if (root.displayPath === parent) return target;
+    const directory = folders.nodes[root.handle]?.find(node => node.kind === "directory" && node.displayPath === parent);
+    if (directory) return { ...target, directoryHandle: directory.handle };
+  }
+  return null;
+}
 
 type Receipt = Extract<CreateMarkdownResponse, { operation: CreateOperation }>;
 export interface CreateMarkdownState {
+  sourceName?: string;
   visible: boolean;
   name: string;
   target: CreateTarget | null;
@@ -27,6 +43,7 @@ export function createMarkdownController({
   locate,
   targetCurrent,
   delay = 250,
+  duplicate = false,
 }: {
   documents: ReturnType<typeof createDocumentController>;
   request: (value: CreateMarkdownRequest) => Promise<unknown>;
@@ -34,6 +51,7 @@ export function createMarkdownController({
   locate: (target: CreateTarget, entryHandle: string) => void;
   targetCurrent: (target: CreateTarget) => boolean;
   delay?: number;
+  duplicate?: boolean;
 }) {
   let state: CreateMarkdownState = {
     visible: false,
@@ -51,6 +69,11 @@ export function createMarkdownController({
   let disposed = false;
   let adoptedHandle: string | null = null;
   let locatedHandle: string | null = null;
+  let sourceIdentity: { handle: string; documentId: string; fileName: string } | null = null;
+  let sourceGate: DuplicateSource | null = null;
+  let adoptionSource: DuplicateSource | null = null;
+  let activationAllowed = true;
+  let customName = false;
   const listeners = new Set<() => void>();
   const publish = (patch: Partial<CreateMarkdownState>) => {
     state = { ...state, ...patch };
@@ -75,7 +98,7 @@ export function createMarkdownController({
         () => undefined
       );
   }
-  function preview() {
+  function preview(suggest = false) {
     cancelPreview();
     const name = markdownFileName(state.name),
       target = state.target;
@@ -100,8 +123,9 @@ export function createMarkdownController({
             ...envelope(),
             op: "preview",
             target,
-            name: state.name,
+            name: suggest && sourceIdentity ? sourceIdentity.fileName : state.name,
             previewId: id,
+            ...(suggest ? { suggest: true } : {}),
           });
           if (
             disposed ||
@@ -110,7 +134,9 @@ export function createMarkdownController({
             response.status !== "preview"
           )
             return;
+          if (suggest && response.result === "available" && (!response.fileName || !markdownFileName(response.fileName).ok)) throw Error("invalid-suggested-name");
           publish({
+            ...(suggest && response.fileName ? { name: response.fileName } : {}),
             preview: response.result,
             message:
               response.message ??
@@ -152,6 +178,19 @@ export function createMarkdownController({
     )
       throw Error("create-operation-mismatch");
     publish({ receipt: response, message: response.message ?? null });
+    if (duplicate) {
+      if (response.working !== false) return;
+      if (sourceGate) {
+        activationAllowed = activationAllowed && documents.duplicateSourceCurrent(sourceGate);
+        adoptionSource = sourceGate;
+        documents.releaseDuplicateSource(sourceGate);
+        sourceGate = null;
+      }
+      if (response.status === "unknown") {
+        publish({ message: response.message ?? "复制结果未知，不会重复创建。可以查询原结果或正常退出应用；不会自动删除文件。" });
+        return;
+      }
+    }
     if (response.status === "opened" && !response.snapshot)
       throw Error("missing-created-snapshot");
     if (response.status === "acked") {
@@ -197,7 +236,7 @@ export function createMarkdownController({
         return;
       }
       const current = () =>
-        !disposed && state.visible && intent === expectedIntent;
+        !disposed && state.visible && intent === expectedIntent && activationAllowed && (!adoptionSource || documents.matchesDuplicateSource(adoptionSource));
       const adopted =
         current() && (await documents.adoptCreatedDocument(snapshot, current));
       if (adopted) {
@@ -240,6 +279,7 @@ export function createMarkdownController({
   }
   async function run(op: "create" | "query" | "retry-open") {
     if (state.busy || disposed) return;
+    if (op === "create" && operation) return;
     if (
       op === "create" &&
       (!state.target ||
@@ -251,12 +291,23 @@ export function createMarkdownController({
     if (op !== "create" && !operation) return;
     cancelPreview();
     const expectedIntent = ++intent;
+    if (duplicate && op === "create") {
+      if (!sourceIdentity) return;
+      sourceGate = documents.acquireDuplicateSource(sourceIdentity.handle, sourceIdentity.documentId);
+      if (!sourceGate) { publish({ message: "源文档已变化或暂不可复制，请回到已保存文档后重试。" }); return; }
+      activationAllowed = true;
+      adoptionSource = null;
+    } else if (duplicate && op === "retry-open") {
+      activationAllowed = documents.canSelectFolder();
+      adoptionSource = null;
+    }
     publish({ busy: true, message: null });
+    let dispatched = false;
     try {
       if (!operation) {
         const receipt = await send({ ...envelope(), op: "state" });
         if (receipt.status !== "state") throw Error();
-        if (!state.visible || disposed || intent !== expectedIntent) return;
+        if (!state.visible || disposed || intent !== expectedIntent || (sourceGate && !documents.duplicateSourceCurrent(sourceGate))) return;
         operation = { session: receipt.session, sequence: receipt.sequence };
       }
       const params: CreateMarkdownRequest =
@@ -267,8 +318,10 @@ export function createMarkdownController({
               op,
               target: state.target!,
               name: state.name,
+              ...(sourceGate ? { source: sourceGate } : {}),
             }
           : { ...envelope(), ...operation, op };
+      dispatched = true;
       let result = await send(params);
       // A bounded recovery loop never resends create. Remaining uncertainty is
       // kept as a visible recovery action, not silently classified as failure.
@@ -282,6 +335,11 @@ export function createMarkdownController({
           : "无法开始创建，请重试。",
       });
     } finally {
+      if (op === "create" && !dispatched && sourceGate) {
+        documents.releaseDuplicateSource(sourceGate);
+        sourceGate = null;
+        operation = null;
+      }
       publish({ busy: false });
     }
   }
@@ -296,35 +354,43 @@ export function createMarkdownController({
       disposed = false;
     },
     getSnapshot: () => state,
-    canOpen: () => !disposed && !state.busy && documents.canSelectFolder(),
+    canOpen: () => !disposed && !state.busy && (!!operation || (duplicate ? documents.canDuplicate() : documents.canSelectFolder())),
     hasPending: () => !!operation,
     open(target: CreateTarget | null) {
-      if (disposed || state.busy || !documents.canSelectFolder()) return;
+      if (disposed || state.busy || (!operation && !(duplicate ? documents.canDuplicate() : documents.canSelectFolder()))) return;
+      if (duplicate && !operation) {
+        sourceIdentity = documents.getSnapshot().snapshot;
+        customName = false;
+      }
       ++intent;
       publish({
         visible: true,
+        ...(duplicate && sourceIdentity ? { sourceName: sourceIdentity.fileName } : {}),
         ...(operation
           ? {}
           : {
               target,
-              name: "",
+              name: duplicate ? sourceIdentity?.fileName ?? "" : "",
               receipt: null,
               message: null,
               preview: "idle" as const,
             }),
       });
+      if (duplicate && !operation && target) preview(true);
     },
     setName(name: string) {
       if (state.busy || operation) return;
       publish({ name });
+      customName = true;
       preview();
     },
     setTarget(target: CreateTarget | null) {
       if (state.busy || operation) return;
       publish({ target });
-      preview();
+      if (duplicate && !customName && sourceIdentity) publish({ name: sourceIdentity.fileName });
+      preview(duplicate && !customName);
     },
-    check: preview,
+    check: () => preview(duplicate && !customName),
     create: () => run("create"),
     query: () => run("query"),
     retry: () => run("retry-open"),

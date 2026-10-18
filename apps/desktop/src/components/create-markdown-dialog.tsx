@@ -16,10 +16,12 @@ export function CreateMarkdownDialog({
   controller,
   state,
   folders,
+  duplicate = false,
 }: {
   controller: ReturnType<typeof createMarkdownController>;
   state: CreateMarkdownState;
   folders: FolderState;
+  duplicate?: boolean;
 }) {
   const root = folders.roots.find(
     (item) => item.handle === state.target?.rootHandle
@@ -42,14 +44,15 @@ export function CreateMarkdownDialog({
       }}
     >
       <DialogContent>
-        <DialogTitle>新建 Markdown 文件</DialogTitle>
+        <DialogTitle>{duplicate ? "复制当前已保存文档" : "新建 Markdown 文件"}</DialogTitle>
         <DialogDescription>
-          在已授权目录中创建空白文件，不覆盖已有项目。
+          {duplicate ? "复制磁盘中已保存的完整内容，源文档保持不变，不覆盖已有项目。图片等资产不复制，相对链接不改写；更换目录后链接可能失效。" : "在已授权目录中创建空白文件，不覆盖已有项目。"}
         </DialogDescription>
+        {duplicate && <p className="text-sm break-all">源文件：{state.sourceName}</p>}
         <label className="grid gap-2 text-sm">
           目标目录
           <select
-            aria-label="新建文件目标目录"
+            aria-label={duplicate ? "副本目标目录" : "新建文件目标目录"}
             className="bg-background rounded border p-2"
             disabled={state.busy || pending}
             value={root ? root.handle : ""}
@@ -81,7 +84,7 @@ export function CreateMarkdownDialog({
           文件名
           <input
             autoFocus
-            aria-label="新建文件名"
+            aria-label={duplicate ? "副本文件名" : "新建文件名"}
             className="bg-background rounded border p-2"
             value={state.name}
             disabled={state.busy || pending}
@@ -129,7 +132,7 @@ export function CreateMarkdownDialog({
               disabled={state.busy || state.preview !== "available"}
               onClick={() => void controller.create()}
             >
-              创建并打开
+              {duplicate ? "复制并打开" : "创建并打开"}
             </button>
           )}
           {pending && (

@@ -70,6 +70,7 @@ interface Owner extends DocumentScope {
 }
 export interface TrustedWorkspaceService extends WorkspaceService {
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
+  duplicateMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   reconciliation: Pick<
     ReturnType<typeof createReconciliation>,
     "prepare" | "get" | "release" | "issue" | "accept" | "query"
@@ -803,7 +804,7 @@ export function createWorkspaceService({
       root.scopes.add(owner); return owner;
     }};
   }
-  const creation = createMarkdownService({
+  const creationHost: Parameters<typeof createMarkdownService>[0] = {
     documents,
     native() {
       if (directoryNative) return directoryNative as CreationNative;
@@ -842,9 +843,12 @@ export function createWorkspaceService({
         }};
       } catch (error) { release(); throw error; }
     }
-  });
+  };
+  const creation = createMarkdownService(creationHost);
+  const duplication = createMarkdownService(creationHost, true);
   return {
     createMarkdown: (value) => creation.request(value),
+    duplicateMarkdown: (value) => duplication.request(value),
     removeStandalone,
     removeFolderRoot: (value) => folderRemoval.request(value),
     reconciliation: {
@@ -1143,6 +1147,7 @@ export function createWorkspaceService({
     },
     async dispose() {
       creation.dispose();
+      duplication.dispose();
       releaseCreation?.();
       folderRemoval.dispose();
       releaseFolderRemoval?.();

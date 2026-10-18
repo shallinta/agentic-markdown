@@ -6,6 +6,7 @@ import {
   type Extension,
 } from "@codemirror/state";
 
+import type { DuplicateSource } from "../shared/create-markdown";
 import {
   MAX_DOCUMENT_BYTES,
   isWriteCapability,
@@ -191,6 +192,7 @@ export function createDocumentController(
   let pending: DocumentRequest | null = null;
   let removalGate = false;
   let folderRemovalGate = false;
+  let duplicateGate: { source: DuplicateSource; cancelled: boolean } | null = null;
   let discardActive = false;
   let removalEligible: (handle: string) => boolean = () => false;
   let removal: { entry: DocumentEntry; phase: "state" | "begin" | "commit" | "query" | "ack"; operation?: RemovalOperation; finalError: string | null } | null = null;
@@ -468,7 +470,7 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
-    if (removalGate || folderRemovalGate) next = { ...next, frozen: true };
+    if (removalGate || folderRemovalGate || duplicateGate) next = { ...next, frozen: true };
     if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
       const old = revealPending; revealPending = null;
       void transport.cancelDocument({ protocolVersion: 1, requestId: old.requestId }).catch(() => undefined);
@@ -912,6 +914,37 @@ export function createDocumentController(
     );
   };
   const controller = {
+    canDuplicate: () => {
+      const snapshot = state.snapshot;
+      const editor = snapshot && editors.get(snapshot.documentId);
+      return !metadataDisposed && !state.frozen && !state.busy && !saving.size && !editorInputBlocked && canLeaveEditor() && !!snapshot && !!editor && !editor.state.field(editorFaultSession).fault && !state.stale && !observation.atRisk(snapshot.documentId) && controller.getSaveStatus(snapshot.documentId).status === "saved";
+    },
+    acquireDuplicateSource: (handle: string, documentId: string): DuplicateSource | null => {
+      if (!controller.canDuplicate() || state.snapshot?.handle !== handle || state.snapshot.documentId !== documentId) return null;
+      const snapshot = state.snapshot;
+      const source: DuplicateSource = { handle, documentId, expectedRevision: snapshot.revision, expectedHash: snapshot.hash, bufferRevision: editors.get(documentId)!.revision, gateToken: crypto.randomUUID() };
+      duplicateGate = { source, cancelled: false };
+      publish({ ...state, frozen: true });
+      return source;
+    },
+    matchesDuplicateSource: (source: DuplicateSource) => !metadataDisposed && !discardActive && !editorInputBlocked && canLeaveEditor() && state.snapshot?.handle === source.handle && state.snapshot.documentId === source.documentId && state.snapshot.revision === source.expectedRevision && state.snapshot.hash === source.expectedHash && editors.get(source.documentId)?.revision === source.bufferRevision && !editors.get(source.documentId)?.state.field(editorFaultSession).fault && !needsDiscard(source.documentId),
+    duplicateSourceCurrent: (source: DuplicateSource) => duplicateGate?.source === source && !duplicateGate.cancelled && controller.matchesDuplicateSource(source),
+    releaseDuplicateSource: (source: DuplicateSource) => {
+      if (duplicateGate?.source !== source) return;
+      duplicateGate = null;
+      publish({ ...state, frozen: discardActive });
+    },
+    // Only the application exit/reload guard may bypass this particular owner.
+    // Keep its freeze until the receipt settles; cancellation cannot revive an
+    // old auto-activation intent or send an as-yet unsent publication.
+    beginWindowDiscard: () => {
+      if (!duplicateGate) return beginDiscard();
+      if (removalGate || folderRemovalGate || discardActive || state.busy || !canLeaveEditor()) return false;
+      duplicateGate.cancelled = true;
+      discardActive = true;
+      publish({ ...state, frozen: true });
+      return true;
+    },
     canBeginFolderRemoval: () => !metadataDisposed && !removal && !state.folderRemovalPending && !state.busy && !state.frozen && canLeaveEditor(),
     beginFolderRemoval: async () => {
       if (!controller.canBeginFolderRemoval()) return false;
@@ -1376,6 +1409,7 @@ export function createDocumentController(
         }
       ),
     dispose: () => {
+      if (duplicateGate) duplicateGate.cancelled = true;
       if (revealPending) {
         void transport.cancelDocument({ protocolVersion: 1, requestId: revealPending.requestId }).catch(() => undefined);
         revealPending = null;

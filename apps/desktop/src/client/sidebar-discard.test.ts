@@ -16,7 +16,7 @@ test("the sole discard participant drains renderer layout before reload approval
   guard.register(
     canonicalDiscardParticipant(
       {
-        beginDiscard: () => {
+        beginWindowDiscard: () => {
           frozen = true;
           return true;
         },

@@ -351,7 +351,7 @@ test("single discard participant cancels parsing while preserving save drain, di
   });
   const participant = canonicalDiscardParticipant(
     {
-      beginDiscard: () => {
+      beginWindowDiscard: () => {
         if (!allowBegin) return false;
         frozen = true;
         return true;

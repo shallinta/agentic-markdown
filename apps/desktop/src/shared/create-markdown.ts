@@ -2,11 +2,12 @@ import type { DocumentRequest, DocumentSnapshot } from "./documents";
 
 export interface CreateTarget { rootHandle: string; generation: number; directoryHandle?: string }
 export interface CreateOperation { session: string; sequence: number }
+export interface DuplicateSource { handle: string; documentId: string; expectedRevision: number; expectedHash: string; bufferRevision: number; gateToken: string }
 export type CreateMarkdownRequest = DocumentRequest & (
   | { op: "state" }
-  | { op: "preview"; target: CreateTarget; name: string; previewId: string }
+  | { op: "preview"; target: CreateTarget; name: string; previewId: string; suggest?: boolean }
   | { op: "cancel-preview"; previewId: string }
-  | (CreateOperation & { op: "create"; target: CreateTarget; name: string })
+  | (CreateOperation & { op: "create"; target: CreateTarget; name: string; source?: DuplicateSource })
   | (CreateOperation & { op: "query" | "retry-open" | "release-unpresented" | "ack" })
 );
 export type CreateOutcome = "rejected-before-create" | "created" | "opened" | "unknown" | "pending" | "busy" | "stale" | "acked";
@@ -14,7 +15,7 @@ export type CreateMarkdownResponse = DocumentRequest & (
   | { status: "state"; session: string; sequence: number }
   | { status: "preview"; previewId: string; result: "available" | "conflict" | "invalid" | "unavailable"; fileName?: string; message?: string }
   | { status: "cancelled-preview"; previewId: string }
-  | { status: CreateOutcome; operation: CreateOperation; fileName?: string; message?: string; snapshot?: DocumentSnapshot; entryHandle?: string; released?: boolean }
+  | { status: CreateOutcome; operation: CreateOperation; fileName?: string; message?: string; snapshot?: DocumentSnapshot; entryHandle?: string; released?: boolean; working?: boolean }
 );
 export function markdownFileName(input: string): { ok: true; name: string } | { ok: false; message: string } {
   if (!input.trim() || input === "." || input === ".." || input === ".git" || input.includes("/") || [...input].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) || /[ .]$/.test(input))
@@ -32,14 +33,15 @@ export const markdownNameKey = (name: string) => name.normalize("NFC").toLowerCa
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const uuid = (v: unknown): v is string => typeof v === "string" && /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(v);
 const short = (v: unknown): v is string => typeof v === "string" && !!v && v.length <= 80;
+export function validDuplicateSource(v: unknown): v is DuplicateSource { return object(v) && Object.keys(v).length === 6 && uuid(v.handle) && uuid(v.documentId) && Number.isSafeInteger(v.expectedRevision) && Number(v.expectedRevision)>0 && typeof v.expectedHash === "string" && /^[a-f\d]{64}$/.test(v.expectedHash) && Number.isSafeInteger(v.bufferRevision) && Number(v.bufferRevision)>=0 && uuid(v.gateToken); }
 function target(v: unknown): v is CreateTarget { return object(v) && Object.keys(v).every(k => ["rootHandle", "generation", "directoryHandle"].includes(k)) && uuid(v.rootHandle) && Number.isSafeInteger(v.generation) && Number(v.generation) > 0 && (v.directoryHandle === undefined || uuid(v.directoryHandle)); }
 export function validCreateMarkdownRequest(v: unknown): v is CreateMarkdownRequest {
   if (!object(v) || v.protocolVersion !== 1 || !short(v.requestId)) return false;
   if (v.op === "state") return Object.keys(v).length === 3;
   if (v.op === "cancel-preview") return Object.keys(v).length === 4 && short(v.previewId);
-  if (v.op === "preview") return Object.keys(v).length === 6 && short(v.previewId) && target(v.target) && typeof v.name === "string" && v.name.length <= 4096;
+  if (v.op === "preview") return Object.keys(v).length === (v.suggest === undefined ? 6 : 7) && (v.suggest === undefined || typeof v.suggest === "boolean") && short(v.previewId) && target(v.target) && typeof v.name === "string" && v.name.length <= 4096;
   if (!uuid(v.session) || !Number.isSafeInteger(v.sequence) || Number(v.sequence) < 1) return false;
-  if (v.op === "create") return Object.keys(v).length === 7 && target(v.target) && typeof v.name === "string" && v.name.length <= 4096;
+  if (v.op === "create") return Object.keys(v).length === (v.source === undefined ? 7 : 8) && (v.source === undefined || validDuplicateSource(v.source)) && target(v.target) && typeof v.name === "string" && v.name.length <= 4096;
   return Object.keys(v).length === 5 && ["query", "retry-open", "release-unpresented", "ack"].includes(String(v.op));
 }
 export function validCreateMarkdownResponse(v: unknown, request: CreateMarkdownRequest): v is CreateMarkdownResponse {
@@ -48,5 +50,5 @@ export function validCreateMarkdownResponse(v: unknown, request: CreateMarkdownR
   if (request.op === "cancel-preview") return v.status === "cancelled-preview" && v.previewId === request.previewId;
   if (request.op === "preview") return v.status === "preview" && v.previewId === request.previewId && ["available", "conflict", "invalid", "unavailable"].includes(String(v.result)) && (v.fileName === undefined || typeof v.fileName === "string") && (v.message === undefined || typeof v.message === "string");
   // Full snapshot validation remains at the document controller's existing boundary.
-  return object(v.operation) && v.operation.session === request.session && v.operation.sequence === request.sequence && ["rejected-before-create", "created", "opened", "unknown", "pending", "busy", "stale", "acked"].includes(String(v.status)) && (v.fileName === undefined || typeof v.fileName === "string") && (v.message === undefined || typeof v.message === "string") && (v.entryHandle === undefined || uuid(v.entryHandle)) && (v.released === undefined || typeof v.released === "boolean") && (v.snapshot === undefined || (object(v.snapshot) && uuid(v.snapshot.handle) && uuid(v.snapshot.documentId) && typeof v.snapshot.text === "string"));
+  return object(v.operation) && v.operation.session === request.session && v.operation.sequence === request.sequence && ["rejected-before-create", "created", "opened", "unknown", "pending", "busy", "stale", "acked"].includes(String(v.status)) && (v.working === undefined || typeof v.working === "boolean") && (v.fileName === undefined || typeof v.fileName === "string") && (v.message === undefined || typeof v.message === "string") && (v.entryHandle === undefined || uuid(v.entryHandle)) && (v.released === undefined || typeof v.released === "boolean") && (v.snapshot === undefined || (object(v.snapshot) && uuid(v.snapshot.handle) && uuid(v.snapshot.documentId) && typeof v.snapshot.text === "string"));
 }

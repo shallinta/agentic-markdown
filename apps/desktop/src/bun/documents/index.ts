@@ -3,6 +3,7 @@ import { constants, watch, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
+import type { DuplicateSource } from "../../shared/create-markdown";
 import { validObservationRequest, type ObservationBinding, type ObservationEvent } from "../../shared/document-observation";
 import {
   DOCUMENT_PROTOCOL_VERSION,
@@ -83,6 +84,7 @@ export interface FolderMutationLease {
   release(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  withDuplicateSource(source: DuplicateSource, action: (source: { bytes: Uint8Array; hash: string; fileName: string; checkCurrent(): void; revalidate(): Promise<void> }) => Promise<void>): Promise<boolean>;
   withCreateBarrier(action: () => Promise<void> | void): Promise<boolean>;
   openCreatedAuthorized(request: unknown, authorize: () => Promise<SingleFileAuthorization>, scope: DocumentScope, sink: (snapshot: DocumentSnapshot) => void): Promise<DocumentResponse>;
   acquireFolderMutationLease(): Promise<FolderMutationLease | null>;
@@ -441,15 +443,11 @@ export function createDocumentService({
       throw new DocumentFailure("INVALID_HANDLE");
   };
 
-  async function snapshot(
-    grant: Grant,
-    generation: number,
-    task: Task
-  ): Promise<DocumentSnapshot> {
+  async function stableBytes(grant: Grant, check: () => void) {
     const readStart = onTiming ? performance.now() : 0;
-    checkTask(task, generation);
+    check();
     const before = await verify(grant);
-    checkTask(task, generation);
+    check();
     if (before.size > BigInt(MAX_DOCUMENT_BYTES))
       throw new DocumentFailure("TOO_LARGE");
     const bytes = Buffer.alloc(
@@ -457,19 +455,19 @@ export function createDocumentService({
     );
     let length = 0;
     while (length < bytes.length) {
-      checkTask(task, generation);
+      check();
       const read = await grant.file.read(
         bytes,
         length,
         Math.min(bytes.length - length, 64 * 1024),
         length
       );
-      checkTask(task, generation);
+      check();
       if (!read.bytesRead) break;
       length += read.bytesRead;
     }
     const after = await verify(grant);
-    checkTask(task, generation);
+    check();
     if (
       fileFingerprint(before) !== fileFingerprint(after) ||
       before.size !== after.size ||
@@ -483,6 +481,11 @@ export function createDocumentService({
     if (length > MAX_DOCUMENT_BYTES) throw new DocumentFailure("TOO_LARGE");
     const content = bytes.subarray(0, length);
     onTiming?.("diskReadMs", performance.now() - readStart);
+    return content;
+  }
+  async function snapshot(grant: Grant, generation: number, task: Task): Promise<DocumentSnapshot> {
+    const content = await stableBytes(grant, () => checkTask(task, generation));
+    const length = content.length;
     const decodeStart = onTiming ? performance.now() : 0;
     let text: string;
     try {
@@ -649,7 +652,7 @@ export function createDocumentService({
       request.handle
     );
   }
-  return {
+  const service: TrustedDocumentService = {
     async acquireFolderMutationLease() {
       if (disposed || disposing || createAdmissionOwner || writeBarrier || folderMutationLease || running || pending || selecting || revealing) return null;
       const token = {};
@@ -885,6 +888,24 @@ export function createDocumentService({
           }
         }
       scope.release?.();
+    },
+    async withDuplicateSource(source, action) {
+      return service.withCreateBarrier(async () => {
+        const owner = createAdmissionOwner;
+        const grant = grants.get(source.handle);
+        const generation = epoch;
+        const check = () => {
+          const identity = grant && identities.get(grant.identityKey);
+          if (!grant || disposed || disposing || epoch !== generation || createAdmissionOwner !== owner || grants.get(source.handle) !== grant || identity?.documentId !== source.documentId || identity.revision !== source.expectedRevision || identity.hash !== source.expectedHash || uncertain.has(source.documentId)) throw new DocumentFailure("CONFLICT");
+        };
+        check();
+        const file = await open(grant!.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        try {
+          const read = async () => { const bytes = await stableBytes({...grant!, file}, check); if (createHash("sha256").update(bytes).digest("hex") !== source.expectedHash) throw new DocumentFailure("CONFLICT"); return bytes; };
+          const bytes = await read(); check();
+          await action({bytes, hash: source.expectedHash, fileName: basename(grant!.path), checkCurrent: check, revalidate: async () => { await read(); check(); }});
+        } finally { await file.close(); }
+      });
     },
     async withCreateBarrier(action) {
       if (disposed || disposing || createAdmissionOwner || writeBarrier || folderMutationLease || running || pending || selecting || revealing) return false;
@@ -1457,4 +1478,5 @@ export function createDocumentService({
       return Promise.resolve();
     },
   };
+  return service;
 }

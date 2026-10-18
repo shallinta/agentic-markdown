@@ -181,9 +181,29 @@ static napi_value create_file_exclusive(napi_env env,napi_callback_info info) {
   return out;
 }
 
+static napi_value publish_exclusive(napi_env env,napi_callback_info info) {
+  napi_value invalid=creation_error(env,"PUBLISH_INVALID"),exists=creation_error(env,"PUBLISH_EXISTS"),unsupported=creation_error(env,"PUBLISH_UNSUPPORTED"),failed=creation_error(env,"PUBLISH_FAILED"),v[3],ok;
+  if(!invalid||!exists||!unsupported||!failed||napi_create_int32(env,0,&ok)!=napi_ok) return NULL;
+  int dir;char src[256],dst[256];
+  if(!args(env,info,v,3)||!integer(env,v[0],&dir)) return creation_throw(env,invalid);
+  for(int j=1;j<=2;j++) {
+    char16_t units[256];size_t length=0,read=0;
+    if(napi_get_value_string_utf16(env,v[j],NULL,0,&length)!=napi_ok||!length||length>255||napi_get_value_string_utf16(env,v[j],units,256,&read)!=napi_ok||read!=length) return creation_throw(env,invalid);
+    for(size_t k=0;k<length;k++) {
+      unsigned c=units[k];if(!c||c=='/'||c<32||c==127)return creation_throw(env,invalid);
+      if(c>=0xd800&&c<=0xdbff){if(k+1>=length||units[k+1]<0xdc00||units[k+1]>0xdfff)return creation_throw(env,invalid);k++;}
+      else if(c>=0xdc00&&c<=0xdfff)return creation_throw(env,invalid);
+    }
+  }
+  if(!name(env,v[1],src)||!name(env,v[2],dst)||strncmp(src,".agentic-save-",14)!=0) return creation_throw(env,invalid);
+  if(renameatx_np(dir,src,dir,dst,RENAME_EXCL)==0)return ok;
+  int saved=errno;return creation_throw(env,saved==EEXIST?exists:(saved==ENOTSUP)?unsupported:failed);
+}
+
 static napi_value init(napi_env env,napi_value exports) {
   napi_property_descriptor properties[]={
     {"createFileExclusive",NULL,create_file_exclusive,NULL,NULL,NULL,napi_default,NULL},
+    {"publishExclusive",NULL,publish_exclusive,NULL,NULL,NULL,napi_default,NULL},
     {"createTemp",NULL,create,NULL,NULL,NULL,napi_default,NULL},
     {"copyMetadata",NULL,metadata,NULL,NULL,NULL,napi_default,NULL},
     {"fullSync",NULL,sync_full,NULL,NULL,NULL,napi_default,NULL},
@@ -198,7 +218,7 @@ static napi_value init(napi_env env,napi_value exports) {
     {"scanStat",NULL,scan_stat,NULL,NULL,NULL,napi_default,NULL},
     {"scanReadlink",NULL,scan_readlink,NULL,NULL,NULL,napi_default,NULL}
   };
-  napi_define_properties(env,exports,14,properties);
+  if(napi_define_properties(env,exports,sizeof(properties)/sizeof(properties[0]),properties)!=napi_ok)return NULL;
   if(!install_directory_watch(env,exports)) return fail(env);
   return exports;
 }

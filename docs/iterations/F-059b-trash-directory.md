@@ -1,5 +1,9 @@
 # F-059b：当前授权完整目录移入系统废纸篓
 
+## Git收据（2026-10-18）
+
+已提交推送`a93d93e883e6fec23df3275368b98cdb6729aa05`，HTTPS远端main与origin/main同SHA，hook前后tree `be999baf85ef9e6f8eedb500c62672cd6bc3a049`一致，核验时clean。下方Git待执行为历史阶段，本收据随后续文档提交。alpha186有限范围不扩展。
+
 > 状态：alpha186经下述真实WK受托代验及最终独立Spec/交叉Standards复核，主线批准有限非离线通过；非用户亲验，Git待执行。
 
 ## 最终有限批准（2026-10-18）

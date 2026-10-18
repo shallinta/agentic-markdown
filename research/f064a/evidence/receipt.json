@@ -1,0 +1,178 @@
+{
+  "complete": true,
+  "inventorySHA": "56be4d15461e714f738efec7ef13699c1019024ef414c019a39f6154959a7c7c",
+  "packages": [
+    {
+      "stage": "toolchain.XOLigk",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/toolchain.XOLigk.tar.xz",
+      "bytes": 80440,
+      "sha256": "48f351cdcd9243e4c42d09476e83f8c1bfef30f1e0dc0ba3a780b69536984fda",
+      "members": 60,
+      "expandedBytes": 1013760
+    },
+    {
+      "stage": "rust190.zxE80R",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/rust190.zxE80R.tar.xz",
+      "bytes": 84460,
+      "sha256": "b1c3f281dd83d86dc934e6940022e36951d09ee08fa40d58688aa1ab409c24ae",
+      "members": 56,
+      "expandedBytes": 1075200
+    },
+    {
+      "stage": "native.hHjGn7",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/native.hHjGn7.tar.xz",
+      "bytes": 25156,
+      "sha256": "d5f14ab096d1b0ce6116a27385b9cfd3e963cf4563e7c96bb580563a19602a91",
+      "members": 349,
+      "expandedBytes": 983040
+    },
+    {
+      "stage": "literal.TNa1mW",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/literal.TNa1mW.tar.xz",
+      "bytes": 24588,
+      "sha256": "639c0b44be016cc4657265cd59900570af6dd8199a71ddad8472e357c66080ce",
+      "members": 120,
+      "expandedBytes": 419840
+    },
+    {
+      "stage": "literal-blob.pf89ql",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/literal-blob.pf89ql.tar.xz",
+      "bytes": 31196,
+      "sha256": "77c4efe703ebc7bbb62c6f5c9226cb66aa3ad7b95c5c25f9e30fe729ef0aa696",
+      "members": 360,
+      "expandedBytes": 1617920
+    },
+    {
+      "stage": "bom-repro.eaiqPG",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/bom-repro.eaiqPG.tar.xz",
+      "bytes": 6504,
+      "sha256": "84dde073924b4b95e149a2dc1a37a830a49dd9d692692ef30be501728a24e092",
+      "members": 47,
+      "expandedBytes": 71680
+    },
+    {
+      "stage": "crud.qyfN9u",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/crud.qyfN9u.tar.xz",
+      "bytes": 19792,
+      "sha256": "4fb0737aa87b6697c558fdc95920dfe8213e6352ab1b7d04fb86af26e4e73c43",
+      "members": 33,
+      "expandedBytes": 122880
+    },
+    {
+      "stage": "crud-rw.h2jpT5",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/crud-rw.h2jpT5.tar.xz",
+      "bytes": 20976,
+      "sha256": "fa901dc34c62d2cc01e35e90a81140ce0123a5aca63df3b616fd5e9275967183",
+      "members": 104,
+      "expandedBytes": 317440
+    },
+    {
+      "stage": "corpus-meta.meLM1N",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/corpus-meta.meLM1N.tar.xz",
+      "bytes": 37992,
+      "sha256": "8d4433a59970e8278ccbf5bef0f5a5cd32327415979f674b8b0ad448ca7661fc",
+      "members": 25,
+      "expandedBytes": 768000
+    },
+    {
+      "stage": "meta-tests.wQQUwy",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/meta-tests.wQQUwy.tar.xz",
+      "bytes": 4692,
+      "sha256": "db49d7bef50a9b872112d9affa0374f83d90f299d193ccedaf7dd73e556c1316",
+      "members": 31,
+      "expandedBytes": 40960
+    },
+    {
+      "stage": "meta-review.Miju03",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/meta-review.Miju03.tar.xz",
+      "bytes": 34972,
+      "sha256": "6bee07d7baefd47cfe66452862abeff8760b16f44aea7b63c040a4b965f86a56",
+      "members": 11,
+      "expandedBytes": 747520
+    },
+    {
+      "stage": "corpus-extract.kTIP71",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/corpus-extract.kTIP71.tar.xz",
+      "bytes": 51292,
+      "sha256": "fea38ffaa90dee657bd2e3ad47e088437873b65084367b79a5778daa8181c983",
+      "members": 25,
+      "expandedBytes": 880640
+    },
+    {
+      "stage": "reference.BDHlVX",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/reference.BDHlVX.tar.xz",
+      "bytes": 18824,
+      "sha256": "bc76a6ef78b90b3a367e2af9c7c19433a416b35ffc1fd4afa4b4aa0b6acbd2d7",
+      "members": 238,
+      "expandedBytes": 399360
+    },
+    {
+      "stage": "corpus-cost.hrCQVN",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/corpus-cost.hrCQVN.tar.xz",
+      "bytes": 332268,
+      "sha256": "0d3ad0405dd920c43a1d6a66d5e6c62c2ee84b7fc3b80ddf56d265efcc1d9bda",
+      "members": 91,
+      "expandedBytes": 39516160
+    },
+    {
+      "stage": "scale.1Kfm4c",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/scale.1Kfm4c.tar.xz",
+      "bytes": 4202416,
+      "sha256": "fd546267cf4240843dbb5627dd7128cdb72480ac79f1eb6f30831b091c29cfa3",
+      "members": 135,
+      "expandedBytes": 172554240
+    },
+    {
+      "stage": "scale-typed.Xx6GxU",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/scale-typed.Xx6GxU.tar.xz",
+      "bytes": 943092,
+      "sha256": "8b5d60cb5b6c1a2c6c236b8705bc8cf9d105c9537367efe816cf705b46f94cf3",
+      "members": 347,
+      "expandedBytes": 89763840
+    },
+    {
+      "stage": "profile.e7G48i",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/profile.e7G48i.tar.xz",
+      "bytes": 406704,
+      "sha256": "f44d80a203b5fc5b437a7ea9f10df705b61c4406bf3b7fe74f4d56e9994afc1f",
+      "members": 8,
+      "expandedBytes": 9267200
+    },
+    {
+      "stage": "iterate.aHgt7N",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/iterate.aHgt7N.tar.xz",
+      "bytes": 428692,
+      "sha256": "7007634f3d33b1c54f11cd7679cbff44a38bafb048ce11447aafb6b10f5a6049",
+      "members": 13,
+      "expandedBytes": 18503680
+    },
+    {
+      "stage": "order.DwUfIx",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/order.DwUfIx.tar.xz",
+      "bytes": 420328,
+      "sha256": "80ab093a931aa2aed2e93fd4740475eb230c358dd2992acf58a0f2993bb58008",
+      "members": 18,
+      "expandedBytes": 18524160
+    },
+    {
+      "stage": "candidate.TURSqj",
+      "path": "/var/folders/jy/rh9p8thj3t32m4pwhk38jydc0000gn/T/agentic-f064a-archives.gwbnq2h9/candidate.TURSqj.tar.xz",
+      "bytes": 1887060,
+      "sha256": "4b679c47324f4132301436224f5b026df257dd19c58e799213658d726c6efebf",
+      "members": 513,
+      "expandedBytes": 330577920
+    }
+  ],
+  "sourceSHA": "203dc21396790e465d184eecd9514e384500b2e9007c1cdf9aab610a2c39043b",
+  "freezeSourceSHA": "6dd3507aaace7923f4f2b25c49404019edf87939224fa06abde39fa8bc470703",
+  "archiveMetrics": {
+    "format": "xz",
+    "preset": 6,
+    "elapsedSeconds": 91.84025183302583,
+    "cpuSeconds": 91.460118,
+    "maxRSSRaw": 126533632,
+    "maxRSSUnit": "bytes",
+    "productPerformance": false,
+    "decoderRSSHardLimit": false
+  }
+}

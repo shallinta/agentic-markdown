@@ -1,0 +1,145 @@
+--- candidate.TURSqj/crud/run.mjs
++++ candidate/crud/run.mjs
+@@ -5,8 +5,8 @@
+ import { validateScalarString } from './common.mjs';
+ 
+ const root = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+-const tool = '/tmp/agentic-f064a-rust190.zxE80R';
+-const bun = '/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun';
++const tool = "/private/tmp/agentic-f064a-rust190.zxE80R";
++const bun = "/private/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun";
+ const manifestHash = 'b7ba553b117641daca12240eb1e540cd0f13694cad615fcc71cc7da36d5d0139';
+ const lockHash = '639d75f7f400a528fb5879936175f31f51ba6a762e5cee8202f80f73dc00f347';
+ const bunHash = '539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf';
+@@ -43,7 +43,8 @@
+   ...process.env,
+   RUSTC: tool + '/prefix/bin/rustc',
+   RUSTDOC: tool + '/prefix/bin/rustdoc',
+-  CARGO_HOME: tool + '/cargo-home',
++  CARGO_HOME: "/private/tmp/agentic-f064a-replay-check.rxgBGU/work/cargo-home",
++  CARGO_NET_OFFLINE: 'true',
+   CARGO_TARGET_DIR: root + '/target',
+   CARGO_HTTP_TIMEOUT: '30',
+   CARGO_NET_RETRY: '2',
+--- candidate.TURSqj/literal/run.mjs
++++ candidate/literal/run.mjs
+@@ -5,8 +5,8 @@
+ import { grams, token, validateScalarString, pureAdmissionCheck, admitQuery } from './common.mjs';
+ 
+ const root = new URL('.', import.meta.url).pathname.replace(/\/$/, '');
+-const tool = '/tmp/agentic-f064a-rust190.zxE80R';
+-const bun = '/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun';
++const tool = "/private/tmp/agentic-f064a-rust190.zxE80R";
++const bun = "/private/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun";
+ const manifestHash = '0ef079d6e33348bc086d9808f21d89d98152b12001525a3c92f9c1040f66b163';
+ const lockHash = '639d75f7f400a528fb5879936175f31f51ba6a762e5cee8202f80f73dc00f347';
+ const bunHash = '539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf';
+@@ -51,7 +51,8 @@
+   ...process.env,
+   RUSTC: tool + '/prefix/bin/rustc',
+   RUSTDOC: tool + '/prefix/bin/rustdoc',
+-  CARGO_HOME: tool + '/cargo-home',
++  CARGO_HOME: "/private/tmp/agentic-f064a-replay-check.rxgBGU/work/cargo-home",
++  CARGO_NET_OFFLINE: 'true',
+   CARGO_TARGET_DIR: root + '/target',
+   CARGO_HTTP_TIMEOUT: '30',
+   CARGO_NET_RETRY: '2',
+--- candidate.TURSqj/real/run.py
++++ candidate/real/run.py
+@@ -10,8 +10,8 @@
+ import time
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent
+-TOOLCHAIN = pathlib.Path('/tmp/agentic-f064a-rust190.zxE80R')
+-BUN = '/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun'
++TOOLCHAIN = pathlib.Path('/private/tmp/agentic-f064a-rust190.zxE80R')
++BUN = '/private/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun'
+ LOCK_SHA = '639d75f7f400a528fb5879936175f31f51ba6a762e5cee8202f80f73dc00f347'
+ PINS = {
+     'manifest.json': 'd6b544e240993096dfb7514621f7a954413df22d2189e69a8919abd497561711',
+@@ -38,7 +38,7 @@
+     manifest = json.loads((ROOT / 'manifest.json').read_bytes())
+     if len(manifest['documents']) != 36 or len(manifest['queries']) != 12:
+         raise ValueError('FIXED_COUNTS')
+-    ref = pathlib.Path('/tmp/agentic-f064a-reference.BDHlVX/run-1792330916464532000/results.json')
++    ref = pathlib.Path('/private/tmp/agentic-f064a-replay-check.rxgBGU/work/history/reference.BDHlVX/run-1792330916464532000/results.json')
+     if sha(ref) != manifest['referenceSHA']:
+         raise ValueError('REFERENCE_SHA')
+     reference = json.loads(ref.read_bytes())
+@@ -49,7 +49,7 @@
+     if sum(d['bytes'] for d in manifest['documents']) != 352051:
+         raise ValueError('CORPUS_SIZE')
+     for doc in manifest['documents']:
+-        path = pathlib.Path(manifest['corpusDirectory']) / doc['output']
++        path = pathlib.Path('/private/tmp/agentic-f064a-replay-check.rxgBGU/work/inputs/real') / doc['output']
+         if path.stat().st_size != doc['bytes'] or sha(path) != doc['sha256']:
+             raise ValueError('CORPUS_SHA')
+     if sha(pathlib.Path(BUN)) != '539598c775882420b9d8deb7dc14d845f20f7d26f5600c50ab067dde6ac3f3bf':
+@@ -299,9 +299,9 @@
+             prefix = TOOLCHAIN/'prefix'
+             environment = {**os.environ, 'RUSTC':str(prefix/'bin/rustc'),
+                            'RUSTDOC':str(prefix/'bin/rustdoc'),
+-                           'CARGO_HOME':str(TOOLCHAIN/'cargo-home'),
++                           'CARGO_HOME':'/private/tmp/agentic-f064a-replay-check.rxgBGU/work/cargo-home', 'CARGO_NET_OFFLINE':'true',
+                            'CARGO_TARGET_DIR':str(ROOT/'target'),
+-                           'PATH':str(prefix/'bin')+os.pathsep+os.environ['PATH']}
++                           'PATH':str(prefix/'bin')+os.pathsep+'/usr/bin:/bin:/usr/sbin:/sbin'}
+             command(output,'compile',[str(prefix/'bin/cargo'),'build','--release','--locked'],
+                     time.monotonic()+600, environment, False)
+             preflight()
+@@ -328,7 +328,7 @@
+                         label=f'{number}-{engine}-{phase}'
+                         argv=([BUN,str(ROOT/'sqlite.mjs'),phase,str(directory)] if engine=='sqlite'
+                               else [str(BINARY),phase,str(directory),str(ROOT),
+-                                    manifest['corpusDirectory'] if phase=='build' else str(output/'NO_FIXTURES')])
++                                    '/private/tmp/agentic-f064a-replay-check.rxgBGU/work/inputs/real' if phase=='build' else str(output/'NO_FIXTURES')])
+                         rows=command(output,label,argv,round_end)
+                         check_sources()
+                         preflight()
+--- candidate.TURSqj/real/sqlite.mjs
++++ candidate/real/sqlite.mjs
+@@ -105,7 +105,7 @@
+   db.transaction(()=>{
+     for(const d of manifest.documents){
+       reserve(d.bytes);
+-      const p=join(manifest.corpusDirectory,d.output);
++      const p=join("/private/tmp/agentic-f064a-replay-check.rxgBGU/work/inputs/real",d.output);
+       if(statSync(p).size!==d.bytes)throw Error('INPUT_SIZE');
+       const raw=readFileSync(p), value=checked(d.id,raw); bytes+=raw.length;
+       if(bytes>352051)throw Error('CORPUS_BYTES');
+--- candidate.TURSqj/scale/processes.py
++++ candidate/scale/processes.py
+@@ -10,8 +10,8 @@
+ import time
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent
+-TOOLCHAIN = pathlib.Path('/tmp/agentic-f064a-rust190.zxE80R')
+-BUN = '/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun'
++TOOLCHAIN = pathlib.Path('/private/tmp/agentic-f064a-rust190.zxE80R')
++BUN = '/private/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun'
+ LOCK_SHA = '639d75f7f400a528fb5879936175f31f51ba6a762e5cee8202f80f73dc00f347'
+ BINARY = ROOT / 'target/release/f064a-toolchain-check'
+ LIMIT = 64 * 1024 * 1024
+--- candidate.TURSqj/scale/run.py
++++ candidate/scale/run.py
+@@ -92,9 +92,9 @@
+             prefix = TOOLCHAIN / 'prefix'
+             environment = {**os.environ, 'RUSTC': str(prefix / 'bin/rustc'),
+                            'RUSTDOC': str(prefix / 'bin/rustdoc'),
+-                           'CARGO_HOME': str(TOOLCHAIN / 'cargo-home'),
++                           'CARGO_HOME': '/private/tmp/agentic-f064a-replay-check.rxgBGU/work/cargo-home', 'CARGO_NET_OFFLINE': 'true',
+                            'CARGO_TARGET_DIR': str(ROOT / 'target'),
+-                           'PATH': str(prefix / 'bin') + os.pathsep + os.environ['PATH']}
++                           'PATH': str(prefix / 'bin') + os.pathsep + '/usr/bin:/bin:/usr/sbin:/sbin'}
+             command(output, 'compile', [str(prefix / 'bin/cargo'), 'build', '--release', '--locked'],
+                     time.monotonic() + 600, environment, False)
+             assert sources(ENGINE_FILES) == frozen_sources and sha(ROOT / 'Cargo.lock') == LOCK_SHA
+@@ -127,7 +127,7 @@
+             for corpus_record in generation['records']:
+                 if mode == 'finite20' and corpus_record['n'] != 10000:
+                     continue
+-                corpus = pathlib.Path(corpus_record['corpus'])
++                corpus = pathlib.Path('/private/tmp/agentic-f064a-replay-check.rxgBGU/work/inputs/scale') / ('corpus-' + str(corpus_record['n']))
+                 complete = check_corpus(corpus, corpus_record['completeSHA'])
+                 n = complete['n']; deadline = time.monotonic() + 900
+                 candidate_baseline = {}

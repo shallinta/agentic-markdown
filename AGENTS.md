@@ -1,5 +1,173 @@
 # AGENTS.md
 
+## F-064a 有限研究与迁移通过，批准持久材料入仓（2026-10-18）
+
+XZ实际20包2584成员9061444bytes完成；主线三步迁移exec33685 exit0/preflight complete且engineExecuted:false。两轴独立逐历史2584项/78派生及11364正文输入SHA、所有阶段pins和精确6文件路径补丁核同，无target/run产物。批准仅research/f064a约9MB证据及受控复跑入口入仓，原gz保留但不提交；不复制展开history/raw/cache。采纳Tantivy为下一集成候选，保SQLite优势与Rust桥接未验，不称生产搜索或原200红已修。入仓后最终复核再Git，alpha186及完整父/离线/既定冻结不变。
+
+## F-064a 最终证据包制作获准（2026-10-18）
+
+主线读archive/replay与最终freeze窄diff，Standards逐2584源文件核size/SHA及旧2546原样；最终inventory56be4d15461e714f738efec7ef13699c1019024ef414c019a39f6154959a7c7c、685256038bytes。批准archive-final.9dRPVA仅新临时目录pack及流式完整EOF/成员SHA验证，保所有首红，未批准入仓或迁移引擎运行。迁移入口源独立审中；有限选型尚待收尾，不改生产/alpha186。
+
+## F-064a 有限万篇比较通过，进入归档收尾（2026-10-18）
+
+finite20 run-1792336563627890000三配对12phase/2304响应/72统计，两轴独立核原oracle、重复摘要、采样统计、source/compile/binary链与实际disk均通过，所有子exit0无残组。SQLite初建较快；Tantivy查询进程RSS约44–49MB对464–492MB，Q01中位约87ms对96ms；Q12全扫反向。高重复合成体积差异不外推真实语料，20样本p99=max非可靠尾估计，原200超时保持。批准本有限证据进入持久归档/迁移入口收尾，不新增引擎调优；尚未最终选型/验收/Git或生产接入，alpha186不变。
+
+## F-064a 候选正确性通过与有限万篇成本获准（2026-10-18）
+
+candidate.TURSqj原L50/CRUD14/real48响应及scale run-1792336224092809000三档54phase、1494响应、六真实批间取消均经两轴独立核验通过；源码/compile/binary及原输入链一致，所有子exit0无残组。scale binary45a13c8488a029eb19799dd49308ba7bd3ebbbbf82b34c5b93f5ea4f79f64410。主线批准固定finite20万篇三对10+20采样，120秒每引擎/900秒批，原200红保持。host列表成员校验可能O(n²)，仍原截止计费不暗改；891863040峰RSS亦非512MiB逻辑账可保证。无生产/新包/最终验收/Git。
+
+## F-064a 无仪表候选正确性执行获准（2026-10-18）
+
+主线已读candidate.TURSqj四适配diff、四runner与README；独立Spec/Standards均0必要编译及正确性执行阻断，66原样文件与11差异来源明确。批准串行四套同锁600秒编译及L50/CRUD14/real36/scale三档独立正确性，原各自配额/oracle/首红停保持；scale每引擎120秒每档900秒为本轮明确合同。有限20成本尚不执行，旧200次红不补判绿，未生产/新包/验收/Git。
+
+## F-064a 排序短片收据与无仪表候选准备（2026-10-18）
+
+sort run-1792335186669837000两臂48条完整语义通过，两轴核实际SQL唯一尾ORDER差异、源及索引SHA不变、无残组。Q01/Q02中位约170/169→101/99ms，峰RSS633667584→423886848，仅有仪表短对照，不冒原200次超时修复。主线批准新隔离候选源准备：L/CRUD/real/scale四入口同迁iterate和轻量排序，先独立三档双引擎baseline+六增量+真实cancel正确性批，每引擎120秒/每档900秒首红停；再另立万篇双方10预热+20采样三配对有限成本合同，原200红保持。先审源后统一执行，无生产/新包/Git；alpha186及既定边界保持。
+
+## F-064a EQP观测与排序对照执行（2026-10-18）
+
+plan run-1792335172219319000 complete，实际固定Q01/Q02/Q10计划有TEMP B-TREE FOR ORDER BY，Q12走原id索引；源SHA及原/副本保持，不证明实际spill或唯一根因。已审排序分支保持iterate与全部校验，两臂同轻量结果sort；主线据该观测批准显式sort单对各24/60秒，只有SQL尾ORDER差异，不自动改正式适配或原矩阵。
+
+## F-064a 查询计划有限执行获准（2026-10-18）
+
+主线全文读order.DwUfIx与最终实际SQL记录，双轴0必要源阻断；冻结profile e52949e1be2378ddfc85e082fc031b09b64d0564bde21f595c19e95c5e178f2c/run bafff9b1bd8a5463d1d3f7e13b1e6f2020b165124512a914b728ec7f8dc7e826。批准仅显式plan四EQP/副本/60秒，不跑payload或自动sort；未执行regex错误已在源审修正并保记录。EQP非实际排序成本证据，原红保持。
+
+## F-064a 逐行单对有限结果（2026-10-18）
+
+iterate run-1792334842259086000两臂48query完整同oracle/跨臂语义；两轴独立核源与原/副本SHA、exit0/无残组，0必要短片证据阻断。all/iterate分别2.745/2.869s、峰RSS813776896/622018560，高召回延迟略增；不采用为已证提速，不称原120秒红修复。下一只读查询计划及排序单因素方案，尚未批准改SQL运行或生产；全部既定边界保持。
+
+## F-064a 逐行读取单因素执行获准（2026-10-18）
+
+主线全文读iterate.aHgt7N四源及diff，两轴0必要限定执行阻断；批准all→iterate单对各24query/60秒、独立副本及原完整校验。profile SHA1756905c145f071f9d8c285545446836a0abe681a07b1704572f9cd995341303，run f8455607b9539b25cd81546197205f9bac8ed05ada47fbaa68ea8f6958511e1b。next含done计fetch，异常return/db清理保原错；固定顺序与插桩扰动仍限短对照，不能冒原矩阵变绿或后端选型完成。
+
+## F-064a 成本剖面有限通过与逐行对照准备（2026-10-18）
+
+profile run-1792334587693193000 complete/24query/exit0/2.711s，无残组且原副本三SHA不变；两轴独立证据核0必要阻断。高召回fetch约86–91ms、SHA约22ms、decode-roundtrip约44–49ms，短片RSS820150272不能冒原红修复。主线核公开iterate接口并批准仅新临时all→iterate单因素对照源准备：相同SQL/排序/完整校验/独立副本，逐next时间计入fetch，各24条/60秒，先审源后运行；不改ORDER/GC/缓存或产品代码。原万篇红及全部边界保持。
+
+## F-064a 万篇有限成本剖面获准（2026-10-18）
+
+主线全文读profile.e7G48i四源，Spec/Standards均0必要有限执行阻断，批准仅独立副本24条query剖面/60秒子止损。原索引不经SQLite打开、固定三普通文件复制与前后SHA；副本DB不变/空WAL，SHM变化另记。完整语义校验保留，innerFailure/outerError分账；逐候选计时有扰动，段和非完整query分解，未测manifest解析，不冒原120秒复验或优化。原红及全部既定边界保持，无生产/新包/Git。
+
+## F-064a 万篇规模首红保留（2026-10-18）
+
+typed compile run-1792333793029627000通过，binary55468cc0afb9f86154f3c46d0d59f7d12ab896cfb16867384b8d94642873e63f。batch run-1792333838696545000父失败/109成功phase；Spec独立核100/1000各54phase共31716查询、12取消链通过。10000仅SQLite build25.665s完成，query在整轮120s共享截止退出-15/88.459s，峰RSS1815347200bytes、无残组；Tantivy大档未执行，不能判胜。Standards核源/二进制链与清理。原wrapper覆盖内部failure原因的限制保留，不改历史；下一先最小诊断与保cause改进计划，不延长预算或更换oracle造绿。尚未最终选型/生产/新包/Git。
+
+## F-064a 合成编译类型窄修获准（2026-10-18）
+
+原compile run-1792333654289467000 exit101/35.878s无残组，两个&&String.as_str解析到Value trait的类型错误保留，不算性能失败。主线读新目录scale-typed.Xx6GxU两处String::as_str(*key)差异，双轴核其余源/原输入不变、0必要重编阻断，批准同锁重compile及原合同batch。main SHA8554f8974db691a264208b049b685348c667432e1340c5570db9d6bbaed54330；不得改生成oracle/截止，未生产或验收/Git。
+
+## F-064a 合成联合批执行获准（2026-10-18）
+
+三档生成run-1792332750009771000 complete，receipt SHA2822c8814f93dcef772f43a2afc36b3f2209caab4f9c81905b3b6ab8c0494da5；两轴独立核全部pins/raw与参考、最终源审0必要限定执行阻断。主线读实际源并批准同锁600秒compile，成功来源绑定后100/1000/10000顺序batch，120秒每引擎轮/900秒每档首红停。末批commit-check在wait前，visibleNs不含最后wait、close/host包含且可能merge重叠，不冒完整构建收尾计时。未生产/新包/最终选型/Git，alpha186/a93d93e与既定边界保持。
+
+## F-064a 合成输入生成执行获准（2026-10-18）
+
+主线全文读model/prepare/run/processes，独立Spec/Standards生成审0必要阻断；baseline只12query，失败前已落5源指纹。批准`/tmp/agentic-f064a-scale.1Kfm4c/run.py generate`按100/1000/10000顺序、每档子过程180秒首红停，保partial及退出/源收据；run SHA723b68e957a7f357830da88d31f044dfc67cb8a97bee2a1bd6b9febecb448cd0。生成5源冻结，作者仅继续JS/Rust；尚不编译/运行后端、不提前认为输入可用，alpha186/a93d93e及既定边界保持。
+
+## F-064a 合成规模与增量源准备获准（2026-10-18）
+
+主线全文读三档确定性模板/12query/同索引六阶段增量与真实CANCEL握手，两轴0必要源准备阻断；Q09明确U0065 U0301/65cc81后批准同一临时源批准备。100/1000/10000各含2×1MiB，模板结构可证distinct≤1374，完整字节仍计；逻辑346977964<512MiB非RSS保证。先生成器/参考源审后冻结实际语料与oracle，再编译引擎批；当前仅源码/语法，不实际生成/运行。120秒每轮/900秒每档首红停，保全部历史与artifact责任，alpha186/a93d93e及既定边界保持。
+
+## F-064a 真实36篇联合批有限通过（2026-10-18）
+
+主线compile run-1792331674913533000 exit0/38.676s，binary9690bdb9ce359b8f0a37961eb3246ed13fc756c48e0dc62d1c85074b4d5e2065；batch run-1792331731674948000三对12phase通过。Spec独立run-1792331761107519000全通过，15264响应剥时间语义逐条同；Standards重算72组分位数/实际disk/RSS及source链，0必要有限结论阻断。仅36篇CLI证据：Tantivy短query与体积较优、长fallback中位较慢，不能冒全面胜出或最终选型。继续规模/增量/取消最小方案及持久artifact责任，不改生产/版本；alpha186/a93d93e及既定边界保持。
+
+## F-064a 真实双引擎联合批执行获准（2026-10-18）
+
+主线全文读JS/Rust/runner及公开CommonCrypto ABI，最终Spec/Standards均0必要限定执行阻断，源SHA已核。批准`/tmp/agentic-f064a-corpus-cost.hrCQVN/run.py compile`同锁600秒，再成功source/binary收据绑定后执行batch（120秒每轮/900秒批）；三对AB/BA/AB，先12正确性后10+200，首红停保原记录。单query仅CLI内适配，host整轮与序列化/RSS/disk另账，不冒App性能或最终选型。未生产/新包/Git，alpha186/a93d93e与既定边界保持。
+
+## F-064a 真实双引擎联合批源准备获准（2026-10-18）
+
+主线读最终最小方案与公开writer/queue接口，独立Spec/Standards均0必要源准备阻断。批准新临时目录准备固定36篇/12query、三配对AB/BA/AB与10+200采样的完整适配/runner源；先源审再compile/运行。逐doc与累计队列联合逻辑297516520bytes，本引擎批512MiB模型非物理限，原参考256不改。CLI内部、真实序列化、host整轮计时分列，RSS/磁盘实际观测，不冒产品RPC/最终选型。未批准生产/新包/Git，alpha186/a93d93e及既定边界保持。
+
+## F-064a 真实语料参考校验有限通过（2026-10-18）
+
+主线run-1792330916464532000及独立Spec run-1792330935107592000均exit0，results逐bytes同SHA d7a211847eab63699bde3dcd5dc651729499c6771c1a096788248b1e3258c451。原L25/3拒绝、36篇×12查询及六手写锚点通过；两轴最终0必要有限阻断，38子无超时/残组。实际最大distinct8967，旧4096不可沿用；Q08/09无真实正例，依然保原L覆盖边界。批准继续真实36篇双引擎正确性/成本联合最小方案，尚不跑新引擎或改生产；alpha186/a93d93e及既定边界保持。
+
+## F-064a 真实语料参考源准备获准（2026-10-18）
+
+主线全文读12类查询与逐篇逻辑预算，独立Spec/Standards复核后仅要求Q07明确两个LF（hex0a0a），批准消歧后准备新临时预算/独立scalar参考源码。固定36篇352051bytes、Q12仅d01前512scalar，覆盖断言失败不换样本；256MiB是逻辑账非RSS保证。先AST及源审，再批15秒每文档/180秒整批实际执行；当前不跑引擎成本、不改生产/版本或提交，alpha186/a93d93e与既定边界保持。
+
+## F-064a 固定真实语料提取有限通过（2026-10-18）
+
+主线提取run-1792330318024936000三子exit0，41项399028bytes完整；Spec独立只读原tar逐payload与输出bytes一致，Standards核实际SHA/收据及5许可归属，0必要有限阻断。36正文352051bytes、许可独立46977bytes；非再分发批准，不执行正文。批准仅下一预算规划/独立参考oracle方案收敛，未建真实索引或跑成本，旧L配额不可默认继承；alpha186/a93d93e及既定边界保持。
+
+## F-064a 41项离线提取获准（2026-10-18）
+
+主线全文读提取器/runner/allowlist及安全parser差异，两轴终核0必要阻断；清单固定SHA a55ae06f…8746在父子同bytes先hash后解析，阶段前后复核，匿名ID/wx/完整EOF保持。批准仅`/tmp/agentic-f064a-corpus-extract.kTIP71/run.py extract-approved`离线提取36正文+5许可，30秒每包/180秒批另有清理开销，首错保partial。正文仅不可信语料不执行；尚不建索引/跑成本/产品接线，alpha186/a93d93e及既定边界保持。
+
+## F-064a 固定正文白名单源准备（2026-10-18）
+
+主线全文读36篇正文+5许可提取合同，两轴独立按真实metadata重算全部path/size/分层一致，0必要源准备阻断。批准仅新临时提取脚本与固定manifest，尚不提取正文；352051正文+46977许可bytes，许可不入索引。原包SHA/同安全规则/完整EOF/匿名wx/UTF8保字节以及三包全通过再complete须落实。不扩成本/生产/新包，alpha186/a93d93e及既定边界保持。
+
+## F-064a 官方归档元数据有限通过（2026-10-18）
+
+三固定commit官方归档均HTTP200无redirect，原6子进程exit0；独立Spec核实包SHA与安全名单，Standards离线重跑3/0且名单逐字节同，0必要本阶段阻断。run-1792329688912526000保压缩合计14340697/展开26664960字节收据，未提取正文或执行成员。批准继续仅从实际src正文名单收敛36篇分层白名单及许可/提取合同，不提前建索引或判成本。alpha186/a93d93e及既定边界保持。
+
+## F-064a 官方语料元数据获取获准（2026-10-18）
+
+主线全文读三Python脚本及固定7例离线测试，两轴独立源审/证据核0必要阻断，7例2接受/5指定拒绝。批准`/tmp/agentic-f064a-corpus-meta.meLM1N/run.py acquire-metadata`仅三固定commit官方归档下载与安全成员列表，保每跳/大小/hash/退出收据，首错停。360秒为操作截止另有清理开销；未知扩展不放宽，不提取正文/执行仓库代码/建索引。无生产或新包，alpha186/a93d93e及既定边界保持。
+
+## F-064a 有限CRUD通过及真实语料准备（2026-10-18）
+
+主线CRUD-rw编译38.368秒exit0、固定14项通过，Spec独立14/0且结果逐字节同，Standards核真实持久字节/身份/重开及收据0必要阻断；原P3打开参数红保留。不冒崩溃恢复或正式控制面。主线全文读下一官方固定commit语料元数据方案，两轴0必要源准备阻断，批准仅新临时下载/安全列表脚本准备，暂不联网执行；须核每跳来源、实际压缩/展开预算、有效路径与扩展规则后另批。尚无生产/新包/最终选型，alpha186/a93d93e及既定边界保持。
+
+## F-064a CRUD打开标志窄修（2026-10-18）
+
+原CRUD编译37.450秒exit0，P1/P2双引擎4项通过后SQLite P3构造报缺READWRITE/READONLY，写入未开始；保run-1792329039304，不判增量索引错误。主线读公开选项和新目录`/tmp/agentic-f064a-crud-rw.h2jpT5`实际diff，除sqlite单行readwrite:!readonly外11文件逐字节同原，两轴独立核0阻断，批准仅重跑同锁编译及完整14case，不在原失败DB补跑；固定oracle/所有既定边界保持。
+
+## F-064a 持久CRUD固定批执行获准（2026-10-18）
+
+主线全文读prepare/manifest/SQLite/Rust/runner，两轴0必要运行阻断，批准`/tmp/agentic-f064a-crud.qyfN9u`同锁release后P1–P7双引擎14case；manifest b7ba553b…d0139，真实bytes/path/live ID和UTF16核验。只读重开无可用fixture路径，查询在waitmerge前；600秒编译/15秒阶段/180秒批首红停保原输出。不扩大为崩溃恢复、控制面、成本或正式选型/生产；alpha186/a93d93e及既定边界保持。
+
+## F-064a 持久CRUD源准备获准（2026-10-18）
+
+主线全文读唯一P1–P7与固定API，两轴0必要源准备阻断，批准新临时目录仅准备双引擎持久create/commit/reopen/add/update/delete源与手写oracle；尚不编译运行。只读重开不建表/修schema/重导入，Tantivy公开存活集合枚举；无旧ID/raw仅指存活查询结果，不称安全擦除。dirty/授权/迟到模型及成本另阶段，不生产/新应用包，alpha186/a93d93e及既定边界保持。
+
+## F-064a BLOB同语义有限批通过（2026-10-18）
+
+主线新目录编译37.090秒exit0，固定L50全通过；独立Spec实际复跑50/0、结果逐字节同，Standards核完整收据/字节/锁与原红保留，两轴0必要有限阻断。BOM两引擎均真实完整bytes及[6,9)，不改oracle。批准仅继续持久CRUD最小方案复核，未批准该新源/成本/生产/应用包或最终选型；alpha186/a93d93e与全部既定边界保持。
+
+## F-064a BLOB窄修实验执行获准（2026-10-18）
+
+边界与独立三对照将原BOM差异限定于固定Bun文本参数路径，非SQLite普遍缺陷。主线全文读新sqlite及diff，两轴核49文件不变且0必要运行阻断，批准仅`/tmp/agentic-f064a-literal-blob.pf89ql`同锁编译与原50case：BLOB真实bytes绑定、类型/长度/保BOM解码回转及原UTF16 oracle，旧红源和收据不改。600秒编译/15秒case/180秒整批首红停；未批准成本/控制面/生产/新应用包，alpha186/a93d93e及既定边界保持。
+
+## F-064a L实验BOM首红停止（2026-10-18）
+
+L编译exit0/36.356秒；原批20case通过后SQLite case10首红，存储返回raw候选缺EFBBBF，UTF16实际[5,8)对冻结[6,9)。主线读原receipt/stdout，未判哪层原因；Tantivy同case及余项未跑，不称L通过。保原源/manifest/oracle与run-1792327630455，批准仅新临时诊断目录复现及最小化既有BOM错误、保失败；须先紧反馈红例再假设/探针，不改原预期。未批准修复/成本/生产/应用包，其他边界保持。
+
+## F-064a 固定L语义实验执行获准（2026-10-18）
+
+主线全文读L核心/runner/manifest，两轴0必要有限执行阻断，批准`/tmp/agentic-f064a-literal.TNa1mW`同锁release后固定50enginecase及纯准入。manifest0ef079d…b163、lock639d75…f347不变，真实storedraw/手写候选与UTF16、golden编码与128/129分支实际核；输入预算仅稳定自建fixture非对抗FS保证。编译600秒、case15秒/批180秒，首红保留停批；未批准成本/控制面/生产或应用包，既定边界保持。
+
+## F-064a L同语义适配源准备获准（2026-10-18）
+
+主线全文读最终L最小方案，两独立轴0必要源准备阻断。批准新临时目录仅准备共同scalar1/2/3 hexgram、真实双引擎AND候选与原文首命中后验源及冻结A/B/C输入：128子句索引、129全候选fallback，4097字符仅实验准入拒绝。k必须实核五字节，保原六及手写UTF16 oracle；控制面/成本仍后续，原拒绝备选未执行。须读源另批编译与运行，未批准生产/新版本/Git，alpha186/a93d93e及既定边界保持。
+
+## F-064a 原生诊断有限通过（2026-10-18）
+
+主线读取固定源及全部结果；作者与独立Spec实际各51/0，results逐字节一致，Standards核全部exit/输入与源及二进制SHA，均无必要原生诊断阻断。无timeout/残组，原BOM/CRLF字节保留；默认短中文不命中及ALPHA均命中c为原生观察，不是L语义通过或后端性能结论。批准继续仅写双方同语义L适配具体最小方案，未批准该源/运行/成本/生产或应用包；alpha186/a93d93e与全部既定边界保持。
+
+## F-064a 固定原生诊断执行获准（2026-10-18）
+
+主线全文读临时原生诊断源/manifest及三窄补，两轴0必要执行阻断：真实scalar拒绝、整批截止竞态与SQLite options收据已补，v1未运行源保留。批准`/tmp/agentic-f064a-native.hHjGn7`同锁release编译后固定51case，manifest77ada5d…a3be/lock639d75…f347不变；600秒编译、15秒case/180秒批次，首红停保原输出。只观察原生行为，不判L通过/性能胜负，不批准生产或新应用包，alpha186/a93d93e及既定开放边界保持。
+
+## F-064a 原生诊断源准备获准（2026-10-18）
+
+Rust1.90同锁release exit0/50.797秒、无timeout/残组，主线与独立Standards核锁前后同SHA；只证工具链。主线全文读唯一原生诊断方案，两轴0必要路线阻断，批准新临时目录准备三profile/六原文字节/15查询的有界诊断源与fixture；Rust仅std读UTF8/hex-TSV，SQLite显式保BOM，各自qprobe，不新增依赖或改锁。须主线读源后另批编译执行；未批准L适配/成本/生产/应用构建，原MSRV红及所有既定边界保持。
+
+## F-064a 同锁隔离工具链窄补获准（2026-10-18）
+
+Rust1.88固定锁release编译exit101，ordered-float/uuid需1.90/1.89，主线读真实stderr/收据并核锁SHA不变、进程已消失；不判候选性能失败。唯一末节与独立两轴均0必要窄补阻断，批准另新临时目录官方Rust1.90校验安装与同锁release编译，保留原失败、不改依赖或系统配置；再次失败停原批。尚未批准任何搜索诊断/语义/成本/生产/新alpha或应用build，alpha186/a93d93e及所有既定边界保持。
+
+## F-064a 隔离工具链核验获准（2026-10-18）
+
+主线全文读取修订唯一方案及相关义务，两独立轴核手写UTF16范围、算法冻结顺序与真实许可语料边界，均0必要工具链阶段阻断。仅批准新临时目录内官方Rust1.88 manifest及aarch64组件校验、临时prefix安装、精确Tantivy0.27.0校验/锁依赖与release编译（含依赖build.rs）；Cargo缓存与target隔离、不改系统/仓库配置。失败保留不自动升版。未批准tokenizer/L语义/成本/生产/新版本/build/验收/Git；alpha186/a93d93e仍最新有限已验已推，既定开放边界保持。
+
+## F-059b Git收据（2026-10-18）
+
+已提交推送`a93d93e883e6fec23df3275368b98cdb6729aa05`，HTTPS ls-remote与origin/main同SHA；hook前后tree `be999baf85ef9e6f8eedb500c62672cd6bc3a049`一致，核验时工作树clean。alpha186最新有限已验已推，两个自建目录仍可从系统Trash恢复。连续授权下继续只读筛选已满足前置的下一MVP片，尚未批准新生产/版本/build。父/冻结/专项/最终问题/offline保持，本收据随后续文档提交。
+
 ## F-059b alpha186 有限片通过（2026-10-18）
 
 最终独立Spec全片及交叉Standards均0必要有限非离线验收阻断，主线批准受托Agent代验通过，非用户亲验。真实两dirty逐一取消/save-first/子树成功、隐藏资产/link本体/外部哨兵守恒、无关source选区undo、乙root键盘OptionTabReturn、浅深及正常CmdQ已核。47152 exit0/PID86440及86455消失，两目录Trash可恢复，七SHA及两inode相同；hash3ujyygu2swigz，包内1780/0/38314，源码1779/1原FINAL002保持。Git待执行，父/冻结/专项/未测真实故障/自然IME/跨卷/offline及FINAL001003仍开放。

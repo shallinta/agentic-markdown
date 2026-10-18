@@ -1,0 +1,10 @@
+{
+  "work": "/private/tmp/f064a-new-empty-work",
+  "archives": "/private/tmp/f064a-verified-stage-packages",
+  "toolchain": "/private/tmp/agentic-f064a-rust190.zxE80R",
+  "bun": "/private/tmp/agentic-direct186.uXVnAg/Agentic Markdown-canary.app/Contents/MacOS/bun",
+  "node": "/Users/shallinta/.nvm/versions/node/v22.22.2/bin/node",
+  "python": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14",
+  "officialArchives": "/private/tmp/f064a-official-fixed-archives",
+  "cargoCache": "/private/tmp/agentic-f064a-rust190.zxE80R/cargo-home"
+}

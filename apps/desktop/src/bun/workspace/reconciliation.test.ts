@@ -30,6 +30,7 @@ const batch = (
   files: ScanFile[],
   extra: Partial<ScanBatch> = {}
 ): ScanBatch => ({
+  directories: [],
   files,
   done: true,
   paused: false,
@@ -81,11 +82,13 @@ function fixture(
     },
   };
   let used = 100;
+  let confirmed = 0;
   const service = createReconciliation({
     getRoot: (h) => (h === handle ? root : undefined),
     usedBytes: () => used,
     limit,
     worker,
+    confirmDirectories(){confirmed++;return {version:1,directories:[]};},
     publish(binding, publication) {
       if (root?.generation !== binding.generation) return false;
       root = {
@@ -113,6 +116,7 @@ function fixture(
     worker,
     drain,
     maximum: () => maximum,
+    confirmed: () => confirmed,
     setRoot: (value: typeof root) => {
       root = value;
     },
@@ -287,6 +291,7 @@ test("errors, partial budget and incomplete/conflicting chains yield no deletion
     const pending = f.service.prepare(f.handle);
     await f.drain();
     expect(await pending).toEqual({ ok: false, reason: "FAILED" });
+    expect(f.confirmed()).toBe(0);
     expect(f.service.bytes()).toBe(0);
   }
   const small = fixture(undefined, undefined, 101);

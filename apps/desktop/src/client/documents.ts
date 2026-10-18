@@ -193,6 +193,7 @@ export function createDocumentController(
   let removalGate = false;
   let folderRemovalGate = false;
   let duplicateGate: { source: DuplicateSource; cancelled: boolean } | null = null;
+  let creationGate: { token: string; cancelled: boolean } | null = null;
   let discardActive = false;
   let removalEligible: (handle: string) => boolean = () => false;
   let removal: { entry: DocumentEntry; phase: "state" | "begin" | "commit" | "query" | "ack"; operation?: RemovalOperation; finalError: string | null } | null = null;
@@ -470,7 +471,7 @@ export function createDocumentController(
     requestId: crypto.randomUUID(),
   });
   function publish(next: DocumentViewState) {
-    if (removalGate || folderRemovalGate || duplicateGate) next = { ...next, frozen: true };
+    if (removalGate || folderRemovalGate || duplicateGate || creationGate) next = { ...next, frozen: true };
     if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
       const old = revealPending; revealPending = null;
       void transport.cancelDocument({ protocolVersion: 1, requestId: old.requestId }).catch(() => undefined);
@@ -914,6 +915,19 @@ export function createDocumentController(
     );
   };
   const controller = {
+    acquireCreationGate: (): string | null => {
+      if (metadataDisposed || editorInputBlocked || !controller.canSelectFolder()) return null;
+      const token = crypto.randomUUID();
+      creationGate = { token, cancelled: false };
+      publish({ ...state, frozen: true });
+      return token;
+    },
+    creationGateCurrent: (token: string) => creationGate?.token === token && !creationGate.cancelled && !metadataDisposed && !discardActive && !editorInputBlocked && canLeaveEditor(),
+    releaseCreationGate: (token: string) => {
+      if (creationGate?.token !== token) return;
+      creationGate = null;
+      publish({ ...state, frozen: discardActive });
+    },
     canDuplicate: () => {
       const snapshot = state.snapshot;
       const editor = snapshot && editors.get(snapshot.documentId);
@@ -938,9 +952,10 @@ export function createDocumentController(
     // Keep its freeze until the receipt settles; cancellation cannot revive an
     // old auto-activation intent or send an as-yet unsent publication.
     beginWindowDiscard: () => {
-      if (!duplicateGate) return beginDiscard();
+      if (!duplicateGate && !creationGate) return beginDiscard();
       if (removalGate || folderRemovalGate || discardActive || state.busy || !canLeaveEditor()) return false;
-      duplicateGate.cancelled = true;
+      if (duplicateGate) duplicateGate.cancelled = true;
+      if (creationGate) creationGate.cancelled = true;
       discardActive = true;
       publish({ ...state, frozen: true });
       return true;
@@ -1409,6 +1424,7 @@ export function createDocumentController(
         }
       ),
     dispose: () => {
+      if (creationGate) creationGate.cancelled = true;
       if (duplicateGate) duplicateGate.cancelled = true;
       if (revealPending) {
         void transport.cancelDocument({ protocolVersion: 1, requestId: revealPending.requestId }).catch(() => undefined);

@@ -70,6 +70,10 @@ export interface DesktopRPCType {
         params: import("./create-markdown").CreateMarkdownRequest;
         response: import("./create-markdown").CreateMarkdownResponse;
       };
+      createFolder: {
+        params: import("./create-folder").CreateFolderRequest;
+        response: import("./create-folder").CreateFolderResponse;
+      };
       openWorkspaceDocument: {
         params: import("./workspace").WorkspaceOpenRequest;
         response: DocumentResponse;

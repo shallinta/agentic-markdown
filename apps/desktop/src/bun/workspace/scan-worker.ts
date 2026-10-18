@@ -58,12 +58,17 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
     if (op === "start") {
       scans.get(key)?.close();
       if (scans.size >= 32 && !scans.has(key)) throw Error();
+      const owned=[...scans].reduce((sum,[other,scan])=>sum+(other===key?0:scan.queueBytes()),watching?.queueBytes()??0);
+      const startBytes=2*Buffer.byteLength(JSON.stringify(event.data.exceptions))+Buffer.byteLength(JSON.stringify({path:root!.path,chain:[]}));
+      if(owned+startBytes>SCAN_QUEUE_BYTES)throw Error("Worker snapshot budget");
       scans.set(
         key,
         createScan(
           root!,
           join(import.meta.dir, "save-primitives.node"),
-          showHidden
+          showHidden,
+          undefined,
+          event.data.exceptions
         )
       );
     } else if (op === "close") {
@@ -77,7 +82,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
     );
     const result =
       op === "next"
-        ? await scans.get(key)?.next(Math.max(0, SCAN_QUEUE_BYTES - otherBytes))
+        ? await scans.get(key)?.next(Math.max(0, Math.min(SCAN_QUEUE_BYTES - otherBytes,event.data.budget!)))
         : null;
     if (op === "next" && !result) throw Error();
     self.postMessage({ id, ok: true, result });

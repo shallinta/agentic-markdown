@@ -1334,7 +1334,7 @@ test("late batches cannot repopulate cleared roots", async () => {
   const cleared = good(await workspace.request(request("clear")));
   expect(cleared.roots).toEqual([]);
   deliver({
-    files: [],
+    files: [],directories: [],
     examined: 1,
     errors: 0,
     done: true,
@@ -1359,7 +1359,7 @@ test("candidate batches yield to a simultaneous root scan on the same Worker", a
   const count = new Map<string, number>(),
     nexts: string[] = [];
   const empty = {
-    files: [],
+    files: [],directories: [],
     examined: 0,
     errors: 0,
     done: true,
@@ -1425,7 +1425,7 @@ test("owner drain serializes pending candidate and acceptance invalidation with 
       let delivered: ((value: unknown) => void) | undefined;
       const closed: string[] = [];
       const empty = {
-        files: [],
+        files: [],directories: [],
         examined: 0,
         errors: 0,
         done: true,

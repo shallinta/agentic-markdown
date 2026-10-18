@@ -136,7 +136,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   }));
   const creationState = useSyncExternalStore(creation.subscribe, creation.getSnapshot);
   const [duplication] = useState(() => createMarkdownController({
-    documents: controller, duplicate: true,
+    documents: controller, mode: "duplicate",
     request: request => electrobun.rpc ? electrobun.rpc.request.duplicateMarkdown(request) : Promise.reject(Error("RPC unavailable")),
     refresh: () => folders.refresh(),
     targetCurrent: target => {
@@ -146,13 +146,29 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     locate: (target, entry) => setCreatedLocation({ root: target.rootHandle, entry, intent: ++nextCreatedLocation.current }),
   }));
   const duplicationState = useSyncExternalStore(duplication.subscribe, duplication.getSnapshot);
+  const [folderCreation] = useState(() => createMarkdownController({
+    documents: controller, mode: "folder",
+    request: request => electrobun.rpc ? electrobun.rpc.request.createFolder(request) : Promise.reject(Error("RPC unavailable")),
+    refresh: () => folders.refresh(),
+    targetCurrent: target => {
+      const latest = folders.getSnapshot();
+      return latest.roots.some(root => root.handle === target.rootHandle && root.generation === target.generation) && (!target.directoryHandle || !!latest.nodes[target.rootHandle]?.some(node => node.handle === target.directoryHandle && node.kind === "directory"));
+    },
+    directoryCurrent: (target, entry) => {
+      const latest = folders.getSnapshot();
+      return latest.roots.some(root => root.handle === target.rootHandle) && !!latest.nodes[target.rootHandle]?.some(node => node.handle === entry && node.kind === "directory");
+    },
+    locate: (target, entry) => setCreatedLocation({ root: target.rootHandle, entry, intent: ++nextCreatedLocation.current }),
+  }));
+  const folderCreationState = useSyncExternalStore(folderCreation.subscribe, folderCreation.getSnapshot);
+  useEffect(() => { folderCreation.attach(); return () => folderCreation.dispose(); }, [folderCreation]);
   useEffect(() => { duplication.attach(); return () => duplication.dispose(); }, [duplication]);
   useEffect(() => { creation.attach(); return () => creation.dispose(); }, [creation]);
-  const notifyCreation = useRegisterCommands({ createMarkdown: () => creation.open(creationTarget.current), duplicateMarkdown: () => duplication.open(duplicateDefaultTarget(controller.getSnapshot().snapshot?.displayPath, folders.getSnapshot())) }, true, { createMarkdown: () => creation.canOpen() && folders.getSnapshot().roots.length > 0, duplicateMarkdown: () => duplication.canOpen() && folders.getSnapshot().roots.length > 0 });
+  const notifyCreation = useRegisterCommands({ createMarkdown: () => creation.open(creationTarget.current), createFolder: () => folderCreation.open(creationTarget.current), duplicateMarkdown: () => duplication.open(duplicateDefaultTarget(controller.getSnapshot().snapshot?.displayPath, folders.getSnapshot())) }, true, { createMarkdown: () => creation.canOpen() && folders.getSnapshot().roots.length > 0, createFolder: () => folderCreation.canOpen() && (folderCreation.hasPending() || folders.getSnapshot().roots.length > 0), duplicateMarkdown: () => duplication.canOpen() && folders.getSnapshot().roots.length > 0 });
   useLayoutEffect(() => {
-    const a = controller.subscribe(notifyCreation), b = folders.subscribe(notifyCreation), c = creation.subscribe(notifyCreation), d = duplication.subscribe(notifyCreation);
-    notifyCreation(); return () => { a(); b(); c(); d(); };
-  }, [controller, folders, creation, duplication, notifyCreation]);
+    const a = controller.subscribe(notifyCreation), b = folders.subscribe(notifyCreation), c = creation.subscribe(notifyCreation), d = duplication.subscribe(notifyCreation), e = folderCreation.subscribe(notifyCreation);
+    notifyCreation(); return () => { a(); b(); c(); d(); e(); };
+  }, [controller, folders, creation, duplication, folderCreation, notifyCreation]);
   const [folderRemoval] = useState(() => createFolderRemoval(controller, folders, request => electrobun.rpc ? electrobun.rpc.request.removeFolderRoot(request) : Promise.reject(Error("RPC unavailable")), documents => new Promise(resolve => setFolderRemovalDialog({ documents, respond: choice => { setFolderRemovalDialog(null); resolve(choice); } }))));
   useEffect(() => () => folderRemoval.dispose(), [folderRemoval]);
   useLayoutEffect(() => {
@@ -411,7 +427,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
   return {
-    creation, creationState, duplication, duplicationState, setCreationTarget, createdLocation, clearCreatedLocation,
+    creation, creationState, duplication, duplicationState, folderCreation, folderCreationState, setCreationTarget, createdLocation, clearCreatedLocation,
     folderRemoval,
     folderRemovalDialog,
     rootOrder,
@@ -515,6 +531,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
       <div className="flex flex-wrap gap-2">
         <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("createMarkdown")} onClick={() => executeCommand({ type: "createMarkdown", args: {} })}>新建 Markdown 文件</button>
         <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("duplicateMarkdown")} onClick={() => executeCommand({ type: "duplicateMarkdown", args: {} })}>复制当前文档</button>
+        <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("createFolder")} onClick={() => executeCommand({ type: "createFolder", args: {} })}>新建文件夹</button>
         <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!orderActions?.canUp()} onClick={() => executeCommand({ type: "moveWorkspaceRootUp", args: {} })}>上移选中根</button>
         <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!orderActions?.canDown()} onClick={() => executeCommand({ type: "moveWorkspaceRootDown", args: {} })}>下移选中根</button>
       </div>
@@ -898,7 +915,8 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         </>
       )}
       <CreateMarkdownDialog controller={workspace.creation} state={workspace.creationState} folders={workspace.folderState} />
-      <CreateMarkdownDialog duplicate controller={workspace.duplication} state={workspace.duplicationState} folders={workspace.folderState} />
+      <CreateMarkdownDialog controller={workspace.duplication} state={workspace.duplicationState} folders={workspace.folderState} />
+      <CreateMarkdownDialog controller={workspace.folderCreation} state={workspace.folderCreationState} folders={workspace.folderState} />
       <Dialog open={!!workspace.folderRemovalDialog} onOpenChange={open => { if (!open) workspace.folderRemovalDialog?.respond("cancel"); }}>
         <DialogContent showCloseButton={false} onInteractOutside={event => event.preventDefault()}>
           <DialogTitle>从窗口移除目录</DialogTitle>

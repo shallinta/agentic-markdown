@@ -10,21 +10,21 @@ import type {
   CreateMarkdownState,
 } from "../client/create-markdown";
 import type { FolderState } from "../client/workspace";
+import { folderName } from "../shared/create-folder";
 import { markdownFileName } from "../shared/create-markdown";
 
 export function CreateMarkdownDialog({
   controller,
   state,
   folders,
-  duplicate = false,
 }: {
   controller: ReturnType<typeof createMarkdownController>;
   state: CreateMarkdownState;
   folders: FolderState;
-  duplicate?: boolean;
 }) {
+  const duplicate = state.mode === "duplicate", folder = state.mode === "folder";
   const root = folders.roots.find(
-    (item) => item.handle === state.target?.rootHandle
+    (item) => item.handle === state.target?.rootHandle && item.generation === state.target.generation
   );
   const directory =
     root && state.target?.directoryHandle
@@ -32,7 +32,7 @@ export function CreateMarkdownDialog({
           (item) => item.handle === state.target?.directoryHandle
         )
       : undefined;
-  const name = markdownFileName(state.name);
+  const name = folder ? folderName(state.name) : markdownFileName(state.name);
   const pending = controller.hasPending();
   const button =
     "hover:bg-muted focus-visible:outline-ring rounded border px-3 py-2 text-sm disabled:opacity-50";
@@ -44,15 +44,15 @@ export function CreateMarkdownDialog({
       }}
     >
       <DialogContent>
-        <DialogTitle>{duplicate ? "复制当前已保存文档" : "新建 Markdown 文件"}</DialogTitle>
+        <DialogTitle>{folder ? "新建文件夹" : duplicate ? "复制当前已保存文档" : "新建 Markdown 文件"}</DialogTitle>
         <DialogDescription>
-          {duplicate ? "复制磁盘中已保存的完整内容，源文档保持不变，不覆盖已有项目。图片等资产不复制，相对链接不改写；更换目录后链接可能失效。" : "在已授权目录中创建空白文件，不覆盖已有项目。"}
+          {folder ? "在已授权目录中新建文件夹，不覆盖已有项目。本会话新建的空目录在重扫后仍显示；不会打开或修改文档。" : duplicate ? "复制磁盘中已保存的完整内容，源文档保持不变，不覆盖已有项目。图片等资产不复制，相对链接不改写；更换目录后链接可能失效。" : "在已授权目录中创建空白文件，不覆盖已有项目。"}
         </DialogDescription>
         {duplicate && <p className="text-sm break-all">源文件：{state.sourceName}</p>}
         <label className="grid gap-2 text-sm">
           目标目录
           <select
-            aria-label={duplicate ? "副本目标目录" : "新建文件目标目录"}
+            aria-label={folder ? "新建文件夹目标目录" : duplicate ? "副本目标目录" : "新建文件目标目录"}
             className="bg-background rounded border p-2"
             disabled={state.busy || pending}
             value={root ? root.handle : ""}
@@ -81,10 +81,10 @@ export function CreateMarkdownDialog({
           </p>
         )}
         <label className="grid gap-2 text-sm">
-          文件名
+          {folder ? "文件夹名称" : "文件名"}
           <input
             autoFocus
-            aria-label={duplicate ? "副本文件名" : "新建文件名"}
+            aria-label={folder ? "新建文件夹名称" : duplicate ? "副本文件名" : "新建文件名"}
             className="bg-background rounded border p-2"
             value={state.name}
             disabled={state.busy || pending}
@@ -104,7 +104,7 @@ export function CreateMarkdownDialog({
         </label>
         {name.ok && (
           <p className="text-muted-foreground text-sm break-all">
-            最终文件名：{name.name}
+            {folder ? "最终文件夹名" : "最终文件名"}：{name.name}
           </p>
         )}
         {state.preview === "checking" && !pending && (
@@ -119,7 +119,7 @@ export function CreateMarkdownDialog({
         )}
         {state.receipt?.status === "created" && (
           <p className="text-sm">
-            文件已创建，尚未完成打开。关闭不会删除磁盘文件。
+            {folder ? "文件夹已创建，尚未完成定位。关闭不会删除磁盘目录。" : "文件已创建，尚未完成打开。关闭不会删除磁盘文件。"}
           </p>
         )}
         <div className="flex flex-wrap justify-end gap-2">
@@ -132,7 +132,7 @@ export function CreateMarkdownDialog({
               disabled={state.busy || state.preview !== "available"}
               onClick={() => void controller.create()}
             >
-              {duplicate ? "复制并打开" : "创建并打开"}
+              {folder ? "创建并定位" : duplicate ? "复制并打开" : "创建并打开"}
             </button>
           )}
           {pending && (
@@ -147,13 +147,13 @@ export function CreateMarkdownDialog({
           {pending &&
             (state.receipt?.status === "created" ||
               state.receipt?.status === "opened") &&
-            !state.receipt.released && (
+            !("released" in state.receipt && state.receipt.released) && (
               <button
                 className={button}
                 disabled={state.busy}
                 onClick={() => void controller.retry()}
               >
-                重试打开
+                {folder ? "重试定位" : "重试打开"}
               </button>
             )}
           {!pending && state.preview === "unavailable" && (

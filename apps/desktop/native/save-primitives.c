@@ -160,7 +160,7 @@ static napi_value creation_error(napi_env env,const char *code) {
 static napi_value creation_throw(napi_env env,napi_value error) {
   bool pending=false;
   if(napi_is_exception_pending(env,&pending)!=napi_ok) return NULL;
-  if(pending) {napi_value previous;if(napi_get_and_clear_last_exception(env,&previous)!=napi_ok) return NULL;}
+  if(pending) return NULL;
   if(error) napi_throw(env,error);
   return NULL;
 }
@@ -181,7 +181,7 @@ static napi_value create_file_exclusive(napi_env env,napi_callback_info info) {
   return out;
 }
 
-static napi_value publish_exclusive(napi_env env,napi_callback_info info) {
+static napi_value publish_exclusive_core(napi_env env,napi_callback_info info,const char *prefix) {
   napi_value invalid=creation_error(env,"PUBLISH_INVALID"),exists=creation_error(env,"PUBLISH_EXISTS"),unsupported=creation_error(env,"PUBLISH_UNSUPPORTED"),failed=creation_error(env,"PUBLISH_FAILED"),v[3],ok;
   if(!invalid||!exists||!unsupported||!failed||napi_create_int32(env,0,&ok)!=napi_ok) return NULL;
   int dir;char src[256],dst[256];
@@ -195,15 +195,30 @@ static napi_value publish_exclusive(napi_env env,napi_callback_info info) {
       else if(c>=0xdc00&&c<=0xdfff)return creation_throw(env,invalid);
     }
   }
-  if(!name(env,v[1],src)||!name(env,v[2],dst)||strncmp(src,".agentic-save-",14)!=0) return creation_throw(env,invalid);
+  if(!name(env,v[1],src)||!name(env,v[2],dst)||strncmp(src,prefix,strlen(prefix))!=0) return creation_throw(env,invalid);
   if(renameatx_np(dir,src,dir,dst,RENAME_EXCL)==0)return ok;
   int saved=errno;return creation_throw(env,saved==EEXIST?exists:(saved==ENOTSUP)?unsupported:failed);
+}
+static napi_value publish_exclusive(napi_env env,napi_callback_info info) { return publish_exclusive_core(env,info,".agentic-save-"); }
+static napi_value publish_directory_exclusive(napi_env env,napi_callback_info info) { return publish_exclusive_core(env,info,".agentic-dir-"); }
+static napi_value create_private_directory(napi_env env,napi_callback_info info) {
+  napi_value invalid=creation_error(env,"CREATE_INVALID"),exists=creation_error(env,"CREATE_EXISTS"),failed=creation_error(env,"CREATE_FAILED"),v[2],ok;
+  if(!invalid||!exists||!failed||napi_create_int32(env,0,&ok)!=napi_ok)return NULL;
+  int dir;char leaf[256];
+  if(!args(env,info,v,2)||!integer(env,v[0],&dir)||!name(env,v[1],leaf)||strncmp(leaf,".agentic-dir-",13)!=0)return creation_throw(env,invalid);
+  /* Private names are generated ASCII UUID components, never user input. */
+  for(size_t j=13;leaf[j];j++)if(!((leaf[j]>='a'&&leaf[j]<='f')||(leaf[j]>='0'&&leaf[j]<='9')||leaf[j]=='-'))return creation_throw(env,invalid);
+  if(strlen(leaf)!=49)return creation_throw(env,invalid);
+  if(mkdirat(dir,leaf,0700)==0)return ok;
+  int saved=errno;return creation_throw(env,saved==EEXIST?exists:failed);
 }
 
 static napi_value init(napi_env env,napi_value exports) {
   napi_property_descriptor properties[]={
     {"createFileExclusive",NULL,create_file_exclusive,NULL,NULL,NULL,napi_default,NULL},
     {"publishExclusive",NULL,publish_exclusive,NULL,NULL,NULL,napi_default,NULL},
+    {"createPrivateDirectory",NULL,create_private_directory,NULL,NULL,NULL,napi_default,NULL},
+    {"publishDirectoryExclusive",NULL,publish_directory_exclusive,NULL,NULL,NULL,napi_default,NULL},
     {"createTemp",NULL,create,NULL,NULL,NULL,napi_default,NULL},
     {"copyMetadata",NULL,metadata,NULL,NULL,NULL,napi_default,NULL},
     {"fullSync",NULL,sync_full,NULL,NULL,NULL,napi_default,NULL},

@@ -1,5 +1,10 @@
 import {
+  folderName, validCreateFolderRequest, validCreateFolderResponse,
+  type CreateFolderRequest, type CreateFolderResponse,
+} from "../shared/create-folder";
+import {
   markdownFileName,
+  validCreateMarkdownRequest,
   validCreateMarkdownResponse,
   type CreateMarkdownRequest,
   type CreateMarkdownResponse,
@@ -24,8 +29,12 @@ export function duplicateDefaultTarget(path: string | undefined, folders: Folder
   return null;
 }
 
-type Receipt = Extract<CreateMarkdownResponse, { operation: CreateOperation }>;
+type CreationResponse = CreateMarkdownResponse | CreateFolderResponse;
+type CreationRequest = CreateMarkdownRequest | CreateFolderRequest;
+type Receipt = Extract<CreationResponse, { operation: CreateOperation }>;
+export type CreationMode = "markdown" | "duplicate" | "folder";
 export interface CreateMarkdownState {
+  mode: CreationMode;
   sourceName?: string;
   visible: boolean;
   name: string;
@@ -36,24 +45,19 @@ export interface CreateMarkdownState {
   message: string | null;
   receipt: Receipt | null;
 }
-export function createMarkdownController({
-  documents,
-  request,
-  refresh,
-  locate,
-  targetCurrent,
-  delay = 250,
-  duplicate = false,
-}: {
+type CreationOptions = {
   documents: ReturnType<typeof createDocumentController>;
-  request: (value: CreateMarkdownRequest) => Promise<unknown>;
   refresh: () => Promise<unknown>;
   locate: (target: CreateTarget, entryHandle: string) => void;
   targetCurrent: (target: CreateTarget) => boolean;
   delay?: number;
-  duplicate?: boolean;
-}) {
+} & ({ mode?: "markdown" | "duplicate"; request: (value: CreateMarkdownRequest) => Promise<unknown> } | { mode: "folder"; request: (value: CreateFolderRequest) => Promise<unknown>; directoryCurrent: (target: CreateTarget, entryHandle: string) => boolean });
+export function createMarkdownController(options: CreationOptions) {
+  const { documents, refresh, locate, targetCurrent, delay = 250 } = options;
+  const mode = options.mode ?? "markdown", duplicate = mode === "duplicate", folder = mode === "folder";
+  const validateName = folder ? folderName : markdownFileName;
   let state: CreateMarkdownState = {
+    mode,
     visible: false,
     name: "",
     target: null,
@@ -71,6 +75,7 @@ export function createMarkdownController({
   let locatedHandle: string | null = null;
   let sourceIdentity: { handle: string; documentId: string; fileName: string } | null = null;
   let sourceGate: DuplicateSource | null = null;
+  let creationGate: string | null = null;
   let adoptionSource: DuplicateSource | null = null;
   let activationAllowed = true;
   let customName = false;
@@ -83,8 +88,15 @@ export function createMarkdownController({
     protocolVersion: 1 as const,
     requestId: crypto.randomUUID(),
   });
-  async function send(value: CreateMarkdownRequest) {
-    const result = await request(value);
+  async function send(value: CreationRequest): Promise<CreationResponse> {
+    if (options.mode === "folder") {
+      if (!validCreateFolderRequest(value)) throw Error("invalid-folder-request");
+      const result = await options.request(value);
+      if (!validCreateFolderResponse(result, value)) throw Error("invalid-folder-response");
+      return result;
+    }
+    if (!validCreateMarkdownRequest(value)) throw Error("invalid-create-request");
+    const result = await options.request(value);
     if (!validCreateMarkdownResponse(result, value))
       throw Error("invalid-create-response");
     return result;
@@ -100,7 +112,7 @@ export function createMarkdownController({
   }
   function preview(suggest = false) {
     cancelPreview();
-    const name = markdownFileName(state.name),
+    const name = validateName(state.name),
       target = state.target;
     if (!name.ok) {
       publish({ preview: "invalid", message: name.message });
@@ -134,9 +146,10 @@ export function createMarkdownController({
             response.status !== "preview"
           )
             return;
-          if (suggest && response.result === "available" && (!response.fileName || !markdownFileName(response.fileName).ok)) throw Error("invalid-suggested-name");
+          const suggestedName = "fileName" in response ? response.fileName : undefined;
+          if (suggest && response.result === "available" && (!suggestedName || !markdownFileName(suggestedName).ok)) throw Error("invalid-suggested-name");
           publish({
-            ...(suggest && response.fileName ? { name: response.fileName } : {}),
+            ...(suggest && suggestedName ? { name: suggestedName } : {}),
             preview: response.result,
             message:
               response.message ??
@@ -167,7 +180,7 @@ export function createMarkdownController({
     return true;
   }
   async function settle(
-    response: CreateMarkdownResponse,
+    response: CreationResponse,
     expectedIntent: number
   ) {
     if (!operation) throw Error("missing-create-operation");
@@ -178,6 +191,33 @@ export function createMarkdownController({
     )
       throw Error("create-operation-mismatch");
     publish({ receipt: response, message: response.message ?? null });
+    if (folder) {
+      if (response.status === "pending" || response.working !== false) return;
+      if (creationGate) {
+        activationAllowed = activationAllowed && documents.creationGateCurrent(creationGate);
+        documents.releaseCreationGate(creationGate);
+        creationGate = null;
+      }
+      if (response.status === "unknown") {
+        publish({ message: response.message ?? "文件夹创建结果未知，不会重复创建。请查询原结果，或正常退出应用；不会自动删除目录。" });
+        return;
+      }
+      if (response.status === "created") {
+        const current = () => !disposed && state.visible && intent === expectedIntent && activationAllowed && documents.canSelectFolder();
+        if (!current()) {
+          // Hiding/closing invalidates presentation, not a completed disk write.
+          if (!state.visible || disposed || !activationAllowed) await acknowledge();
+          return;
+        }
+        await refresh();
+        if (!current()) return;
+        if (state.target && response.entryHandle && options.mode === "folder" && options.directoryCurrent(state.target, response.entryHandle)) {
+          locate(state.target, response.entryHandle);
+          if (await acknowledge()) publish({ visible: false, message: null });
+        } else publish({ message: "文件夹已创建，但文件树暂时无法定位；可重试定位，不会重复创建。" });
+        return;
+      }
+    }
     if (duplicate) {
       if (response.working !== false) return;
       if (sourceGate) {
@@ -277,9 +317,13 @@ export function createMarkdownController({
     if (response.status === "created" || response.status === "opened")
       await refresh();
   }
-  async function run(op: "create" | "query" | "retry-open") {
+  async function run(op: "create" | "query" | "retry-open" | "retry-locate") {
     if (state.busy || disposed) return;
     if (op === "create" && operation) return;
+    if (op === "create" && state.target && !targetCurrent(state.target)) {
+      publish({ preview: "unavailable", message: "目标目录已变化，请重新选择当前已授权目录。" });
+      return;
+    }
     if (
       op === "create" &&
       (!state.target ||
@@ -291,6 +335,11 @@ export function createMarkdownController({
     if (op !== "create" && !operation) return;
     cancelPreview();
     const expectedIntent = ++intent;
+    if (folder && op === "create") {
+      creationGate = documents.acquireCreationGate();
+      if (!creationGate) return;
+      activationAllowed = true;
+    } else if (folder && op === "retry-locate") activationAllowed = documents.canSelectFolder();
     if (duplicate && op === "create") {
       if (!sourceIdentity) return;
       sourceGate = documents.acquireDuplicateSource(sourceIdentity.handle, sourceIdentity.documentId);
@@ -307,10 +356,10 @@ export function createMarkdownController({
       if (!operation) {
         const receipt = await send({ ...envelope(), op: "state" });
         if (receipt.status !== "state") throw Error();
-        if (!state.visible || disposed || intent !== expectedIntent || (sourceGate && !documents.duplicateSourceCurrent(sourceGate))) return;
+        if (!state.visible || disposed || intent !== expectedIntent || (sourceGate && !documents.duplicateSourceCurrent(sourceGate)) || (creationGate && !documents.creationGateCurrent(creationGate))) return;
         operation = { session: receipt.session, sequence: receipt.sequence };
       }
-      const params: CreateMarkdownRequest =
+      const params: CreationRequest =
         op === "create"
           ? {
               ...envelope(),
@@ -335,6 +384,11 @@ export function createMarkdownController({
           : "无法开始创建，请重试。",
       });
     } finally {
+      if (op === "create" && !dispatched && creationGate) {
+        documents.releaseCreationGate(creationGate);
+        creationGate = null;
+        operation = null;
+      }
       if (op === "create" && !dispatched && sourceGate) {
         documents.releaseDuplicateSource(sourceGate);
         sourceGate = null;
@@ -393,7 +447,7 @@ export function createMarkdownController({
     check: () => preview(duplicate && !customName),
     create: () => run("create"),
     query: () => run("query"),
-    retry: () => run("retry-open"),
+    retry: () => run(folder ? "retry-locate" : "retry-open"),
     async close() {
       ++intent;
       cancelPreview();

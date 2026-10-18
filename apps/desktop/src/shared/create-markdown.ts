@@ -17,7 +17,7 @@ export type CreateMarkdownResponse = DocumentRequest & (
   | { status: "cancelled-preview"; previewId: string }
   | { status: CreateOutcome; operation: CreateOperation; fileName?: string; message?: string; snapshot?: DocumentSnapshot; entryHandle?: string; released?: boolean; working?: boolean }
 );
-export function markdownFileName(input: string): { ok: true; name: string } | { ok: false; message: string } {
+export function markdownFileName(input: string, appendExtension = true): { ok: true; name: string } | { ok: false; message: string } {
   if (!input.trim() || input === "." || input === ".." || input === ".git" || input.includes("/") || [...input].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127) || /[ .]$/.test(input))
     return { ok: false, message: "名称不能为空，不能包含路径分隔符、控制字符或尾随空格和点。" };
   for (let i = 0; i < input.length; i++) {
@@ -25,7 +25,7 @@ export function markdownFileName(input: string): { ok: true; name: string } | { 
     if (c >= 0xd800 && c <= 0xdbff) { const next = input.charCodeAt(++i); if (!(next >= 0xdc00 && next <= 0xdfff)) return { ok: false, message: "名称包含不完整字符。" }; }
     else if (c >= 0xdc00 && c <= 0xdfff) return { ok: false, message: "名称包含不完整字符。" };
   }
-  const name = /\.(md|markdown)$/i.test(input) ? input : `${input}.md`;
+  const name = !appendExtension || /\.(md|markdown)$/i.test(input) ? input : `${input}.md`;
   if (new TextEncoder().encode(name).length > 255) return { ok: false, message: "文件名过长（最多 255 UTF-8 字节）。" };
   return { ok: true, name };
 }

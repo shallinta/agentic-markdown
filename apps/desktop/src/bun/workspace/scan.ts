@@ -18,8 +18,11 @@ export interface ScanFile {
   fingerprint: string;
   chain: DirectoryIdentity[];
 }
+export type ScanDirectory = ScanFile;
+export interface CreatedDirectorySnapshot { version: number; directories: ScanDirectory[] }
 export interface ScanBatch {
   files: ScanFile[];
+  directories: ScanDirectory[];
   examined: number;
   errors: number;
   done: boolean;
@@ -79,10 +82,13 @@ export function createScan(
   root: RootAuthorization,
   nativePath: string,
   showHidden = false,
-  onDirectory?: (directory: PendingDirectory) => void
+  onDirectory?: (directory: PendingDirectory) => void,
+  exceptions: CreatedDirectorySnapshot = {version:1,directories:[]}
 ) {
   const native = createRequire(import.meta.url)(nativePath) as Native;
   const pending: PendingDirectory[] = [{ path: root.path, chain: [] }];
+  const exceptionMap = new Map(exceptions.directories.map(proof=>[proof.path,JSON.stringify(proof)]));
+  const exceptionBytes = 2 * Buffer.byteLength(JSON.stringify(exceptions));
   let current: {
     directory: PendingDirectory;
     fd: number;
@@ -90,7 +96,7 @@ export function createScan(
   } | null = null;
   let closed = false,
     paused = false,
-    queuedBytes = Buffer.byteLength(JSON.stringify(pending[0]));
+    queuedBytes = Buffer.byteLength(JSON.stringify(pending[0])) + exceptionBytes;
   const closeCurrent = () => {
     if (current) {
       native.scanClose(current.cursor);
@@ -103,6 +109,7 @@ export function createScan(
     closed = true;
     closeCurrent();
     pending.length = 0;
+    exceptionMap.clear();
     queuedBytes = 0;
   };
   function directoryDescriptor(directory: PendingDirectory) {
@@ -196,6 +203,7 @@ export function createScan(
     async next(queueLimit = SCAN_QUEUE_BYTES): Promise<ScanBatch> {
       const result: ScanBatch = {
         files: [],
+        directories: [],
         examined: 0,
         errors: 0,
         done: false,
@@ -203,6 +211,7 @@ export function createScan(
         queueBytes: queueBytes(),
       };
       if (closed || paused) return { ...result, done: closed };
+      if(queuedBytes>queueLimit){paused=true;closeCurrent();return {...result,paused:true};}
       try {
         await verifyRoot(root);
       } catch {
@@ -229,6 +238,13 @@ export function createScan(
             const metadata = native.scanStat(active.fd, name),
               path = join(active.directory.path, name);
             if (metadata.kind === "directory") {
+              const proof: ScanDirectory = {path,fingerprint:metadata.fingerprint,chain:active.directory.chain};
+              if(exceptionMap.get(path)===JSON.stringify(proof)) {
+                const child=native.openDirectoryAt(active.fd,name);
+                try { if(fileFingerprint(fstatSync(child,{bigint:true}))!==metadata.fingerprint)throw Error("Directory changed"); }
+                finally { closeSync(child); }
+                result.directories.push(proof);
+              }
               const item = {
                 path,
                 chain: [
@@ -286,6 +302,7 @@ export function createScan(
       } catch {
         closeCurrent();
         result.files = [];
+        result.directories = [];
         result.errors++;
         return {
           ...result,

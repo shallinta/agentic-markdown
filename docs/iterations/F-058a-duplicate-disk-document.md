@@ -1,5 +1,9 @@
 # F-058a：已打开 clean 文档的磁盘版复制
 
+## Git 收据（2026-10-18）
+
+提交推送 `5bf11d484e2961dea4339c09ad03a61b58e9b1c5`，HTTPS远端main及origin/main核同SHA，hook前后tree `88fc16f33e05b1acfbeeca91b67a24a6c1d6ed12`一致。主线提交前type/full lint/docs/lock/diff再次通过，工作树核clean，冻结stash未变。下方Git待执行为当时记录，本收据自身随后续文档提交；alpha178仅本片有限通过，原开放责任不变。
+
 ## alpha178 真实 WK 有限代验通过（2026-10-18，Git 待执行）
 
 独立最终 Spec 33 项 / 184 断言、前端 Standards 37 项 / 305 断言通过，两轴均为 0 必要有限非离线验收阻断；主线已批准 alpha178 有限受托 Agent 代验通过，非用户亲验。Git 待执行，不预写提交或推送成功，完整父功能和下列开放责任不关闭。

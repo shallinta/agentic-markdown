@@ -3,6 +3,7 @@ import { closeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 
+import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
 import {
@@ -39,7 +40,10 @@ import {
   type RootAuthorization,
 } from "./authorization";
 import { createAutomaticObservation } from "./automatic-observation";
-import { createMarkdownService, type CreationNative, type CreationTarget } from "./create-markdown";
+import { createFolderService, type FolderLease } from "./create-folder";
+import type { FolderNative } from "./create-folder-disk";
+import { createMarkdownService, type CreationNative, type CreationTarget, type CreationLease } from "./create-markdown";
+import { createDirectoryRegistry } from "./created-directories";
 import { createFolderRemoval } from "./folder-removal";
 import type { HiddenPreferences } from "./preferences";
 import type { HiddenRemoval } from "./preferences";
@@ -48,6 +52,7 @@ import {
   openDirectoryDescriptor,
   type DirectoryNative,
   type ScanFile,
+  type ScanDirectory,
 } from "./scan";
 import { validScanBatch } from "./scan-protocol";
 import { createScanWorker } from "./worker";
@@ -58,6 +63,9 @@ interface Root {
   nodes: WorkspaceNode[];
   byPath: Map<string, WorkspaceNode>;
   files: Map<string, ScanFile>;
+  directories: Map<string, ScanDirectory>;
+  registry: ReturnType<typeof createDirectoryRegistry>;
+  scanVersion: number;
   bytes: number;
   started: boolean;
   live: boolean;
@@ -71,6 +79,7 @@ interface Owner extends DocumentScope {
 export interface TrustedWorkspaceService extends WorkspaceService {
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   duplicateMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
+  createFolder(value: unknown): Promise<CreateFolderResponse>;
   reconciliation: Pick<
     ReturnType<typeof createReconciliation>,
     "prepare" | "get" | "release" | "issue" | "accept" | "query"
@@ -209,13 +218,21 @@ export function createWorkspaceService({
             authorization: root.authorization,
             nodes: root.nodes,
             files: root.files,
+            directories: root.directories,
+            exceptions: root.registry.snapshot(),
           }
         : undefined;
     },
-    usedBytes: () => cacheBytes + observation.bytes(),
+    usedBytes: () => workspaceUsed(),
     limit: cacheLimit,
     worker,
     wake: () => wake(),
+    confirmDirectories(binding,seen){
+      const root=roots.find(item=>item===binding.lifetime);
+      if(!root||!live(root,binding.generation)||root.registry.version()!==binding.exceptions?.version||(root.meta.showHidden??false)!==binding.showHidden)return undefined;
+      root.registry.reconcile(seen,binding.showHidden);
+      return root.registry.snapshot();
+    },
     publish(binding, publication) {
       if (scanParked && !running) return "busy";
       const root = roots.find((item) => item.meta.handle === binding.handle);
@@ -227,6 +244,7 @@ export function createWorkspaceService({
         root.meta.status !== "complete" ||
         root.meta.generation !== binding.generation ||
         (root.meta.showHidden ?? false) !== binding.showHidden
+        || root.registry.version() !== binding.exceptions?.version
       )
         return false;
       cacheBytes += publication.bytes - root.bytes;
@@ -234,6 +252,8 @@ export function createWorkspaceService({
       root.nodes = publication.nodes;
       root.byPath = publication.byPath;
       root.files = publication.files;
+      root.directories = publication.directories;
+      root.registry.reconcile(root.directories.values(), root.meta.showHidden ?? false);
       root.meta = {
         ...root.meta,
         generation: publication.generation,
@@ -253,7 +273,7 @@ export function createWorkspaceService({
     call: (request) => worker.call(request),
     reconciliation,
     wake: () => wake(),
-    budget: () => cacheLimit - cacheBytes - reconciliation.bytes(),
+    budget: () => cacheLimit - cacheBytes - scanQueues() - reconciliation.bytes(),
     terminate: () => {
       workerStopped = true;
       reconciliation.invalidate();
@@ -282,6 +302,8 @@ export function createWorkspaceService({
     },
   });
   let candidateTurn = true;
+  function scanQueues(){return roots.reduce((sum,root)=>sum+root.queueBytes,0);}
+  function workspaceUsed(){return cacheBytes+observation.bytes()+scanQueues();}
   const invalidate = (root: Root) => {
     manualCandidates.delete(root.meta.handle);
     observation.cancel(root.meta.handle, true);
@@ -294,18 +316,28 @@ export function createWorkspaceService({
     root.nodes = [];
     root.byPath.clear();
     root.files.clear();
+    root.directories.clear();
+    root.registry.dispose();
   };
-  function merge(root: Root, files: ScanFile[]) {
+  function merge(root: Root, files: ScanFile[], kind: "file" | "directory" = "file") {
     for (const file of files) {
       if (
         !visiblePath(
           root.authorization.path,
           file.path,
           root.meta.showHidden
-        ) ||
-        root.byPath.has(file.path)
+        )
       )
         continue;
+      const existing=root.byPath.get(file.path);
+      if(existing){
+        if(kind==="directory"&&existing.kind==="directory"&&!root.directories.has(existing.handle)){
+          const bytes=Buffer.byteLength(JSON.stringify(file));
+          if(workspaceUsed()+reconciliation.bytes()+bytes>cacheLimit){root.meta.status="paused";queueCleanup(key(root));return;}
+          root.directories.set(existing.handle,file);root.bytes+=bytes;cacheBytes+=bytes;
+        }
+        continue;
+      }
       const additions: WorkspaceNode[] = [];
       let cursor = root.authorization.path,
         parent = root.meta.handle;
@@ -322,7 +354,7 @@ export function createWorkspaceService({
           handle: randomUUID(),
           parent,
           name: part,
-          kind: cursor === file.path ? "file" : "directory",
+          kind: cursor === file.path ? kind : "directory",
           displayPath: cursor,
         };
         additions.push(node);
@@ -332,11 +364,11 @@ export function createWorkspaceService({
         Buffer.byteLength(JSON.stringify(additions)) +
         Buffer.byteLength(JSON.stringify(file));
       if (
-        cacheBytes + observation.bytes() + reconciliation.bytes() + bytes >
+        workspaceUsed() + reconciliation.bytes() + bytes >
         cacheLimit
       )
         reconciliation.invalidate(undefined, true);
-      if (cacheBytes + observation.bytes() + bytes > cacheLimit) {
+      if (workspaceUsed() + bytes > cacheLimit) {
         root.meta.status = "paused";
         queueCleanup(key(root));
         return;
@@ -345,7 +377,7 @@ export function createWorkspaceService({
         root.nodes.push(node);
         root.byPath.set(node.displayPath, node);
       }
-      root.files.set(parent, file);
+      (kind === "file" ? root.files : root.directories).set(parent, file);
       root.bytes += bytes;
       cacheBytes += bytes;
       root.meta.entries = root.nodes.length;
@@ -400,12 +432,17 @@ export function createWorkspaceService({
         const generation = root.meta.generation;
         try {
           if (!root.started) {
+            const exceptions=root.registry.snapshot();root.scanVersion=exceptions.version;
+            const snapshotBytes=2*Buffer.byteLength(JSON.stringify(exceptions))+Buffer.byteLength(JSON.stringify({path:root.authorization.path,chain:[]}));
+            if(workspaceUsed()+reconciliation.bytes()+snapshotBytes>cacheLimit){root.meta.status="paused";queueCleanup(key(root));root.queueBytes=0;continue;}
+            root.queueBytes=snapshotBytes;
             workerKeys.add(key(root));
             await worker.call({
               op: "start",
               key: key(root),
               root: root.authorization,
               showHidden: root.meta.showHidden ?? false,
+              exceptions,
             });
             if (!live(root, generation)) continue;
             root.started = true;
@@ -420,18 +457,24 @@ export function createWorkspaceService({
           const batch = await worker.call({
             op: "next",
             key: key(root),
+            budget:Math.max(0,Math.min(2*1024*1024,cacheLimit-workspaceUsed()+root.queueBytes-reconciliation.bytes())),
           });
-          if (!live(root, generation)) continue;
+          if (!live(root, generation) || root.scanVersion!==root.registry.version()) continue;
           if (!validScanBatch(batch)) throw Error();
           root.meta.examined += batch.examined;
           root.queueBytes = batch.queueBytes;
+          if(workspaceUsed()+reconciliation.bytes()>cacheLimit){root.meta.status="paused";queueCleanup(key(root));root.queueBytes=0;continue;}
           root.meta.errors += batch.errors;
           merge(root, batch.files);
+          const directories=batch.directories.filter(proof=>JSON.stringify(root.registry.get(proof.path)?.proof)===JSON.stringify(proof));
+          if(directories.length!==batch.directories.length)throw Error("Unclaimed directory");
+          merge(root,directories,"directory");
           if (batch.paused) root.meta.status = "paused";
           else if (batch.done && root.meta.status === "scanning")
             root.meta.status = root.meta.errors ? "partial" : "complete";
           if (root.meta.status !== "scanning") queueCleanup(key(root));
           if (root.meta.status !== "scanning") root.queueBytes = 0;
+          if(root.meta.status === "complete")root.registry.reconcile(root.directories.values(),root.meta.showHidden ?? false);
         } catch {
           if (live(root, generation)) {
             root.meta.status = "failed";
@@ -461,6 +504,7 @@ export function createWorkspaceService({
     root.queueBytes = 0;
     root.nodes = [];
     root.files.clear();
+    root.directories.clear();
     root.byPath.clear();
     root.started = false;
     root.priorities = [];
@@ -693,7 +737,7 @@ export function createWorkspaceService({
       // the ledger's serialized request. No document text is copied by this plan.
       const planBytes = JSON.stringify([opened, listed, bindings.map(({ scope: _scope, ...binding }) => { void _scope; return binding; })]).length * 4
         + bindings.length * 256 + entries.length * 128 + roots.length * 256;
-      const baseBytes = planBytes + cacheBytes + observation.bytes() + reconciliation.bytes();
+      const baseBytes = planBytes + workspaceUsed() + reconciliation.bytes();
       if (baseBytes > cacheLimit) throw Error("Removal budget");
       let settingsBudget = cacheLimit - baseBytes;
       let setting: HiddenRemoval | undefined;
@@ -756,7 +800,7 @@ export function createWorkspaceService({
                 roots.splice(roots.indexOf(root), 1);
                 root.live = false;
                 cacheBytes -= root.bytes; root.bytes = 0; root.queueBytes = 0;
-                root.nodes = []; root.byPath.clear(); root.files.clear();
+                root.nodes = []; root.byPath.clear(); root.files.clear();root.directories.clear();root.registry.dispose();
                 manualCandidates.delete(root.meta.handle);
                 queueCleanup(key(root));
                 publication = result;
@@ -789,7 +833,16 @@ export function createWorkspaceService({
     const check = () => { if (disposed || !root.live || !roots.includes(root) || root.meta.generation !== value.generation || (node && root.byPath.get(path) !== node)) throw Error("Target changed"); };
     if (node) {
       let count = 0, found = false;
+      const directory=root.directories.get(node.handle);
+      if(directory && root.registry.get(path)?.proof.fingerprint===directory.fingerprint){chain=[...directory.chain,{path:directory.path,fingerprint:directory.fingerprint}];found=true;}
+      if(!found)for(const proof of root.directories.values()){
+        if(JSON.stringify(root.registry.get(proof.path)?.proof)!==JSON.stringify(proof))continue;
+        const index=proof.chain.findIndex(item=>item.path===path);
+        if(index>=0){chain=proof.chain.slice(0,index+1);found=true;break;}
+        if(++count%64===0){await new Promise(resolve=>setTimeout(resolve,0));check();}
+      }
       for (const file of root.files.values()) {
+        if(found)break;
         const index = file.chain.findIndex(item => item.path === path);
         if (index >= 0) { chain = file.chain.slice(0, index + 1); found = true; break; }
         if (++count % 64 === 0) { await new Promise(resolve => setTimeout(resolve, 0)); check(); }
@@ -797,14 +850,14 @@ export function createWorkspaceService({
       if (!found) throw Error("Missing directory proof");
     }
     let parent = root.authorization.path;
-    if (chain.length > 256 || !chain.every(item => { const valid = dirname(item.path) === parent && containsPath(root.authorization.path, item.path); parent = item.path; return valid; })) throw Error("Incomplete chain");
+    if (chain.length > 128 || !chain.every(item => { const valid = dirname(item.path) === parent && containsPath(root.authorization.path, item.path); parent = item.path; return valid; })) throw Error("Incomplete chain");
     check();
     return {root: root.authorization, path, chain, showHidden: root.meta.showHidden ?? false, check, scope() {
       const owner: Owner = {root, release() { this.root.scopes.delete(this); }, async verify() { if (disposed || !this.root.live || !roots.includes(this.root)) throw Error("Root removed"); await verifyRoot(this.root.authorization); if (disposed || !this.root.live) throw Error("Root removed"); }};
       root.scopes.add(owner); return owner;
     }};
   }
-  const creationHost: Parameters<typeof createMarkdownService>[0] = {
+  const creationHost: Omit<Parameters<typeof createMarkdownService>[0],"acquire"> & {acquire(value:CreateTarget):Promise<CreationLease & FolderLease>} = {
     documents,
     native() {
       if (directoryNative) return directoryNative as CreationNative;
@@ -824,7 +877,34 @@ export function createWorkspaceService({
         if (disposed || createOwner !== owner) throw Error("Creation disposed");
         const target = await creationTarget(value);
         const root = roots.find(item => item.meta.handle === value.rootHandle)!;
-        return {target, release, accept(file: ScanFile) {
+        let expectedVersion=root.registry.version();
+        const checkDirectory=()=>{if(disposed||createOwner!==owner||!scanParked||root.registry.version()!==expectedVersion)throw Error("Directory owner changed");target.check();};
+        return {target, release,lifetime:root,
+          reserve(proof){checkDirectory();return root.registry.reserve(proof);},
+          cancel(reservation){root.registry.cancel(reservation);},
+          acceptDirectory(proof,reservation,token){
+            checkDirectory();
+            if(dirname(proof.path)!==target.path||JSON.stringify(proof.chain)!==JSON.stringify(target.chain)||!visiblePath(root.authorization.path,proof.path,root.meta.showHidden))return {status:"unavailable"};
+            const record=root.registry.get(proof.path),previous=root.byPath.get(proof.path);
+            if(token){
+              if(record?.token!==token||JSON.stringify(record.proof)!==JSON.stringify(proof)||previous?.kind!=="directory")return {status:"unavailable"};
+              return {status:"same-identity",entryHandle:previous.handle,registrationToken:token,committedVersion:expectedVersion};
+            }
+            if(!reservation||record||previous)return {status:"unavailable"};
+            const parent=target.path===root.authorization.path?root.meta.handle:root.byPath.get(target.path)?.handle;
+            if(!parent)return {status:"unavailable"};
+            const node:WorkspaceNode={handle:randomUUID(),parent,name:basename(proof.path),kind:"directory",displayPath:proof.path};
+            const bytes=Buffer.byteLength(JSON.stringify([node]))+Buffer.byteLength(JSON.stringify(proof));
+            if(workspaceUsed()+reconciliation.bytes()+bytes>cacheLimit)return {status:"unavailable"};
+            const nodes=[...root.nodes,node],byPath=new Map(root.byPath),directories=new Map(root.directories);
+            byPath.set(proof.path,node);directories.set(node.handle,proof);checkDirectory();
+            const receipt=root.registry.commit(reservation,proof,expectedVersion);expectedVersion=receipt.committedVersion;
+            root.nodes=nodes;root.byPath=byPath;root.directories=directories;root.bytes+=bytes;cacheBytes+=bytes;root.meta.entries=nodes.length;
+            // The owner advances its own version; old scans and candidates do not.
+            queueCleanup(key(root));root.started=false;root.meta.generation++;root.scanVersion=expectedVersion;
+            reconciliation.invalidate(root.meta.handle);manualCandidates.delete(root.meta.handle);observation.cancel(root.meta.handle,true);
+            return {status:"accepted",entryHandle:node.handle,...receipt};
+          },accept(file: ScanFile) {
           if (disposed || createOwner !== owner || !scanParked) return {status: "unavailable" as const};
           target.check();
           if (dirname(file.path) !== target.path || JSON.stringify(file.chain) !== JSON.stringify(target.chain) || !visiblePath(root.authorization.path, file.path, root.meta.showHidden)) return {status: "unavailable" as const};
@@ -837,7 +917,7 @@ export function createWorkspaceService({
           if (!parent || (target.path !== root.authorization.path && root.byPath.get(target.path)?.kind !== "directory")) return {status: "unavailable" as const};
           const node: WorkspaceNode = {handle: randomUUID(), parent, name: basename(file.path), kind: "file", displayPath: file.path};
           const bytes = Buffer.byteLength(JSON.stringify([node])) + Buffer.byteLength(JSON.stringify(file));
-          if (cacheBytes + observation.bytes() + reconciliation.bytes() + bytes > cacheLimit) return {status: "unavailable" as const};
+          if (workspaceUsed() + reconciliation.bytes() + bytes > cacheLimit) return {status: "unavailable" as const};
           root.nodes.push(node); root.byPath.set(file.path, node); root.files.set(node.handle, file); root.bytes += bytes; cacheBytes += bytes; root.meta.entries = root.nodes.length;
           return {status: "accepted" as const, entryHandle: node.handle};
         }};
@@ -846,7 +926,22 @@ export function createWorkspaceService({
   };
   const creation = createMarkdownService(creationHost);
   const duplication = createMarkdownService(creationHost, true);
+  const folders=createFolderService({
+    ...creationHost,native:()=>creationHost.native() as FolderNative,
+    registered(lifetime,token){const root=roots.find(item=>item===lifetime);return !!root?.live&&root.registry.has(token);},
+    async acquire(value,retry){
+      if(!retry)return creationHost.acquire(value);
+      const root=roots.find(item=>item===retry.lifetime);
+      if(!root?.live||root.meta.handle!==value.rootHandle)throw Error("Original root removed");
+      const parentPath=dirname(retry.proof.path),node=root.byPath.get(parentPath);
+      if(parentPath!==root.authorization.path&&node?.kind!=="directory")throw Error("Original parent unavailable");
+      const lease=await creationHost.acquire({rootHandle:root.meta.handle,generation:root.meta.generation,...(node?{directoryHandle:node.handle}:{})});
+      if(lease.target.path!==parentPath||JSON.stringify(lease.target.chain)!==JSON.stringify(retry.proof.chain)){lease.release();throw Error("Original parent changed");}
+      return lease;
+    }
+  });
   return {
+    createFolder:(value)=>folders.request(value),
     createMarkdown: (value) => creation.request(value),
     duplicateMarkdown: (value) => duplication.request(value),
     removeStandalone,
@@ -987,6 +1082,9 @@ export function createWorkspaceService({
             nodes: [],
             byPath: new Map(),
             files: new Map(),
+            directories: new Map(),
+            registry:createDirectoryRegistry(authorization.path,delta=>{if(delta>0&&workspaceUsed()+reconciliation.bytes()+delta>cacheLimit)throw Error("Directory registry budget");cacheBytes+=delta;}),
+            scanVersion:1,
             bytes: 0,
             started: false,
             live: true,
@@ -1148,6 +1246,7 @@ export function createWorkspaceService({
     async dispose() {
       creation.dispose();
       duplication.dispose();
+      folders.dispose();
       releaseCreation?.();
       folderRemoval.dispose();
       releaseFolderRemoval?.();

@@ -80,6 +80,7 @@ export function CommandPalette({
       type === "selectFolder" ||
       type === "createMarkdown" ||
       type === "duplicateMarkdown" ||
+      type === "createFolder" ||
       type === "setRootHidden" ||
       type === "toggleReadingMode" ||
       type === "undoDocument" ||

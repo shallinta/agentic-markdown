@@ -1,5 +1,7 @@
+import { dirname, relative } from "node:path";
+
 import type { RootAuthorization } from "./authorization";
-import type { ScanBatch } from "./scan";
+import type { ScanBatch, CreatedDirectorySnapshot } from "./scan";
 
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -35,6 +37,7 @@ export interface ScanRequest {
   path?: string;
   showHidden?: boolean;
   budget?: number;
+  exceptions?: CreatedDirectorySnapshot;
 }
 export function validScanRequest(value: unknown): value is ScanRequest {
   if (
@@ -50,11 +53,12 @@ export function validScanRequest(value: unknown): value is ScanRequest {
       ? value.showHidden === undefined
         ? ["id", "op", "key", "root"]
         : ["id", "op", "key", "root", "showHidden"]
-      : value.op === "watchTick"
+      : value.op === "watchTick" || value.op === "next"
         ? ["id", "op", "key", "budget"]
         : value.op === "prioritize"
           ? ["id", "op", "key", "path"]
           : ["id", "op", "key"];
+  if(value.op === "start")keys.push("exceptions");
   if (
     Object.keys(value).length !== keys.length ||
     !Object.keys(value).every((key) => keys.includes(key))
@@ -70,26 +74,41 @@ export function validScanRequest(value: unknown): value is ScanRequest {
       Array.isArray(value.root.directories) &&
       value.root.directories.length > 0 &&
       value.root.directories.length <= 256 &&
-      value.root.directories.every(identity)
+      value.root.directories.every(identity) &&
+      (value.op !== "start" || validDirectorySnapshot(value.exceptions, value.root.path))
     );
   if (value.op === "prioritize") return path(value.path);
-  if (value.op === "watchTick")
+  if (value.op === "watchTick" || value.op === "next")
     return (
       Number.isSafeInteger(value.budget) &&
       Number(value.budget) >= 0 &&
       Number(value.budget) <= 4 * 1024 * 1024
     );
   return (
-    value.op === "next" ||
     value.op === "close" ||
     value.op === "watchClose" ||
     value.op === "watchDispose"
   );
 }
+export function validDirectorySnapshot(value: unknown, root: string): value is CreatedDirectorySnapshot {
+  if(!record(value)||Object.keys(value).length!==2||!Number.isSafeInteger(value.version)||Number(value.version)<1||!Array.isArray(value.directories)||value.directories.length>1024)return false;
+  const paths=new Set<string>();
+  let bytes=64;
+  return value.directories.every(proof=>{
+    if(!record(proof)||Object.keys(proof).length!==3||!identity({path:proof.path,fingerprint:proof.fingerprint})||!Array.isArray(proof.chain)||proof.chain.length>=128||!proof.chain.every(identity))return false;
+    const p=proof.path as string,r=relative(root,p);if(!r||r.startsWith("../")||r===".."||paths.has(p))return false;
+    let parent=root;
+    for(const item of proof.chain as unknown[]){if(!record(item)||typeof item.path!=="string"||dirname(item.path)!==parent)return false;parent=item.path;}
+    if(dirname(p)!==parent)return false;
+    bytes+=Buffer.byteLength(JSON.stringify(proof))+1;
+    if(bytes>512*1024)return false;
+    paths.add(p);return true;
+  });
+}
 export function validScanBatch(value: unknown): value is ScanBatch {
   return (
     record(value) &&
-    Object.keys(value).length === 6 &&
+    Object.keys(value).length === 7 &&
     typeof value.done === "boolean" &&
     typeof value.paused === "boolean" &&
     Number.isSafeInteger(value.examined) &&
@@ -102,8 +121,9 @@ export function validScanBatch(value: unknown): value is ScanBatch {
     Number(value.queueBytes) >= 0 &&
     Number(value.queueBytes) <= 2 * 1024 * 1024 &&
     Array.isArray(value.files) &&
-    value.files.length <= 128 &&
-    value.files.every(
+    Array.isArray(value.directories) &&
+    value.files.length + value.directories.length <= 128 &&
+    [...value.files as unknown[],...value.directories as unknown[]].every(
       (file) =>
         record(file) &&
         Object.keys(file).length === 3 &&

@@ -13,7 +13,7 @@ import {
   type DirectoryOperation,
   type DirectoryAcceptanceResult,
 } from "./directory-acceptance";
-import type { ScanFile } from "./scan";
+import type { ScanFile, ScanDirectory, CreatedDirectorySnapshot } from "./scan";
 import { validScanBatch } from "./scan-protocol";
 import type { createScanWorker } from "./worker";
 
@@ -25,6 +25,8 @@ export interface ReconciliationRoot {
   authorization: RootAuthorization;
   nodes: readonly WorkspaceNode[];
   files: ReadonlyMap<string, ScanFile>;
+  directories?: ReadonlyMap<string, ScanDirectory>;
+  exceptions?: CreatedDirectorySnapshot;
 }
 export interface ReconciliationSummary {
   token: string;
@@ -46,11 +48,12 @@ interface Proof {
   identity: string;
   handle?: string;
 }
-export type RootBinding = Omit<ReconciliationRoot, "nodes" | "files">;
+export type RootBinding = Omit<ReconciliationRoot, "nodes" | "files" | "directories">;
 export interface DirectoryPublication {
   nodes: WorkspaceNode[];
   byPath: Map<string, WorkspaceNode>;
   files: Map<string, ScanFile>;
+  directories: Map<string, ScanDirectory>;
   bytes: number;
   generation: number;
   examined: number;
@@ -58,6 +61,7 @@ export interface DirectoryPublication {
 interface Acceptance {
   proofs: Map<string, Proof>;
   files: Map<string, ScanFile>;
+  directories: Map<string, ScanDirectory>;
   examined: number;
   resolve: (result: DirectoryAcceptanceResult) => void;
 }
@@ -67,7 +71,9 @@ interface Job {
   key: string;
   baseline: Map<string, Proof>;
   candidate: Map<string, Proof>;
+  candidateDirectories: Map<string, ScanDirectory>;
   bytes: number;
+  queueBytes: number;
   started: boolean;
   close: boolean;
   result?: ReconciliationResult;
@@ -91,11 +97,12 @@ function addProofs(
   map: Map<string, Proof>,
   root: RootBinding,
   file: ScanFile,
-  reserve: (bytes: number) => void
+  reserve: (bytes: number) => void,
+  kind: "file" | "directory" = "file"
 ) {
   if (
     !visiblePath(root.authorization.path, file.path, root.showHidden) ||
-    ![".md", ".markdown"].includes(extname(file.path).toLowerCase()) ||
+    (kind === "file" && ![".md", ".markdown"].includes(extname(file.path).toLowerCase())) ||
     file.path === root.authorization.path
   )
     throw Error("invalid candidate path");
@@ -127,7 +134,7 @@ function addProofs(
     add(path, { kind: "directory", identity: JSON.stringify(chain) });
   }
   add(file.path, {
-    kind: "file",
+    kind,
     identity: JSON.stringify([...chain, [file.path, file.fingerprint]]),
   });
 }
@@ -140,6 +147,7 @@ export function createReconciliation({
   worker,
   wake,
   publish,
+  confirmDirectories,
 }: {
   getRoot: (handle: string) => ReconciliationRoot | undefined;
   usedBytes: () => number;
@@ -150,6 +158,7 @@ export function createReconciliation({
     binding: RootBinding,
     publication: DirectoryPublication
   ) => boolean | "busy";
+  confirmDirectories?: (binding:RootBinding,seen:Iterable<ScanDirectory>)=>CreatedDirectorySnapshot|undefined;
 }) {
   let job: Job | undefined;
   let disposed = false;
@@ -161,6 +170,7 @@ export function createReconciliation({
       root?.lifetime === value.root.lifetime &&
       root.generation === value.root.generation &&
       root.showHidden === value.root.showHidden &&
+      (root.exceptions?.version ?? 1) === (value.root.exceptions?.version ?? 1) &&
       usedBytes() + value.bytes + ledger.bytes() <= limit
     );
   };
@@ -173,11 +183,14 @@ export function createReconciliation({
       value.acceptance.resolve({ status: "rejected", reason });
       value.acceptance.proofs.clear();
       value.acceptance.files.clear();
+      value.acceptance.directories.clear();
       value.acceptance = undefined;
     }
     value.baseline.clear();
     value.candidate.clear();
+    value.candidateDirectories.clear();
     value.bytes = 0;
+    value.queueBytes = 0;
     value.close = true;
   };
   const reserve = (value: Job, bytes: number) => {
@@ -215,6 +228,7 @@ export function createReconciliation({
         job.acceptance = {
           proofs: new Map(),
           files: new Map(),
+          directories: new Map(),
           examined: 0,
           resolve: (result) => {
             ledger.recordResult(identity, result);
@@ -248,12 +262,15 @@ export function createReconciliation({
           generation: root.generation,
           showHidden: root.showHidden,
           authorization: root.authorization,
+          exceptions: root.exceptions ?? {version:1,directories:[]},
         },
         token: randomUUID(),
         key: `${randomUUID()}:1`,
         baseline: new Map(),
         candidate: new Map(),
+        candidateDirectories:new Map(),
         bytes: 0,
+        queueBytes: 0,
         started: false,
         close: false,
         promise: deferred.promise,
@@ -262,12 +279,13 @@ export function createReconciliation({
       try {
         reserve(
           value,
-          512 + Buffer.byteLength(JSON.stringify(root.authorization))
+          512 + Buffer.byteLength(JSON.stringify(root.authorization)) + 2 * Buffer.byteLength(JSON.stringify(value.root.exceptions))
         );
         for (const file of root.files.values())
           addProofs(value.baseline, root, file, (bytes) =>
             reserve(value, bytes)
           );
+        for(const directory of root.directories?.values() ?? [])addProofs(value.baseline,root,directory,bytes=>reserve(value,bytes),"directory");
         if (root.nodes.length !== value.baseline.size)
           throw Error("incomplete baseline");
         for (const node of root.nodes) {
@@ -338,10 +356,11 @@ export function createReconciliation({
             key: value.key,
             root: value.root.authorization,
             showHidden: value.root.showHidden,
+            exceptions: value.root.exceptions ?? {version:1,directories:[]},
           });
           return;
         }
-        const batch = await worker.call({ op: "next", key: value.key });
+        const batch = await worker.call({ op: "next", key: value.key, budget: Math.max(0,Math.min(2*1024*1024,limit-usedBytes()-value.bytes-ledger.bytes()+value.queueBytes)) });
         if (!binding(value) || value.close) {
           fail(value, "INVALIDATED");
           return;
@@ -350,6 +369,7 @@ export function createReconciliation({
           fail(value, "FAILED");
           return;
         }
+        reserve(value,batch.queueBytes-value.queueBytes);value.queueBytes=batch.queueBytes;
         const accepting = value.acceptance;
         for (const file of batch.files) {
           addProofs(
@@ -363,8 +383,22 @@ export function createReconciliation({
             accepting.files.set(file.path, structuredClone(file));
           }
         }
+        for(const directory of batch.directories){
+          if(!value.root.exceptions?.directories.some(proof=>JSON.stringify(proof)===JSON.stringify(directory)))throw Error("Unclaimed directory");
+          addProofs(accepting?.proofs ?? value.candidate,value.root,directory,bytes=>reserve(value,bytes),"directory");
+          if(accepting&&!accepting.directories.has(directory.path)){reserve(value,2*Buffer.byteLength(JSON.stringify(directory))+128);accepting.directories.set(directory.path,structuredClone(directory));}
+          if(!accepting&&!value.candidateDirectories.has(directory.path)){reserve(value,2*Buffer.byteLength(JSON.stringify(directory))+128);value.candidateDirectories.set(directory.path,structuredClone(directory));}
+        }
         if (accepting) accepting.examined += batch.examined;
         if (!batch.done) return;
+        await verifyRoot(value.root.authorization);
+        if(!binding(value)||value.close){fail(value,"INVALIDATED");return;}
+        if(confirmDirectories){
+          const confirmed=confirmDirectories(value.root,(accepting?.directories??value.candidateDirectories).values());
+          if(!confirmed){fail(value,"INVALIDATED");return;}
+          // Only this completed scan advances its own confirmed version.
+          value.root.exceptions=confirmed;
+        }
         if (accepting) {
           if (
             accepting.proofs.size !== value.candidate.size ||
@@ -383,6 +417,7 @@ export function createReconciliation({
             nodes: [],
             byPath: new Map(),
             files: new Map(),
+            directories: new Map(),
             bytes: 0,
             generation: value.root.generation + 1,
             examined: accepting.examined,
@@ -408,7 +443,7 @@ export function createReconciliation({
               displayPath: path,
             };
             const metadata =
-              proof.kind === "file" ? accepting.files.get(path) : undefined;
+              proof.kind === "file" ? accepting.files.get(path) : accepting.directories.get(path);
             if (proof.kind === "file" && !metadata) throw Error("missing file");
             const bytes =
               2 * Buffer.byteLength(JSON.stringify([node, metadata])) + 256;
@@ -416,7 +451,7 @@ export function createReconciliation({
             publication.bytes += bytes;
             publication.nodes.push(node);
             publication.byPath.set(path, node);
-            if (metadata) publication.files.set(node.handle, metadata);
+            if (metadata) (proof.kind === "file" ? publication.files : publication.directories).set(node.handle, metadata);
           }
           const receipt: DirectoryAcceptanceResult = {
             status: "committed",
@@ -425,6 +460,7 @@ export function createReconciliation({
           };
           await worker.call({ op: "close", key: value.key });
           value.started = false;
+          reserve(value,-value.queueBytes);value.queueBytes=0;
           if (
             !binding(value) ||
             value.close ||
@@ -486,6 +522,7 @@ export function createReconciliation({
         reserve(value, 2 * Buffer.byteLength(JSON.stringify(summary)) + 256);
         await worker.call({ op: "close", key: value.key });
         value.started = false;
+        reserve(value,-value.queueBytes);value.queueBytes=0;
         if (!binding(value) || value.close) {
           fail(value, "INVALIDATED");
           return;

@@ -1,5 +1,29 @@
 # AGENTS.md
 
+## F-057b alpha179 非离线有限片通过（2026-10-18）
+
+最终独立Spec/Standards均0必要有限交付阻断，主线批准受托Agent代验通过，非用户亲验。alpha179/hash3ajblxtn34q5g，包内Bun仓库1674/0/37616，源码1673/1仅原FINAL002；FINAL001003保持。真实中文根/子目录/newmd/dirtyundo/保存/隐藏冲突取消/命令主题/自动观察/根重加与重启已核，exec60411/39964正常CmdQ退出0、PID64525/64930消失、三SHA原样。精确选区/自然IME/真实OS/跨卷未实际验，manualaccept仅正式测试；父/专项/冻结/offline保持。Git待执行。
+
+## F-057b alpha179 构建获准（2026-10-18）
+
+主线已读native/disk/service/registry/scan/reconciliation/目标消费者与前端接线；独立Spec和后端Standards各93/0/663，前端独立及主线各45/0/372，0必要构建阻断。联合预算、必要祖先与可靠候选撤销三缺口已修并复核。主线全量1673/1/37617、226文件，唯一原long-whitespace18.806s仍FINAL002；非全绿，FINAL001003亦未关闭。type/full lint/docs/lock/diff通过，按既有延期授权批准alpha179 unsigned构建及真实WK，尚未验收不得Git；alpha178仍最新有限已验包，完整父/专项/冻结/offline保持。
+
+## F-057b 有限正式实施获准（2026-10-18）
+
+主线全文读唯一T1–T5、scan/reconciliation/creationHost和实际barrier，独立两轴0必要typed路线阻断；自身版本提交及已撤销登记禁止retry复活两缺口已收敛。批准文件夹排他发布、本会话有界空目录登记、全扫描同步贯通及前端无源owner/定位正式实现和实现后测试；不引入document grant。五组临时证据不冒生产；尚未代码验收/新版本/build，下一alpha179由主线后续管理。alpha178/5bf11d4仍最新有限已验已推；完整父/FINAL001002003/阅读子窗/冻结/专项/offline保持。
+
+## F-057b 五组原生探针有限通过（2026-10-18）
+
+新目录`/tmp/agentic-f057b-folder.TPsAUj`作者/主线/独立Spec及Standards均5/0、exit0、无timeout；主线日志run-1792312071020.json。已全文读三源，固定成功/冲突/前后替换与ENOTSUP注入满足冻结oracle；绝对no-follow打开仅固定父、不冒完整生产祖先验证，G4小槽非产品收据、G5非真实卷故障。批准编写同一唯一typed接入合同，尚不生产/版本/build。alpha178/5bf11d4最新已验已推及既定开放边界不变。
+
+## F-057b 五组目录原生探针获准（2026-10-18）
+
+主线全文读唯一F057b、官方SDK mkdirat与实际scan/reconciliation接点；两轴0必要有限探针路线阻断，root内128/授权祖先256深度修订已核。批准仅新临时目录五组固定原生探针，15秒每组/180秒整批首红停；私有目录持fd后排他发布、mkdir-open非恶意同UID全局CAS保证缺口明确保留。尚未批准生产/版本/build；alpha178/5bf11d4仍最新有限已验已推。barrier/会话登记/预算/三类扫描贯通待typed实现验证，完整父与既定最终问题/冻结/专项/offline保持。
+
+## F-058a Git 收据与下一文件夹片（2026-10-18）
+
+已提交推送 `5bf11d484e2961dea4339c09ad03a61b58e9b1c5`，主线命令级SSH443严格校验成功，HTTPS ls-remote与origin/main核同SHA；hook前后tree `88fc16f33e05b1acfbeeca91b67a24a6c1d6ed12`一致，核验时工作树clean。alpha178最新有限已验已推包。下一F057b按用户已确认的本会话新建空目录可见例外编写唯一最小方案，尚未批准实验/生产/新版本/build；重扫和目录同步必须贯通，不能只插临时树节点。完整父/FINAL001002003/阅读子窗/冻结/专项/offline保持。
+
 ## F-058a alpha178 有限片通过（2026-10-18）
 
 独立最终Spec33/184及前端Standards37/305均0必要有限验收阻断，主线批准clean磁盘版复制受托Agent非离线有限代验通过，非用户亲验。hash kuh9qnba7qij，包内Bun运行仓库1648/0/37412；源码1647/1及FINAL001002003保持不称修复。同目录重名/身份/BOMCRLF/选区历史、只读独立源明确跨目录目标、其他dirty/undo、隐藏命令/取消/浅深及正常CmdQ完成；session25183 exit0、60214/60215消失，五SHA原样两副本逐字节一致、readonly恢复644。Git待执行；F058b/完整父/F057b/阅读子窗/冻结/专项/offline仍开放。

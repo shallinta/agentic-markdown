@@ -267,7 +267,7 @@ async function fixture(duplicate = false, readonly = false) {
     | undefined;
   const controller = createMarkdownController({
     documents,
-    duplicate,
+    mode: duplicate ? "duplicate" : "markdown",
     targetCurrent: () => true,
     delay: 0,
     refresh: () =>
@@ -277,7 +277,7 @@ async function fixture(duplicate = false, readonly = false) {
     locate: () => {
       located++;
     },
-    request: async (r) => {
+    request: async (r: CreateMarkdownRequest) => {
       calls.push(r);
       const custom = intercept?.(r);
       if (custom) return custom;

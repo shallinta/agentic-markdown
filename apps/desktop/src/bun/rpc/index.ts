@@ -169,6 +169,10 @@ export function createMainWindowRPC({
           if (!workspace?.duplicateMarkdown) throw Error("Workspace unavailable");
           return workspace.duplicateMarkdown(request);
         },
+        createFolder: (request) => {
+          if (!workspace?.createFolder) throw Error("Workspace unavailable");
+          return workspace.createFolder(request);
+        },
         removeStandalone: (request) => {
           if (!workspace) throw Error("Workspace unavailable");
           return workspace.removeStandalone(request);

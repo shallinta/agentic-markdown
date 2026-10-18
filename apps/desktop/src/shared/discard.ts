@@ -3,6 +3,7 @@ export interface DiscardRequest {
   protocolVersion: 1;
   requestId: string;
   reason: DiscardReason;
+  mruBudgetMs?: number;
 }
 export interface DiscardResponse {
   protocolVersion: 1;
@@ -46,7 +47,8 @@ function record(value: unknown): value is Record<string, unknown> {
 export function isDiscardRequest(value: unknown): value is DiscardRequest {
   return (
     record(value) &&
-    Object.keys(value).length === 3 &&
+    Object.keys(value).every(key => ["protocolVersion", "requestId", "reason", "mruBudgetMs"].includes(key)) &&
+    (value.mruBudgetMs === undefined || (typeof value.mruBudgetMs === "number" && Number.isFinite(value.mruBudgetMs) && value.mruBudgetMs >= 0 && value.mruBudgetMs <= 2000)) &&
     value.protocolVersion === 1 &&
     typeof value.requestId === "string" &&
     uuid.test(value.requestId) &&

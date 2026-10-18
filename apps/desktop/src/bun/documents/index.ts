@@ -124,6 +124,9 @@ export interface TrustedDocumentService extends DocumentService {
     fingerprint: string;
     documentId?: string;
   }[];
+  captureMRU(this:void, handle: string, documentId: string): import("../../shared/document-mru").MRUEntry | undefined;
+  inspectMRU(entry: import("../../shared/document-mru").MRUEntry): (() => void) | undefined;
+  resolveMRUIndependent(this:void, entry: import("../../shared/document-mru").MRUEntry, check: () => void): Promise<{handle:string;current(this:void):void} | undefined>;
   setAssetScope(handle: string, scope: AssetScope | undefined): void;
   assetEpochs(): Record<string, string>;
   revokeScope(scope: DocumentScope): void;
@@ -212,11 +215,13 @@ export function createDocumentService({
   onTiming,
   imageReader,
   onStandaloneSelected,
+  mru,
   revealPath,
   openDefaultPath,
 }: {
   pickFile: (startingFolder?: string) => Promise<string | null>;
   onStandaloneSelected?: (metadata: Readonly<{ path: string; accessedAt: number }>) => void | Promise<void>;
+  mru?: { lookup(path: string, fingerprint: string): string | undefined; migrate(documentId: string, path: string, oldFingerprint: string, newFingerprint: string): void };
   revealPath?: (path: string) => void;
   openDefaultPath?: (path: string) => boolean;
   authorize?: typeof authorizeSingleFile;
@@ -502,9 +507,12 @@ export function createDocumentService({
       content[0] === 0xef && content[1] === 0xbb && content[2] === 0xbf;
     if (fidelity.bom !== byteBom) throw new DocumentFailure("INVALID_UTF8");
     onTiming?.("decodeAnalyzeMs", performance.now() - decodeStart);
+    const writeCapability = await capability(grant);
     const previous = identities.get(grant.identityKey);
+    const recovered = !previous ? mru?.lookup(grant.path, grant.fingerprint) : undefined;
+    const occupied = recovered && [...identities.entries()].some(([key, value]) => value.documentId === recovered && key !== grant.identityKey);
     const identity = {
-      documentId: previous?.documentId ?? randomUUID(),
+      documentId: previous?.documentId ?? (recovered && !occupied ? recovered : randomUUID()),
       hash,
       revision: previous
         ? previous.revision + Number(previous.hash !== hash)
@@ -520,7 +528,7 @@ export function createDocumentService({
       byteLength: length,
       text,
       fidelity,
-      writeCapability: await capability(grant),
+      writeCapability,
     };
   }
   function commit(
@@ -859,6 +867,31 @@ export function createDocumentService({
         fingerprint: grant.fingerprint,
         documentId: identities.get(grant.identityKey)?.documentId,
       })),
+    inspectMRU(entry) {
+      const generation=epoch;
+      const current=()=>{
+        if(disposed||disposing||saving||writeBarrier||createAdmissionOwner||folderMutationLease||epoch!==generation)throw Error("MRU_STALE");
+        const key=`${entry.path}:${entry.fingerprint}`;
+        for(const [identityKey,identity] of identities){
+          if((identity.documentId===entry.documentId&&identityKey!==key)||(identityKey===key&&identity.documentId!==entry.documentId))throw Error("MRU_IDENTITY");
+        }
+      };
+      try{current();return current;}catch{return undefined;}
+    },
+    captureMRU(handle, documentId) {
+      const grant=grants.get(handle);
+      if(disposed||disposing||!grant||identities.get(grant.identityKey)?.documentId!==documentId)return;
+      return {documentId,path:grant.path,fingerprint:grant.fingerprint,rank:0};
+    },
+    async resolveMRUIndependent(entry, check) {
+      if(disposed||disposing||saving||writeBarrier)return;
+      const grant=[...grants.values()].find(g=>g.explicitStandalone&&g.path===entry.path&&g.fingerprint===entry.fingerprint);
+      if(!grant)return;
+      const generation=epoch;
+      const live=()=>{check();if(disposed||disposing||saving||writeBarrier||epoch!==generation||grants.get(grant.handle)!==grant||grant.fingerprint!==entry.fingerprint)throw Error("MRU_STALE");};
+      live();const opened=await authorizeSingleFile(grant.path,live);
+      try{live();if(opened.fingerprint!==entry.fingerprint)return;await verifySingleFileAuthorization(opened,live);live();return {handle:grant.handle,current:live};}finally{await opened.file.close();}
+    },
     setAssetScope(handle, scope) {
       if (folderMutationLease) return;
       const grant = grants.get(handle);
@@ -1269,6 +1302,7 @@ export function createDocumentService({
         };
         identities.delete(oldKey);
         identities.set(newKey, nextIdentity);
+        try { mru?.migrate(identity.documentId, grant.path, grant.fingerprint, written.fingerprint); } catch { /* Optional metadata cannot change save durability. */ }
         commits.set(identity.documentId, { token: randomUUID(), fingerprint: written.fingerprint, revision: nextIdentity.revision, hash: written.hash });
         for (const owned of grants.values())
           if (owned.identityKey === oldKey) {

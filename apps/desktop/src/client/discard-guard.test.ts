@@ -7,6 +7,22 @@ const request = () => ({
   reason: "quit" as const,
 });
 
+test("metadata flush failure leaves clean quit allowed without adding a discard prompt", async () => {
+  const guard = createDiscardGuard();
+  const events: string[] = [];
+  guard.register({
+    beginDiscard: () => { events.push("freeze"); return true; },
+    endDiscard: () => undefined,
+    hasDirty: () => false,
+    waitForActivationRecords: budget => { events.push(`metadata:${budget}`); return Promise.reject(Error("metadata unavailable")); },
+    waitForSaves: () => { events.push("saves"); return Promise.resolve(); },
+  });
+  const result = await guard.request({ ...request(), mruBudgetMs: 10 });
+  expect(result.allow).toBe(true);
+  expect(events).toEqual(["freeze", "metadata:10", "saves"]);
+  expect(guard.getSnapshot()).toBeNull();
+});
+
 test("late settlement failure after release cannot publish into a newer discard attempt", async () => {
   const guard = createDiscardGuard();
   let reject!: (error: Error) => void;

@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## F-062a alpha184 有限片通过（2026-10-18）
+
+独立最终Spec及交叉Standards前后端均0必要有限非离线验收阻断，主线批准受托Agent代验通过，非用户亲验。hash16x4mfcqck1do，源码1735/0/38019、包内Bun运行仓库1735/0/38018；真实MRU排序/关标签保留/源码dirty选区undo/只读/保存证明迁移与重启重授权原ID/移除过滤/浅深及正常CmdQ两轮通过。session43750/17545 exit0、PID76893/77345消失，三SHA原样、甲仅计划内保存、readonly644。未测及操作观察见唯一，不关闭完整父/FINAL001002003/冻结/专项/offline。Git待执行。
+
+## F-062a alpha184 构建获准（2026-10-18）
+
+主线已读真实身份/保存/激活/退出/预算接线；独立Spec全片48/275及预算补17/87、交叉Standards后端10/84与前端48/258均0必要构建阻断。最终源码1735/0/38019、233文件36.22秒，type/full lint/docs/lock/diff通过；此前1733/1唯一FINAL002仍保留，不称已修复。批准alpha184 unsigned构建与真实WK有限验证，尚未验收不得Git；alpha183/d8f7ef4仍最新有限已验已推，完整父/冻结/专项/最终问题/offline保持。
+
+## F-062a 持久MRU有限实施获准（2026-10-18）
+
+主线全文读唯一F062a及实际snapshot/save/activate/授权/退出接点，独立Spec与Standards均0必要路线阻断，批准候选A有界20条持久MRU、Quick空态/同分及实现后测试。保存提交同步迁移证明、可信授权短复验、全活跃身份冲突拒绝和查询联合预算须落实；hardlink不同路径不按fingerprint全局去重。退出元数据共享2秒软期限，不新增无dirty弹窗，不等已持writeBarrier，不改变正文保存语义。尚未实现/验收，下一alpha184/build/真实WK/Git由主线后续管理；alpha183/d8f7ef4仍最新有限已验已推，完整父/冻结/专项/最终问题/offline保持。
+
+## F-063a Git收据与最近文档下一片（2026-10-18）
+
+已提交推送`d8f7ef49a7c8556e9bf6beaf6ca7663ac0ede528`，主线HTTPS ls-remote与origin/main同SHA，hook前后tree `45f48d579d8687a18dab331f1b2396e822c827bd`一致。alpha183最新有限已验包。下一F062a仅起持久MRU/Quick Open空态最小方案，正核真实激活、跨重启身份与保存证明；欢迎页path历史不冒documentId MRU。尚未批准生产/实验/版本/build，完整父/冻结/专项/最终问题/offline保持。
+
 ## F-063a alpha183 有限片通过（2026-10-18）
 
 独立最终Spec/Standards均0必要有限非离线验收阻断，主线批准受托Agent组合证据范围通过，非用户亲验：alpha183选择稳定/焦点/精确选区及直接undo-redo补验，alpha182其他路径沿用详见唯一记录。hash2zyx0tmpacvox，源码1715/1/37902唯一原FINAL002，包内Bun运行仓库1716/0/37902；不称源码全绿或最终问题修复。正常CmdQ session61866 exit0/Bun73591消失、50SHA原样、readonly644。Git待执行；完整父/MRU/区域消费者、未测自然IME/极端树、冻结/专项/最终问题/offline保持。

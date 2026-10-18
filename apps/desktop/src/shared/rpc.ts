@@ -23,6 +23,9 @@ import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
+      beginMRUSession: { params: import("./document-mru").MRUEnvelope; response: import("./document-mru").MRUSessionResponse };
+      recordDocumentActivation: { params: import("./document-mru").MRURecordRequest; response: import("./document-mru").MRUAck };
+      resolveDocumentMRU: { params: import("./document-mru").MRUResolveRequest; response: import("./document-mru").MRUResolveResponse };
       removeStandalone: { params: import("./standalone-removal").RemovalRequest; response: import("./standalone-removal").RemovalResponse };
       removeFolderRoot: { params: import("./folder-removal").FolderRemovalRequest; response: import("./folder-removal").FolderRemovalResponse };
       revealDocument: { params: DocumentHandleRequest; response: DocumentResponse };

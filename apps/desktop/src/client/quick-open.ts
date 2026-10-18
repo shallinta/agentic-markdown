@@ -1,3 +1,4 @@
+import type { createDocumentMRU } from "./document-mru";
 import type { DocumentEntry, createDocumentController } from "./documents";
 import { compareScore, matchField, normalizeQuery } from "./quick-open-match";
 import type { createFolderWorkspace, FolderState } from "./workspace";
@@ -10,7 +11,7 @@ export interface QuickResult {
 interface QuickState { visible: boolean; scope: number; query: string; results: QuickResult[]; active: number; searching: boolean; message: string }
 type Budget = NonNullable<ReturnType<ReturnType<typeof createFolderWorkspace>["acquireQueryBudget"]>>;
 interface Job { token: number; roots?: FolderState; entries?: readonly DocumentEntry[]; seen: Set<string>; results: QuickResult[]; query: string[]; root: number; node: number; entry: number; bytes: number; lease: Budget; timer?: ReturnType<typeof setTimeout> }
-export function createQuickOpen(folders: ReturnType<typeof createFolderWorkspace>, documents: ReturnType<typeof createDocumentController>, order?: ReturnType<typeof createWorkspaceRootOrder>) {
+export function createQuickOpen(folders: ReturnType<typeof createFolderWorkspace>, documents: ReturnType<typeof createDocumentController>, order?: ReturnType<typeof createWorkspaceRootOrder>, mru?: ReturnType<typeof createDocumentMRU>) {
   let state: QuickState = { visible: false, scope: 0, query: "", results: [], active: 0, searching: false, message: "输入文件名或路径" };
   let epoch = 0, intent = 0, disposed = false, job: Job | undefined;
   let focusTicket: { intent: number; scope: number; closed: boolean; documentId?: string } | undefined;
@@ -29,15 +30,19 @@ export function createQuickOpen(folders: ReturnType<typeof createFolderWorkspace
     if (job) { clearTimeout(job.timer); job.roots = undefined; job.entries = undefined; job.results = []; job.query = []; job.seen.clear(); job.lease.release(); job = undefined; }
     publish({results:[],active:0,searching:false});
   };
-  const compare = (a: QuickResult,b: QuickResult) => compareScore(a.score,b.score) || a.order-b.order || (a.path<b.path?-1:a.path>b.path?1:0) || (a.key<b.key?-1:a.key>b.key?1:0);
+  const rank = (item: Omit<QuickResult, "score">) => mru?.getSnapshot().items.find(record => "root" in item.target ? record.kind === "root" && record.root === item.target.root && record.generation === item.target.generation && record.entry === item.target.entry : record.kind === "standalone" && record.handle === item.target.document.handle && record.documentId === item.target.document.documentId)?.rank ?? -1;
+  const compare = (a: QuickResult,b: QuickResult) => compareScore(a.score,b.score) || rank(b)-rank(a) || a.order-b.order || (a.path<b.path?-1:a.path>b.path?1:0) || (a.key<b.key?-1:a.key>b.key?1:0);
   function add(j: Job, item: Omit<QuickResult,"score">) {
+    // Empty queries have at most 20 resolved targets: do not allocate a seen
+    // entry for every unrelated file while walking the existing paged metadata.
+    if (!j.query.length && rank(item) < 0) return;
     const independent="document" in item.target;
     if("document" in item.target&&j.roots?.coveredHandles.includes(item.target.document.handle)&&j.seen.has(item.path))return;
     const key=independent?`document:${item.key}`:item.path;
     if(j.seen.has(key)) return;
     j.bytes += 96 + key.length*2; j.seen.add(key);
     if(!j.lease.reserve(j.bytes + 262144)) throw Error("budget");
-    const name=matchField(j.query,item.name,0),path=matchField(j.query,item.path,1);
+    const name=j.query.length?matchField(j.query,item.name,0):[0,0,0,0,0],path=j.query.length?matchField(j.query,item.path,1):null;
     const score=name&&path?(compareScore(name,path)<=0?name:path):name??path;
     if(!score)return;
     j.bytes+=256;
@@ -58,7 +63,7 @@ export function createQuickOpen(folders: ReturnType<typeof createFolderWorkspace
       while(remaining-- >0){
         const root=j.roots.roots[j.root];
         if(root){const node=j.roots.nodes[root.handle]?.[j.node++];if(!node){j.root++;j.node=0;continue;}if(node.kind==="file")add(j,{key:`${root.handle}:${node.handle}`,name:node.name,path:node.displayPath,rootName:root.name,order:j.root,target:{root:root.handle,generation:root.generation,entry:node.handle}});}
-        else {const entry=j.entries[j.entry++];if(!entry){publish({results:j.results,searching:false,message:j.roots.roots.some(r=>r.status!=="complete")?"仅显示当前已发现的文件；目录尚未完整扫描。":j.results.length?"":"没有匹配的文件"});return;}if(entry.explicitStandalone!==false)add(j,{key:entry.handle,name:entry.fileName,path:entry.displayPath??entry.fileName,rootName:"独立文件",order:j.roots.roots.length,target:{document:entry}});}
+        else {const entry=j.entries[j.entry++];if(!entry){publish({results:j.results,searching:false,message:mru?.getSnapshot().message || (j.roots.roots.some(r=>r.status!=="complete")?"仅显示当前已发现的文件；目录尚未完整扫描。":j.results.length?"":j.query.length?"没有匹配的文件":"暂无当前窗口可用的最近文档")});return;}if(entry.explicitStandalone!==false)add(j,{key:entry.handle,name:entry.fileName,path:entry.displayPath??entry.fileName,rootName:"独立文件",order:j.roots.roots.length,target:{document:entry}});}
       }
       j.timer=setTimeout(()=>step(j),0);
     }catch{clear();publish({message:"查询预算不足，请缩小工作区后重试。"});}
@@ -67,7 +72,7 @@ export function createQuickOpen(folders: ReturnType<typeof createFolderWorkspace
     clear();if(disposed||!state.visible)return;
     const normalized=normalizeQuery(state.query);
     if(normalized===null){publish({message:"查询过长（最多 4096 个 UTF-16 单位），未执行查询。"});return;}
-    if(!normalized){publish({message:"输入文件名或路径"});return;}
+    if(!normalized && (!mru?.getSnapshot().items.length)){publish({message:mru ? mru.getSnapshot().message || "暂无当前窗口可用的最近文档" : "输入文件名或路径"});return;}
     const lease=folders.acquireQueryBudget(()=>{clear();publish({message:"文件集合更新中，请稍候。"});});
     if(!lease){publish({message:"文件集合暂不可确认，请刷新后重试。"});return;}
     const bytes=normalized.length*64+1024;
@@ -87,11 +92,12 @@ export function createQuickOpen(folders: ReturnType<typeof createFolderWorkspace
   const changedDocuments=()=>{if(focusTicket?.documentId&&documents.getSnapshot().snapshot?.documentId!==focusTicket.documentId)focusTicket=undefined;const next=documents.getSnapshot().entries;if(next!==entries){entries=next;search();}};
   let unsubscribeDocuments: (()=>void)|undefined=documents.subscribe(changedDocuments);
   let unsubscribeOrder=order?.subscribe(search);
+  let unsubscribeMRU=mru?.subscribe(search);
   return {
     subscribe(listener:()=>void){listeners.add(listener);return()=>{listeners.delete(listener);};},getSnapshot:()=>state,
     canOpen:()=>!disposed&&documents.canSelectFolder(),
-    attach(){disposed=false;unsubscribeFocus??=documents.subscribeQuickFocus(tryFocus);unsubscribeFolders??=folders.subscribe(search);unsubscribeAvailability??=folders.subscribeQueryAvailability(availabilityChanged);unsubscribeDocuments??=documents.subscribe(changedDocuments);unsubscribeOrder??=order?.subscribe(search);},
-    open(){if(disposed||!documents.canSelectFolder())return;intent++;focusTicket=undefined;publish({visible:true,scope:state.scope+1,query:""});search();},
+    attach(){disposed=false;unsubscribeFocus??=documents.subscribeQuickFocus(tryFocus);unsubscribeFolders??=folders.subscribe(search);unsubscribeAvailability??=folders.subscribeQueryAvailability(availabilityChanged);unsubscribeDocuments??=documents.subscribe(changedDocuments);unsubscribeOrder??=order?.subscribe(search);unsubscribeMRU??=mru?.subscribe(search);},
+    open(){if(disposed||!documents.canSelectFolder())return;intent++;focusTicket=undefined;publish({visible:true,scope:state.scope+1,query:""});mru?.refresh();search();},
     close(){intent++;focusTicket=undefined;clear();publish({visible:false});},
     scopeClosed(scope:number){if(focusTicket?.scope===scope){focusTicket.closed=true;tryFocus();}},
     setQuery(query:string){publish({query});search();},
@@ -114,6 +120,6 @@ export function createQuickOpen(folders: ReturnType<typeof createFolderWorkspace
         ticket.documentId=snapshot.documentId;tryFocus();
       }catch(error){if(focusTicket===ticket)focusTicket=undefined;throw error;}
     },
-    dispose(){disposed=true;intent++;focusTicket=undefined;unsubscribeFocus?.();unsubscribeFocus=undefined;clear();unsubscribeFolders?.();unsubscribeAvailability?.();unsubscribeDocuments?.();unsubscribeOrder?.();unsubscribeFolders=undefined;unsubscribeAvailability=undefined;unsubscribeDocuments=undefined;unsubscribeOrder=undefined;listeners.clear();},
+    dispose(){disposed=true;intent++;focusTicket=undefined;unsubscribeFocus?.();unsubscribeFocus=undefined;clear();unsubscribeFolders?.();unsubscribeAvailability?.();unsubscribeDocuments?.();unsubscribeOrder?.();unsubscribeMRU?.();unsubscribeFolders=undefined;unsubscribeAvailability=undefined;unsubscribeDocuments=undefined;unsubscribeOrder=undefined;unsubscribeMRU=undefined;listeners.clear();},
   };
 }

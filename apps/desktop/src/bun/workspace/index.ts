@@ -77,6 +77,7 @@ interface Owner extends DocumentScope {
   root: Root;
 }
 export interface TrustedWorkspaceService extends WorkspaceService {
+  resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   duplicateMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   createFolder(value: unknown): Promise<CreateFolderResponse>;
@@ -941,6 +942,31 @@ export function createWorkspaceService({
     }
   });
   return {
+    async resolveMRU(entries, check) {
+      const items:import("../../shared/document-mru").MRUResolved[]=[];
+      const validations:(()=>void)[]=[];
+      let incomplete=false;
+      for(const entry of entries.slice(0,20)) {
+        check();
+        const identityCurrent=documents.inspectMRU(entry);
+        if(!identityCurrent){incomplete=true;continue;}
+        let found=false;
+        for(const root of roots) {
+          const node=root.byPath.get(entry.path),file=node&&root.files.get(node.handle);
+          if(!node||file?.fingerprint!==entry.fingerprint)continue;
+          const generation=root.meta.generation;
+          const current=()=>{check();identityCurrent();if(disposed||!live(root,generation)||root.files.get(node.handle)!==file||root.byPath.get(entry.path)!==node)throw Error("MRU_STALE");};
+          try {
+            current();const opened=await authorizeEntry(root.authorization,file.path,file.fingerprint,file.chain,root.meta.showHidden,current);
+            try{current();items.push({documentId:entry.documentId,rank:entry.rank,kind:"root",root:root.meta.handle,generation,entry:node.handle});validations.push(current);found=true;}finally{await opened.file.close();}
+          }catch{incomplete=true;check();}
+          if(found)break;
+        }
+        if(!found){try{const result=await documents.resolveMRUIndependent(entry,()=>{check();identityCurrent();});if(result){items.push({documentId:entry.documentId,rank:entry.rank,kind:"standalone",handle:result.handle});validations.push(result.current);}}catch{incomplete=true;check();}}
+        await new Promise<void>(resolve=>setTimeout(resolve,0));
+      }
+      const current=()=>{check();for(const validate of validations)validate();};current();return {items,incomplete:incomplete||roots.some(root=>root.meta.status!=="complete"),current};
+    },
     createFolder:(value)=>folders.request(value),
     createMarkdown: (value) => creation.request(value),
     duplicateMarkdown: (value) => duplication.request(value),

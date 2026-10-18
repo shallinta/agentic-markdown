@@ -1,5 +1,9 @@
 # F-063a：当前主区非空查询 Quick Open
 
+## Git收据（2026-10-18）
+
+已提交推送 `d8f7ef49a7c8556e9bf6beaf6ca7663ac0ede528`；HTTPS ls-remote 与 origin/main 同 SHA，hook 前后 tree `45f48d579d8687a18dab331f1b2396e822c827bd` 一致。下方 Git 待执行是验收时历史。本收据随后续文档提交。
+
 ## alpha183 非离线有限片通过（2026-10-18）
 
 主线报告 alpha183/hash `2zyx0tmpacvox` 实际 WK 补验：准确 setValue 授权两根成功、无 toast；新开笔记44切源码并修改/选中，Quick Escape 保原选区；Quick 新开只读聚焦编辑器，再回既有笔记44仍为源码/dirty/精确选区，直接 CmdZ 恢复 clean 原文。同当前笔记44再确认后直接 CmdShiftZ 恢复 dirty，再 CmdZ clean；既有只读目标亦实际聚焦 readonly editor。重复两项选乙跨多个轮询不复位，Enter 正确新开并聚焦编辑模式。

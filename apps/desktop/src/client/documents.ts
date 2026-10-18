@@ -342,6 +342,13 @@ export function createDocumentController(
   let canLeaveEditor = () => true;
   let quickFocusTarget: { documentId: string; ready(): boolean; focus(): void } | undefined;
   const quickFocusListeners = new Set<() => void>();
+  const activationListeners = new Set<(target: { handle: string; documentId: string }) => void>();
+  const recordActivation = (target: { handle: string; documentId: string }) => {
+    for (const listener of activationListeners) {
+      try { listener({ handle: target.handle, documentId: target.documentId }); }
+      catch { console.warn("document-mru-activation-unavailable"); }
+    }
+  };
   // Fault ownership outlives EditorView (reading has no view). Only faults enter
   // this pending set; ordinary edits neither scan tabs nor schedule recovery.
   const faultOwners = new Map<
@@ -523,7 +530,8 @@ export function createDocumentController(
     select: boolean,
     entry?: DocumentEntry,
     open?: (request: DocumentRequest) => Promise<unknown>,
-    createdIntent?: () => boolean
+    createdIntent?: () => boolean,
+    purpose: "user" | "background" = "background"
   ) {
     const previous = state.snapshot;
     const target = entry ?? previous;
@@ -721,6 +729,8 @@ export function createDocumentController(
         elapsedMs: performance.now() - start,
         frozen: state.frozen,
       });
+      if (purpose === "user" && current === generation && state.snapshot?.handle === active.handle)
+        recordActivation(active);
       if (previousEntry && previousEntry.handle !== snapshot.handle)
         void release(previousEntry.handle);
     } catch {
@@ -789,6 +799,7 @@ export function createDocumentController(
       stale: staleDocuments.has(documentId),
       elapsedMs: null,
     });
+    if (state.snapshot === snapshot) recordActivation(snapshot);
   }
   function closeTab(documentId: string, removeHandle?: string) {
     const index = state.tabs.findIndex((tab) => tab.documentId === documentId);
@@ -1337,8 +1348,8 @@ export function createDocumentController(
     selectWith: (open?: (request: DocumentRequest) => Promise<unknown>) => {
       if (!state.frozen && canLeaveEditor()) {
         if (saving.size || saveDrainRequired)
-          return protect([], () => load(true, undefined, open));
-        return load(true, undefined, open);
+          return protect([], () => load(true, undefined, open, undefined, "user"));
+        return load(true, undefined, open, undefined, "user");
       }
     },
     canSelectFolder: () =>
@@ -1348,7 +1359,7 @@ export function createDocumentController(
       let ready = false;
       await protect([], () => { ready = true; });
       if (!ready || metadataDisposed || !current() || !controller.canSelectFolder()) return false;
-      await load(true, undefined, params => Promise.resolve({ ...params, ok: true, snapshot }), current);
+      await load(true, undefined, params => Promise.resolve({ ...params, ok: true, snapshot }), current, "user");
       return state.tabs.some(tab => tab.handle === snapshot.handle && tab.documentId === snapshot.documentId);
     },
     runWorkspaceAction: (action: () => void | Promise<void>) => {
@@ -1372,7 +1383,7 @@ export function createDocumentController(
         return;
       const open = (params: DocumentRequest) =>
         transport.openWorkspaceDocument!({ ...params, root, entry });
-      return protect([], () => current() ? load(true, undefined, open) : undefined);
+      return protect([], () => current() ? load(true, undefined, open, undefined, "user") : undefined);
     },
     reload: () =>
       protect(state.snapshot ? [state.snapshot.documentId] : [], () =>
@@ -1384,9 +1395,13 @@ export function createDocumentController(
       if (state.tabs.some((tab) => tab.documentId === entry.documentId))
         activateTab(entry.documentId);
       else if (state.entries.some((value) => value.handle === entry.handle))
-        await protect([], () => current() ? load(false, entry) : undefined);
+        await protect([], () => current() ? load(false, entry, undefined, undefined, "user") : undefined);
     },
     activateTab,
+    subscribeActivation(listener: (target: { handle: string; documentId: string }) => void) {
+      activationListeners.add(listener);
+      return () => { activationListeners.delete(listener); };
+    },
     registerQuickFocusTarget(target: NonNullable<typeof quickFocusTarget>) {
       quickFocusTarget = target;
       for (const listener of quickFocusListeners) listener();
@@ -1453,6 +1468,7 @@ export function createDocumentController(
       metadataDisposed = true;
       quickFocusTarget = undefined;
       quickFocusListeners.clear();
+      activationListeners.clear();
       for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();
       metadataEpoch++;

@@ -11,6 +11,7 @@ interface Participant {
   endDiscard(): void;
   hasDirty(): boolean;
   waitForSaves?(): Promise<void>;
+  waitForActivationRecords?(budgetMs: number): Promise<void>;
   reportDiscardFailure?(): void;
 }
 export function createDiscardGuard() {
@@ -109,6 +110,10 @@ export function createDiscardGuard() {
       active = current;
       current.promise = (async () => {
         try {
+          if (target.waitForActivationRecords) {
+            try { await target.waitForActivationRecords(request.mruBudgetMs ?? 0); }
+            catch { console.warn("document-mru-exit-unconfirmed"); }
+          }
           if (target.waitForSaves) await target.waitForSaves();
           if (current.released || participant !== target) return denied;
           const approved =

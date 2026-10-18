@@ -14,6 +14,7 @@ import {
   canonicalDiscardParticipant,
   createDocumentCanonical,
 } from "@/client/document-canonical";
+import { createDocumentMRU } from "@/client/document-mru";
 import {
   documentCapabilitySuffix,
   documentStatusLabel,
@@ -121,7 +122,13 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
-  const [quickOpen] = useState(() => createQuickOpen(folders, controller, rootOrder));
+  const [mru] = useState(() => createDocumentMRU({
+    begin: request => electrobun.rpc ? electrobun.rpc.request.beginMRUSession(request, { maxRequestTime: 4000 }) : Promise.reject(Error("RPC unavailable")),
+    record: request => electrobun.rpc ? electrobun.rpc.request.recordDocumentActivation(request, { maxRequestTime: 4000 }) : Promise.reject(Error("RPC unavailable")),
+    resolve: request => electrobun.rpc ? electrobun.rpc.request.resolveDocumentMRU(request, { maxRequestTime: 4000 }) : Promise.reject(Error("RPC unavailable")),
+  }, controller, folders, message => toast.warning(message, { id: "document-mru-warning" })));
+  useEffect(() => { mru.attach(); return () => mru.dispose(); }, [mru]);
+  const [quickOpen] = useState(() => createQuickOpen(folders, controller, rootOrder, mru));
   useEffect(() => { quickOpen.attach(); return () => quickOpen.dispose(); }, [quickOpen]);
   const notifyQuick = useRegisterCommands({ quickOpen: () => quickOpen.open() }, true, { quickOpen: () => quickOpen.canOpen() });
   useLayoutEffect(() => { const off = controller.subscribe(notifyQuick); notifyQuick(); return off; }, [controller, notifyQuick]);
@@ -374,10 +381,11 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
           controller,
           canonical,
           beforeDiscard,
-          controller.hasDiscardable
+          controller.hasDiscardable,
+          budgetMs => mru.flush(budgetMs)
         )
       ),
-    [controller, canonical, beforeDiscard]
+    [controller, canonical, beforeDiscard, mru]
   );
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) =>

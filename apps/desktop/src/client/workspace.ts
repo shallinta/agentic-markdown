@@ -164,6 +164,7 @@ export function createFolderWorkspace(
   let rescanNotice: string | null = null;
   let confirmedCommit = false;
   let metadataOwners = 0;
+  let mruBytes = 0;
   let probing = false;
   let queryRevision = 0;
   let queryLease: { cancel(): void; bytes: number } | undefined;
@@ -217,7 +218,7 @@ export function createFolderWorkspace(
         metadataOwners++;
         if (probing) queryRevision++; else invalidateMetadata();
         try {
-          if (probing && queryBaseCost + (queryLease?.bytes ?? 0) + 1024 > WORKSPACE_CACHE_BYTES) throw Error("workspace-probe-budget");
+          if (probing && mruBytes + queryBaseCost + (queryLease?.bytes ?? 0) + 1024 > WORKSPACE_CACHE_BYTES) throw Error("workspace-probe-budget");
           await action();
         } catch (error) {
           if (!disposed && expectedEpoch === epoch) publish({ ...state, error: error instanceof WorkspaceError ? error.message : "目录更新未完成，保留上次可见结果；请重试。" });
@@ -235,7 +236,7 @@ export function createFolderWorkspace(
   async function refreshSnapshot() {
     const captured = await request({ op: "state" });
     if (!captured) return;
-    if (probing && queryBaseCost + (queryLease?.bytes ?? 0) + 1024 + queryHeaderCost + 3 * metadataBytes(captured) > WORKSPACE_CACHE_BYTES) throw Error("workspace-probe-response-budget");
+    if (probing && mruBytes + queryBaseCost + (queryLease?.bytes ?? 0) + 1024 + queryHeaderCost + 3 * metadataBytes(captured) > WORKSPACE_CACHE_BYTES) throw Error("workspace-probe-response-budget");
     if (
       JSON.stringify([
         captured.roots,
@@ -268,7 +269,7 @@ export function createFolderWorkspace(
     };
     const nodes: FolderState["nodes"] = {};
     const known = new Set(captured.roots.map((root) => root.handle));
-    let bytes = metadataBytes(state) + metadataBytes(captured);
+    let bytes = mruBytes + metadataBytes(state) + metadataBytes(captured);
     const charge = (value: unknown) => {
       bytes += metadataBytes(value);
       if (bytes > WORKSPACE_CACHE_BYTES)
@@ -446,6 +447,13 @@ export function createFolderWorkspace(
       );
   }
   return {
+    setMRUCost(bytes: number) {
+      if (!Number.isSafeInteger(bytes) || bytes < 0 || (bytes > 0 && (disposed || metadataOwners || removalPaused))) return false;
+      if (bytes > 0 && queryBaseCost + mruBytes + (queryLease?.bytes ?? 0) + bytes > WORKSPACE_CACHE_BYTES) return false;
+      invalidateQuery();
+      mruBytes = bytes;
+      return true;
+    },
     queryVersion: () => queryRevision,
     subscribeQueryAvailability(listener: () => void) {
       queryListeners.add(listener);
@@ -455,7 +463,7 @@ export function createFolderWorkspace(
     acquireQueryBudget(cancel: () => void) {
       if (disposed || metadataOwners || removalPaused || state.busy || state.error) return null;
       invalidateQuery();
-      const base = queryBaseCost;
+      const base = queryBaseCost + mruBytes;
       const lease = { cancel, bytes: 0 }; queryLease = lease;
       return {
         current: () => queryLease === lease && !disposed && !removalPaused,
@@ -483,6 +491,10 @@ export function createFolderWorkspace(
         const old = state.roots.find(item => item.handle === root.handle);
         return !old || root.handle === result.root || root.generation < old.generation || (root.generation === old.generation && (root.entries < old.entries || old.showHidden !== root.showHidden));
       })) throw Error("folder-removal-roots");
+      // Existing node arrays are shared, not copied. Charge the incoming
+      // publication and the new shallow container while old metadata/MRU live.
+      const preparedCost = 3 * metadataBytes(result) + 1024 + Object.keys(state.nodes).reduce((bytes, key) => bytes + 64 + key.length * 2, 0);
+      if (queryBaseCost + mruBytes + preparedCost > WORKSPACE_CACHE_BYTES) throw Error("folder-removal-budget");
       const nodes = { ...state.nodes };
       delete nodes[result.root];
       for (const root of result.roots) {

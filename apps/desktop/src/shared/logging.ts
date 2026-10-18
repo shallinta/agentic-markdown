@@ -1,4 +1,5 @@
 const EVENTS = [
+  "mru.unavailable",
   "app.started",
   "app.stopped",
   "app.start_failed",

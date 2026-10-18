@@ -47,13 +47,15 @@ export function canonicalDiscardParticipant(
   >,
   canonical: Pick<ReturnType<typeof createCurrentCanonical>, "cancel">,
   beforeDiscard?: () => Promise<void>,
-  hasDiscardable?: () => boolean
+  hasDiscardable?: () => boolean,
+  waitForActivationRecords?: (budgetMs: number) => Promise<void>
 ) {
   return {
     beginDiscard: controller.beginWindowDiscard,
     endDiscard: controller.endDiscard,
     hasDirty: hasDiscardable ?? controller.hasDirty,
     reportDiscardFailure: controller.reportDiscardFailure,
+    waitForActivationRecords,
     waitForSaves: () => {
       canonical.cancel();
       const saved = controller.waitForSaves();

@@ -7,7 +7,10 @@ import Electrobun, {
 
 import type { Command } from "../../shared/commands";
 import { isReloadCommitResponse } from "../../shared/discard";
+import { MRU_EXIT_MS } from "../../shared/document-mru";
 import { executeCommandInBun } from "../commands";
+import { createDocumentMRU } from "../document-mru";
+import { createMRUService } from "../document-mru-service";
 import { createDocumentService } from "../documents";
 import { createLocaleController } from "../i18n/controller";
 import { createLocaleStateStore } from "../i18n/state";
@@ -37,7 +40,11 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const recent = createRecentFiles(getSettingsDir(), (reason) =>
     rpc?.send.recentFilesFailed({ reason })
   );
+  const mru = createDocumentMRU(getSettingsDir(), () => logEvent("mru.unavailable"));
+  await mru.initialize();
+  let mruDeadline = 0;
   const documents = createDocumentService({
+    mru,
     revealPath: (path) => Utils.showItemInFolder(path),
     openDefaultPath: (path) => Utils.openPath(path),
     onExternalChanged: (event) => rpc?.send.documentExternalChanged(event),
@@ -65,7 +72,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     getRpc().send.updateStatusChanged(message)
   );
   const guard = createDiscardCoordinator({
-    prepare: (request) => getRpc().request.prepareDiscard(request),
+    prepare: (request) => {
+      mruDeadline = performance.now() + MRU_EXIT_MS;
+      return getRpc().request.prepareDiscard({...request,mruBudgetMs:Math.max(0,mruDeadline-performance.now())});
+    },
     release: (requestId) => getRpc().send.finishDiscard({ requestId }),
   });
   const lifecycle = createLifecycleGuard({
@@ -73,6 +83,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       documents.withWriteBarrier(() =>
         guard(reason, async (requestId) => {
           await recent.drain();
+          await mru.drainUntil(mruDeadline);
           return execute(requestId);
         })
       ),
@@ -83,11 +94,13 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     },
     quit: () => Utils.quit(),
     reload: async (requestId) => {
+      const transition=mru.beginTransition();
       const response: unknown = await getRpc().request.commitReload({
         protocolVersion: 1,
         requestId,
       });
-      return isReloadCommitResponse(response, requestId) && response.committed;
+      if(isReloadCommitResponse(response, requestId)&&!response.committed)mru.cancelTransition(transition);
+      return isReloadCommitResponse(response, requestId)&&response.committed;
     },
     update: () => updater.applyUpdateAndRestart(),
     beforeUpdate: async () => {
@@ -111,6 +124,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         ["workspace", () => workspace.dispose()],
         ["documents", () => documents.dispose()],
         ["recent files", () => recent.drain()],
+        ["document MRU", async () => {await mru.drainUntil(mruDeadline || performance.now()+MRU_EXIT_MS);mru.dispose();}],
         ["window state", () => mainWindow?.flushState()],
         ["updater", () => updater.stop()],
       ]);
@@ -146,6 +160,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
             : Promise.reject(Error("WINDOW_NOT_READY")),
       },
       documents,
+      documentMRU: createMRUService(mru,documents,workspace),
       recentFiles: {
         request: (input) => recent.request(input),
         reopen: createRecentReopener(documents, (id) => recent.find(id)),
@@ -161,6 +176,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       executeCommand,
       onWindowCreated: (window) => {
         browserWindow = window;
+        mru.bindWindow();
+        window.webview.on("dom-ready",()=>mru.domReady());
         window.on("will-close", (event) =>
           lifecycle.beforeClose(
             event as ElectrobunEvent<{}, { allow: boolean }>

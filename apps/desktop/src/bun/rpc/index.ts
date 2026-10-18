@@ -18,6 +18,11 @@ export type MainWindowRPC = ReturnType<
 >;
 
 export interface MainWindowRPCDependencies {
+  documentMRU?: {
+    begin(input: unknown): Promise<import("../../shared/document-mru").MRUSessionResponse>;
+    record(input: unknown): Promise<import("../../shared/document-mru").MRUAck>;
+    resolve(input: unknown): Promise<import("../../shared/document-mru").MRUResolveResponse>;
+  };
   recentFiles?: {
     request(
       input: unknown
@@ -46,6 +51,7 @@ const MAX_REQUEST_TIME_MS = 5 * 60_000 + 10_000;
 
 export function createMainWindowRPC({
   documents,
+  documentMRU,
   recentFiles,
   sidebar,
   sourceWrapping,
@@ -66,6 +72,9 @@ export function createMainWindowRPC({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        beginMRUSession: input => documentMRU ? documentMRU.begin(input) : Promise.reject(Error("MRU unavailable")),
+        recordDocumentActivation: input => documentMRU ? documentMRU.record(input) : Promise.reject(Error("MRU unavailable")),
+        resolveDocumentMRU: input => documentMRU ? documentMRU.resolve(input) : Promise.reject(Error("MRU unavailable")),
         recentFiles: (input) =>
           recentFiles
             ? recentFiles.request(input)

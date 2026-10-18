@@ -7,6 +7,7 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
+import { createMarkdownController } from "@/client/create-markdown";
 import CurrentCanonicalWorker from "@/client/current-canonical.worker?worker&inline";
 import { discardGuard } from "@/client/discard-guard";
 import {
@@ -39,11 +40,13 @@ import { useCommands, useRegisterCommands } from "@/commands";
 import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
+import type { CreateTarget } from "@/shared/create-markdown";
 import type { FolderRemovalDocument } from "@/shared/folder-removal";
 import type { LocalImageRequest } from "@/shared/local-images";
 import { analyzeTextFidelity } from "@/shared/text-fidelity";
 import type { WorkspaceRevealTarget } from "@/shared/workspace";
 
+import { CreateMarkdownDialog } from "./create-markdown-dialog";
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
 import { ReadingView } from "./reading-view";
@@ -116,6 +119,28 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
+  const creationTarget = useRef<CreateTarget | null>(null);
+  const setCreationTarget = useCallback((target: CreateTarget | null) => { creationTarget.current = target; }, []);
+  const [createdLocation, setCreatedLocation] = useState<{ root: string; entry: string; intent: number } | null>(null);
+  const nextCreatedLocation = useRef(0);
+  const clearCreatedLocation = useCallback((intent: number) => setCreatedLocation(old => old?.intent === intent ? null : old), []);
+  const [creation] = useState(() => createMarkdownController({
+    documents: controller,
+    request: request => electrobun.rpc ? electrobun.rpc.request.createMarkdown(request) : Promise.reject(Error("RPC unavailable")),
+    refresh: () => folders.refresh(),
+    targetCurrent: target => {
+      const latest = folders.getSnapshot();
+      return latest.roots.some(root => root.handle === target.rootHandle && root.generation === target.generation) && (!target.directoryHandle || !!latest.nodes[target.rootHandle]?.some(node => node.handle === target.directoryHandle && node.kind === "directory"));
+    },
+    locate: (target, entry) => setCreatedLocation({ root: target.rootHandle, entry, intent: ++nextCreatedLocation.current }),
+  }));
+  const creationState = useSyncExternalStore(creation.subscribe, creation.getSnapshot);
+  useEffect(() => { creation.attach(); return () => creation.dispose(); }, [creation]);
+  const notifyCreation = useRegisterCommands({ createMarkdown: () => creation.open(creationTarget.current) }, true, { createMarkdown: () => creation.canOpen() && folders.getSnapshot().roots.length > 0 });
+  useLayoutEffect(() => {
+    const a = controller.subscribe(notifyCreation), b = folders.subscribe(notifyCreation), c = creation.subscribe(notifyCreation);
+    notifyCreation(); return () => { a(); b(); c(); };
+  }, [controller, folders, creation, notifyCreation]);
   const [folderRemoval] = useState(() => createFolderRemoval(controller, folders, request => electrobun.rpc ? electrobun.rpc.request.removeFolderRoot(request) : Promise.reject(Error("RPC unavailable")), documents => new Promise(resolve => setFolderRemovalDialog({ documents, respond: choice => { setFolderRemovalDialog(null); resolve(choice); } }))));
   useEffect(() => () => folderRemoval.dispose(), [folderRemoval]);
   useLayoutEffect(() => {
@@ -374,6 +399,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   }, [controller, state.snapshot?.handle]);
   useEffect(() => () => controller.dispose(), [controller]);
   return {
+    creation, creationState, setCreationTarget, createdLocation, clearCreatedLocation,
     folderRemoval,
     folderRemovalDialog,
     rootOrder,
@@ -390,7 +416,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
 type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
 export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
-  const { state, controller, executeCommand, isCommandEnabled } = workspace;
+  const { state, controller, executeCommand, isCommandEnabled, folders, setCreationTarget } = workspace;
   const [removalHandle, setRemovalHandle] = useState<string | null>(null);
   const [folderRemovalHandle, setFolderRemovalHandle] = useState<string | null>(null);
   const [orderActions, setOrderActions] = useState<RootOrderActions | null>(null);
@@ -407,7 +433,9 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
     reveal.setTarget(target, isFile);
     setRemovalHandle(target?.type === "document" && isFile ? target.handle : null);
     setFolderRemovalHandle(target?.type === "workspace" && !target.entry ? target.root : null);
-  }, [reveal]);
+    const root = target?.type === "workspace" && !isFile ? folders.getSnapshot().roots.find(root => root.handle === target.root) : undefined;
+    setCreationTarget(root && target?.type === "workspace" ? { rootHandle: root.handle, generation: root.generation, ...(target.entry ? { directoryHandle: target.entry } : {}) } : null);
+  }, [reveal, folders, setCreationTarget]);
   const notifyRemoval = useRegisterCommands({ removeStandaloneRoot: () => removalHandle ? controller.removeStandalone(removalHandle) : undefined }, true, { removeStandaloneRoot: () => controller.canRemoveStandalone(removalHandle) });
   useLayoutEffect(() => { notifyRemoval(); }, [state, workspace.folderState, removalHandle, notifyRemoval]);
   const notifyFolderRemoval = useRegisterCommands({ removeFolderRoot: () => folderRemovalHandle ? workspace.folderRemoval.remove(folderRemovalHandle) : undefined }, true, { removeFolderRoot: () => workspace.folderRemoval.canRemove(folderRemovalHandle) });
@@ -443,6 +471,8 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         </button>
       </div>
       <WorkspaceTree
+        createdLocation={workspace.createdLocation}
+        onCreatedLocated={workspace.clearCreatedLocation}
         rootOrder={workspace.rootOrder}
         canOrder={controller.canSelectFolder}
         subscribeOrderAvailability={controller.subscribe}
@@ -471,6 +501,7 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
         }}
       />
       <div className="flex gap-2">
+        <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("createMarkdown")} onClick={() => executeCommand({ type: "createMarkdown", args: {} })}>新建 Markdown 文件</button>
         <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!orderActions?.canUp()} onClick={() => executeCommand({ type: "moveWorkspaceRootUp", args: {} })}>上移选中根</button>
         <button type="button" className="hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50" disabled={!orderActions?.canDown()} onClick={() => executeCommand({ type: "moveWorkspaceRootDown", args: {} })}>下移选中根</button>
       </div>
@@ -853,6 +884,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           </div>
         </>
       )}
+      <CreateMarkdownDialog controller={workspace.creation} state={workspace.creationState} folders={workspace.folderState} />
       <Dialog open={!!workspace.folderRemovalDialog} onOpenChange={open => { if (!open) workspace.folderRemovalDialog?.respond("cancel"); }}>
         <DialogContent showCloseButton={false} onInteractOutside={event => event.preventDefault()}>
           <DialogTitle>从窗口移除目录</DialogTitle>

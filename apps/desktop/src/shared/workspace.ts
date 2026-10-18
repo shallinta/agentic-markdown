@@ -127,6 +127,7 @@ export type WorkspaceResponse = { protocolVersion: 1; requestId: string } & (
     }
 );
 export interface WorkspaceService {
+  createMarkdown?(value: unknown): Promise<import("./create-markdown").CreateMarkdownResponse>;
   removeStandalone(value: unknown): import("./standalone-removal").RemovalResponse;
   removeFolderRoot(value: unknown): Promise<import("./folder-removal").FolderRemovalResponse>;
   request(value: unknown): Promise<WorkspaceResponse>;

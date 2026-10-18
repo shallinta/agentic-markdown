@@ -57,6 +57,8 @@ export function WorkspaceTree({
   canOrder,
   onOrderActions,
   subscribeOrderAvailability,
+  createdLocation,
+  onCreatedLocated,
 }: {
   folders: ReturnType<typeof createFolderWorkspace>;
   state: FolderState;
@@ -77,6 +79,8 @@ export function WorkspaceTree({
   canOrder?: () => boolean;
   onOrderActions?: (actions: RootOrderActions | null) => void;
   subscribeOrderAvailability?: (listener: () => void) => () => void;
+  createdLocation?: { root: string; entry: string; intent: number } | null;
+  onCreatedLocated?: (intent: number) => void;
 }) {
   const [fallbackOrder] = useState(createWorkspaceRootOrder);
   const rootOrder = suppliedOrder ?? fallbackOrder;
@@ -205,6 +209,28 @@ export function WorkspaceTree({
   );
   const container = useRef<HTMLDivElement>(null);
   const buttons = useRef(new Map<string, HTMLLIElement>());
+  const locatedIntent = useRef<number | null>(null);
+  const scrolledIntent = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (!createdLocation || locatedIntent.current === createdLocation.intent) return;
+    const key = `node:${createdLocation.root}:${createdLocation.entry}`;
+    const item = model.items.get(key);
+    if (!item) return;
+    const parents: string[] = [];
+    let parent = item.parent;
+    while (parent) { parents.push(parent); parent = model.items.get(parent)?.parent ?? null; }
+    setExpanded(old => new Set([...old, ...parents]));
+    setCollapsedRoots(old => { const next = new Set(old); next.delete(`root:${createdLocation.root}`); return next; });
+    setSelected(key);
+    locatedIntent.current = createdLocation.intent;
+  }, [createdLocation, model]);
+  useLayoutEffect(() => {
+    if (!createdLocation) return;
+    if (locatedIntent.current === createdLocation.intent && scrolledIntent.current !== createdLocation.intent) {
+      const element = buttons.current.get(`node:${createdLocation.root}:${createdLocation.entry}`);
+      if (element) { element.scrollIntoView({ block: "nearest" }); scrolledIntent.current = createdLocation.intent; onCreatedLocated?.(createdLocation.intent); }
+    }
+  }, [createdLocation, visible, onCreatedLocated]);
   const focused = useRef<{ item: TreeItem; element: HTMLLIElement } | null>(
     null
   );

@@ -517,7 +517,8 @@ export function createDocumentController(
   async function load(
     select: boolean,
     entry?: DocumentEntry,
-    open?: (request: DocumentRequest) => Promise<unknown>
+    open?: (request: DocumentRequest) => Promise<unknown>,
+    createdIntent?: () => boolean
   ) {
     const previous = state.snapshot;
     const target = entry ?? previous;
@@ -539,7 +540,7 @@ export function createDocumentController(
           select &&
           response.ok &&
           response.snapshot &&
-          !state.entries.some(
+          !createdIntent && !state.entries.some(
             (value) => value.handle === response.snapshot?.handle
           )
         )
@@ -563,6 +564,12 @@ export function createDocumentController(
       const snapshot = response.snapshot;
       if (!snapshot) {
         if (!select) throw new Error("empty-read");
+        publish({ ...state, busy: false });
+        return;
+      }
+      // A creation receipt owns its grant until explicit adoption/cleanup. Do
+      // not use the ordinary best-effort release path for a cancelled intent.
+      if (createdIntent && (!createdIntent() || metadataDisposed || state.frozen || !canLeaveEditor() || state.entries.some(value => locationKey(value) === locationKey(snapshot) && value.documentId !== snapshot.documentId))) {
         publish({ ...state, busy: false });
         return;
       }
@@ -1285,6 +1292,14 @@ export function createDocumentController(
     },
     canSelectFolder: () =>
       !state.frozen && !state.busy && !saving.size && canLeaveEditor(),
+    adoptCreatedDocument: async (snapshot: DocumentSnapshot, current: () => boolean) => {
+      if (metadataDisposed || !current() || !controller.canSelectFolder()) return false;
+      let ready = false;
+      await protect([], () => { ready = true; });
+      if (!ready || metadataDisposed || !current() || !controller.canSelectFolder()) return false;
+      await load(true, undefined, params => Promise.resolve({ ...params, ok: true, snapshot }), current);
+      return state.tabs.some(tab => tab.handle === snapshot.handle && tab.documentId === snapshot.documentId);
+    },
     runWorkspaceAction: (action: () => void | Promise<void>) => {
       if (!controller.canSelectFolder()) return;
       // Availability is not settlement: a completed/expired save still needs

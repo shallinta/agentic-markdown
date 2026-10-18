@@ -150,8 +150,40 @@ static napi_value capability(napi_env env,napi_callback_info info) {
 }
 #include "directory-watch.h"
 
+// New-file creation never uses replacement or deletion. Errors are allocated
+// before the commit syscall so a recoverable return failure retains its phase.
+static napi_value creation_error(napi_env env,const char *code) {
+  napi_value text,error;
+  if(napi_create_string_utf8(env,code,NAPI_AUTO_LENGTH,&text)!=napi_ok || napi_create_error(env,text,text,&error)!=napi_ok) return NULL;
+  return error;
+}
+static napi_value creation_throw(napi_env env,napi_value error) {
+  bool pending=false;
+  if(napi_is_exception_pending(env,&pending)!=napi_ok) return NULL;
+  if(pending) {napi_value previous;if(napi_get_and_clear_last_exception(env,&previous)!=napi_ok) return NULL;}
+  if(error) napi_throw(env,error);
+  return NULL;
+}
+static napi_value create_file_exclusive(napi_env env,napi_callback_info info) {
+  napi_value invalid=creation_error(env,"CREATE_INVALID"),exists=creation_error(env,"CREATE_EXISTS"),denied=creation_error(env,"CREATE_DENIED"),failed=creation_error(env,"CREATE_FAILED"),created=creation_error(env,"CREATED_IDENTITY_UNKNOWN"),v[2],out;
+  if(!invalid||!exists||!denied||!failed||!created) return NULL;
+  int dir;size_t length=0,read=0;char16_t units[256];char leaf[256];
+  if(!args(env,info,v,2)||!integer(env,v[0],&dir)||napi_get_value_string_utf16(env,v[1],NULL,0,&length)!=napi_ok||!length||length>255||napi_get_value_string_utf16(env,v[1],units,256,&read)!=napi_ok||read!=length) return creation_throw(env,invalid);
+  for(size_t i=0;i<length;i++) {
+    unsigned c=units[i];if(!c||c=='/'||c<32||c==127) return creation_throw(env,invalid);
+    if(c>=0xd800&&c<=0xdbff) {if(i+1>=length||units[i+1]<0xdc00||units[i+1]>0xdfff) return creation_throw(env,invalid);i++;}
+    else if(c>=0xdc00&&c<=0xdfff) return creation_throw(env,invalid);
+  }
+  if(!name(env,v[1],leaf)) return creation_throw(env,invalid);
+  int fd=openat(dir,leaf,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+  if(fd<0) {int saved=errno;return creation_throw(env,saved==EEXIST?exists:(saved==EACCES||saved==EPERM||saved==EROFS)?denied:(saved==EBADF||saved==ENOTDIR||saved==EINVAL||saved==ENAMETOOLONG)?invalid:failed);}
+  if(napi_create_int32(env,fd,&out)!=napi_ok) {close(fd);return creation_throw(env,created);}
+  return out;
+}
+
 static napi_value init(napi_env env,napi_value exports) {
   napi_property_descriptor properties[]={
+    {"createFileExclusive",NULL,create_file_exclusive,NULL,NULL,NULL,napi_default,NULL},
     {"createTemp",NULL,create,NULL,NULL,NULL,napi_default,NULL},
     {"copyMetadata",NULL,metadata,NULL,NULL,NULL,napi_default,NULL},
     {"fullSync",NULL,sync_full,NULL,NULL,NULL,napi_default,NULL},
@@ -166,7 +198,7 @@ static napi_value init(napi_env env,napi_value exports) {
     {"scanStat",NULL,scan_stat,NULL,NULL,NULL,napi_default,NULL},
     {"scanReadlink",NULL,scan_readlink,NULL,NULL,NULL,napi_default,NULL}
   };
-  napi_define_properties(env,exports,13,properties);
+  napi_define_properties(env,exports,14,properties);
   if(!install_directory_watch(env,exports)) return fail(env);
   return exports;
 }

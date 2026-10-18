@@ -3,6 +3,7 @@ import { closeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 
+import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
 import {
   WORKSPACE_CACHE_BYTES,
@@ -38,6 +39,7 @@ import {
   type RootAuthorization,
 } from "./authorization";
 import { createAutomaticObservation } from "./automatic-observation";
+import { createMarkdownService, type CreationNative, type CreationTarget } from "./create-markdown";
 import { createFolderRemoval } from "./folder-removal";
 import type { HiddenPreferences } from "./preferences";
 import type { HiddenRemoval } from "./preferences";
@@ -67,6 +69,7 @@ interface Owner extends DocumentScope {
   root: Root;
 }
 export interface TrustedWorkspaceService extends WorkspaceService {
+  createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   reconciliation: Pick<
     ReturnType<typeof createReconciliation>,
     "prepare" | "get" | "release" | "issue" | "accept" | "query"
@@ -101,6 +104,8 @@ export function createWorkspaceService({
   let scanParked = false;
   let reachedPark: (() => void) | undefined;
   let releaseFolderRemoval: (() => void) | undefined;
+  let createOwner: object | undefined;
+  let releaseCreation: (() => void) | undefined;
   const assetOwners = new Map<string, { root: Root; scope: AssetScope }>();
   function makeAssetScope(root: Root) {
     const scope: AssetScope = {
@@ -773,7 +778,73 @@ export function createWorkspaceService({
       };
     } catch (error) { release(); throw error; }
   });
+  async function creationTarget(value: CreateTarget): Promise<CreationTarget> {
+    const root = roots.find(item => item.meta.handle === value.rootHandle);
+    if (!root?.live || disposed || root.meta.generation !== value.generation) throw Error("Invalid target");
+    const node = value.directoryHandle ? root.nodes.find(item => item.handle === value.directoryHandle) : undefined;
+    if (value.directoryHandle && node?.kind !== "directory") throw Error("Not a directory");
+    const path = node?.displayPath ?? root.authorization.path;
+    let chain: ScanFile["chain"] = [];
+    const check = () => { if (disposed || !root.live || !roots.includes(root) || root.meta.generation !== value.generation || (node && root.byPath.get(path) !== node)) throw Error("Target changed"); };
+    if (node) {
+      let count = 0, found = false;
+      for (const file of root.files.values()) {
+        const index = file.chain.findIndex(item => item.path === path);
+        if (index >= 0) { chain = file.chain.slice(0, index + 1); found = true; break; }
+        if (++count % 64 === 0) { await new Promise(resolve => setTimeout(resolve, 0)); check(); }
+      }
+      if (!found) throw Error("Missing directory proof");
+    }
+    let parent = root.authorization.path;
+    if (chain.length > 256 || !chain.every(item => { const valid = dirname(item.path) === parent && containsPath(root.authorization.path, item.path); parent = item.path; return valid; })) throw Error("Incomplete chain");
+    check();
+    return {root: root.authorization, path, chain, showHidden: root.meta.showHidden ?? false, check, scope() {
+      const owner: Owner = {root, release() { this.root.scopes.delete(this); }, async verify() { if (disposed || !this.root.live || !roots.includes(this.root)) throw Error("Root removed"); await verifyRoot(this.root.authorization); if (disposed || !this.root.live) throw Error("Root removed"); }};
+      root.scopes.add(owner); return owner;
+    }};
+  }
+  const creation = createMarkdownService({
+    documents,
+    native() {
+      if (directoryNative) return directoryNative as CreationNative;
+      const entry = resolveSaveWorkerEntry(join(import.meta.dir, "../documents"));
+      if (!entry) throw Error("Native unavailable");
+      return createRequire(import.meta.url)(join(dirname(entry), "save-primitives.node")) as CreationNative;
+    },
+    resolve: creationTarget,
+    async acquire(value) {
+      if (disposed || removalAdmission || removeStandalone.busy() || folderRemoval.busy() || selecting || preferencePending || openingRoots.size || manualCandidates.size) throw Error("Workspace busy");
+      const owner = {}; createOwner = owner; removalAdmission = true; scanParked = true;
+      let released = false;
+      const release = () => { if (released) return; released = true; if (createOwner === owner) { createOwner = undefined; removalAdmission = false; scanParked = false; releaseCreation = undefined; wake(); } };
+      releaseCreation = release;
+      try {
+        if (running) await new Promise<void>(resolve => { reachedPark = resolve; });
+        if (disposed || createOwner !== owner) throw Error("Creation disposed");
+        const target = await creationTarget(value);
+        const root = roots.find(item => item.meta.handle === value.rootHandle)!;
+        return {target, release, accept(file: ScanFile) {
+          if (disposed || createOwner !== owner || !scanParked) return {status: "unavailable" as const};
+          target.check();
+          if (dirname(file.path) !== target.path || JSON.stringify(file.chain) !== JSON.stringify(target.chain) || !visiblePath(root.authorization.path, file.path, root.meta.showHidden)) return {status: "unavailable" as const};
+          const previous = root.byPath.get(file.path);
+          if (previous) {
+            const old = root.files.get(previous.handle);
+            return previous.kind === "file" && old?.fingerprint === file.fingerprint && JSON.stringify(old.chain) === JSON.stringify(file.chain) ? {status: "same-identity" as const, entryHandle: previous.handle} : {status: "unavailable" as const};
+          }
+          const parent = target.path === root.authorization.path ? root.meta.handle : root.byPath.get(target.path)?.handle;
+          if (!parent || (target.path !== root.authorization.path && root.byPath.get(target.path)?.kind !== "directory")) return {status: "unavailable" as const};
+          const node: WorkspaceNode = {handle: randomUUID(), parent, name: basename(file.path), kind: "file", displayPath: file.path};
+          const bytes = Buffer.byteLength(JSON.stringify([node])) + Buffer.byteLength(JSON.stringify(file));
+          if (cacheBytes + observation.bytes() + reconciliation.bytes() + bytes > cacheLimit) return {status: "unavailable" as const};
+          root.nodes.push(node); root.byPath.set(file.path, node); root.files.set(node.handle, file); root.bytes += bytes; cacheBytes += bytes; root.meta.entries = root.nodes.length;
+          return {status: "accepted" as const, entryHandle: node.handle};
+        }};
+      } catch (error) { release(); throw error; }
+    }
+  });
   return {
+    createMarkdown: (value) => creation.request(value),
     removeStandalone,
     removeFolderRoot: (value) => folderRemoval.request(value),
     reconciliation: {
@@ -1071,6 +1142,8 @@ export function createWorkspaceService({
       }
     },
     async dispose() {
+      creation.dispose();
+      releaseCreation?.();
       folderRemoval.dispose();
       releaseFolderRemoval?.();
       observation.dispose();

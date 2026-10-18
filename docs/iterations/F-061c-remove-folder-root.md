@@ -166,3 +166,5 @@ AX选择根行并隐藏侧栏后，后来观察到showHidden为on，但缺少中
 精确选区、自然IME和真实并存剩余根迁移未测。失联/未知结果主要依据controller/service故障注入，不冒真实断链验收。F061a剩余输入矩阵、完整父/OBL主责、FINAL-ISSUE-001/002、阅读子窗、冻结stash、专项/F028c和`F-061c-offline-final`仍开放；不因本轮全绿声称FINAL002修复，不断网执行离线项。
 
 最终独立Spec/Standards均0项必要有限非离线验收阻断；两轴独立核实际日志、五SHA与进程退出，GUI采用主线收据，不冒其亲自操作。主线据此批准本片受托Agent有限代验通过，非用户亲验；Git尚未执行。
+
+Git收据：已提交推送`691b09bb0fbd645417cc159a43a2afbb23fdd595`，HTTPS远端main与origin/main核同SHA；提交hook前后tree均`3dbae5ee15695ccfbabda0f0439912d45e9efc83`。上方Git待执行为历史，本收据随后续文档提交。

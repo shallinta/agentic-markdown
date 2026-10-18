@@ -83,6 +83,8 @@ export interface FolderMutationLease {
   release(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  withCreateBarrier(action: () => Promise<void> | void): Promise<boolean>;
+  openCreatedAuthorized(request: unknown, authorize: () => Promise<SingleFileAuthorization>, scope: DocumentScope, sink: (snapshot: DocumentSnapshot) => void): Promise<DocumentResponse>;
   acquireFolderMutationLease(): Promise<FolderMutationLease | null>;
   inspectStandaloneRemoval(handle: string, eligible: (path: string) => boolean): object | null;
   commitStandaloneRemoval(handle: string, identity: object, eligible: (path: string) => boolean, committed: () => void): boolean;
@@ -344,6 +346,8 @@ export function createDocumentService({
     operation: () => Promise<DocumentResponse>;
   } | null = null;
   let disposed = false;
+  let disposing = false;
+  let createAdmissionOwner: object | null = null;
   let epoch = 0;
   const identities = new Map<string, Identity>();
   let saveTail: Promise<void> = Promise.resolve();
@@ -390,7 +394,10 @@ export function createDocumentService({
   };
   const duplicate = (id: string) =>
     [selecting, running, pending?.task, revealing].some((task) => task?.id === id);
-  function enqueue(task: Task, operation: () => Promise<DocumentResponse>) {
+  function enqueue(task: Task, operation: () => Promise<DocumentResponse>, owner?: object) {
+    if (disposing || (createAdmissionOwner && createAdmissionOwner !== owner)) {
+      task.resolve(failure(task.id, "BUSY")); return;
+    }
     cancel(running);
     cancel(pending?.task ?? null);
     pending = { task, operation };
@@ -545,7 +552,7 @@ export function createDocumentService({
       return Promise.resolve(failure("", "INVALID_REQUEST"));
     if (disposed)
       return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
-    if (revealing || duplicate(request.requestId) || saving || writeBarrier)
+    if (disposing || createAdmissionOwner || revealing || duplicate(request.requestId) || saving || writeBarrier)
       return Promise.resolve(failure(request.requestId, "BUSY"));
     const { task, promise } = taskFor(request.requestId);
     task.handle = handle;
@@ -644,7 +651,7 @@ export function createDocumentService({
   }
   return {
     async acquireFolderMutationLease() {
-      if (disposed || writeBarrier || folderMutationLease || running || pending || selecting || revealing) return null;
+      if (disposed || disposing || createAdmissionOwner || writeBarrier || folderMutationLease || running || pending || selecting || revealing) return null;
       const token = {};
       // Initialize missing legacy metadata before read-only leased state requests.
       for (const grant of grants.values()) grant.assetEpoch ??= randomUUID();
@@ -747,7 +754,7 @@ export function createDocumentService({
       if (!validRefreshAcceptance(request)) return { status: "rejected", error: "INVALID_REQUEST" };
       const params = { ...request };
       if (disposed || !grants.has(params.handle)) return { status: "unknown" };
-      const result = await acceptance.run(params, !saving && !writeBarrier && !running && !pending && !selecting, async () => {
+      const result = await acceptance.run(params, !disposing && !createAdmissionOwner && !saving && !writeBarrier && !running && !pending && !selecting, async () => {
         const lease = candidates.acquire(params.token, params.handle), grant = grants.get(params.handle);
         if (!lease || !grant) return { status: "rejected", error: "INVALID_HANDLE" };
         const identity = identities.get(grant.identityKey), generation = epoch;
@@ -878,6 +885,39 @@ export function createDocumentService({
           }
         }
       scope.release?.();
+    },
+    async withCreateBarrier(action) {
+      if (disposed || disposing || createAdmissionOwner || writeBarrier || folderMutationLease || running || pending || selecting || revealing) return false;
+      const owner = {}; createAdmissionOwner = owner; writeBarrier = true; selectBarrierGeneration++;
+      try {
+        await saveTail; await acceptance.settled();
+        if (disposed || disposing || createAdmissionOwner !== owner || running || pending || selecting || revealing || folderMutationLease) return false;
+        await action(); return true;
+      } finally {
+        if (createAdmissionOwner === owner && !disposing) { createAdmissionOwner = null; writeBarrier = false; candidates.wake(); }
+      }
+    },
+    async openCreatedAuthorized(request, getAuthorization, scope, sink) {
+      if (!validate(request, false)) return failure("", "INVALID_REQUEST");
+      if (disposed || disposing || createAdmissionOwner || running || pending || selecting || revealing || saving || writeBarrier || folderMutationLease || acceptance.busy()) return failure(request.requestId, "BUSY");
+      const owner = {}; createAdmissionOwner = owner;
+      const { task, promise } = taskFor(request.requestId), generation = epoch;
+      enqueue(task, async () => {
+        let candidate: Grant | null = null;
+        const check = () => { checkTask(task, generation); if (disposing || createAdmissionOwner !== owner) throw new DocumentFailure("CANCELLED"); };
+        try {
+          check(); await scope.verify(); check();
+          const authorization = await getAuthorization();
+          candidate = { ...authorization, handle: randomUUID(), identityKey: `${authorization.path}:${authorization.fingerprint}`, explicitStandalone: false, assetEpoch: randomUUID(), scope };
+          check(); const next = await snapshot(candidate, generation, task);
+          await scope.verify(); check();
+          commit(candidate, next, task, generation); grants.set(candidate.handle, candidate); sink(next);
+          watchGrant(candidate);
+          return result(request.requestId, next);
+        } catch (error) { return failure(request.requestId, codeOf(error)); }
+        finally { await close(candidate); if (createAdmissionOwner === owner && !disposing) createAdmissionOwner = null; }
+      }, owner);
+      return promise;
     },
     async openAuthorized(request, getAuthorization, scope) {
       if (!validate(request, false)) return failure("", "INVALID_REQUEST");
@@ -1071,6 +1111,7 @@ export function createDocumentService({
       if (disposed || !grants.has(request.handle))
         return failure(request.requestId, "INVALID_HANDLE");
       if (
+        disposing || createAdmissionOwner ||
         writeBarrier ||
         savingRequests.has(request.requestId) ||
         saving >= 2 ||
@@ -1227,7 +1268,7 @@ export function createDocumentService({
       }
     },
     async withWriteBarrier(action) {
-      if (writeBarrier || disposed) return false;
+      if (writeBarrier || disposed || disposing || createAdmissionOwner) return false;
       writeBarrier = true;
       selectBarrierGeneration++;
       try {
@@ -1241,7 +1282,7 @@ export function createDocumentService({
     },
     async select(request, prepareStartingFolder) {
       if (!validate(request, false)) return failure("", "INVALID_REQUEST");
-      if (saving || writeBarrier || acceptance.busy()) return failure(request.requestId, "BUSY");
+      if (disposing || createAdmissionOwner || saving || writeBarrier || acceptance.busy()) return failure(request.requestId, "BUSY");
       if (disposed) return failure(request.requestId, "INVALID_HANDLE");
       if (selecting || duplicate(request.requestId))
         return failure(request.requestId, "BUSY");
@@ -1388,6 +1429,8 @@ export function createDocumentService({
       return Promise.resolve(result(request.requestId, null));
     },
     async dispose() {
+      disposing = true;
+      createAdmissionOwner = null;
       writeBarrier = true;
       cancel(revealing);
       candidates.dispose();

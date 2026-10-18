@@ -62,6 +62,10 @@ export interface DesktopRPCType {
         params: import("./workspace").WorkspaceRequest;
         response: import("./workspace").WorkspaceResponse;
       };
+      createMarkdown: {
+        params: import("./create-markdown").CreateMarkdownRequest;
+        response: import("./create-markdown").CreateMarkdownResponse;
+      };
       openWorkspaceDocument: {
         params: import("./workspace").WorkspaceOpenRequest;
         response: DocumentResponse;

@@ -78,6 +78,7 @@ export function CommandPalette({
       type === "toggleFrontmatterFold" ||
       type === "selectDocument" ||
       type === "selectFolder" ||
+      type === "createMarkdown" ||
       type === "setRootHidden" ||
       type === "toggleReadingMode" ||
       type === "undoDocument" ||

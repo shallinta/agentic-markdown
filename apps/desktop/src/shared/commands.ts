@@ -83,6 +83,7 @@ export type Command =
   | GenericCommand<"dedentSource", { documentId: string }>
   | GenericCommand<"selectDocument">
   | GenericCommand<"selectFolder">
+  | GenericCommand<"createMarkdown">
   | GenericCommand<"saveDocument">
   | GenericCommand<"reloadDocument">
   | GenericCommand<"clearDocument">
@@ -262,6 +263,7 @@ export const COMMAND_META: Record<
   openDefaultWorkspaceItem: { target: "webview" },
   openDefaultDocument: { target: "webview" },
   selectFolder: { target: "webview" },
+  createMarkdown: { target: "webview" },
   setRootHidden: { target: "webview", palette: false },
   saveDocument: { target: "webview" },
   reloadDocument: { target: "webview" },
@@ -323,6 +325,7 @@ export const PRODUCT_COMMANDS: Partial<
     shortcut: "⌘O",
   },
   selectFolder: { label: "加入文件夹" },
+  createMarkdown: { label: "新建 Markdown 文件" },
   revealDocument: { label: "在 Finder 中显示当前文档" },
   revealWorkspaceItem: { label: "在 Finder 中显示选中项" },
   moveWorkspaceRootUp: { label: "上移选中根" },

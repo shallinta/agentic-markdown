@@ -163,13 +163,13 @@ export function createIndexSession(moduleDirectory = import.meta.dir) {
     });
   }
   return {
-    open(path: string, mode: "create-new" | "reader-only") {
+    open(path: string, mode: "create-new" | "reader-only" | "writer-existing") {
       if (
         !scalar(path, 4096) ||
         !path.startsWith("/") ||
         path.includes("\0") ||
         Buffer.byteLength(path) > 4096 ||
-        !["create-new", "reader-only"].includes(mode)
+        !["create-new", "reader-only", "writer-existing"].includes(mode)
       )
         return Promise.resolve(error("INPUT"));
       return send("open", { path, mode });

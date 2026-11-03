@@ -23,7 +23,7 @@ const loaded: unknown = await import(
 );
 if (!isHost(loaded)) throw Error("Package host export mismatch");
 const root = await mkdtemp(join(tmpdir(), "agentic-index-package-"));
-const writer = loaded.createIndexSession(directory);
+let writer = loaded.createIndexSession(directory);
 const check = (actual: unknown, expected: unknown) => {
   if (JSON.stringify(actual) !== JSON.stringify(expected))
     throw Error("Package index oracle mismatch");
@@ -38,6 +38,12 @@ check(
   ]),
   { ok: true, generation: 1 }
 );
+check(await writer.close(), { ok: true, generation: 1 });
+writer = loaded.createIndexSession(directory);
+check(await writer.open(join(root, "index"), "writer-existing"), {
+  ok: true,
+  generation: 1,
+});
 check(await writer.query("中文"), {
   ok: true,
   generation: 1,

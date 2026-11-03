@@ -117,13 +117,17 @@ function operate(op: string, payload: unknown): IndexResult {
       payload.path.includes("\0") ||
       Buffer.byteLength(payload.path) > 4096 ||
       typeof payload.mode !== "string" ||
-      !["create-new", "reader-only"].includes(payload.mode)
+      !["create-new", "reader-only", "writer-existing"].includes(payload.mode)
     )
       return rejected("INPUT");
     const metadata = Buffer.alloc(8);
     const result = native.open(
       Buffer.from(payload.path),
-      payload.mode === "create-new" ? 0 : 1,
+      payload.mode === "create-new"
+        ? 0
+        : payload.mode === "reader-only"
+          ? 1
+          : 2,
       metadata
     );
     if (typeof result === "number") return failure(result, false);

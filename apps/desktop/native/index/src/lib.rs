@@ -52,7 +52,7 @@ fn open_session(path:&str,mode:u32)->R<IndexSession>{
         if p.exists(){return Err(INPUT);}fs::create_dir(p).map_err(|_|IO)?;
         fs::write(p.join("bridge.schema"),CONFIG).map_err(|_|IO)?;
         Index::create_in_dir(p,schema.clone()).map_err(|_|IO)?
-    } else if mode==1 {
+    } else if mode==1||mode==2 {
         // Controlled independent fixtures, not a TOCTOU-safe authorization boundary.
         if !p.is_dir()||!p.join(".tantivy-meta.lock").is_file(){return Err(SCHEMA);}
         let mut file=std::fs::File::open(p.join("bridge.schema")).map_err(|_|SCHEMA)?;
@@ -63,11 +63,37 @@ fn open_session(path:&str,mode:u32)->R<IndexSession>{
         Index::open_in_dir(p).map_err(|_|SCHEMA)?
     } else{return Err(INPUT);};
     if index.schema()!=schema{return Err(SCHEMA);}
-    let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into().map_err(|_|IO)?;
-    let live=read_live(&index,&reader,fields)?;
-    let payload=index.load_metas().map_err(|_|IO)?.payload;
-    let generation=match payload {None if mode==0||live.is_empty()=>0,Some(v)=>v.strip_prefix("bridge-v1:").ok_or(SCHEMA)?.parse().map_err(|_|SCHEMA)?,_=>return Err(SCHEMA)};
-    let writer=if mode==0{Some(index.writer_with_num_threads::<TantivyDocument>(1,50*1024*1024).map_err(|_|IO)?)}else{None};
+    // Existing writable sessions acquire the writer lock BEFORE either snapshot read.
+    let writer=if mode==0||mode==2{Some(index.writer_with_num_threads::<TantivyDocument>(1,50*1024*1024).map_err(|_|IO)?)}else{None};
+    let restored=catch_unwind(AssertUnwindSafe(||->R<_>{
+        let reader:IndexReader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into().map_err(|_|IO)?;
+        reader.reload().map_err(|_|IO)?;
+        let live=read_live(&index,&reader,fields)?;
+        let meta=index.load_metas().map_err(|_|IO)?;
+        let generation=match meta.payload {
+            None if meta.opstamp==0&&live.is_empty()=>0,
+            Some(v)=>{
+                let digits=v.strip_prefix("bridge-v1:").ok_or(SCHEMA)?;
+                if digits.is_empty()||!digits.bytes().all(|b|b.is_ascii_digit()){return Err(SCHEMA);}
+                let n:u64=digits.parse().map_err(|_|SCHEMA)?;
+                if n>9_007_199_254_740_991{return Err(SCHEMA);}n
+            },_=>return Err(SCHEMA)
+        };
+        Ok((reader,live,generation))
+    }));
+    let (reader,live,generation)=match restored {
+        Ok(Ok(value))=>value,
+        error=>{
+            let first=match error {Ok(Err(code))=>code,_=>PANIC};
+            if let Some(writer)=writer {
+                // Preserve the validation failure unless cleanup itself is uncertain.
+                match catch_unwind(AssertUnwindSafe(||writer.wait_merging_threads())) {
+                    Ok(Ok(()))=>{},_=>return Err(IO)
+                }
+            }
+            return Err(first);
+        }
+    };
     Ok(IndexSession{index,reader,writer,id:fields[0],path:fields[1],raw:fields[2],gram:fields[3],live,generation,mutations:0,poison:false,pending:false})
 }
 struct Cursor<'a>{data:&'a[u8],at:usize}
@@ -76,6 +102,7 @@ impl<'a> Cursor<'a>{fn u32(&mut self)->R<usize>{let bytes=self.bytes(4)?;Ok(u32:
 impl IndexSession {
  fn batch(&mut self,data:&[u8])->R<String>{
     if self.writer.is_none(){return Err(READONLY);}if self.pending{return Err(INPUT);}
+    if self.generation>=9_007_199_254_740_991{return Err(LIMIT);}
     // Before clones/grams/doc values: worst wire scalars <= bytes, <=3 windows/scalar.
     // Two sets of 128-byte value nodes + 24-byte token storage, raw/parse copies,
     // fixed arena and response scratch. Logical reservation, not allocator RSS cap.
@@ -106,7 +133,7 @@ impl IndexSession {
     self.live=next;self.pending=true;Ok(String::new())
  }
  fn commit(&mut self)->R<String>{
-    if !self.pending{return Err(INPUT);}let next=self.generation.checked_add(1).ok_or(LIMIT)?;
+    if !self.pending{return Err(INPUT);}let next=self.generation.checked_add(1).filter(|n|*n<=9_007_199_254_740_991).ok_or(LIMIT)?;
     let writer=self.writer.as_mut().ok_or(READONLY)?;
     let mut prepared=writer.prepare_commit().map_err(|_|IO)?;prepared.set_payload(&format!("bridge-v1:{next}"));
     prepared.commit().map_err(|_|IO)?;self.generation=next;self.pending=false;

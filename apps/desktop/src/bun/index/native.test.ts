@@ -119,6 +119,40 @@ test("separate test addon panic poisons and preserves committed generation", asy
     hits: [{ id: "a", from: 0, to: 9 }],
   });
   expect(await reader.close()).toEqual({ ok: true, generation: 1 });
+  const resumed = createIndexSession();
+  expect(await resumed.open(path, "writer-existing")).toEqual({
+    ok: true,
+    generation: 1,
+  });
+  expect(
+    await resumed.applyAndCommit([
+      { kind: "put", id: "a", path: "a", raw: "explicit-next" },
+    ])
+  ).toEqual({ ok: true, generation: 2 });
+  expect(await resumed.close()).toEqual({ ok: true, generation: 2 });
+}, 15000);
+
+test("pre-mutation panic closes then writable reopen preserves prior generation", async () => {
+  const native = load(
+    join(import.meta.dir, "../../../.index-test/index-primitives.node")
+  );
+  const { handle, path } = await open(native);
+  const out = Buffer.alloc(150000),
+    meta = Buffer.alloc(32);
+  expect(native.call(handle, 90, Buffer.alloc(0), out, meta)).toBe(8);
+  expect(meta.readBigUInt64LE()).toBe(0n);
+  expect(native.close(handle)).toBe(0);
+  const resumed = createIndexSession();
+  expect(await resumed.open(path, "writer-existing")).toEqual({
+    ok: true,
+    generation: 0,
+  });
+  expect(await resumed.query("absent")).toEqual({
+    ok: true,
+    generation: 0,
+    hits: [],
+  });
+  expect(await resumed.close()).toEqual({ ok: true, generation: 0 });
 }, 15000);
 
 test("test-only cleanup closes resource but retained wrapper remains safe", async () => {

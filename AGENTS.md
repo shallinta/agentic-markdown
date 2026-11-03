@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## F-064d alpha.190 验收通过（2026-11-03）
+
+正式包内可写重开及定向测试复跑通过，最终独立复核无阻断。此前真实窗口和全量证据见唯一迭代，原临时日志已不可用。接下来先收敛 F-064 的工作区授权与索引接入，四项父义务继续登记。
+
+## F-064d alpha190构建获准（2026-10-19）
+
+主线已读完整核心与测试差异，两轴各23/0/184且0必要有限构建阻断；主线全量1803/0/38497、242文件43.30秒，type/full lint/docs/lock/diff通过。新增饱和代batch前LIMIT，pre/post测试panic后显式重开及损坏payload后复取锁通过；cleanup失败仅控制流未注入。批准递增alpha190 unsigned构建及正式包host可写重开/空WK检查，尚未验收/Git，alpha189仍最新已验。旧FINAL002不因本次绿称修复；父/冻结/专项/offline保持。
+
+## F-064d 可写重开有限实施获准（2026-10-19）
+
+主线全文读唯一F064d及实际Rust/C/worker与锁定公开writer锁/meta接口，两轴修订末核0必要路线阻断。批准writer-existing、锁后有界live/代数恢复及实现后测试；初始None仅opstamp0且空，删空保代，失败显式收尾、cleanup失败unknown优先，锁竞争沿保守UNKNOWN不自动重试。仅内部limited-v1，不扩授权/dirty/UI/四父义务；本机模块编译可执行，版本/build/包验收/Git仍待主线，alpha189保持。冻结/专项/最终问题/offline不变。
+
+## F-064c Git收据与下一片（2026-10-19）
+
+已提交推送`0b26d32ccf5a3d62f3057cf3f1dd01b642779014`，HTTPS远端main/origin/main/HEAD同SHA；hook前后tree均`8383eb2fe282f7debeb53abba81c4938747189e8`，核验时clean。alpha189为最新有限已验包；仅内部索引非完整搜索。连续授权下下一片先核F064剩余硬前置与四义务，收敛可写重开/缓存会话承接最小方案，不自动放大limited-v1或引入搜索UI/权限旁路，尚未批准下一生产/版本/build。冻结/专项/最终问题/offline保持。
+
 ## F-064c alpha189 最终有限通过，Git待执行（2026-10-19）
 
 两轴独立末核0必要有限阻断，主线批准alpha189/hash2p9sykdjetquk受托代验通过，非用户亲验。包内正式CRUD自然exit0/gen4、包Bun定向19/0/134、10源及三资源SHA核同；相对188仅bridge.c尾空格源hash变化，三产物同。实际独立空WK欢迎页/CmdQ，launcher10234exit0/PID97053消失，IMK仅观察。未称189全量重跑；187全量、源码FINAL002、并发与暂存首红保留。完整父/授权dirty/UI/x64/CI实装/冻结/专项/offline开放，Git待执行。

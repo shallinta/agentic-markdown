@@ -30,6 +30,7 @@ import type {
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 import { DocumentPathError, authorizeSingleFile } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
+import { INDEX_LIMITS } from "../index/protocol";
 
 import {
   authorizeRoot,
@@ -55,6 +56,7 @@ import {
   type ScanDirectory,
 } from "./scan";
 import { validScanBatch } from "./scan-protocol";
+import { searchSnapshot } from "./search-snapshot";
 import { createTrashService } from "./trash-document";
 import { createScanWorker } from "./worker";
 
@@ -78,6 +80,11 @@ interface Owner extends DocumentScope {
   root: Root;
 }
 export interface TrustedWorkspaceService extends WorkspaceService {
+  searchSnapshot(
+    root: string,
+    generation: number,
+    query: string
+  ): ReturnType<typeof searchSnapshot>;
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
@@ -209,6 +216,8 @@ export function createWorkspaceService({
     root.meta.generation === generation &&
     roots.includes(root);
   const openingRoots = new Map<Root, number>();
+  let indexTask: ReturnType<typeof searchSnapshot> | undefined;
+  let indexDisposing = false;
   const manualCandidates = new Map<
     string,
     { operation?: DirectoryOperation; token?: string; expires: number }
@@ -1050,6 +1059,48 @@ export function createWorkspaceService({
       }
       const current=()=>{check();for(const validate of validations)validate();};current();return {items,incomplete:incomplete||roots.some(root=>root.meta.status!=="complete"),current};
     },
+    async searchSnapshot(handle, generation, query) {
+      if (indexTask) return { ok: false, error: "BUSY", accepted: false };
+      const root = roots.find((candidate) => candidate.meta.handle === handle);
+      if (!root) return { ok: false, error: "UNAVAILABLE", accepted: false };
+      const eligible = () =>
+        live(root, generation) &&
+        root.meta.status === "complete" &&
+        !removalAdmission &&
+        !scanParked &&
+        !preferencePending &&
+        !indexDisposing;
+      if (!eligible()) return { ok: false, error: "UNAVAILABLE", accepted: false };
+      const files = root.files;
+      if (files.size > INDEX_LIMITS.documents)
+        return { ok: false, error: "LIMIT", accepted: false };
+      const entries = new Map(files);
+      const showHidden = root.meta.showHidden ?? false;
+      const scanVersion = root.registry.version();
+      const current = () => {
+        if (!eligible() || root.files !== files || files.size !== entries.size ||
+            (root.meta.showHidden ?? false) !== showHidden ||
+            root.registry.version() !== scanVersion) return false;
+        for (const [entry, file] of entries)
+          if (files.get(entry) !== file) return false;
+        return true;
+      };
+      indexTask = searchSnapshot(
+        root.authorization,
+        entries,
+        showHidden,
+        query,
+        current
+      );
+      try {
+        const result = await indexTask;
+        return result.ok && !current()
+          ? { ok: false, error: "CANCELLED", accepted: false }
+          : result;
+      } finally {
+        indexTask = undefined;
+      }
+    },
     createFolder:(value)=>folders.request(value),
     trashDocument:(value)=>trash.request(value),
     trashLifecycle:trash,
@@ -1355,6 +1406,7 @@ export function createWorkspaceService({
       }
     },
     async dispose() {
+      indexDisposing = true;
       trash.dispose();
       creation.dispose();
       duplication.dispose();
@@ -1368,6 +1420,7 @@ export function createWorkspaceService({
       disposed = true;
       epoch++;
       while (running) await new Promise((resolve) => setTimeout(resolve, 1));
+      await indexTask;
       worker.dispose();
     },
   };

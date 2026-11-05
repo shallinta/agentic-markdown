@@ -75,6 +75,9 @@ export async function createMainWindow({
     preload:
       SHELL_PRELOAD +
       labPreload +
+      (process.env.AGENTIC_MARKDOWN_SEARCH_LAB === "1"
+        ? ";globalThis.__AGENTIC_MARKDOWN_SEARCH_LAB__ = true;"
+        : "") +
       (process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB === "1"
         ? ";globalThis.__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__ = true;"
         : ""),

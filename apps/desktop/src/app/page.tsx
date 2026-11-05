@@ -60,6 +60,11 @@ const SecurityLab = lazy(() =>
     default: module.SecurityLab,
   }))
 );
+const SearchLab = lazy(() =>
+  import("@/components/search-lab").then((module) => ({
+    default: module.SearchLab,
+  }))
+);
 const EditorProbeLab = lazy(() =>
   import("@/components/editor-probe-lab").then((module) => ({
     default: module.EditorProbeLab,
@@ -74,6 +79,18 @@ function LazyMount({ open, children }: { open: boolean; children: ReactNode }) {
 }
 
 export function Page() {
+  if (
+    (
+      globalThis as typeof globalThis & {
+        __AGENTIC_MARKDOWN_SEARCH_LAB__?: boolean;
+      }
+    ).__AGENTIC_MARKDOWN_SEARCH_LAB__ === true
+  )
+    return (
+      <Suspense fallback={<p>正在加载正文查询实验…</p>}>
+        <SearchLab />
+      </Suspense>
+    );
   const lab = (
     globalThis as typeof globalThis & {
       __AGENTIC_MARKDOWN_PERF_LAB__?: {

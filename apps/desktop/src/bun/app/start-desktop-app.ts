@@ -58,6 +58,9 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     pickDirectory: () => nativeFiles.pickDirectory(),
     documents,
   });
+  const searchLab = process.env.AGENTIC_MARKDOWN_SEARCH_LAB === "1"
+    ? (await import("../perf-lab/search")).createSearchLab()
+    : undefined;
 
   const getRpc = (): MainWindowRPC => {
     if (!rpc) throw new Error("Main window RPC is not ready.");
@@ -95,9 +98,11 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     // never dispose document grants until the process actually exits.
     stop: async () => {
       await mainWindow?.flushState();
+      await searchLab?.close();
     },
     quit: () => Utils.quit(),
     reload: async (requestId) => {
+      await searchLab?.close();
       const transition=mru.beginTransition();
       const response: unknown = await getRpc().request.commitReload({
         protocolVersion: 1,
@@ -109,6 +114,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     update: () => updater.applyUpdateAndRestart(),
     beforeUpdate: async () => {
       await mainWindow?.flushState();
+      await searchLab?.close();
     },
   });
   const commandDependencies = {
@@ -125,6 +131,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const runtime: DesktopAppRuntime = {
     stop() {
       stopPromise ??= stopDesktopApp([
+        ["search lab", () => searchLab?.dispose()],
         ["workspace", () => workspace.dispose()],
         ["documents", () => documents.dispose()],
         ["recent files", () => recent.drain()],
@@ -170,6 +177,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         reopen: createRecentReopener(documents, (id) => recent.find(id)),
       },
       workspace,
+      searchLab,
       executeCommand: (command) => executeCommand(command, getMainWindow()),
       getMainWindow,
       locale,

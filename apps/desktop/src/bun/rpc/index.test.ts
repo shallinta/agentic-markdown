@@ -24,6 +24,26 @@ function createDependencies() {
   } as never;
 }
 
+test("search lab RPC is disabled without the trusted startup service", async () => {
+  const rpc = createMainWindowRPC(createDependencies()) as unknown as {
+    handlers: { requests: { searchLabRequest(request: unknown): unknown } };
+  };
+  const requestId = crypto.randomUUID();
+  const run = (input: unknown) => rpc.handlers.requests.searchLabRequest(input);
+  expect(await run({ protocolVersion: 1, requestId, op: "prepare" })).toEqual({
+    protocolVersion: 1,
+    requestId,
+    ok: false,
+    error: "DISABLED",
+  });
+  expect(await run({ requestId: "/private/opaque" })).toEqual({
+    protocolVersion: 1,
+    requestId: null,
+    ok: false,
+    error: "DISABLED",
+  });
+});
+
 test("source wrapping RPC requires exact boolean metadata and acknowledged persistence", async () => {
   let enabled = true;
   const rpc = createMainWindowRPC({

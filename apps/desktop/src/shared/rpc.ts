@@ -99,6 +99,10 @@ export interface DesktopRPCType {
         response: { enabled: boolean; autorun: boolean };
       };
       perfLabRequest: { params: PerfRequest; response: PerfResponse };
+      searchLabRequest: {
+        params: import("./search-lab").SearchLabRequest;
+        response: import("./search-lab").SearchLabResponse;
+      };
       checkDocumentWriteCapability: {
         params: DocumentHandleRequest;
         response: WriteCapabilityResponse;

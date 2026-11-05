@@ -83,7 +83,8 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   searchSnapshot(
     root: string,
     generation: number,
-    query: string
+    query: string,
+    signal?: AbortSignal
   ): ReturnType<typeof searchSnapshot>;
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
@@ -1059,7 +1060,8 @@ export function createWorkspaceService({
       }
       const current=()=>{check();for(const validate of validations)validate();};current();return {items,incomplete:incomplete||roots.some(root=>root.meta.status!=="complete"),current};
     },
-    async searchSnapshot(handle, generation, query) {
+    async searchSnapshot(handle, generation, query, signal) {
+      if (signal?.aborted) return { ok: false, error: "CANCELLED", accepted: false };
       if (indexTask) return { ok: false, error: "BUSY", accepted: false };
       const root = roots.find((candidate) => candidate.meta.handle === handle);
       if (!root) return { ok: false, error: "UNAVAILABLE", accepted: false };
@@ -1069,7 +1071,8 @@ export function createWorkspaceService({
         !removalAdmission &&
         !scanParked &&
         !preferencePending &&
-        !indexDisposing;
+        !indexDisposing &&
+        !signal?.aborted;
       if (!eligible()) return { ok: false, error: "UNAVAILABLE", accepted: false };
       const files = root.files;
       if (files.size > INDEX_LIMITS.documents)

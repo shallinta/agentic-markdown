@@ -85,6 +85,8 @@ export interface FolderMutationLease {
   release(): void;
 }
 export interface TrustedDocumentService extends DocumentService {
+  /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
+  beginSearchAdmission(): { current(): boolean } | undefined;
   setTrashGuard(guard: (path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]) => boolean): void;
   trashBlocked(path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]): boolean;
   inspectTrash(handle: string, documentId: string): Omit<SingleFileAuthorization,"file"> | null;
@@ -369,9 +371,23 @@ export function createDocumentService({
   let writeBarrier = false;
   let folderMutationLease: object | null = null;
   let selectBarrierGeneration = 0;
+  let searchAdmissionGeneration = 0;
   let saveStartGeneration = 0;
   const uncertain = new Set<string>();
   const savingRequests = new Set<string>();
+  const searchAdmissible = () =>
+    !disposed &&
+    !disposing &&
+    grants.size === 0 &&
+    !selecting &&
+    !revealing &&
+    !running &&
+    !pending &&
+    saving === 0 &&
+    !acceptance.busy() &&
+    !writeBarrier &&
+    !createAdmissionOwner &&
+    !folderMutationLease;
   const result = (
     requestId: string,
     snapshot: DocumentSnapshot | null
@@ -668,6 +684,17 @@ export function createDocumentService({
     );
   }
   const service: TrustedDocumentService = {
+    beginSearchAdmission() {
+      if (!searchAdmissible()) return undefined;
+      const authorization = searchAdmissionGeneration;
+      const barrier = selectBarrierGeneration;
+      return {
+        current: () =>
+          authorization === searchAdmissionGeneration &&
+          barrier === selectBarrierGeneration &&
+          searchAdmissible(),
+      };
+    },
     setTrashGuard(guard) { trashGuard = guard; },
     trashBlocked(path, fingerprint, directories) { return trashGuard(path, fingerprint, directories); },
     inspectTrash(handle, documentId) {
@@ -989,6 +1016,7 @@ export function createDocumentService({
       if (disposed || disposing || createAdmissionOwner || running || pending || selecting || revealing || saving || writeBarrier || folderMutationLease || acceptance.busy()) return failure(request.requestId, "BUSY");
       const owner = {}; createAdmissionOwner = owner;
       const { task, promise } = taskFor(request.requestId), generation = epoch;
+      searchAdmissionGeneration++;
       enqueue(task, async () => {
         let candidate: Grant | null = null;
         const check = () => { checkTask(task, generation); if (disposing || createAdmissionOwner !== owner) throw new DocumentFailure("CANCELLED"); };
@@ -1013,6 +1041,7 @@ export function createDocumentService({
         return failure(request.requestId, "BUSY");
       const { task, promise } = taskFor(request.requestId),
         generation = epoch;
+      searchAdmissionGeneration++;
       enqueue(task, async () => {
         let candidate: Grant | null = null;
         try {
@@ -1377,6 +1406,7 @@ export function createDocumentService({
         return failure(request.requestId, "BUSY");
       const { task, promise } = taskFor(request.requestId);
       selecting = task;
+      searchAdmissionGeneration++;
       const generation = epoch;
       const selectedBarrier = selectBarrierGeneration;
       void (async () => {

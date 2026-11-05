@@ -2,6 +2,8 @@
 
 ## 全文索引内部接入（F-064a／F-064b／F-064c，非可用搜索功能）
 
+F-064g 的 alpha.193 加入内部查询准入票据。文档授权或写屏障变化后，旧查询的迟到命中会被拦截。已通过隔离实验窗口及授权交错测试。见[F-064g 迭代](iterations/F-064g-document-search-admission.md)。
+
 F-064f 的 alpha.192 加入了默认关闭的合成数据查询实验。实验面板可准备测试目录、查询字面量、取消和关闭。已验证实际窗口通过 RPC 返回命中区间，并在退出时释放测试夹具。见[F-064f 迭代](iterations/F-064f-authorized-search-transport.md)。
 
 F-064e 的 alpha.191 支持对一个已完成扫描的授权目录根发起内部正文查询。包形态验收覆盖中文命中、UTF-16 位置、过期或撤销的授权和缓存清理。当前仍是内部入口，适用 16 个文档和 65,536 字节正文的快照限额。见[F-064e 迭代](iterations/F-064e-authorized-workspace-index.md)。

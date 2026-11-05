@@ -13,11 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createDocumentService } from "../documents";
-import { fileFingerprint } from "../documents/path-authorization";
 import type { IndexRequest, IndexResult } from "../index/protocol";
-
-import { authorizeRoot } from "./authorization";
-import { searchSnapshot } from "./search-snapshot";
 
 import { createWorkspaceService } from ".";
 
@@ -154,27 +150,58 @@ for (const scenario of ["native", "transport"] as const)
   );
 
 test.skipIf(childScenario !== "transport")(
-  "late apply and query cannot deliver hits; UNKNOWN retains the slot",
+  "admission changes suppress late apply and query; UNKNOWN retains the slot",
   async () => {
     const fixture = await mkdtemp(join(tmpdir(), "source-"));
-    const authorization = await authorizeRoot(fixture);
-    const path = join(authorization.path, "a.md");
+    const path = join(fixture, "a.md");
+    const documents = createDocumentService({
+      pickFile: () => Promise.resolve(path),
+    });
+    const workspace = createWorkspaceService({
+      documents,
+      pickDirectory: () => Promise.resolve(fixture),
+    });
     await writeFile(path, "target");
-    const fingerprint = fileFingerprint(await lstat(path, { bigint: true }));
-    const files = new Map([["entry", { path, fingerprint, chain: [] }]]);
+    const originalWorker = globalThis.Worker;
+    try {
+      await workspace.request({ ...env(), op: "select" });
+      let root: { handle: string; generation: number } | undefined;
+      for (let i = 0; i < 1000; i++) {
+        const state = await workspace.request({ ...env(), op: "state" });
+        if (state.ok && state.roots[0]?.status === "complete") {
+          root = state.roots[0];
+          break;
+        }
+        await Bun.sleep(2);
+      }
+      if (!root) throw Error("Missing complete scan root");
+      const search = () =>
+        workspace.searchSnapshot(root.handle, root.generation, "target");
+      async function openAndRelease() {
+        const opened = await documents.select(env());
+        if (!opened.ok || !opened.snapshot) throw Error("Opening was blocked");
+        expect(await search()).toMatchObject({ ok: false, error: "BUSY" });
+        expect(
+          await documents.release({ ...env(), handle: opened.snapshot.handle })
+        ).toMatchObject({ ok: true });
+        expect(documents.locations()).toEqual([]);
+      }
 
-    for (const scenario of ["apply", "query", "unknown"] as const) {
-      let current = true;
-      let generation = 0;
-      let hitId = "";
-      const operations: string[] = [];
-      class Transport extends EventTarget {
-        onmessage?: (event: MessageEvent) => void;
-        postMessage(request: IndexRequest) {
-          operations.push(request.op);
-          queueMicrotask(() => {
+      for (const scenario of ["apply", "query", "unknown"] as const) {
+        let generation = 0;
+        let hitId = "";
+        const operations: string[] = [];
+        class Transport extends EventTarget {
+          onmessage?: (event: MessageEvent) => void;
+          postMessage(request: IndexRequest) {
+            operations.push(request.op);
+            void this.respond(request);
+          }
+          async respond(request: IndexRequest) {
+            await Promise.resolve();
             let result: IndexResult;
             if (request.op === "apply" && scenario === "unknown") {
+              await openAndRelease();
               result = { ok: false, error: "UNKNOWN", accepted: true };
             } else {
               if (request.op === "apply") {
@@ -191,7 +218,11 @@ test.skipIf(childScenario !== "transport")(
                   throw Error("Missing index ID");
                 hitId = change.id;
               }
-              if (request.op === scenario) current = false;
+              if (request.op === "apply" && scenario === "apply")
+                expect(await documents.withCreateBarrier(() => undefined)).toBe(
+                  true
+                );
+              if (request.op === "query") await openAndRelease();
               result =
                 request.op === "query"
                   ? {
@@ -216,49 +247,50 @@ test.skipIf(childScenario !== "transport")(
               Object.defineProperty(event, "code", { value: 0 });
               this.dispatchEvent(event);
             }
+          }
+        }
+        Object.defineProperty(globalThis, "Worker", {
+          value: Transport,
+          configurable: true,
+        });
+        const result = await search();
+        if (scenario === "unknown") {
+          expect(result).toEqual({
+            ok: false,
+            error: "UNKNOWN",
+            accepted: true,
+          });
+          expect((await lstat(slot)).isDirectory()).toBe(true);
+          expect(await search()).toMatchObject({
+            ok: false,
+            error: "UNAVAILABLE",
+          });
+        } else {
+          expect(result).toEqual({
+            ok: false,
+            error: "CANCELLED",
+            accepted: false,
+          });
+          expect(
+            await lstat(slot).catch((error: unknown) => error)
+          ).toMatchObject({
+            code: "ENOENT",
           });
         }
+        expect(operations).toEqual(
+          scenario === "query"
+            ? ["open", "apply", "query", "close"]
+            : ["open", "apply", "close"]
+        );
       }
+    } finally {
       Object.defineProperty(globalThis, "Worker", {
-        value: Transport,
+        value: originalWorker,
         configurable: true,
       });
-      const result = await searchSnapshot(
-        authorization,
-        files,
-        false,
-        "target",
-        () => current
-      );
-      if (scenario === "unknown") {
-        expect(result).toEqual({ ok: false, error: "UNKNOWN", accepted: true });
-        expect((await lstat(slot)).isDirectory()).toBe(true);
-        expect(
-          await searchSnapshot(
-            authorization,
-            files,
-            false,
-            "target",
-            () => true
-          )
-        ).toMatchObject({ ok: false, error: "UNAVAILABLE" });
-      } else {
-        expect(result).toEqual({
-          ok: false,
-          error: "CANCELLED",
-          accepted: false,
-        });
-        expect(
-          await lstat(slot).catch((error: unknown) => error)
-        ).toMatchObject({
-          code: "ENOENT",
-        });
-      }
-      expect(operations).toEqual(
-        scenario === "query"
-          ? ["open", "apply", "query", "close"]
-          : ["open", "apply", "close"]
-      );
+      await workspace.dispose();
+      await documents.dispose();
+      await rm(fixture, { recursive: true, force: true });
     }
   },
   5000

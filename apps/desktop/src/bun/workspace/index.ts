@@ -1074,6 +1074,8 @@ export function createWorkspaceService({
         !indexDisposing &&
         !signal?.aborted;
       if (!eligible()) return { ok: false, error: "UNAVAILABLE", accepted: false };
+      const admission = documents.beginSearchAdmission();
+      if (!admission) return { ok: false, error: "UNAVAILABLE", accepted: false };
       const files = root.files;
       if (files.size > INDEX_LIMITS.documents)
         return { ok: false, error: "LIMIT", accepted: false };
@@ -1081,7 +1083,7 @@ export function createWorkspaceService({
       const showHidden = root.meta.showHidden ?? false;
       const scanVersion = root.registry.version();
       const current = () => {
-        if (!eligible() || root.files !== files || files.size !== entries.size ||
+        if (!admission.current() || !eligible() || root.files !== files || files.size !== entries.size ||
             (root.meta.showHidden ?? false) !== showHidden ||
             root.registry.version() !== scanVersion) return false;
         for (const [entry, file] of entries)

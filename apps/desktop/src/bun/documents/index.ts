@@ -17,6 +17,7 @@ import {
   type WriteCapability,
 } from "../../shared/documents";
 import { validLocalImageRequest } from "../../shared/local-images";
+import { READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import { validMirror } from "../../shared/save-content";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
 
@@ -106,7 +107,22 @@ interface ContentSearchBinding {
     owner?: DocumentScope
   ): Promise<DocumentResponse>;
 }
+interface ReadingSnapshotSource {
+  handle: string;
+  documentId: string;
+  expectedRevision: number;
+  expectedHash: string;
+}
+type ReadingSnapshotCapture =
+  | { ok: true; base64: string; current(): boolean }
+  | { ok: false; error: DocumentErrorCode };
+
 export interface TrustedDocumentService extends DocumentService {
+  /** Existing observed grant only. The receipt checks logical ownership after capture. */
+  captureReadingSnapshot(
+    source: ReadingSnapshotSource,
+    current?: () => boolean
+  ): Promise<ReadingSnapshotCapture>;
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
   beginSearchAdmission(): { current(): boolean } | undefined;
   /** Captures only grants owned by this service. Missing or uncertain grants remain unresolved. */
@@ -730,6 +746,88 @@ export function createDocumentService({
     );
   }
   const service: TrustedDocumentService = {
+    async captureReadingSnapshot(source, callerCurrent = () => true) {
+      const { handle, documentId, expectedRevision, expectedHash } = source;
+      const reject = (error: DocumentErrorCode) => ({ ok: false as const, error });
+      if (
+        typeof handle !== "string" || !uuidPattern.test(handle) ||
+        typeof documentId !== "string" || !uuidPattern.test(documentId) ||
+        !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
+        typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedHash)
+      ) return reject("INVALID_REQUEST");
+      const grant = grants.get(handle);
+      if (!grant) return reject("INVALID_HANDLE");
+      const { identityKey, path, fingerprint, directories, scope } = grant;
+      const identity = identities.get(identityKey);
+      const observation = observations.get(handle);
+      if (
+        identity?.documentId !== documentId || identity.revision !== expectedRevision ||
+        identity.hash !== expectedHash || observation?.documentId !== documentId ||
+        observation.revision !== expectedRevision || observation.hash !== expectedHash
+      ) return reject("CONFLICT");
+      const generation = epoch;
+      const authorization = searchAdmissionGeneration;
+      const barrier = selectBarrierGeneration;
+      const save = saveStartGeneration;
+      const check = () => {
+        let callerIsCurrent: boolean;
+        try {
+          callerIsCurrent = callerCurrent();
+        } catch {
+          callerIsCurrent = false;
+        }
+        if (!callerIsCurrent) throw new DocumentFailure("CANCELLED");
+        if (!searchIdle()) throw new DocumentFailure("BUSY");
+        if (
+          epoch !== generation || searchAdmissionGeneration !== authorization ||
+          selectBarrierGeneration !== barrier || saveStartGeneration !== save ||
+          grants.get(handle) !== grant || grant.identityKey !== identityKey ||
+          grant.path !== path || grant.fingerprint !== fingerprint ||
+          grant.directories !== directories || grant.scope !== scope ||
+          identities.get(identityKey) !== identity || uncertain.has(documentId) ||
+          observations.get(handle) !== observation ||
+          (observation.last !== undefined && observation.last !== "unchanged")
+        ) throw new DocumentFailure("CONFLICT");
+        if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
+      };
+      try {
+        check();
+        const file = await open(
+          path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+        );
+        let bytes: Buffer;
+        try {
+          bytes = await stableBytes({ ...grant, file }, check, READER_SNAPSHOT_MAX_BYTES);
+        } finally {
+          await file.close();
+        }
+        check();
+        if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
+          return reject("CONFLICT");
+        try {
+          new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+        } catch {
+          return reject("INVALID_UTF8");
+        }
+        let retired = false;
+        return {
+          ok: true,
+          base64: bytes.toString("base64"),
+          current() {
+            if (retired) return false;
+            try {
+              check();
+              return true;
+            } catch {
+              retired = true;
+              return false;
+            }
+          },
+        };
+      } catch (error) {
+        return reject(codeOf(error));
+      }
+    },
     beginSearchAdmission() {
       if (!searchAdmissible()) return undefined;
       const authorization = searchAdmissionGeneration;

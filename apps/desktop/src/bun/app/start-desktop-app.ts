@@ -6,6 +6,7 @@ import Electrobun, {
 } from "electrobun/bun";
 
 import {
+  PACKAGED_READER_SNAPSHOT_URL,
   PACKAGED_READER_URL,
   readerNavigationRules,
 } from "../../security/reader-policy";
@@ -42,19 +43,21 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   let mainWindow: ManagedMainWindow | null = null;
   let browserWindow: BrowserWindow | null = null;
   let rpc: MainWindowRPC | null = null;
-  const readerLab = process.env.AGENTIC_MARKDOWN_READER_LAB === "1"
-    ? createReaderLab(() => new BrowserWindow({
-        title: "独立阅读窗口实验",
-        url: PACKAGED_READER_URL,
-        renderer: "native",
-        sandbox: true,
-        navigationRules: readerNavigationRules(),
-        titleBarStyle: "default",
-        hidden: true,
-        activate: false,
-        frame: { width: 680, height: 720 },
-      }))
-    : undefined;
+  const syntheticReader = process.env.AGENTIC_MARKDOWN_READER_LAB === "1";
+  const snapshotRequested = process.env.AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB === "1";
+  const snapshotReader = snapshotRequested && !syntheticReader;
+  const openReaderWindow = (url: typeof PACKAGED_READER_URL | typeof PACKAGED_READER_SNAPSHOT_URL) =>
+    new BrowserWindow({
+      title: "独立阅读窗口实验",
+      url,
+      renderer: "native",
+      sandbox: true,
+      navigationRules: readerNavigationRules(url),
+      titleBarStyle: "default",
+      hidden: true,
+      activate: false,
+      frame: { width: 680, height: 720 },
+    });
   const nativeFiles = createNativeFileCapabilities();
   const recent = createRecentFiles(getSettingsDir(), (reason) =>
     rpc?.send.recentFilesFailed({ reason })
@@ -72,6 +75,14 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     onCapabilityChanged: (handle) =>
       rpc?.send.documentCapabilityChanged({ handle }),
   });
+  const readerLab = snapshotReader
+    ? createReaderLab(undefined, {
+        capture: (source, current) => documents.captureReadingSnapshot(source, current),
+        open: () => openReaderWindow(PACKAGED_READER_SNAPSHOT_URL),
+      })
+    : syntheticReader && !snapshotRequested
+      ? createReaderLab(() => openReaderWindow(PACKAGED_READER_URL))
+      : undefined;
   const workspace = createWorkspaceService({
     preferences: createHiddenPreferences(getSettingsDir()),
     pickDirectory: () => nativeFiles.pickDirectory(),
@@ -114,6 +125,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const lifecycle = createLifecycleGuard({
     guard: async (reason, execute) => {
       const resumeSearch = contentSearch?.suspend();
+      const resumeSnapshots = snapshotReader ? readerLab?.suspendSnapshots() : undefined;
       workspace.trashLifecycle.beforeExit();
       try {
         // A canceled search may still need to release an unclaimed grant.
@@ -127,7 +139,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
             return execute(requestId);
           })
         );
-      } finally { workspace.trashLifecycle.cancelExit(); resumeSearch?.(); }
+      } finally { workspace.trashLifecycle.cancelExit(); resumeSearch?.(); resumeSnapshots?.(); }
     },
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.
@@ -223,6 +235,11 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       workspace,
       searchLab,
       contentSearch,
+      openReadingSnapshot: snapshotReader && readerLab
+        ? async (input) => browserWindow
+          ? readerLab.openReadingSnapshot(input, browserWindow)
+          : { ok: false, error: "UNAVAILABLE" }
+        : undefined,
       executeCommand: (command) => executeCommand(command, getMainWindow()),
       getMainWindow,
       locale,
@@ -230,6 +247,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     });
     mainWindow = await createMainWindow({
       rpc,
+      readerSnapshotLab: snapshotReader,
       executeCommand: (command, window) => {
         if (!readerLab?.interceptMenu(command)) executeCommand(command, window);
       },
@@ -237,10 +255,12 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         browserWindow = window;
         readerLab?.bindMain(window);
         mru.bindWindow();
-        window.webview.on("dom-ready",()=>{
+        if (snapshotReader)
+          window.webview.on("did-commit-navigation", () => readerLab?.retireMainReady(window));
+        window.webview.on("dom-ready",(event)=>{
           mru.domReady();
           contentSearch?.setReady(true);
-          readerLab?.openAfterMainReady(window);
+          readerLab?.openAfterMainReady(window, event);
         });
         window.on("will-close", (event) =>
           lifecycle.beforeClose(

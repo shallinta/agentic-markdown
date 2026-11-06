@@ -8,6 +8,7 @@ import type {
   ReloadCommitResponse,
 } from "./discard";
 import type {
+  DocumentErrorCode,
   DocumentHandleRequest,
   DocumentRequest,
   DocumentResponse,
@@ -20,6 +21,17 @@ import type { SupportedLocale } from "./i18n";
 import type { PerfRequest, PerfResponse } from "./perf-lab";
 import type { UpdateMode, UpdateStatusChangedPayload } from "./updates";
 
+export interface ReadingSnapshotSource {
+  handle: string;
+  documentId: string;
+  expectedRevision: number;
+  expectedHash: string;
+}
+
+export type OpenReadingSnapshotResponse =
+  | { ok: true; submitted: true }
+  | { ok: false; error: DocumentErrorCode | "UNAVAILABLE" };
+
 export interface DesktopRPCType {
   bun: RPCSchema<{
     requests: {
@@ -31,6 +43,10 @@ export interface DesktopRPCType {
       removeFolderRoot: { params: import("./folder-removal").FolderRemovalRequest; response: import("./folder-removal").FolderRemovalResponse };
       revealDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       openDefaultDocument: { params: DocumentHandleRequest; response: DocumentResponse };
+      openReadingSnapshot: {
+        params: ReadingSnapshotSource;
+        response: OpenReadingSnapshotResponse;
+      };
       recentFiles: {
         params: import("./recent-files").RecentRequest;
         response: import("./recent-files").RecentResponse;

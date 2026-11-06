@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 独立阅读窗口的已保存快照（F-021d）
+
+F-021d 在 alpha.263 实验入口验证当前已保存文档可投递到独立阅读窗口，首轮范围 64 KiB。打开后显示该次快照，主窗后续编辑独立进行。见[F-021d 迭代](iterations/F-021d-saved-reading-snapshot-probe.md)。
+
 ## 独立阅读窗口（F-021）
 
 F-021c 在 alpha.262 实验开关下验证独立阅读窗口、安全只读渲染，以及子窗关闭和主窗未保存保护。实验展示固定合成文档。正式文档打开入口和主窗模式迁移待接入。见[F-021c 迭代](iterations/F-021c-isolated-reading-window-probe.md)。

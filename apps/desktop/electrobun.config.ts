@@ -37,6 +37,7 @@ export default {
     copy: {
       "dist/index.html": "views/mainview/index.html",
       "dist/reader.html": "views/mainview/reader.html",
+      "dist/reader-snapshot.html": "views/mainview/reader-snapshot.html",
       "dist/assets": "views/mainview/assets",
       "dist-native": "native",
     },

@@ -1,7 +1,10 @@
 export const PACKAGED_READER_URL = "views://mainview/reader.html";
+export const PACKAGED_READER_SNAPSHOT_URL = "views://mainview/reader-snapshot.html";
 
-export function readerNavigationRules(): string {
-  return JSON.stringify(["^*", PACKAGED_READER_URL]);
+export function readerNavigationRules(
+  url: typeof PACKAGED_READER_URL | typeof PACKAGED_READER_SNAPSHOT_URL = PACKAGED_READER_URL
+): string {
+  return JSON.stringify(["^*", url === PACKAGED_READER_SNAPSHOT_URL ? url : PACKAGED_READER_URL]);
 }
 
 export const READER_CONTENT_SECURITY_POLICY = [

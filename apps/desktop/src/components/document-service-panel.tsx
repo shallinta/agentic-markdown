@@ -609,6 +609,50 @@ export function StandaloneFileList({ workspace, visible }: { workspace: Workspac
   );
 }
 
+function ReadingSnapshotLab({ controller, buttonClass }: {
+  controller: Workspace["controller"];
+  buttonClass: string;
+}) {
+  const pending = useRef(false);
+  const [status, setStatus] = useState<"idle" | "pending" | "submitted" | "error">("idle");
+  const open = async () => {
+    if (pending.current) return;
+    const source = controller.captureReadingSnapshotSource();
+    const rpc = electrobun.rpc;
+    if (!source || !rpc) {
+      setStatus("error");
+      return;
+    }
+    pending.current = true;
+    setStatus("pending");
+    try {
+      const result = await rpc.request.openReadingSnapshot(source, { maxRequestTime: 12000 });
+      setStatus(result?.ok === true && result.submitted === true ? "submitted" : "error");
+    } catch {
+      setStatus("error");
+    } finally {
+      pending.current = false;
+    }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        className={buttonClass}
+        disabled={status === "pending" || !controller.captureReadingSnapshotSource()}
+        onClick={() => void open()}
+      >
+        实验：打开已保存阅读快照
+      </button>
+      <span className="text-muted-foreground text-sm" role="status">
+        {status === "pending" ? "正在提交已保存快照…" :
+          status === "submitted" ? "快照已提交，请在阅读窗口核对。" :
+            status === "error" ? "未能确认快照已提交，请核对当前文档和阅读窗口。" :
+              "仅支持当前已保存、且不超过 64 KiB 的文档。"}
+      </span>
+    </div>
+  );
+}
+
 export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
   const previousFocus = useRef<HTMLElement | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -684,6 +728,13 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
             : "打开本地 Markdown 文件或加入文件夹。侧栏单击选择，双击或按 Enter 打开文档。"}
         </p>
       </div>
+      {(
+        globalThis as typeof globalThis & {
+          __AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB__?: boolean;
+        }
+      ).__AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB__ === true && (
+        <ReadingSnapshotLab controller={controller} buttonClass={buttonClass} />
+      )}
       {!snapshot &&
         !workspace.folderState.roots.length &&
         !state.entries.length &&

@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 
 import {
+  PACKAGED_READER_SNAPSHOT_URL,
   PACKAGED_READER_URL,
   READER_CONTENT_SECURITY_POLICY,
   readerNavigationRules,
@@ -53,7 +54,12 @@ test("production CSP allows hashed bootstrap and loopback bridge only", () => {
 
 test("the reader allows only its own navigation and no bridge or asset requests", () => {
   expect(JSON.parse(readerNavigationRules())).toEqual(["^*", PACKAGED_READER_URL]);
+  expect(JSON.parse(readerNavigationRules(PACKAGED_READER_SNAPSHOT_URL))).toEqual([
+    "^*",
+    PACKAGED_READER_SNAPSHOT_URL,
+  ]);
   expect(shellNavigationRules(PACKAGED_READER_URL)).not.toContain(PACKAGED_READER_URL);
+  expect(shellNavigationRules(PACKAGED_READER_SNAPSHOT_URL)).not.toContain(PACKAGED_READER_SNAPSHOT_URL);
   expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("worker-src blob:");
   expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("connect-src 'none'");
   expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("img-src 'none'");

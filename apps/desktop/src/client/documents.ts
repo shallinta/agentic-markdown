@@ -21,6 +21,8 @@ import {
   type SaveDocumentRequest,
 } from "../shared/documents";
 import type { FolderRemovalPublication, FolderRemovalDocument } from "../shared/folder-removal";
+import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
+import type { ReadingSnapshotSource } from "../shared/rpc";
 import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
 import type { TrashAffected, TrashPublication } from "../shared/trash-document";
 import type { WorkspaceOpenRequest } from "../shared/workspace";
@@ -1210,6 +1212,19 @@ export function createDocumentController(
   }
   const controller = {
     captureContentSearch,
+    captureReadingSnapshotSource(): ReadingSnapshotSource | null {
+      const snapshot = state.snapshot;
+      if (!snapshot || metadataDisposed || state.frozen || state.busy || state.stale ||
+          editorInputBlocked || !canLeaveEditor() || snapshot.byteLength > READER_SNAPSHOT_MAX_BYTES ||
+          searchDocumentStatus(snapshot, editors.get(snapshot.documentId)) !== "clean")
+        return null;
+      return {
+        handle: snapshot.handle,
+        documentId: snapshot.documentId,
+        expectedRevision: snapshot.revision,
+        expectedHash: snapshot.hash,
+      };
+    },
     getContentSearchActivation: () => generation,
     shouldAutoFocusEditor(documentId: string) {
       return (

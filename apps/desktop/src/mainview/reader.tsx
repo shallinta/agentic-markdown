@@ -1,5 +1,5 @@
 import { useCallback, useState, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 
 import { createCurrentCanonical } from "../client/current-canonical";
 import ReaderWorker from "../client/current-canonical.worker?worker&inline";
@@ -10,6 +10,7 @@ import {
   commonmarkContent,
   isControlledReadingElement,
 } from "../security/commonmark-content";
+import { decodeReaderSnapshot, READER_SNAPSHOT_EVENT } from "../shared/reader-snapshot";
 
 const fixture = {
   documentId: "reader-lab-fixture",
@@ -60,7 +61,7 @@ function checkBridge(name: string, handlerName: string) {
   }
 }
 
-function Reader({ content }: { content: ReactNode }) {
+function Reader({ content, label }: { content: ReactNode; label: string }) {
   const [auditResult, setAuditResult] = useState<{ safe: boolean; details: string }>();
   const audit = useCallback((element: HTMLElement | null) => {
     if (!element) return;
@@ -91,8 +92,8 @@ function Reader({ content }: { content: ReactNode }) {
         {!auditResult
           ? "正在检查只读内容…"
           : auditResult.safe
-            ? "只读样本 · 安全检查通过"
-            : "只读样本 · 安全检查失败"}
+            ? `${label} · 安全检查通过`
+            : `${label} · 安全检查失败`}
       </p>
       {auditResult && !auditResult.safe && <p>{auditResult.details}</p>}
       <article ref={audit}>{content}</article>
@@ -100,21 +101,55 @@ function Reader({ content }: { content: ReactNode }) {
   );
 }
 
-const container = document.getElementById("root");
-if (container) {
-  const root = createRoot(container);
+function renderReadingContent(root: Root, source: typeof fixture, label: string) {
   const canonical = createCurrentCanonical(
-    () => fixture,
+    () => source,
     () => new ReaderWorker(),
     "reading-legacy"
   );
-  window.addEventListener("pagehide", canonical.dispose, { once: true });
-  root.render(<p role="status">正在解析只读样本…</p>);
+  let closed = false;
+  window.addEventListener("pagehide", () => {
+    closed = true;
+    canonical.dispose();
+  }, { once: true });
+  root.render(<p role="status">正在解析{label}…</p>);
   void canonical.request().then((result) => {
+    if (closed) return;
     if (!result || !canonical.isCurrent(result)) {
-      root.render(<p role="alert">无法解析只读样本。</p>);
+      root.render(<p role="alert">无法解析{label}。</p>);
       return;
     }
-    root.render(<Reader content={commonmarkContent(result.tree, fixture.text)} />);
+    root.render(<Reader content={commonmarkContent(result.tree, source.text)} label={label} />);
   });
+}
+
+function waitForSnapshot(root: Root) {
+  const removeReceiver = () => {
+    window.clearTimeout(timer);
+    window.removeEventListener(READER_SNAPSHOT_EVENT, receive);
+    window.removeEventListener("pagehide", removeReceiver);
+  };
+  const receive = (event: Event) => {
+    removeReceiver();
+    const text = decodeReaderSnapshot(event instanceof CustomEvent ? event.detail : undefined);
+    if (text === undefined) {
+      root.render(<p role="alert">已保存快照无效。</p>);
+      return;
+    }
+    renderReadingContent(root, { documentId: "reader-snapshot", revision: 1, identity: {}, text }, "已保存快照");
+  };
+  const timer = window.setTimeout(() => {
+    removeReceiver();
+    root.render(<p role="alert">未收到已保存快照。</p>);
+  }, 5000);
+  window.addEventListener(READER_SNAPSHOT_EVENT, receive, { once: true });
+  window.addEventListener("pagehide", removeReceiver, { once: true });
+  root.render(<p role="status">等待已保存快照…</p>);
+}
+
+const container = document.getElementById("root");
+if (container) {
+  const root = createRoot(container);
+  if (container.hasAttribute("data-reader-snapshot")) waitForSnapshot(root);
+  else renderReadingContent(root, fixture, "只读样本");
 }

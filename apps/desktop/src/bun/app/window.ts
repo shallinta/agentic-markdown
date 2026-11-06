@@ -9,6 +9,7 @@ import {
 import { BrowserWindow, Updater } from "electrobun/bun";
 
 import {
+  PACKAGED_VIEW_URL,
   SHELL_PRELOAD,
   shellNavigationRules,
 } from "../../security/shell-policy";
@@ -37,7 +38,7 @@ async function getMainViewUrl(): Promise<string> {
     }
   }
   logEvent("window.packaged_assets");
-  return "views://mainview/index.html";
+  return PACKAGED_VIEW_URL;
 }
 
 export interface ManagedMainWindow {
@@ -50,11 +51,13 @@ export interface ManagedMainWindow {
 
 export async function createMainWindow({
   rpc,
+  readerSnapshotLab,
   executeCommand,
   onWindowCreated,
   onFullScreenChange,
 }: {
   rpc: MainWindowRPC;
+  readerSnapshotLab?: boolean;
   executeCommand: (command: Command, window: BrowserWindow) => void;
   onWindowCreated?: (window: BrowserWindow) => void;
   onFullScreenChange?: (isFullScreen: boolean) => void;
@@ -80,6 +83,9 @@ export async function createMainWindow({
         : "") +
       (process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB === "1"
         ? ";globalThis.__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__ = true;"
+        : "") +
+      (readerSnapshotLab === true && url === PACKAGED_VIEW_URL
+        ? ";globalThis.__AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB__ = true;"
         : ""),
     titleBarStyle: "hiddenInset",
     rpc,

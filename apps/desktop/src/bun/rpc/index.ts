@@ -8,7 +8,7 @@ import type { Command } from "../../shared/commands";
 import type { ContentSearchPrepareResponse, ContentSearchResponse } from "../../shared/content-search";
 import type { DocumentService } from "../../shared/documents";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
-import type { DesktopRPCType } from "../../shared/rpc";
+import type { DesktopRPCType, OpenReadingSnapshotResponse } from "../../shared/rpc";
 import type { SearchLabResponse } from "../../shared/search-lab";
 import { isSourceWrappingRequest } from "../../shared/source-wrapping";
 import type { WorkspaceService } from "../../shared/workspace";
@@ -21,6 +21,7 @@ export type MainWindowRPC = ReturnType<
 >;
 
 export interface MainWindowRPCDependencies {
+  openReadingSnapshot?: (input: unknown) => Promise<OpenReadingSnapshotResponse>;
   searchLab?: { run(input: unknown): Promise<SearchLabResponse> };
   contentSearch?: {
     run(input: unknown): Promise<ContentSearchResponse>;
@@ -66,6 +67,7 @@ export function createMainWindowRPC({
   workspace,
   searchLab,
   contentSearch,
+  openReadingSnapshot,
   executeCommand,
   getMainWindow,
   locale,
@@ -82,6 +84,8 @@ export function createMainWindowRPC({
     maxRequestTime: MAX_REQUEST_TIME_MS,
     handlers: {
       requests: {
+        openReadingSnapshot: (input) =>
+          openReadingSnapshot?.(input) ?? { ok: false, error: "UNAVAILABLE" },
         beginMRUSession: input => documentMRU ? documentMRU.begin(input) : Promise.reject(Error("MRU unavailable")),
         recordDocumentActivation: input => documentMRU ? documentMRU.record(input) : Promise.reject(Error("MRU unavailable")),
         resolveDocumentMRU: input => documentMRU ? documentMRU.resolve(input) : Promise.reject(Error("MRU unavailable")),

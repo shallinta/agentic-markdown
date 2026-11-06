@@ -10,6 +10,7 @@ import { electrobunViteAliases } from "./.hutch/devkit/api/config/electrobun-vit
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const readerEntry = path.resolve(__dirname, "src/mainview/reader.html");
+const readerSnapshotEntry = path.resolve(__dirname, "src/mainview/reader-snapshot.html");
 
 export default defineConfig({
   worker: {
@@ -43,7 +44,8 @@ export default defineConfig({
             (match) =>
               `'sha256-${createHash("sha256").update(match[1]).digest("base64")}'`
           );
-          const policy = path.resolve(context.filename) === readerEntry
+          const filename = path.resolve(context.filename);
+          const policy = filename === readerEntry || filename === readerSnapshotEntry
             ? READER_CONTENT_SECURITY_POLICY
             : shellContentSecurityPolicy(hashes, Boolean(context.server));
           return html.replace(
@@ -74,6 +76,7 @@ export default defineConfig({
       input: {
         index: path.resolve(__dirname, "src/mainview/index.html"),
         reader: readerEntry,
+        readerSnapshot: readerSnapshotEntry,
       },
       output: {
         // Split the stable, heavy vendor libraries out of the app chunk. They

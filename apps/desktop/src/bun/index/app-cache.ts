@@ -12,7 +12,8 @@ import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout }
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
   prepareEmptyStagedIndexReuseCompletion, prepareStagedIndexReusePurge, removeStagedIndexReuseMember,
-  prepareStagedIndexReuseFinalization, removeEmptyStagedIndexReuseDirectory, removeStagedIndexReuseFinalizationSidecar,
+  prepareStagedIndexReuseFinalization, releaseFinalizedIndexReuseSlot,
+  removeEmptyStagedIndexReuseDirectory, removeStagedIndexReuseFinalizationSidecar,
   stageRetiredIndexReuse, type IndexReuseInput,
 } from "./reuse";
 import {
@@ -151,6 +152,10 @@ export function prepareStagedIndexFinalization(input: IndexReclaimIntentTarget, 
 
 export function removeStagedIndexFinalizationSidecar(input: IndexFinalizationSidecarTarget, current: () => boolean) {
   return useRetiredAppProfile(readIndexFinalizationSidecarTarget(input), current, removeStagedIndexReuseFinalizationSidecar);
+}
+
+export function releaseFinalizedAppIndexSlot(input: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, releaseFinalizedIndexReuseSlot);
 }
 
 async function useRetiredAppProfile<

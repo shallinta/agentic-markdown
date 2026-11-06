@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bf 的 alpha.243 已在隔离夹具验证内部释放已收尾的索引槽。新授权范围可以重新使用该槽，旧请求无法修改新索引。窗口继续沿用现有搜索路径。见[F-064bf 迭代](iterations/F-064bf-release-finalized-index-slot.md)。
+
 F-064be 的 alpha.242 已在隔离夹具验证内部按序清理名册和确认记录。每次只清理指定的一份，v4 继续保留。见[F-064be 迭代](iterations/F-064be-index-reclaim-remove-sidecar.md)。
 
 F-064bd 的 alpha.241 已验证固定 v4 收尾清单可记录两份旁车的身份。此时两份旁车仍保留，槽位继续拒绝重新启用。见[F-064bd 迭代](iterations/F-064bd-index-reclaim-finalizing-catalog.md)。

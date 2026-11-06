@@ -21,7 +21,7 @@ const error = (
   accepted = false
 ): IndexResult => ({ ok: false, error: code, accepted });
 /** No window consumers yet. The supplied directory must have the real source/package layout. */
-export function createIndexSession(moduleDirectory = import.meta.dir) {
+export function createIndexSession(moduleDirectory = import.meta.dir, beforeWorker?: () => void) {
   const resources = resolveIndexResources(moduleDirectory);
   let worker: Worker | undefined;
   let active: Active | undefined;
@@ -89,6 +89,7 @@ export function createIndexSession(moduleDirectory = import.meta.dir) {
       : result.generation === generation;
   }
   if (resources) {
+    beforeWorker?.();
     try {
       worker = new Worker(resources.worker);
       worker.onmessage = (event: MessageEvent<unknown>) => {

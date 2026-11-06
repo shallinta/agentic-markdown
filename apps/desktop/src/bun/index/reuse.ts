@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import type { Dir } from "node:fs";
-import { opendir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
-  captureCompletedPlacement, captureFinalizingPlacement, captureIndexFootprint, sameIndexInventoryMetadata,
+  captureCompletedPlacement, captureFinalizingPlacement, captureIndexFootprint, captureVacantIndexSlot, sameIndexInventoryMetadata,
 } from "./cache-footprint";
 import {
   INDEX_LIMITS,
@@ -19,10 +17,10 @@ import {
 } from "./protocol";
 import {
   sameCompletedRecords, samePurgeRecords, samePurgeStamp, verifyCompletedPlacement, verifyFinalizationPlacement,
-  verifyFinalizingSidecars, verifyPurgeSubset,
+  verifyFinalizingCatalog, verifyFinalizingSidecars, verifyPurgeSubset,
 } from "./purge-proof";
 import { publishReclaimRecord, replaceReclaimCatalog } from "./purge-publish";
-import { unlinkFinalizationSidecar, unlinkPurgeMember } from "./purge-remove";
+import { unlinkFinalizationRecord, unlinkPurgeMember } from "./purge-remove";
 import { encodePurgeCompletion, encodePurgeRoster, purgeMemberOrder } from "./purge-roster";
 import { readPinnedPurgeCompletion, readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import { loadEmptyPendingRemover, loadReclaimStage } from "./reclaim-stage";
@@ -66,29 +64,6 @@ const fail = <Error extends Failure["error"] | ExactError>(error: Error) => ({
   accepted: error === "UNKNOWN",
 });
 
-async function closeProfileInspection(directory: Dir) {
-  try {
-    await directory.close();
-  } catch {
-    throw new IndexReuseCleanupError("Index reuse profile inspection close unconfirmed");
-  }
-}
-
-async function profileContainsOnlyLease(directory: string, check: () => void) {
-  const directoryHandle = await opendir(directory, { bufferSize: 2 });
-  try {
-    check();
-    const first = await directoryHandle.read();
-    check();
-    if (first?.name !== ".lease") return false;
-    const second = await directoryHandle.read();
-    check();
-    return second === null;
-  } finally {
-    await closeProfileInspection(directoryHandle);
-  }
-}
-
 async function useRetirementLease<Result extends { ok: true }>(
   directory: string, current: () => boolean,
   use: (slot: RetirementSlot, check: () => void) => Promise<Result | RetirementFailure>
@@ -129,13 +104,8 @@ function useRetirementSlot<Result extends { ok: true }>(
     check();
     if (cached.status === "invalid" || (mode === "retirement" && cached.status === "prepared")) return fail("SCHEMA");
     if (cached.status === "cold") {
-      const checkCold = () => {
-        check();
-        slot.assertInventoryLease();
-      };
-      checkCold();
-      const empty = await profileContainsOnlyLease(directory, checkCold);
-      checkCold();
+      const empty = await captureVacantIndexSlot(directory, check, slot.assertInventoryLease);
+      check();
       return fail(empty ? "MISSING" : "SCHEMA");
     }
     const { catalog } = cached;
@@ -567,7 +537,7 @@ export function removeStagedIndexReuseFinalizationSidecar(
       placement.recheck();
       held.checkAbsent();
       if (pinned) {
-        const result = unlinkFinalizationSidecar(held, selected, pinned, placement.recheck);
+        const result = unlinkFinalizationRecord(held, selected, pinned, placement.recheck);
         if (result !== "removed") return fail(result);
       }
       try {
@@ -589,6 +559,37 @@ export function removeStagedIndexReuseFinalizationSidecar(
         return { ok: true, alreadyAbsent: !pinned };
       } catch {
         throw new IndexReuseCleanupError("Index finalization sidecar removal unconfirmed");
+      }
+    });
+  });
+}
+
+export function releaseFinalizedIndexReuseSlot(directory: string, target: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetirementLease<{ ok: true; state: "released" | "alreadyEmpty" }>(directory, current, async (slot, check) => {
+    const { assertInventoryLease } = slot;
+    const placement = await captureVacantIndexSlot(directory, check, assertInventoryLease, true);
+    if (!placement) return fail("UNAVAILABLE");
+    const { catalog, profile, recheck } = placement;
+    if (catalog) {
+      const proof = await verifyFinalizingCatalog(directory, catalog, target, profile.uid, recheck);
+      if (!proof.ok) return proof;
+    }
+    return slot.withCompletionPlacement(undefined, async (held) => {
+      recheck();
+      held.checkAbsent();
+      if (catalog) {
+        const removed = unlinkFinalizationRecord(held, "catalog", catalog, recheck);
+        if (removed !== "removed") return fail(removed);
+      }
+      try {
+        held.checkAbsent();
+        await held.sync();
+        const empty = await captureVacantIndexSlot(directory, held.checkAbsent, assertInventoryLease);
+        if (!empty) throw Error("Finalized index slot not empty");
+        empty.recheck();
+        return { ok: true, state: catalog ? "released" : "alreadyEmpty" };
+      } catch {
+        throw new IndexReuseCleanupError("Finalized index slot release unconfirmed");
       }
     });
   });
@@ -695,10 +696,14 @@ async function runIndexReuse(
       return fail("SCHEMA");
     const prior = cached.status === "existing" ? cached.catalog : undefined;
     if (prior && prior.scopeKey !== scopeKey) return fail("SCHEMA");
-    if (exact && !prior) {
-      const empty = await profileContainsOnlyLease(directory, check);
+    const vacant = cached.status === "cold" ? await captureVacantIndexSlot(directory, check, slot.assertInventoryLease) : undefined;
+    if (cached.status === "cold") {
       check();
-      return fail(empty ? "MISSING" : "SCHEMA");
+      if (!vacant) return fail("SCHEMA");
+      if (exact) {
+        vacant.recheck();
+        return fail("MISSING");
+      }
     }
 
     const previous = new Map(prior?.entries.map(({ id, hash }) => [id, hash]));
@@ -726,7 +731,7 @@ async function runIndexReuse(
       if (footprint.totalBytes > BigInt(maxLogicalBytes)) return fail("LIMIT");
     } else check();
     if (slot.hasReclaimRecord()) return fail("SCHEMA");
-    session = createIndexSession();
+    session = createIndexSession(undefined, vacant?.recheck);
     const opened = await session.open(slot.indexPath, exact ? "reader-only" : prior ? "writer-existing" : "create-new");
     if (opened.ok) nativeGeneration = opened.generation;
     if (!opened.ok && opened.error === "UNKNOWN") return opened;

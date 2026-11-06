@@ -154,13 +154,9 @@ export async function verifyFinalizingSidecars(
 ) {
   const { catalogStat, roster, completion, recheck } = placement;
   if (roster && !completion) return fail("MISMATCH");
-  const catalog = await readPinnedReclaimCatalog(profile, catalogStat, recheck);
-  recheck();
-  if (!catalog) return fail("SCHEMA");
-  const marker = decodeFinalizingCatalog(catalog.bytes, catalog.value, owner);
-  if (marker?.scopeKey !== target.scopeKey) return fail("SCHEMA");
-  if (marker.generation !== target.generation || marker.inventoryDigest !== target.inventoryDigest)
-    return fail("MISMATCH");
+  const verified = await verifyFinalizingCatalog(profile, catalogStat, target, owner, recheck);
+  if (!verified.ok) return verified;
+  const { marker } = verified;
   for (const [pinned, expected, read] of [
     [roster, marker.roster, readPinnedPurgeRoster], [completion, marker.completion, readPinnedPurgeCompletion],
   ] as const) {
@@ -171,5 +167,18 @@ export async function verifyFinalizingSidecars(
     if (!bytes || createHash("sha256").update(bytes).digest("hex") !== expected.sha256)
       return fail("MISMATCH");
   }
-  return { ok: true as const, catalogBytes: catalog.bytes };
+  return verified;
+}
+
+export async function verifyFinalizingCatalog(
+  profile: string, catalogStat: BigIntStats, target: IndexReclaimIntentTarget, owner: bigint, recheck: () => void
+) {
+  const catalog = await readPinnedReclaimCatalog(profile, catalogStat, recheck);
+  recheck();
+  if (!catalog) return fail("SCHEMA");
+  const marker = decodeFinalizingCatalog(catalog.bytes, catalog.value, owner);
+  if (marker?.scopeKey !== target.scopeKey) return fail("SCHEMA");
+  if (marker.generation !== target.generation || marker.inventoryDigest !== target.inventoryDigest)
+    return fail("MISMATCH");
+  return { ok: true as const, marker, catalogBytes: catalog.bytes };
 }

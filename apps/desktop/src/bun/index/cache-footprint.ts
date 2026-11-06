@@ -187,6 +187,44 @@ function privateRecord(profile: string, name: string, owner: bigint) {
   return { path, stat };
 }
 
+/** Admit only this lease, with an optional fixed catalog for final release. */
+export async function captureVacantIndexSlot(profile: string, check: () => void, checkLease: () => BigIntStats, allowCatalog = false) {
+  check();
+  const pinnedProfile = checkLease();
+  const recheckProfile = () => {
+    check();
+    if (!sameIndexInventoryMetadata(pinnedProfile, checkLease()))
+      throw Error("Index slot membership changed");
+  };
+  const allowed = new Set(allowCatalog ? [".lease", "catalog.json"] : [".lease"]);
+  const found = new Set<string>();
+  const directory = await opendir(profile, { bufferSize: allowed.size + 1 });
+  try {
+    recheckProfile();
+    while (true) {
+      const entry = await directory.read();
+      recheckProfile();
+      if (!entry) break;
+      if (!allowed.has(entry.name) || found.has(entry.name)) return;
+      found.add(entry.name);
+    }
+  } finally {
+    await closeDirectory(directory);
+  }
+  recheckProfile();
+  if (!found.has(".lease")) return;
+  const catalog = found.has("catalog.json") ? privateRecord(profile, "catalog.json", pinnedProfile.uid) : undefined;
+  const recheck = () => {
+    recheckProfile();
+    if (catalog) {
+      if (!sameIndexInventoryMetadata(catalog.stat, lstatSync(catalog.path, { bigint: true })))
+        throw Error("Index slot catalog changed");
+    } else assertAbsent(join(profile, "catalog.json"));
+  };
+  recheck();
+  return { profile: pinnedProfile, catalog: catalog?.stat, recheck };
+}
+
 /** The completion record outlives the optional empty pending directory. */
 export async function captureCompletedPlacement(
   profile: string, profileStat: BigIntStats, owner: bigint, check: () => void, checkLease: () => void

@@ -255,3 +255,41 @@ static napi_value remove_finalizing_sidecar(napi_env env, napi_callback_info inf
         return unknown;
     return success;
 }
+
+static bool finalizing_companions_absent(int profile_fd) {
+    return reclaim_source_absent(profile_fd) && absent_reclaim_member(profile_fd, reclaim_destination_name) &&
+        absent_reclaim_member(profile_fd, ".reclaim-purge.json") &&
+        absent_reclaim_member(profile_fd, ".reclaim-complete.json");
+}
+
+/* The caller proves the exact catalog version and profile layout before invoking this fixed unlink. */
+static napi_value remove_finalizing_catalog(napi_env env, napi_callback_info info) {
+    napi_value argv[2];
+    int profile_fd, catalog_fd;
+    if (!args(env, info, argv, 2) || !integer(env, argv[0], &profile_fd) ||
+        !integer(env, argv[1], &catalog_fd) || profile_fd == catalog_fd)
+        return reclaim_receipt(env, "INPUT");
+
+    napi_value success = reclaim_receipt(env, NULL);
+    napi_value precondition = reclaim_receipt(env, "PRECONDITION");
+    napi_value unknown = reclaim_receipt(env, "UNKNOWN");
+    if (!success || !precondition || !unknown) return NULL;
+
+    const char *leaf = "catalog.json";
+    struct stat profile, before, named;
+    if (fstat(profile_fd, &profile) != 0 || !reclaim_owned_directory(&profile, geteuid(), 0) ||
+        (profile.st_mode & 07777) != 0700 || !finalizing_companions_absent(profile_fd) ||
+        fstat(catalog_fd, &before) != 0 ||
+        !finalizing_record(profile_fd, leaf, &profile, &named) || !reclaim_same_inventory(&before, &named))
+        return precondition;
+    if (unlinkat(profile_fd, leaf, 0) != 0) return unknown;
+
+    struct stat profile_after, after;
+    if (fstat(profile_fd, &profile_after) != 0 || !reclaim_same_identity(&profile, &profile_after) ||
+        !finalizing_companions_absent(profile_fd) || fstat(catalog_fd, &after) != 0 ||
+        !reclaim_same_identity(&before, &after) || after.st_nlink != 0 ||
+        after.st_size != before.st_size || !reclaim_same_time(after.st_mtimespec, before.st_mtimespec) ||
+        !absent_reclaim_member(profile_fd, leaf))
+        return unknown;
+    return success;
+}

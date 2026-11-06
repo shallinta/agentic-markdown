@@ -129,20 +129,23 @@ export function loadEmptyPendingRemover() {
   };
 }
 
-export function loadFinalizationSidecarRemover() {
+export function loadFinalizationRemover(selected: FinalizationRecord | "catalog") {
   const native = loadSaveNative();
-  if (typeof native?.openFileAt !== "function" || typeof native.removeFinalizingSidecar !== "function") return;
-  const { openFileAt, removeFinalizingSidecar } = native;
+  const remove = selected === "catalog" ? native?.removeFinalizingCatalog : native?.removeFinalizingSidecar;
+  if (typeof native?.openFileAt !== "function" || typeof remove !== "function") return;
+  const { openFileAt } = native;
+  const leaf = selected === "catalog" ? "catalog.json"
+    : selected === "roster" ? INDEX_RECLAIM_RECORD_NAMES.purge : INDEX_RECLAIM_RECORD_NAMES.complete;
   return {
-    open(profileFd: number, selected: FinalizationRecord) {
-      const leaf = selected === "roster" ? INDEX_RECLAIM_RECORD_NAMES.purge : INDEX_RECLAIM_RECORD_NAMES.complete;
+    open(profileFd: number) {
       const fd: unknown = Reflect.apply(openFileAt, native, [profileFd, leaf]);
       if (!natural(fd) || fd > 0x7fff_ffff) throw Error("Finalization sidecar descriptor unavailable");
       return fd;
     },
-    remove(profileFd: number, fileFd: number, selected: FinalizationRecord) {
+    remove(profileFd: number, fileFd: number) {
       try {
-        const result: unknown = Reflect.apply(removeFinalizingSidecar, native, [profileFd, fileFd, selected === "roster" ? 0 : 1]);
+        const args = selected === "catalog" ? [profileFd, fileFd] : [profileFd, fileFd, selected === "roster" ? 0 : 1];
+        const result: unknown = Reflect.apply(remove, native, args);
         if (record(result) && result.ok === true && keys(result, "ok")) return "removed" as const;
         if (record(result) && result.ok === false && keys(result, "error,ok") &&
             (result.error === "PRECONDITION" || result.error === "INPUT")) return "UNAVAILABLE" as const;

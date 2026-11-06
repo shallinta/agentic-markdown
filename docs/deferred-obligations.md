@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bf 释放已收尾的索引槽（2026-11-06）
+
+alpha.243 已验证空槽释放及显式复用。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接工作区建索引、持久增量、遗留租约、自动配额及最终离线。见[F-064bf 迭代](iterations/F-064bf-release-finalized-index-slot.md)。
+
 ## F-064be 按序清理索引收尾旁车（2026-11-06）
 
 alpha.242 已验证按序清理单份旁车及同选择重试。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接最后释放、槽位复用、遗留租约、自动配额及最终离线。见[F-064be 迭代](iterations/F-064be-index-reclaim-remove-sidecar.md)。

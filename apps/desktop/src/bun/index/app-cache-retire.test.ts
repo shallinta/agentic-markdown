@@ -5,10 +5,14 @@ import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpat
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
+import type { WorkspaceRequest } from "../../shared/workspace";
+import { createDocumentService } from "../documents";
+import { createWorkspaceService } from "../workspace";
+
 import {
   inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, inspectStagedIndexPurgeProgress, reopenAppIndexCache,
   prepareEmptyStagedIndexCompletion, prepareRetiredIndexReclaim, prepareStagedIndexFinalization, prepareStagedIndexPurge,
-  removeEmptyStagedIndexDirectory, removeStagedIndexFinalizationSidecar, removeStagedIndexPurgeMember,
+  releaseFinalizedAppIndexSlot, removeEmptyStagedIndexDirectory, removeStagedIndexFinalizationSidecar, removeStagedIndexPurgeMember,
   retireAppIndexCache, searchAppIndexCache,
   stageRetiredIndexReclaim,
 } from "./app-cache";
@@ -110,8 +114,8 @@ async function runFixture(
     | "stage" | "stage-reopen" | "purge" | "purge-reopen" | "progress" | "progress-reopen"
     | "remove-member" | "remove-member-reopen" | "empty-completion" | "empty-completion-reopen"
     | "remove-empty-directory" | "remove-empty-directory-reopen" | "finalization" | "finalization-reopen"
-    | "remove-sidecar" | "remove-sidecar-reopen",
-  entry = import.meta.path
+    | "remove-sidecar" | "remove-sidecar-reopen" | "release-slot" | "release-slot-reopen",
+  entry = import.meta.path, releaseDigest?: string
 ) {
   const child = Bun.spawn([process.execPath, "test", entry], {
     env: {
@@ -119,6 +123,7 @@ async function runFixture(
       TMPDIR: scratch,
       AGENTIC_MARKDOWN_HOME: join(scratch, "home"),
       AGENTIC_MARKDOWN_INDEX_RETIRE_TEST: childMode,
+      ...(releaseDigest ? { AGENTIC_MARKDOWN_INDEX_TEST_RELEASE_DIGEST: releaseDigest } : {}),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -131,7 +136,9 @@ async function runFixture(
 }
 
 async function runFixtureWithoutNative(
-  scratch: string, childMode: "stage-reopen" | "empty-completion-reopen" | "remove-empty-directory-reopen" | "finalization-reopen"
+  scratch: string, childMode: "stage-reopen" | "empty-completion-reopen" | "remove-empty-directory-reopen"
+    | "finalization-reopen" | "release-slot-reopen",
+  releaseDigest?: string
 ) {
   const retry = join(scratch, "retry");
   try {
@@ -140,7 +147,7 @@ async function runFixtureWithoutNative(
       entrypoints: [import.meta.path], outdir, target: "bun", naming: "stage-retry.test.js",
     });
     if (!built.success) throw new AggregateError(built.logs, "Cache retry fixture bundling failed");
-    await runFixture(scratch, childMode, join(outdir, "stage-retry.test.js"));
+    await runFixture(scratch, childMode, join(outdir, "stage-retry.test.js"), releaseDigest);
   } finally {
     await rm(retry, { recursive: true, force: true });
   }
@@ -249,6 +256,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "finalization");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "remove-sidecar");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "release-slot");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -2458,6 +2467,235 @@ test.skipIf(mode !== "remove-sidecar-reopen")("a fresh process retries roster re
     expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
     expect(await f.fingerprint(f.catalog)).toEqual(v4);
     expect((await readdir(f.profile)).sort()).toEqual(["catalog.json"]);
+    expect(f.workers()).toBe(0);
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "release-slot")("final release preserves the private slot and an old target cannot touch a new authorized index", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  const unavailable = failed("UNAVAILABLE");
+  const mismatch = failed("MISMATCH");
+  const unknown = { ok: false, error: "UNKNOWN", accepted: true } as const;
+  const released = { ok: true, state: "released" } as const;
+  const alreadyEmpty = { ok: true, state: "alreadyEmpty" } as const;
+  f.startRecording();
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toMatchObject({ ok: true, generation: 1, applied: 1 });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const preflight = await inspectRetiredIndexReclaim(retirement, current);
+    if (!preflight.ok) throw Error("Release fixture preflight refused: " + preflight.error);
+    const target = { ...retirement, inventoryDigest: preflight.inventoryDigest };
+    const release = (guard = current) => releaseFinalizedAppIndexSlot(target, guard);
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: false });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    const files = await f.nativeFiles(join(f.profile, ".reclaim-pending"));
+    for (let ordinal = 0; ordinal < files.length; ordinal++)
+      expect(await removeStagedIndexPurgeMember({ ...target, ordinal }, current)).toMatchObject({ ok: true, alreadyMissing: false });
+    expect(await prepareEmptyStagedIndexCompletion(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await removeEmptyStagedIndexDirectory(target, current)).toEqual({ ok: true, alreadyAbsent: false });
+    expect(await prepareStagedIndexFinalization(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await release()).toEqual(unavailable);
+    expect(await removeStagedIndexFinalizationSidecar({ ...target, record: "roster" }, current))
+      .toEqual({ ok: true, alreadyAbsent: false });
+    expect(await release()).toEqual(unavailable);
+    expect(await removeStagedIndexFinalizationSidecar({ ...target, record: "completion" }, current))
+      .toEqual({ ok: true, alreadyAbsent: false });
+    return { target, release, profile: await f.fingerprint(f.profile), workers: f.workers() };
+  }
+  async function checkEmpty(snapshot: Awaited<ReturnType<typeof seed>>) {
+    expect(await readdir(f.profile)).toEqual([]);
+    expect(await f.fingerprint(f.profile)).toMatchObject({
+      dev: snapshot.profile.dev, ino: snapshot.profile.ino, birth: snapshot.profile.birth,
+      uid: snapshot.profile.uid, mode: snapshot.profile.mode,
+    });
+    expect(f.workers()).toBe(snapshot.workers);
+  }
+  async function authorizedReuse(old: Awaited<ReturnType<typeof seed>>) {
+    const path = join(f.scratch, "new-root");
+    const source = "# 新正文\nnew term";
+    await mkdir(path, { mode: 0o700 });
+    await writeFile(join(path, "new.md"), source, { mode: 0o600 });
+    const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
+    const workspace = createWorkspaceService({
+      documents, pickDirectory: () => Promise.resolve(path), contentSearchStrategy: "direct",
+    });
+    async function request(input: Omit<WorkspaceRequest, "protocolVersion" | "requestId">) {
+      const result = await workspace.request({ protocolVersion: 1, requestId: crypto.randomUUID(), ...input });
+      if (!result.ok) throw Error("Replacement workspace command refused: " + result.error);
+      return result;
+    }
+    try {
+      await request({ op: "select" });
+      for (let attempt = 0; attempt < 500; attempt++) {
+        const root = (await request({ op: "state" })).roots.find(root => root.displayPath === path);
+        if (!root || root.status === "scanning") { await Bun.sleep(2); continue; }
+        if (root.status !== "complete") throw Error("Replacement fixture scan incomplete");
+        const ticket = await workspace.captureIndexRows(root.handle, root.generation);
+        if (!ticket.ok || !await ticket.verify()) throw Error("Replacement workspace authorization failed");
+        expect(ticket.scopeKey).not.toBe(old.target.scopeKey);
+        expect(ticket.rows.map(row => row.raw)).toEqual([source]);
+        const next = { scopeKey: ticket.scopeKey, rows: ticket.rows.map(({ id, raw }) => ({ id, raw })), query: "new term" };
+        const before = f.workers();
+        let beforeWorker = 0;
+        expect(await searchAppIndexCache(next, () => {
+          if (f.workers() === before) beforeWorker++;
+          return ticket.current();
+        })).toMatchObject({
+          ok: true, generation: 1, applied: 1, hits: [{ from: 6, to: 14 }],
+        });
+        const files = await f.nativeFiles();
+        const catalog = await f.fingerprint(f.catalog);
+        const workers = f.workers();
+        expect(await old.release()).toEqual(unavailable);
+        expect(await f.nativeFiles()).toEqual(files);
+        expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+        expect(f.workers()).toBe(workers);
+        expect(await reopenAppIndexCache(next, ticket.current)).toMatchObject({
+          ok: true, generation: 1, applied: 0, hits: [{ from: 6, to: 14 }],
+        });
+        expect(await readFile(join(path, "new.md"), "utf8")).toBe(source);
+        return beforeWorker;
+      }
+      throw Error("Replacement fixture scan did not finish");
+    } finally {
+      try {
+        await workspace.dispose();
+      } finally {
+        try { await documents.dispose(); }
+        finally { await rm(path, { recursive: true, force: true }); }
+      }
+    }
+  }
+  try {
+    const first = await seed();
+    expect(await releaseFinalizedAppIndexSlot({ ...first.target, ...wrongScope }, current)).toEqual(failed("SCHEMA"));
+    expect(await releaseFinalizedAppIndexSlot({ ...first.target, ...wrongGeneration }, current)).toEqual(mismatch);
+    expect(await releaseFinalizedAppIndexSlot({ ...first.target, inventoryDigest: sha("wrong release target") }, current))
+      .toEqual(mismatch);
+    expect(await releaseFinalizedAppIndexSlot({ ...first.target, inventoryDigest: "invalid" }, current)).toEqual(failed("INPUT"));
+    await mkdir(f.lease, { mode: 0o700 });
+    const occupied = join(f.lease, "keep");
+    await writeFile(occupied, "busy", { mode: 0o600 });
+    expect(await first.release()).toEqual(failed("BUSY"));
+    expect(await readFile(occupied, "utf8")).toBe("busy");
+    await rm(occupied);
+    await rmdir(f.lease);
+    const foreign = join(f.profile, "foreign");
+    await writeFile(foreign, "foreign", { mode: 0o600 });
+    expect(await first.release()).toEqual(unavailable);
+    expect(await readFile(foreign, "utf8")).toBe("foreign");
+    await rm(foreign);
+    const parked = join(f.scratch, "parked-v4");
+    await rename(f.catalog, parked);
+    try {
+      await symlink(parked, f.catalog);
+      expect(await first.release()).toEqual(unavailable);
+      expect(await readlink(f.catalog)).toBe(parked);
+      await rm(f.catalog);
+    } finally {
+      await rename(parked, f.catalog);
+    }
+    const held = await open(f.catalog, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let beforeUnlink = 0;
+    try {
+      const original = await held.stat({ bigint: true });
+      expect(await first.release(() => {
+        if (existsSync(f.catalog)) beforeUnlink++;
+        return true;
+      })).toEqual(released);
+      const after = await held.stat({ bigint: true });
+      expect({ dev: after.dev, ino: after.ino, birth: after.birthtimeNs, links: after.nlink })
+        .toEqual({ dev: original.dev, ino: original.ino, birth: original.birthtimeNs, links: 0n });
+    } finally {
+      await held.close();
+    }
+    expect(beforeUnlink).toBeGreaterThan(1);
+    expect(await lstat(f.catalog).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+    await checkEmpty(first);
+    await runFixtureWithoutNative(f.scratch, "release-slot-reopen", first.target.inventoryDigest);
+    await checkEmpty(first);
+
+    await writeFile(foreign, "foreign cold slot", { mode: 0o600 });
+    const unexpected = await f.fingerprint(foreign);
+    expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await first.release()).toEqual(unavailable);
+    expect(await f.fingerprint(foreign)).toEqual(unexpected);
+    expect(f.workers()).toBe(first.workers);
+    await rm(foreign);
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("MISSING"));
+    await checkEmpty(first);
+    const beforeWorker = await authorizedReuse(first);
+    expect(beforeWorker).toBeGreaterThan(1);
+    await rm(f.home, { recursive: true, force: true });
+
+    const second = await seed();
+    const original = await f.fingerprint(f.catalog);
+    let checks = 0;
+    expect(await second.release(() => ++checks < beforeUnlink)).toEqual(failed("CANCELLED"));
+    expect(checks).toBe(beforeUnlink);
+    expect(await f.fingerprint(f.catalog)).toEqual(original);
+    const parkedLease = join(f.profile, "parked-lease");
+    const lateLease = join(f.lease, "late-lease");
+    checks = 0;
+    expect(await second.release(() => {
+      if (++checks === beforeUnlink) {
+        renameSync(f.lease, parkedLease);
+        mkdirSync(f.lease, { mode: 0o700 });
+        writeFileSync(lateLease, "preserve", { mode: 0o600 });
+      }
+      return true;
+    })).toEqual(unknown);
+    expect(await readFile(lateLease, "utf8")).toBe("preserve");
+    expect(await readdir(parkedLease)).toEqual([]);
+    expect(await f.fingerprint(f.catalog)).toEqual(original);
+    await rm(lateLease);
+    await rmdir(f.lease);
+    await rmdir(parkedLease);
+
+    const failedSync = await refuseDirectorySync(f.profile, () => Promise.resolve(!existsSync(f.catalog)), second.release);
+    expect(failedSync).toEqual(unknown);
+    await checkEmpty(second);
+    expect(await second.release()).toEqual(alreadyEmpty);
+    await checkEmpty(second);
+    checks = 0;
+    expect(await searchAppIndexCache(input, () => {
+      if (++checks === beforeWorker) writeFileSync(foreign, "arrived at launch", { flag: "wx", mode: 0o600 });
+      return true;
+    })).toEqual(unavailable);
+    expect(await readFile(foreign, "utf8")).toBe("arrived at launch");
+    expect(await readdir(f.profile)).toEqual(["foreign"]);
+    expect(f.workers()).toBe(second.workers);
+    await rm(foreign);
+    await checkEmpty(second);
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "release-slot-reopen")("a fresh process confirms the exact empty slot without a native addon", async () => {
+  const f = await fixture();
+  expect((await readdir(f.scratch)).sort()).toEqual(["home", "retry"]);
+  expect(existsSync(join(f.scratch, "retry", "native", "save-primitives.node"))).toBe(false);
+  const inventoryDigest = process.env.AGENTIC_MARKDOWN_INDEX_TEST_RELEASE_DIGEST;
+  if (!inventoryDigest || !/^[0-9a-f]{64}$/.test(inventoryDigest)) throw Error("Missing release fixture digest");
+  const target = { ...retirement, inventoryDigest };
+  const stat = await f.fingerprint(f.profile);
+  f.startRecording();
+  try {
+    expect(await releaseFinalizedAppIndexSlot(target, current)).toEqual({ ok: true, state: "alreadyEmpty" });
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("MISSING"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual({
+      ok: true, present: false, files: 0, catalogBytes: 0, indexBytes: 0, totalBytes: 0,
+    });
+    expect(await readdir(f.profile)).toEqual([]);
+    expect(await f.fingerprint(f.profile)).toMatchObject({ dev: stat.dev, ino: stat.ino, birth: stat.birth, mode: stat.mode });
     expect(f.workers()).toBe(0);
   } finally {
     f.stopRecording();

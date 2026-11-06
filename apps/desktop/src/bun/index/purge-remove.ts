@@ -2,7 +2,7 @@ import { closeSync, fstatSync, type BigIntStats } from "node:fs";
 
 import { sameIndexInventoryMetadata } from "./cache-footprint";
 import type { FinalizationRecord } from "./purge-roster";
-import { loadFinalizationSidecarRemover, loadPurgeMemberRemover } from "./reclaim-stage";
+import { loadFinalizationRemover, loadPurgeMemberRemover } from "./reclaim-stage";
 import { IndexReuseCleanupError, type HeldCompletionPlacement, type HeldIndexPlacement } from "./reuse-catalog";
 
 function closeMember(fd: number) {
@@ -31,18 +31,18 @@ export function unlinkPurgeMember(
   }
 }
 
-export function unlinkFinalizationSidecar(
-  held: HeldCompletionPlacement, selected: FinalizationRecord, pinned: BigIntStats, beforeUnlink: () => void
+export function unlinkFinalizationRecord(
+  held: HeldCompletionPlacement, selected: FinalizationRecord | "catalog", pinned: BigIntStats, beforeUnlink: () => void
 ) {
-  const native = loadFinalizationSidecarRemover();
+  const native = loadFinalizationRemover(selected);
   if (!native) return "UNAVAILABLE" as const;
   held.checkAbsent();
-  const fd = native.open(held.profileFd, selected);
+  const fd = native.open(held.profileFd);
   try {
     beforeUnlink();
     held.checkAbsent();
     if (!sameIndexInventoryMetadata(pinned, fstatSync(fd, { bigint: true }))) return "UNAVAILABLE" as const;
-    return native.remove(held.profileFd, fd, selected);
+    return native.remove(held.profileFd, fd);
   } finally {
     closeMember(fd);
   }

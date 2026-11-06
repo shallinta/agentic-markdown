@@ -63,7 +63,7 @@ import {
   type SingleFileAuthorization,
 } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
-import { reopenAppIndexCache } from "../index/app-cache";
+import { prepareColdAppIndexCache, reopenAppIndexCache } from "../index/app-cache";
 import { INDEX_LIMITS, keys, natural, record, scalar } from "../index/protocol";
 
 import {
@@ -141,8 +141,12 @@ interface ObservedIndexOptions { requireObserved: true; maxLogicalBytes: number 
 type ExistingIndexSearch =
   | { ok: true; hits: ExistingIndexHit[] }
   | { ok: false; error: IndexScopeError | "INPUT" | "MISSING" | "MISMATCH" | "SCHEMA" | "UNKNOWN" };
+type ObservedIndexPreparation =
+  | { ok: true; generation: number; documents: number }
+  | { ok: false; error: IndexScopeError | "INPUT" | "SCHEMA" | "UNKNOWN" };
 
 export interface TrustedWorkspaceService extends WorkspaceService {
+  prepareObservedIndex(handle: string, generation: number, signal?: AbortSignal): Promise<ObservedIndexPreparation>;
   searchExistingIndex(
     handle: string, generation: number, query: string, signal?: AbortSignal, options?: ObservedIndexOptions
   ): Promise<ExistingIndexSearch>;
@@ -1755,6 +1759,37 @@ export function createWorkspaceService({
           }
         };
         return { ...result, verify };
+      } finally {
+        indexTask = undefined;
+      }
+    },
+    async prepareObservedIndex(handle, generation, signal) {
+      const scope = captureIndexProof(handle, generation, signal, true);
+      if (!scope.ok) return scope;
+      let current = scope.current;
+      const task = Promise.resolve().then(async (): Promise<ObservedIndexPreparation> => {
+        try {
+          const ticket = await captureIndexRowsOwned(scope);
+          if (!ticket.ok) return ticket;
+          current = ticket.current;
+          const result = await prepareColdAppIndexCache({
+            scopeKey: ticket.scopeKey,
+            rows: ticket.rows.map(({ id, raw }) => ({ id, raw })),
+          }, { current, verify: ticket.verify });
+          if (!result.ok && result.error === "UNKNOWN") return { ok: false, error: "UNKNOWN" };
+          if (!current()) return scope.failure();
+          if (!result.ok) return { ok: false, error: result.error };
+          return { ok: true, generation: result.generation, documents: result.documents };
+        } catch (error) {
+          scope.invalidate(error);
+          return scope.failure();
+        }
+      });
+      indexTask = task;
+      try {
+        const result = await task;
+        if (!result.ok && result.error === "UNKNOWN") return result;
+        return current() ? result : scope.failure();
       } finally {
         indexTask = undefined;
       }

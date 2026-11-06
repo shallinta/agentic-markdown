@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bh 为已观察的工作区建索引（2026-11-06）
+
+alpha.245 已验证单根磁盘名册的工作区授权接入。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。持久增量、跨根接入、未保存覆盖、遗留租约、自动配额及最终离线继续承接。见[F-064bh 迭代](iterations/F-064bh-prepare-observed-workspace-index.md)。
+
 ## F-064bg 空槽建索引与名册核验（2026-11-06）
 
 alpha.244 已验证内部空槽建索引。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。工作区授权接入、持久增量、遗留租约、自动配额及最终离线继续承接。见[F-064bg 迭代](iterations/F-064bg-prepare-cold-index-cache.md)。

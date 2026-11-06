@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bh 的 alpha.245 已验证可信工作区可为已授权、已建立观察的一个根目录显式建索引。观察失效、取消或正文变化会拒绝迟到结果。普通窗口仍沿用现有搜索路径。见[F-064bh 迭代](iterations/F-064bh-prepare-observed-workspace-index.md)。
+
 F-064bg 的 alpha.244 已验证内部空槽准备。写入和只读重开共用一个租约，核对完整文档名册后才发布清单。普通窗口仍沿用现有搜索路径。见[F-064bg 迭代](iterations/F-064bg-prepare-cold-index-cache.md)。
 
 F-064bf 的 alpha.243 已在隔离夹具验证内部释放已收尾的索引槽。新授权范围可以重新使用该槽，旧请求无法修改新索引。窗口继续沿用现有搜索路径。见[F-064bf 迭代](iterations/F-064bf-release-finalized-index-slot.md)。

@@ -661,9 +661,11 @@ test("exact search location stays available above the root query coverage limit"
   const text = "\uFEFF# 标题\r\n🎯 target\r\n";
   const file = join(owner, "target.md");
   const oversized = join(owner, "large.md");
+  const hiddenPath = join(owner, ".hidden.md");
   const largeText = "x".repeat(65_537);
   await writeFile(file, text);
   await writeFile(oversized, largeText);
+  await writeFile(hiddenPath, "hidden target");
   await Promise.all(Array.from({ length: 31 }, (_, index) =>
     writeFile(join(owner, `other-${index}.md`), "unrelated")
   ));
@@ -745,19 +747,67 @@ test("exact search location stays available above the root query coverage limit"
     .toMatchObject({
       ok: true, coverage: [{ entry: target.handle }], mappings: [{ handle: outside.handle, kind: "outside" }],
     });
+  expect(await workspace.prepareRetainedContentSearchDocument({
+    entry: outside.handle, expectedHash: outside.hash, roots,
+  }, crypto.randomUUID())).toEqual({ ok: false, error: "STALE" });
   expect(await documents.release({ ...documentEnvelope(), handle: outside.handle })).toMatchObject({ ok: true });
+
   const standalonePath = join(directory, "standalone.md");
   await writeFile(standalonePath, "independent");
   const standalone = await pickSearchFile(standalonePath);
+  const leaf = { entry: standalone.handle, expectedHash: standalone.hash, roots };
+  const prepareLeaf = (change: Partial<typeof leaf> = {}) =>
+    workspace.prepareRetainedContentSearchDocument({ ...leaf, ...change }, crypto.randomUUID());
+  const locations = documents.locations();
+  documents.setTrashGuard((path) => path === oversizedPath);
+  expect(await prepareLeaf()).toMatchObject({ ok: true, target: { kind: "retained", snapshot: {
+    handle: standalone.handle, documentId: standalone.documentId, locationId: standalone.locationId,
+    revision: standalone.revision, hash: standalone.hash, text: "independent", explicitStandalone: true,
+  } } });
+  const leafBinding = {
+    handle: standalone.handle, documentId: standalone.documentId, revision: standalone.revision, hash: standalone.hash,
+  };
   expect(await workspace.prepareRetainedContentSearchDocument({
-    entry: standalone.handle, expectedHash: standalone.hash, roots,
-  }, crypto.randomUUID())).toEqual({ ok: false, error: "LIMIT" });
+    ...leaf, binding: leafBinding,
+  }, crypto.randomUUID())).toEqual({ ok: true, target: { kind: "reuse", ...leafBinding } });
+  expect(await prepareLeaf({ expectedHash: searchHash("wrong") })).toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations()).toEqual(locations);
+
+  const sibling = join(directory, "sibling");
+  await mkdir(sibling);
+  await writeFile(join(sibling, "sibling.md"), "sibling");
+  selected = sibling;
+  good(await workspace.request(request("select")));
+  const ordered = (await settle()).roots.map(({ handle, generation }) => ({ handle, generation }));
+  expect(ordered).toHaveLength(2);
+  expect(await prepareLeaf()).toEqual({ ok: false, error: "STALE" });
+  expect(await prepareLeaf({ roots: [...ordered].reverse() })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepareLeaf({ roots: ordered })).toMatchObject({
+    ok: true, target: { kind: "retained", snapshot: { handle: standalone.handle, hash: standalone.hash } },
+  });
+  await writeFile(standalonePath, "independenx");
+  expect(await prepareLeaf({ roots: ordered })).toEqual({ ok: false, error: "STALE" });
+  expect(documents.captureContentSearchBindings([standalone.handle])?.bindings[0]).toMatchObject(leafBinding);
   expect(await documents.release({ ...documentEnvelope(), handle: standalone.handle })).toMatchObject({ ok: true });
 
   await writeFile(file, text.replace("target", "change"));
   expect(await reopen()).toEqual({ ok: false, error: "STALE" });
   expect(await workspace.prepareContentSearchDocument({ ...input, binding }, crypto.randomUUID()))
     .toEqual({ ok: false, error: "STALE" });
+
+  const hidden = await pickSearchFile(hiddenPath);
+  const prepareHidden = (roots: typeof ordered) => workspace.prepareRetainedContentSearchDocument({
+    entry: hidden.handle, expectedHash: hidden.hash, roots,
+  }, crypto.randomUUID());
+  const beforeVisibility = (await settle()).roots.map(({ handle, generation }) => ({ handle, generation }));
+  expect(await prepareHidden(beforeVisibility)).toMatchObject({ ok: true, target: {
+    kind: "retained", snapshot: { handle: hidden.handle, locationId: hidden.locationId, text: "hidden target" },
+  } });
+  good(await workspace.request(request("hidden", { root: root.handle, showHidden: true })));
+  const visible = (await settle()).roots.map(({ handle, generation }) => ({ handle, generation }));
+  expect(await prepareHidden(beforeVisibility)).toEqual({ ok: false, error: "STALE" });
+  expect(await prepareHidden(visible)).toEqual({ ok: false, error: "STALE" });
+  expect(await documents.release({ ...documentEnvelope(), handle: hidden.handle })).toMatchObject({ ok: true });
   expect(documents.locations()).toMatchObject([{ handle, documentId }]);
 });
 

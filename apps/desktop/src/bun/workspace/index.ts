@@ -2091,7 +2091,7 @@ export function createWorkspaceService({
       const roster = captureSearchRoster(requested, signal, !anchored);
       if (!roster.ok) return roster;
       let anchor: Extract<ReturnType<typeof captureIndexEntry>, { ok: true }> | undefined;
-      const captures: Extract<ReturnType<typeof captureIndexRoot>, { ok: true }>[] = [];
+      const captures: { root: Root; byPath: Root["byPath"]; current: () => boolean }[] = [];
       if (rootEntry) {
         const { handle, generation } = requested[0];
         const captured = captureIndexEntry(handle, generation, rootEntry, signal);
@@ -2099,9 +2099,15 @@ export function createWorkspaceService({
         anchor = captured;
       } else {
         for (const { handle, generation } of requested) {
-          const captured = captureIndexRoot(handle, generation, signal, CONTENT_SEARCH_LIMITS.coverageDocuments);
+          const captured = captureIndexRootState(handle, generation, signal);
           if (!captured.ok) return captured;
-          captures.push(captured);
+          const { root, files } = captured;
+          const { byPath, nodes } = root;
+          const count = byPath.size;
+          const current = () => captured.current() && root.byPath === byPath && root.nodes === nodes &&
+            byPath.size === count && nodes.length === count && root.meta.entries === count && files.size <= count;
+          if (!current()) return { ok: false, error: "STALE" };
+          captures.push({ root, byPath, current });
         }
       }
       const admission = documents.captureContentSearchBindings([entry]);
@@ -2117,19 +2123,16 @@ export function createWorkspaceService({
       if (scope ? !owner : !readStandalone) return { ok: false, error: "STALE" };
       if (anchored && (anchorFile?.path !== path || anchorFile.fingerprint !== fingerprint))
         return { ok: false, error: "STALE" };
-      const visible = () => captures.some(({ root, entries }) => {
-        const node = root.byPath.get(path);
-        return node !== undefined && entries.has(node.handle);
-      });
+      // A node at the retained file's canonical path is either visible coverage or a collision.
+      const independent = () => captures.every(({ byPath, current }) => current() && !byPath.has(path));
       const peers = documents.locations().filter((item) => item.path === path);
-      if ((!anchored && visible()) || peers.length !== 1 || peers[0].handle !== entry ||
+      if (!independent() || peers.length !== 1 || peers[0].handle !== entry ||
           (binding && (binding.documentId !== documentId || binding.revision !== revision || binding.hash !== hash)))
         return { ok: false, error: "STALE" };
       const check = () => {
         if (signal?.aborted) throw new DocumentPathError("CANCELLED");
-        if (!roster.current() || anchor?.current() === false || captures.some((captured) => !captured.current()) ||
-            (owner && (owner.root !== anchor?.root || !owner.root.scopes.has(owner))) ||
-            (!anchored && visible()))
+        if (!roster.current() || anchor?.current() === false || !independent() ||
+            (owner && (owner.root !== anchor?.root || !owner.root.scopes.has(owner))))
           throw new DocumentPathError("FILE_CHANGED");
       };
       const verifyScope = async (current: () => void) => {

@@ -1,5 +1,13 @@
 # 迁出能力承接登记
 
+## F-064bq 按目标路径核验独立文档命中（2026-11-06）
+
+alpha.255 已验独立路径定位和重复覆盖检查，部分承接 OBL-006。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。混合范围筛选、后台调度、自动配额及最终离线继续登记。见[F-064bq 迭代](iterations/F-064bq-locate-retained-standalone-search-entry.md)。
+
+## FINAL-ISSUE-004：解析树状态前置断言间歇失败（开放，2026-11-06）
+
+alpha.255 首轮全量中，`source-indentation.test.ts:116` 的初始 `syntaxTreeAvailable` 返回 true，断言预期 false，因而该次未执行其后的缩进计划验证。[F-045e](iterations/F-045e-task-list-indentation.md) 已记录相同现象。未改编辑器代码、测试或时限。单项串行三次及随后串行全量中该项通过。根因待查，保留首轮及复跑记录，最终一起复核。
+
 ## F-064bp 在筛选下拉框中选择大目录范围（2026-11-06）
 
 alpha.254 已验单根大目录筛选选项。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。独立文档定位、混合范围、索引调度、自动配额和最终离线继续登记。见[F-064bp 迭代](iterations/F-064bp-pick-filters-in-larger-folders.md)。

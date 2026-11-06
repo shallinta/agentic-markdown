@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064q 有界成本对照（2026-11-06）
+
+alpha.203 资源上的两批对照已核验同义命中。OBL-006、OBL-018、OBL-026、OBL-035 均继续开放。此次性能对照只覆盖已读取的固定小快照。见[F-064q 迭代](iterations/F-064q-bounded-search-cost-comparison.md)。
+
 ## F-064p 隔离持久索引复用有限通过（2026-11-06）
 
 alpha.203 包内已验证私有槽、清单代数和有界复用。OBL-006、OBL-018、OBL-026、OBL-035 保持开放。默认缓存归属、授权撤销、容量和 schema 生命周期仍由 F-064 承接。见[F-064p 迭代](iterations/F-064p-bounded-index-reuse.md)。

@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ag 用合成文件连验了授权快照与私有索引的冷建、热重开、单行更新和失效结果处理。沿用 alpha.219，普通窗口仍使用直接搜索。见[F-064ag 迭代](iterations/F-064ag-authorized-private-index-integration.md)。
+
 F-064af 的 alpha.219 已验证已授权单根的内存正文快照。逐篇核对原始字节，文件变更、授权失效或超限时整批拒绝。普通窗口仍使用直接搜索。见[F-064af 迭代](iterations/F-064af-single-root-index-rows.md)。
 
 F-064ae 的 alpha.218 已验证单个授权目录的索引范围身份。同一目录重扫可沿用范围键，旧扫描凭据会失效。普通窗口暂无新增入口。见[F-064ae 迭代](iterations/F-064ae-single-root-index-scope.md)。

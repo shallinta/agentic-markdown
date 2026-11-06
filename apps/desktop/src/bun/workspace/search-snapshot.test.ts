@@ -19,8 +19,10 @@ import { dirname, join } from "node:path";
 
 import {
   validContentSearchPrepareResponse,
+  validContentSearchProgress,
   validContentSearchResponse,
   type ContentSearchInput,
+  type ContentSearchProgress,
 } from "../../shared/content-search";
 import { createDocumentService } from "../documents";
 import { verifySingleFileAuthorization } from "../documents/path-authorization";
@@ -1156,6 +1158,56 @@ test.skipIf(childScenario !== "mixed")(
       expect(observed.splice(0)).toEqual([firstProgress]);
       expect(await search(groupedProgress, undefined, recordProgress)).toEqual(successful);
       expect(observed.splice(0)).toEqual([firstProgress, standaloneProgress]);
+
+      const wireEvents: ContentSearchProgress[] = [];
+      const streamingRPC = createContentSearchRPC(workspace, undefined, (event) => wireEvents.push(event));
+      streamingRPC.setReady(true);
+      const plainRequest = {
+        ...groupedProgress, ...env(), op: "query-workspace" as const, handles: [visible.handle],
+      };
+      const plainTerminal = await streamingRPC.run(plainRequest);
+      expect(plainTerminal).toMatchObject({ ok: true });
+      expect(wireEvents).toEqual([]);
+      const stream = { ...plainRequest, ...env(), stream: true as const };
+      const blocked = readGate();
+      gate = blocked;
+      let finished = false;
+      const wirePending = streamingRPC.run(stream).then((response) => {
+        finished = true;
+        return response;
+      });
+      const firstWireEvent = (requestId: string) => ({
+        protocolVersion: 1 as const, requestId, ...redacted(firstProgress),
+      });
+      try {
+        await Promise.race([blocked.entered.promise, wirePending.then((result) => {
+          throw Error("Stream completed before second read was held: " + JSON.stringify(result));
+        })]);
+        expect(wireEvents).toEqual([firstWireEvent(stream.requestId)]);
+        expect(validContentSearchProgress(wireEvents[0], stream)).toBe(true);
+        const cancel = { ...env(), op: "cancel" as const, targetRequestId: stream.requestId };
+        expect(await streamingRPC.run(cancel)).toEqual({
+          protocolVersion: 1, requestId: cancel.requestId, ok: true, op: "cancel",
+        });
+        expect(await streamingRPC.run({ ...stream, ...env() })).toMatchObject({ error: "BUSY" });
+        expect(finished).toBe(false);
+      } finally {
+        gate = undefined;
+        blocked.resume.resolve();
+      }
+      expect(await wirePending).toEqual({
+        protocolVersion: 1, requestId: stream.requestId, ok: false, error: "CANCELLED",
+      });
+      expect(wireEvents.splice(0)).toEqual([firstWireEvent(stream.requestId)]);
+      const nextStream = { ...stream, ...env() };
+      expect(await streamingRPC.run(nextStream)).toEqual({ ...plainTerminal, requestId: nextStream.requestId });
+      expect(wireEvents).toEqual([
+        firstWireEvent(nextStream.requestId),
+        { protocolVersion: 1, requestId: nextStream.requestId, ...standaloneProgress },
+      ]);
+      expect(wireEvents.every((event) => validContentSearchProgress(event, nextStream))).toBe(true);
+      await streamingRPC.drain();
+
       await interrupt(groupedProgress, async () => {
         expect(observed).toEqual([firstProgress]);
         await joinRoot(thirdPath);

@@ -69,7 +69,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
           protocolVersion: 1, requestId: crypto.randomUUID(), handle,
         });
         return result.ok;
-      })
+      }, (progress) => rpc?.send.contentSearchProgress(progress))
     : undefined;
 
   const getRpc = (): MainWindowRPC => {

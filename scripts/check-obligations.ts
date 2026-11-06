@@ -149,7 +149,7 @@ if (import.meta.main) {
     const docs: Documents = {};
     const dir = new URL("../docs/iterations/", import.meta.url);
     for (const name of await readdir(dir)) {
-      if (/^F-\d{3}[a-z]?-.*\.md$/.test(name))
+      if (/^F-\d{3}[a-z]{0,2}-.*\.md$/.test(name))
         docs[name] = await Bun.file(new URL(name, dir)).text();
     }
     verifyObligations(

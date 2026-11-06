@@ -5,12 +5,15 @@ import {
   validContentSearchResponse,
   validContentSearchPrepareRequest,
   validContentSearchPrepareResponse,
+  validContentSearchProgress,
   type ContentSearchCandidates,
   type ContentSearchPrepared,
+  type ContentSearchProgress,
   type ContentSearchRequest,
   type ContentSearchRetainedPrepared,
 } from "../../shared/content-search";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
+import type { ContentSearchFileProgress } from "../workspace";
 
 import { createContentSearchRPC } from "./content-search";
 
@@ -293,6 +296,132 @@ test("mixed queries use the common active lane and retain uncertain outcome thro
   });
   expect(calls).toBe(2);
 });
+
+test("progress ignores malformed, duplicate and out-of-order file receipts without changing terminal", async () => {
+  const gate = Promise.withResolvers<ContentSearchCandidates>();
+  const first = id(), second = id(), third = id();
+  const fragments = { matches: [{ from: 2, to: 4, before: "前 ", after: " 后" }], more: false };
+  const empty: ContentSearchCandidates = { ok: true, coverage: [], mappings: [] };
+  const output: ContentSearchProgress[] = [];
+  let calls = 0;
+  let publish: ((event: ContentSearchFileProgress) => void) | undefined;
+  const rpc = createContentSearchRPC({
+    searchContentCandidates(_input, _signal, onFile) {
+      ++calls;
+      if (calls === 1) {
+        expect(onFile).toBeUndefined();
+        return Promise.resolve(empty);
+      }
+      publish = onFile;
+      return gate.promise;
+    },
+  }, undefined, (event) => {
+    output.push(event);
+    if (event.sequence === 2) throw Error("synthetic window-send failure");
+  });
+  rpc.setReady(true);
+  const legacy = { ...query(), fragments: true as const };
+  expect(await rpc.run(legacy)).toMatchObject({ ok: true });
+  expect(output).toEqual([]);
+  const request = { ...legacy, ...envelope(), stream: true as const };
+  const pending = rpc.run(request);
+  const send = publish;
+  if (!send) throw Error("Missing active query progress observer");
+  send({ sequence: 2, entry: second, kind: "redacted" });
+  send({ sequence: 0, entry: first, kind: "redacted" });
+  send({ sequence: 1, entry: "/outside.md", kind: "redacted" });
+  send({ sequence: 1, entry: first, kind: "fragments", fragments: {
+    ...fragments, matches: [{ ...fragments.matches[0], to: 5 }],
+  } });
+  expect(output).toEqual([]);
+  send({ sequence: 1, entry: first, kind: "fragments", fragments });
+  send({ sequence: 1, entry: third, kind: "redacted" });
+  send({ sequence: 2, entry: first, kind: "redacted" });
+  send({ sequence: 3, entry: third, kind: "redacted" });
+  expect(output).toHaveLength(1);
+  send({ sequence: 2, entry: second, kind: "redacted" });
+  send({ sequence: 3, entry: third, kind: "redacted" });
+  expect(output).toHaveLength(2);
+  const terminal = {
+    ok: true as const,
+    coverage: [
+      { entry: first, hash: "a".repeat(64), bytes: 20, fragments },
+      { entry: second, hash: "b".repeat(64), bytes: 0, fragments: { matches: [], more: false } },
+    ],
+    mappings: [],
+  };
+  gate.resolve(terminal);
+  expect(await pending).toEqual({
+    protocolVersion: 1, requestId: request.requestId, op: "query",
+    root: request.root, generation: request.generation, ...terminal,
+  });
+  send({ sequence: 3, entry: third, kind: "redacted" });
+  const next = { ...request, ...envelope() };
+  const nextPending = rpc.run(next);
+  const sendNext = publish;
+  if (!sendNext) throw Error("Missing new query observer");
+  send({ sequence: 3, entry: third, kind: "redacted" });
+  sendNext({ sequence: 1, entry: first, kind: "redacted" });
+  expect(await nextPending).toMatchObject({ ok: true, requestId: next.requestId });
+  sendNext({ sequence: 2, entry: second, kind: "redacted" });
+  expect(output).toEqual([
+    { protocolVersion: 1, requestId: request.requestId, sequence: 1, entry: first, kind: "fragments", fragments },
+    { protocolVersion: 1, requestId: request.requestId, sequence: 2, entry: second, kind: "redacted" },
+    { protocolVersion: 1, requestId: next.requestId, sequence: 1, entry: first, kind: "redacted" },
+  ]);
+  expect(output.slice(0, 2).every((event) => validContentSearchProgress(event, request))).toBe(true);
+  expect(validContentSearchProgress(output[2], next)).toBe(true);
+});
+
+test.each(["cancel", "suspend"] as const)(
+  "interrupting a streamed mixed query silences progress and waits for drain (%s)",
+  async (interruption) => {
+    const gate = Promise.withResolvers<ContentSearchCandidates>();
+    const request = { ...queryWorkspace(), roots: [], fragments: true as const, stream: true as const };
+    const [first, second] = request.standaloneHandles;
+    const output: ContentSearchProgress[] = [];
+    let signal: AbortSignal | undefined;
+    let publish: ((event: ContentSearchFileProgress) => void) | undefined;
+    const rpc = createContentSearchRPC({
+      searchContentCandidates: () => Promise.resolve({ ok: true, coverage: [], mappings: [] }),
+      searchContentCandidatesForWorkspace(_input, abort, onFile) {
+        signal = abort;
+        publish = onFile;
+        return gate.promise;
+      },
+    }, undefined, (event) => output.push(event));
+    rpc.setReady(true);
+    const pending = rpc.run(request);
+    const send = publish;
+    if (!send) throw Error("Missing mixed query progress observer");
+    send({ sequence: 1, entry: first, kind: "redacted" });
+    expect(output).toHaveLength(1);
+    expect(await rpc.run({ ...envelope(), op: "cancel", targetRequestId: id() }))
+      .toMatchObject({ error: "STALE" });
+    expect(signal?.aborted).toBe(false);
+    if (interruption === "cancel") {
+      expect(await rpc.run({ ...envelope(), op: "cancel", targetRequestId: request.requestId }))
+        .toMatchObject({ ok: true, op: "cancel" });
+    } else {
+      const resume = rpc.suspend();
+      expect(await rpc.run(query())).toMatchObject({ error: "NOT_READY" });
+      send({ sequence: 2, entry: second, kind: "redacted" });
+      resume();
+    }
+    expect(signal?.aborted).toBe(true);
+    send({ sequence: 2, entry: second, kind: "redacted" });
+    expect(output).toHaveLength(1);
+    let drained = false;
+    const drain = rpc.drain().then(() => { drained = true; });
+    expect(await rpc.run(query())).toMatchObject({ error: "BUSY" });
+    expect(drained).toBe(false);
+    gate.resolve({ ok: false, error: interruption === "cancel" ? "UNKNOWN" : "CANCELLED" });
+    expect(await pending).toMatchObject({ error: interruption === "cancel" ? "UNKNOWN" : "CANCELLED" });
+    await drain;
+    expect(drained).toBe(true);
+    expect(await rpc.run(query())).toMatchObject({ ok: true });
+  }
+);
 
 test("retained preparation works without a release callback and drains cancelled I/O", async () => {
   const request = prepareRetained();

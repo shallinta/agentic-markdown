@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064aa 的 alpha.213 已验证逐篇进度的窗口消息协议，进度只属于当前查询。窗口流式显示由下一片接入。见[F-064aa 迭代](iterations/F-064aa-window-search-progress-transport.md)。
+
 F-064z 的 alpha.212 验证了逐篇读取后的内部进度，以及取消、范围失效和打开文档片段遮蔽。窗口在收到最终回执后展示可定位结果，流式界面由后续接入。见[F-064z 迭代](iterations/F-064z-bounded-per-file-search-progress.md)。
 
 F-064y 的 alpha.211 将正文结果按文件分组。每篇最多显示前三处和上下文，更多命中另有提示。可单独点开或用键盘定位每处，未保存正文替换该文件的整组磁盘结果。见[F-064y 迭代](iterations/F-064y-group-content-search-fragments.md)。

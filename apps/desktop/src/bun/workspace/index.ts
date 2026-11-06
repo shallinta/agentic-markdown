@@ -5,6 +5,7 @@ import { basename, dirname, join, relative } from "node:path";
 
 import type {
   ContentSearchCandidates,
+  ContentSearchFileProgress,
   ContentSearchInput,
   ContentSearchPrepareInput,
   ContentSearchPrepared,
@@ -114,10 +115,7 @@ interface Root {
 interface Owner extends DocumentScope {
   root: Root;
 }
-export type ContentSearchFileProgress = { sequence: number; entry: string } & (
-  | { kind: "redacted" }
-  | { kind: "fragments"; fragments: ContentSearchFragments }
-);
+export type { ContentSearchFileProgress } from "../../shared/content-search";
 type ContentSearchFileObserver = (update: ContentSearchFileProgress) => void;
 
 export interface TrustedWorkspaceService extends WorkspaceService {

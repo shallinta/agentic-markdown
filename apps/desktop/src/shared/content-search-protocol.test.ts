@@ -4,6 +4,7 @@ import {
   CONTENT_SEARCH_LIMITS,
   validContentSearchPrepareRequest,
   validContentSearchPrepareResponse,
+  validContentSearchProgress,
   validContentSearchRequest,
   validContentSearchResponse,
   type ContentSearchRequest,
@@ -198,6 +199,69 @@ test("fragments wire requires explicit opt-in and exact bounded evidence per cov
     const bad = { ...row, fragments: { ...fragments, matches: [first, { ...second, ...change }, third] } };
     expect(validContentSearchResponse({ ...response, coverage: [bad] }, request)).toBe(false);
   }
+});
+
+test("streaming is opt-in only on bounded fragment queries and does not change terminal response", () => {
+  const mixed = { ...queryWorkspace(), roots: [], handles: [], query: "aa" };
+  const single = {
+    protocolVersion: 1 as const, requestId: crypto.randomUUID(), op: "query" as const,
+    root: crypto.randomUUID(), generation: 3, query: "aa", handles: [],
+  };
+  for (const legacy of [single, mixed]) {
+    expect(validContentSearchRequest(legacy)).toBe(true);
+    expect(validContentSearchRequest({ ...legacy, stream: true })).toBe(false);
+    const fragments = { ...legacy, fragments: true as const };
+    const stream = { ...fragments, stream: true as const };
+    expect(validContentSearchRequest(stream)).toBe(true);
+    for (const value of [false, undefined, 1, "true"])
+      expect(validContentSearchRequest({ ...fragments, stream: value })).toBe(false);
+    const { protocolVersion, requestId, op } = stream;
+    const terminal = {
+      protocolVersion, requestId, op, ok: true, coverage: [], mappings: [],
+      ...(legacy.op === "query"
+        ? { root: legacy.root, generation: legacy.generation }
+        : { roots: legacy.roots, standaloneHandles: legacy.standaloneHandles }),
+    };
+    expect(validContentSearchResponse(terminal, stream)).toBe(true);
+    expect(validContentSearchResponse({ ...terminal, stream: true }, stream)).toBe(false);
+  }
+  expect(validContentSearchRequest({ ...queryRoots(), stream: true, fragments: true })).toBe(false);
+  expect(validContentSearchRequest({ ...mixed, standaloneHandles: [], fragments: true, stream: true })).toBe(false);
+});
+
+test("progress wire accepts only bounded same-request redaction or exact fragments", () => {
+  const request = {
+    ...queryWorkspace(), roots: [], handles: [], query: "aa", fragments: true as const, stream: true as const,
+  };
+  const redacted = {
+    protocolVersion: 1, requestId: request.requestId, sequence: 1,
+    entry: request.standaloneHandles[0], kind: "redacted",
+  };
+  const fragments = contentSearchFragments("😀aaaaaa\r\naa", request.query);
+  const progress = { ...redacted, kind: "fragments", fragments };
+  expect(validContentSearchProgress(redacted, request)).toBe(true);
+  expect(validContentSearchProgress(progress, request)).toBe(true);
+  expect(validContentSearchProgress({
+    ...progress, sequence: CONTENT_SEARCH_LIMITS.documents,
+    fragments: { matches: [], more: false },
+  }, request)).toBe(true);
+  const { stream, ...nonStreaming } = request;
+  expect(stream).toBe(true);
+  expect(validContentSearchProgress(progress, nonStreaming)).toBe(false);
+  expect(validContentSearchProgress(progress, { ...request, requestId: crypto.randomUUID() })).toBe(false);
+  for (const sequence of [0, -1, 1.5, CONTENT_SEARCH_LIMITS.documents + 1, Number.NaN])
+    expect(validContentSearchProgress({ ...progress, sequence }, request)).toBe(false);
+  for (const malformed of [
+    { ...progress, protocolVersion: 2 }, { ...progress, entry: "/outside" },
+    { ...progress, entry: crypto.randomUUID() },
+    { ...progress, kind: "unrecognized" }, { ...redacted, fragments },
+    { ...redacted, bytes: 4 }, { ...progress, path: "/outside" }, { ...progress, hash: "a".repeat(64) },
+    { ...progress, fragments: { ...fragments, raw: "uncapped" } },
+    { ...progress, fragments: { matches: fragments.matches.slice(0, 2), more: true } },
+    { ...progress, fragments: { matches: [fragments.matches[0], fragments.matches[0]], more: false } },
+    { ...progress, fragments: { matches: [{ ...fragments.matches[0], before: "\ud800" }], more: false } },
+    { ...progress, fragments: { matches: [{ ...fragments.matches[0], after: "x".repeat(33) }], more: false } },
+  ]) expect(validContentSearchProgress(malformed, request)).toBe(false);
 });
 
 test("mixed response echoes both scope lists and rejects cross-operation or partial evidence", () => {

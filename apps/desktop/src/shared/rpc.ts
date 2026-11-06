@@ -171,6 +171,7 @@ export interface DesktopRPCType {
       documentCapabilityChanged: { handle: string };
       recentFilesFailed: { reason: import("./recent-files").RecentFailure };
       documentExternalChanged: import("./document-observation").ObservationEvent;
+      contentSearchProgress: import("./content-search").ContentSearchProgress;
       updateStatusChanged: UpdateStatusChangedPayload;
       executeCommand: Command;
       fullScreenChanged: { fullScreen: boolean };

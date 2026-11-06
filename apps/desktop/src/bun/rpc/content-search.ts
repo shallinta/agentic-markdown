@@ -3,8 +3,12 @@ import {
   validContentSearchResponse,
   validContentSearchPrepareRequest,
   validContentSearchPrepareResponse,
+  validContentSearchProgress,
   type ContentSearchError,
+  type ContentSearchFileProgress,
+  type ContentSearchInput,
   type ContentSearchPrepareResponse,
+  type ContentSearchProgress,
   type ContentSearchResponse,
   type ContentSearchScopeRoot,
 } from "../../shared/content-search";
@@ -13,6 +17,11 @@ import type { TrustedWorkspaceService } from "../workspace";
 
 const copyRoots = (roots: readonly ContentSearchScopeRoot[]) =>
   roots.map(({ handle, generation }) => ({ handle, generation }));
+const copySelection = (input: Pick<ContentSearchInput, "handles" | "fileFilters" | "pathFilters">) => ({
+  handles: [...input.handles],
+  ...(input.fileFilters ? { fileFilters: [...input.fileFilters] } : {}),
+  ...(input.pathFilters ? { pathFilters: input.pathFilters.map((filter) => ({ ...filter })) } : {}),
+});
 
 /** Owned by one native window and its workspace. A stale view cannot publish a reply. */
 export function createContentSearchRPC(
@@ -20,7 +29,8 @@ export function createContentSearchRPC(
     Partial<Pick<TrustedWorkspaceService,
       "prepareContentSearchDocument" | "prepareRetainedContentSearchDocument" |
       "searchContentCandidatesForRoots" | "searchContentCandidatesForWorkspace">>,
-  release?: (handle: string) => Promise<boolean>
+  release?: (handle: string) => Promise<boolean>,
+  sendProgress?: (progress: ContentSearchProgress) => void
 ) {
   let ready = false;
   let suspended = 0;
@@ -37,6 +47,7 @@ export function createContentSearchRPC(
     active = request;
     return {
       signal: request.abort.signal,
+      current: () => active === request && ready && !suspended && !request.abort.signal.aborted,
       finish() {
         active = undefined;
         completion.resolve();
@@ -138,21 +149,38 @@ export function createContentSearchRPC(
         return { ...envelope, ok: true, op: "cancel" };
       }
       if (active) return fail("BUSY");
-      const query = input.op === "query" ? input
+      const query = input.op === "query" ? (input.stream ? { ...input, ...copySelection(input) } : input)
         : input.op === "query-roots" ? { ...input, roots: copyRoots(input.roots) }
         : {
             ...input,
             roots: copyRoots(input.roots),
             standaloneHandles: [...input.standaloneHandles],
-            handles: [...input.handles],
-            ...(input.fileFilters ? { fileFilters: [...input.fileFilters] } : {}),
-            ...(input.pathFilters ? { pathFilters: input.pathFilters.map((filter) => ({ ...filter })) } : {}),
+            ...copySelection(input),
           };
       const request = begin(input.requestId);
+      const onFile = query.stream && sendProgress ? (() => {
+        const emitted = new Set<string>();
+        let progressFailed = false;
+        return (update: ContentSearchFileProgress) => {
+          if (progressFailed || !request.current()) return;
+          try {
+            if (!perfRecord(update) || "protocolVersion" in update || "requestId" in update)
+              return;
+            const progress = { ...envelope, ...update };
+            if (!validContentSearchProgress(progress, query) || progress.sequence !== emitted.size + 1 ||
+                emitted.has(progress.entry) || !request.current()) return;
+            emitted.add(progress.entry);
+            sendProgress(progress);
+          } catch {
+            // Delivery is uncertain. Keep the terminal reply, but do not risk a gap.
+            progressFailed = true;
+          }
+        };
+      })() : undefined;
       try {
-        const result = query.op === "query" ? await workspace.searchContentCandidates(query, request.signal)
+        const result = query.op === "query" ? await workspace.searchContentCandidates(query, request.signal, onFile)
           : query.op === "query-roots" ? await workspace.searchContentCandidatesForRoots?.(query, request.signal)
-          : await workspace.searchContentCandidatesForWorkspace?.(query, request.signal);
+          : await workspace.searchContentCandidatesForWorkspace?.(query, request.signal, onFile);
         if (!result) return fail("UNAVAILABLE");
         if (!result.ok && result.error === "UNKNOWN") return fail("UNKNOWN");
         if (request.signal.aborted || !ready || suspended)

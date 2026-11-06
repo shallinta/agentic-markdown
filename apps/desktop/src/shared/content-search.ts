@@ -86,6 +86,11 @@ export type SearchCoverage = {
   | { hit?: never; fragments: ContentSearchFragments }
 );
 
+export type ContentSearchFileProgress = { sequence: number; entry: string } & (
+  | { kind: "redacted" }
+  | { kind: "fragments"; fragments: ContentSearchFragments }
+);
+
 export type SearchMapping =
   | {
       handle: string;
@@ -117,13 +122,15 @@ interface Envelope {
   protocolVersion: 1;
   requestId: string;
 }
+type StreamOption = { stream?: never } | { stream: true; fragments: true };
 export type ContentSearchRequest = Envelope &
   (
-    | (ContentSearchInput & { op: "query" })
-    | (ContentSearchRootSetInput & { op: "query-roots"; fragments?: never })
-    | (ContentSearchWorkspaceInput & { op: "query-workspace" })
+    | (ContentSearchInput & { op: "query" } & StreamOption)
+    | (ContentSearchRootSetInput & { op: "query-roots"; fragments?: never; stream?: never })
+    | (ContentSearchWorkspaceInput & { op: "query-workspace" } & StreamOption)
     | { op: "cancel"; targetRequestId: string }
   );
+export type ContentSearchProgress = Envelope & ContentSearchFileProgress;
 export type ContentSearchRetainedPrepareRequest = Envelope &
   ContentSearchRetainedPrepareInput & { op: "prepare-retained" };
 export type ContentSearchPrepareRequest =
@@ -350,6 +357,10 @@ export function validContentSearchRequest(
   )
     return false;
   const base = ["protocolVersion", "requestId", "op"];
+  const stream = "stream" in value;
+  if (stream && (value.stream !== true || value.fragments !== true ||
+      (value.op !== "query" && value.op !== "query-workspace")))
+    return false;
   if (value.op === "cancel")
     return (
       exact(value, [...base, "targetRequestId"]) &&
@@ -370,6 +381,7 @@ export function validContentSearchRequest(
     if (value.fragments !== true || value.op === "query-roots") return false;
     queryKeys.push("fragments");
   }
+  if (stream) queryKeys.push("stream");
   let filterCount = 0;
   if (ownFileFilters) {
     if (!validContentSearchFileFilters(value.fileFilters)) return false;
@@ -396,6 +408,27 @@ export function validContentSearchRequest(
     isWellFormedContentSearchText(value.query) &&
     validHandles(value.handles, mixed)
   );
+}
+
+export function validContentSearchProgress(
+  value: unknown,
+  request: ContentSearchRequest
+): value is ContentSearchProgress {
+  if ((request.op !== "query" && request.op !== "query-workspace") ||
+      request.stream !== true || request.fragments !== true ||
+      !Object.prototype.hasOwnProperty.call(request, "stream") ||
+      !Object.prototype.hasOwnProperty.call(request, "fragments") ||
+      !perfRecord(value) || value.protocolVersion !== 1 ||
+      !perfUuid(value.requestId) || value.requestId !== request.requestId ||
+      !natural(value.sequence) || value.sequence < 1 || value.sequence > CONTENT_SEARCH_LIMITS.documents ||
+      !perfUuid(value.entry) ||
+      (request.op === "query-workspace" && !request.roots.length &&
+        !request.standaloneHandles.includes(value.entry)))
+    return false;
+  const keys = ["protocolVersion", "requestId", "sequence", "entry", "kind"];
+  return value.kind === "redacted" ? exact(value, keys)
+    : value.kind === "fragments" && exact(value, [...keys, "fragments"]) &&
+      validFragments(value.fragments, request.query.length, CONTENT_SEARCH_LIMITS.bytes);
 }
 
 export function validContentSearchResponse(

@@ -219,7 +219,89 @@ test.skipIf(childScenario !== "candidates")(
   15_000
 );
 
-for (const scenario of ["native", "transport", "candidates"] as const)
+test.skipIf(childScenario !== "file-filters")(
+  "searches matching basenames without reading excluded bodies or trusting unresolved grants",
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "workspace-file-filters-"));
+    const nested = join(fixture, "parent-marker");
+    const sample = "\uFEFF😀target\r\n";
+    const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
+    const workspace = createWorkspaceService({
+      documents,
+      pickDirectory: () => Promise.resolve(fixture),
+    });
+    try {
+      await mkdir(nested);
+      await writeFile(join(fixture, "会议 纪要.md"), sample);
+      await writeFile(join(nested, "oversize.md"), "target".repeat(11_000));
+      const selected = await workspace.request({ ...env(), op: "select" });
+      if (!selected.ok || !selected.roots[0]) throw Error("Missing root");
+      const root = selected.roots[0];
+      for (let i = 0; i < 1000; i++) {
+        const state = await workspace.request({ ...env(), op: "state" });
+        if (state.ok && state.roots[0]?.status === "complete") break;
+        await Bun.sleep(2);
+      }
+      const page = await workspace.request({
+        ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0,
+      });
+      if (!page.ok || !page.nodes) throw Error("Missing page");
+      const entry = page.nodes.find((node) => node.name === "会议 纪要.md")?.handle;
+      const oversize = page.nodes.find((node) => node.name === "oversize.md")?.handle;
+      if (!entry || !oversize) throw Error("Missing file entries");
+      const opened = await workspace.open({ ...env(), root: root.handle, entry: oversize });
+      if (!opened.ok || !opened.snapshot) throw Error("Missing excluded grant");
+      const { handle } = opened.snapshot;
+      const unknown = crypto.randomUUID();
+      const input = {
+        root: root.handle, generation: root.generation, query: "target", handles: [handle, unknown],
+      };
+      const search = (...fileFilters: string[]) =>
+        workspace.searchContentCandidates({ ...input, fileFilters });
+      expect(await workspace.searchContentCandidates(input)).toEqual({ ok: false, error: "LIMIT" });
+      expect(await search("会议", "纪要")).toEqual({
+        ok: true,
+        coverage: [{
+          entry,
+          hash: createHash("sha256").update(sample).digest("hex"),
+          bytes: Buffer.byteLength(sample),
+          hit: { from: 3, to: 9 },
+        }],
+        mappings: [{ handle, kind: "outside" }, { handle: unknown, kind: "unresolved" }],
+      });
+      expect(await search("parent-marker")).toEqual({
+        ok: true,
+        coverage: [],
+        mappings: [{ handle, kind: "outside" }, { handle: unknown, kind: "unresolved" }],
+      });
+      expect(await search("会议", "oversize")).toMatchObject({ ok: true, coverage: [] });
+      expect(await search()).toEqual({ ok: false, error: "INVALID" });
+      expect(await search("会议", "会议")).toEqual({ ok: false, error: "INVALID" });
+      expect(await search("parent-marker/")).toEqual({ ok: false, error: "INVALID" });
+      documents.setTrashGuard((path, fingerprint, directories) =>
+        path.endsWith("/oversize.md") && !!fingerprint &&
+        !!directories?.some((directory) => directory.path.endsWith("/parent-marker"))
+      );
+      expect(await search("parent-marker")).toEqual({
+        ok: true,
+        coverage: [],
+        mappings: [{ handle, kind: "unresolved" }, { handle: unknown, kind: "unresolved" }],
+      });
+      await documents.release({ ...env(), handle });
+      expect(await search("会议")).toMatchObject({
+        ok: true,
+        mappings: [{ handle, kind: "unresolved" }, { handle: unknown, kind: "unresolved" }],
+      });
+    } finally {
+      await workspace.dispose();
+      await documents.dispose();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+  15_000
+);
+
+for (const scenario of ["native", "transport", "candidates", "file-filters"] as const)
   test.skipIf(!!childScenario)(
     `isolated workspace index ${scenario} checks`,
     async () => {

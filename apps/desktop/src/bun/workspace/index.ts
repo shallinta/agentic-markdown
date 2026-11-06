@@ -11,6 +11,10 @@ import type {
   SearchMapping,
 } from "../../shared/content-search";
 import { validContentSearchPrepareRequest } from "../../shared/content-search";
+import {
+  matchesContentSearchFileFilters,
+  validContentSearchFileFilters,
+} from "../../shared/content-search-filters";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
@@ -1189,7 +1193,8 @@ export function createWorkspaceService({
       if (signal?.aborted) return { ok: false, error: "CANCELLED" };
       if (indexTask) return { ok: false, error: "BUSY" };
       if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
-          new Set(input.handles).size !== input.handles.length)
+          new Set(input.handles).size !== input.handles.length ||
+          (input.fileFilters !== undefined && !validContentSearchFileFilters(input.fileFilters)))
         return { ok: false, error: "INVALID" };
       if (input.handles.length > INDEX_LIMITS.documents)
         return { ok: false, error: "LIMIT" };
@@ -1199,12 +1204,18 @@ export function createWorkspaceService({
       const admission = documents.captureContentSearchBindings(handles);
       if (!admission) return { ok: false, error: "UNAVAILABLE" };
       const { root, entries, showHidden } = snapshot;
+      const fileFilters = input.fileFilters ?? [];
+      const searched = fileFilters.length
+        ? new Map([...entries].filter(([, file]) =>
+            matchesContentSearchFileFilters(basename(file.path), fileFilters)
+          ))
+        : entries;
       const current = () => admission.current() && snapshot.current();
       const check = () => {
         if (!current()) throw Error("Content search invalidated");
       };
       const task = (async (): Promise<ContentSearchCandidates> => {
-        const result = await searchSnapshotEvidence(root.authorization, entries, showHidden, input.query, current);
+        const result = await searchSnapshotEvidence(root.authorization, searched, showHidden, input.query, current);
         if (!result.ok) {
           const error = result.error;
           if (error === "INPUT") return { ok: false, error: "INVALID" };
@@ -1240,6 +1251,24 @@ export function createWorkspaceService({
             const file = node && entries.get(node.handle);
             if (!node || file?.fingerprint !== binding.fingerprint) {
               mappings.push({ handle, kind: "unresolved" });
+              continue;
+            }
+            if (!searched.has(node.handle)) {
+              try {
+                // The grant and scan must still identify the same authorized file.
+                // Prove the scan's directory chain without reading excluded content.
+                const authorization = await authorizeEntry(
+                  root.authorization, file.path, file.fingerprint, file.chain, showHidden, check
+                );
+                await authorization.file.close();
+                check();
+                const blocked = documents.trashBlocked(
+                  authorization.path, authorization.fingerprint, authorization.directories
+                );
+                mappings.push({ handle, kind: blocked ? "unresolved" : "outside" });
+              } catch {
+                mappings.push({ handle, kind: "unresolved" });
+              }
               continue;
             }
             matchedCounts.set(node.handle, (matchedCounts.get(node.handle) ?? 0) + 1);

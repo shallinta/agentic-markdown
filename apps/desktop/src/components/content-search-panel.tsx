@@ -1,4 +1,4 @@
-import { useCallback, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { mergeContentSearch } from "@/client/content-search";
 import type { ContentSearchLocation } from "@/client/content-search-location";
@@ -15,8 +15,15 @@ import {
   type ContentSearchPrepareRequest,
   type ContentSearchRequest,
 } from "@/shared/content-search";
+import {
+  CONTENT_SEARCH_FILTER_TEXT_LIMIT,
+  formatContentSearchFileFilter,
+  matchesContentSearchFileFilters,
+  parseContentSearchFileFilters,
+  validContentSearchFileFilters,
+} from "@/shared/content-search-filters";
 import type { DocumentRequest } from "@/shared/documents";
-import type { WorkspaceRoot } from "@/shared/workspace";
+import type { WorkspaceNode, WorkspaceRoot } from "@/shared/workspace";
 
 const errors: Record<ContentSearchError, string> = {
   DISABLED: "此窗口暂不提供正文搜索。",
@@ -32,8 +39,15 @@ const errors: Record<ContentSearchError, string> = {
 const incomplete = "查询范围不完整，部分文档的内容版本无法确认。";
 const changed = "文件夹或文档状态已变更，请重新查询。";
 const initialStatus = "输入字面量后开始查询。";
+const filterErrors = {
+  invalid: "文件名筛选无效。请检查空值、引号、重复项或不支持的字符。",
+  unsupported: "此处只支持 file: 文件名筛选。",
+  limit: "筛选条件过长或超过 8 条。",
+};
 const buttonClass =
   "hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50";
+const fieldClass =
+  "bg-background focus-visible:outline-ring w-full min-w-0 rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50";
 
 type Query = Extract<ContentSearchRequest, { op: "query" }>;
 type Merged = Extract<ReturnType<typeof mergeContentSearch>, { ok: true }>;
@@ -72,6 +86,18 @@ function cancel(requestId: string) {
     .catch(() => undefined);
 }
 
+function pickableFileNames(nodes: readonly WorkspaceNode[] | undefined, entries: number | undefined) {
+  if (!nodes || nodes.length !== entries) return [];
+  let count = 0;
+  const names = new Set<string>();
+  for (const node of nodes) {
+    if (node.kind !== "file") continue;
+    if (++count > CONTENT_SEARCH_LIMITS.documents) return [];
+    if (validContentSearchFileFilters([node.name])) names.add(node.name);
+  }
+  return [...names];
+}
+
 export function ContentSearchPanel({
   selectedRoot,
   getSelection,
@@ -86,6 +112,9 @@ export function ContentSearchPanel({
   folders: ReturnType<typeof createFolderWorkspace>;
 }) {
   const inputId = useId();
+  const filterId = useId();
+  const filterErrorId = useId();
+  const pickerId = useId();
   const resultId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -93,12 +122,30 @@ export function ContentSearchPanel({
   const location = useRef<LocationIntent | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [filterText, setFilterText] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(initialStatus);
   const [result, setResult] = useState<Presented | null>(null);
   // Retain the clicked DOM button when the document load invalidates its results.
   const [focusedHit, setFocusedHit] = useState<Pick<PresentedHit, "entry" | "name"> | null>(null);
   const ready = selectedRoot?.status === "complete";
+  const fileFilters = useMemo(() => parseContentSearchFileFilters(filterText), [filterText]);
+  const filterError = fileFilters.ok ? undefined : filterErrors[fileFilters.error];
+  const rootNodes = open && ready ? folders.getSnapshot().nodes[selectedRoot.handle] : undefined;
+  const entryCount = selectedRoot?.entries;
+  const pickerNames = useMemo(() => pickableFileNames(rootNodes, entryCount), [rootNodes, entryCount]);
+  const previousFilters = filterText.trimEnd();
+  const pickerOptions = pickerNames.map((name) => {
+    const token = formatContentSearchFileFilter(name);
+    const next = previousFilters ? `${previousFilters} ${token}` : token;
+    return {
+      name,
+      next,
+      available: fileFilters.ok &&
+        next.length <= CONTENT_SEARCH_FILTER_TEXT_LIMIT &&
+        validContentSearchFileFilters([...fileFilters.values, name]),
+    };
+  });
 
   const retire = useCallback(() => {
     const previous = active.current;
@@ -172,11 +219,20 @@ export function ContentSearchPanel({
     if (open) input.current?.focus();
   }, [open]);
 
+  function changeFilters(value: string) {
+    if (value === filterText) return;
+    cancelLocation("已取消定位。");
+    setFocusedHit(null);
+    setFilterText(value);
+    reset(initialStatus);
+  }
+
   async function search() {
     if (!ready || busy) return;
     cancelLocation("已取消定位。");
     setFocusedHit(null);
     reset(initialStatus);
+    if (!fileFilters.ok) return;
     const selection = getSelection();
     const workspace = folders.getSnapshot();
     const root = workspace.roots.find((item) => item.handle === selection.handle);
@@ -195,13 +251,15 @@ export function ContentSearchPanel({
       return;
     }
     const names = new Map<string, string>();
+    let rootFileCount = 0;
     for (const node of nodes) {
       if (node.kind !== "file") continue;
-      names.set(node.handle, node.name);
-      if (names.size > CONTENT_SEARCH_LIMITS.documents) {
+      if (++rootFileCount > CONTENT_SEARCH_LIMITS.documents) {
         setStatus(errors.LIMIT);
         return;
       }
+      if (matchesContentSearchFileFilters(node.name, fileFilters.values))
+        names.set(node.handle, node.name);
     }
     const capture = controller.captureContentSearch();
     if (!capture.ok) {
@@ -215,6 +273,7 @@ export function ContentSearchPanel({
       generation: root.generation,
       query,
       handles: capture.documents.map(({ handle }) => handle),
+      ...(fileFilters.values.length ? { fileFilters: fileFilters.values } : {}),
     };
     if (!validContentSearchRequest(request)) {
       setStatus(errors.INVALID);
@@ -433,14 +492,14 @@ export function ContentSearchPanel({
             {selectedRoot ? `搜索范围：${selectedRoot.name}` : "请先在文件树选中顶层文件夹。"}
           </p>
           <p className="text-muted-foreground text-xs">
-            区分大小写，每篇显示首个匹配。最多 16 篇，正文合计 64 KiB。
+            区分大小写，每篇显示首个匹配。文件夹最多 16 篇，查询正文合计 64 KiB。
           </p>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void search(); }}>
             <label className="block text-xs" htmlFor={inputId}>字面量查询</label>
             <input
               id={inputId}
               ref={input}
-              className="bg-background focus-visible:outline-ring w-full min-w-0 rounded border px-2 py-1 text-xs focus-visible:outline-2"
+              className={fieldClass}
               type="search"
               maxLength={CONTENT_SEARCH_LIMITS.query}
               value={query}
@@ -451,8 +510,37 @@ export function ContentSearchPanel({
                 reset(initialStatus);
               }}
             />
+            <label className="block text-xs" htmlFor={filterId}>文件名筛选</label>
+            <input
+              id={filterId}
+              className={fieldClass}
+              type="text"
+              maxLength={CONTENT_SEARCH_FILTER_TEXT_LIMIT}
+              placeholder={'file:"会议 纪要"'}
+              value={filterText}
+              aria-invalid={!!filterError}
+              aria-describedby={filterError ? filterErrorId : undefined}
+              onChange={(event) => changeFilters(event.target.value)}
+            />
+            {filterError && <p id={filterErrorId} role="alert" className="text-destructive text-xs">{filterError}</p>}
+            <label className="block text-xs" htmlFor={pickerId}>从文件夹选择文件名</label>
+            <select
+              id={pickerId}
+              className={fieldClass}
+              value=""
+              disabled={!pickerOptions.some(({ available }) => available)}
+              onChange={(event) => {
+                const option = pickerOptions.find(({ name }) => name === event.target.value);
+                if (option?.available) changeFilters(option.next);
+              }}
+            >
+              <option value="">选择后添加到筛选栏</option>
+              {pickerOptions.map(({ name, available }) => (
+                <option key={name} value={name} disabled={!available}>{name}</option>
+              ))}
+            </select>
             <div className="flex flex-wrap gap-1">
-              <button type="submit" className={buttonClass} disabled={!ready || busy || !query.trim()}>查询正文</button>
+              <button type="submit" className={buttonClass} disabled={!ready || busy || !query.trim() || !fileFilters.ok}>查询正文</button>
               <button type="button" className={buttonClass} disabled={!busy} onClick={() => reset(errors.CANCELLED)}>取消查询</button>
               <button type="button" className={buttonClass} onClick={() => {
                 cancelLocation("已取消定位。");

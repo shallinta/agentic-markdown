@@ -114,6 +114,27 @@ test("memory overrides count UTF-8 bytes and reject invalid Unicode", () => {
   ).toEqual({ ok: false, reason: "incomplete" });
 });
 
+test("a document outside the filtered scope cannot contribute a memory hit", () => {
+  const dirty: ContentSearchDocument = {
+    ...document,
+    status: "dirty",
+    raw: "筛选命中".repeat(20_000),
+  };
+  const coverage = [
+    { entry: "included", hash, bytes: 12, hit: { from: 0, to: 4 } },
+  ];
+  expect(
+    mergeContentSearch("筛选命中", [dirty], {
+      coverage,
+      mappings: [{ handle: document.handle, kind: "outside" }],
+    })
+  ).toEqual({
+    ok: true,
+    covered: 1,
+    hits: [{ entry: "included", from: 0, to: 4, source: "disk" }],
+  });
+});
+
 function fixture(): DocumentSnapshot {
   return {
     handle: crypto.randomUUID(),

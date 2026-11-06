@@ -1,3 +1,4 @@
+import { validContentSearchFileFilters } from "./content-search-filters";
 import { isDocumentSnapshot } from "./document-snapshot";
 import type { DocumentSnapshot } from "./documents";
 import { perfRecord, perfUuid } from "./perf-lab";
@@ -13,6 +14,7 @@ export interface ContentSearchInput {
   generation: number;
   query: string;
   handles: readonly string[];
+  fileFilters?: readonly string[];
 }
 
 export interface ContentSearchDocumentBinding {
@@ -216,9 +218,12 @@ export function validContentSearchRequest(
       exact(value, [...base, "targetRequestId"]) &&
       perfUuid(value.targetRequestId)
     );
+  const queryKeys = [...base, "root", "generation", "query", "handles"];
   return (
     value.op === "query" &&
-    exact(value, [...base, "root", "generation", "query", "handles"]) &&
+    (exact(value, queryKeys) ||
+      (exact(value, [...queryKeys, "fileFilters"]) &&
+        validContentSearchFileFilters(value.fileFilters))) &&
     perfUuid(value.root) &&
     natural(value.generation) &&
     typeof value.query === "string" &&

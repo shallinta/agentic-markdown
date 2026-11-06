@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { mkdirSync, readdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -23,7 +23,7 @@ const wrongGeneration = { ...retirement, generation: 2 };
 const failed = <E extends string>(error: E) => ({ ok: false as const, error, accepted: false });
 const current = () => true;
 
-async function runFixture(scratch: string, childMode: "owner" | "reopen") {
+async function runFixture(scratch: string, childMode: "owner" | "sealed" | "reopen") {
   const child = Bun.spawn([process.execPath, "test", import.meta.path], {
     env: {
       ...process.env,
@@ -39,6 +39,19 @@ async function runFixture(scratch: string, childMode: "owner" | "reopen") {
   ]);
   if (exit !== 0) throw Error(stdout + stderr);
   expect(stderr).toContain("1 pass");
+}
+
+const isStagedCatalog = (name: string) => /^\.catalog-[a-f0-9-]+\.tmp$/.test(name);
+function beforePublish(profile: string, action: () => boolean) {
+  let visited = false;
+  return {
+    current: () => {
+      if (visited || !readdirSync(profile).some(isStagedCatalog)) return true;
+      visited = true;
+      return action();
+    },
+    visited: () => visited,
+  };
 }
 
 async function fixture() {
@@ -86,6 +99,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
   try {
     await runFixture(scratch, "owner");
     expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "sealed");
+    expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -126,18 +141,6 @@ test.skipIf(mode !== "owner")("retirement publishes only a matching marker and p
     expect(nativeWorkers).toBe(1);
     const activeFootprint = await inspectAppIndexCacheFootprint(current);
     if (!activeFootprint.ok) throw Error("Could not inspect active fixture");
-    const isStagedCatalog = (name: string) => /^\.catalog-[a-f0-9-]+\.tmp$/.test(name);
-    const beforePublish = (action: () => boolean) => {
-      let visited = false;
-      return {
-        current: () => {
-          if (visited || !readdirSync(f.profile).some(isStagedCatalog)) return true;
-          visited = true;
-          return action();
-        },
-        visited: () => visited,
-      };
-    };
     expect(await retireAppIndexCache(wrongScope, current)).toEqual(failed("SCHEMA"));
     expect(await retireAppIndexCache(wrongGeneration, current)).toEqual(failed("MISMATCH"));
 
@@ -149,7 +152,7 @@ test.skipIf(mode !== "owner")("retirement publishes only a matching marker and p
     await rm(existingLease);
     await rmdir(f.lease);
 
-    const cancelled = beforePublish(() => false);
+    const cancelled = beforePublish(f.profile, () => false);
     expect(await retireAppIndexCache(retirement, cancelled.current)).toEqual(failed("CANCELLED"));
     expect(cancelled.visited()).toBe(true);
     expect(await f.fingerprint(f.catalog)).toEqual(original);
@@ -157,7 +160,7 @@ test.skipIf(mode !== "owner")("retirement publishes only a matching marker and p
 
     const parked = join(f.scratch, "parked-index");
     const unrelated = join(f.index, "sentinel");
-    const swapped = beforePublish(() => {
+    const swapped = beforePublish(f.profile, () => {
       renameSync(f.index, parked);
       mkdirSync(f.index, { mode: 0o700 });
       writeFileSync(unrelated, "unrelated");
@@ -173,7 +176,7 @@ test.skipIf(mode !== "owner")("retirement publishes only a matching marker and p
     await rename(parked, f.index);
 
     const blocked = join(f.lease, "fixture-blocks-release");
-    const uncertain = beforePublish(() => {
+    const uncertain = beforePublish(f.profile, () => {
       writeFileSync(blocked, "retain", { flag: "wx", mode: 0o600 });
       return false;
     });
@@ -206,6 +209,7 @@ test.skipIf(mode !== "owner")("retirement publishes only a matching marker and p
       totalBytes: Number(marker.size) + activeFootprint.indexBytes,
     });
     expect(await retireAppIndexCache(retirement, current)).toEqual({ ok: true, alreadyRetired: true });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual(failed("SCHEMA"));
     expect(await retireAppIndexCache(wrongScope, current)).toEqual(failed("SCHEMA"));
     expect(await retireAppIndexCache(wrongGeneration, current)).toEqual(failed("MISMATCH"));
     expect(await f.fingerprint(f.catalog)).toEqual(marker);
@@ -215,6 +219,136 @@ test.skipIf(mode !== "owner")("retirement publishes only a matching marker and p
     expect(await f.fingerprint(f.catalog)).toEqual(marker);
     expect(await f.fingerprint(f.index)).toEqual(nativeDirectory);
     expect(await f.nativeFiles()).toEqual(native);
+    expect(f.workers()).toBe(nativeWorkers);
+    await f.cleanSlot();
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "sealed")("a sealed marker binds the native directory and files to their exact identities", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  f.startRecording();
+  try {
+    let calls = 0;
+    expect(await retireAppIndexCache(retirement, () => { calls++; return true; }, false as unknown as true))
+      .toEqual(failed("INPUT"));
+    expect(calls).toBe(0);
+    expect(await readdir(f.scratch)).toEqual([]);
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toMatchObject({ ok: true, generation: 1 });
+    const originalCatalog = await f.fingerprint(f.catalog);
+    const nativeWorkers = f.workers();
+    expect(nativeWorkers).toBe(1);
+
+    const existingLease = join(f.lease, "keep");
+    await mkdir(f.lease, { mode: 0o700 });
+    await writeFile(existingLease, "fixture", { mode: 0o600 });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual(failed("BUSY"));
+    expect(await readFile(existingLease, "utf8")).toBe("fixture");
+    await rm(existingLease);
+    await rmdir(f.lease);
+    const target = join(f.scratch, "symlink-target");
+    const link = join(f.index, "fixture-symlink");
+    await writeFile(target, "do not touch", { mode: 0o600 });
+    await symlink(target, link);
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual(failed("UNAVAILABLE"));
+    expect(await readlink(link)).toBe(target);
+    expect(await readFile(target, "utf8")).toBe("do not touch");
+    await rm(link);
+    await rm(target);
+    await f.cleanSlot();
+
+    const cancelled = beforePublish(f.profile, () => false);
+    expect(await retireAppIndexCache(retirement, cancelled.current, true)).toEqual(failed("CANCELLED"));
+    expect(cancelled.visited()).toBe(true);
+    expect(await f.fingerprint(f.catalog)).toEqual(originalCatalog);
+    await f.cleanSlot();
+
+    const parked = join(f.scratch, "parked-index");
+    const swapped = beforePublish(f.profile, () => {
+      renameSync(f.index, parked);
+      mkdirSync(f.index, { mode: 0o700 });
+      return true;
+    });
+    expect(await retireAppIndexCache(retirement, swapped.current, true)).toEqual(failed("UNAVAILABLE"));
+    expect(swapped.visited()).toBe(true);
+    expect(await readdir(f.index)).toEqual([]);
+    expect(await f.fingerprint(f.catalog)).toEqual(originalCatalog);
+    await rmdir(f.index);
+    await rename(parked, f.index);
+    await f.cleanSlot();
+
+    const firstMember = (await readdir(f.index)).sort()[0];
+    if (!firstMember) throw Error("Native fixture files missing");
+    const firstFile = join(f.index, firstMember);
+    const beforeTouch = await lstat(firstFile);
+    const touched = beforePublish(f.profile, () => {
+      utimesSync(firstFile, beforeTouch.atime, new Date(beforeTouch.mtimeMs + 10_000));
+      return true;
+    });
+    expect(await retireAppIndexCache(retirement, touched.current, true)).toEqual(failed("UNAVAILABLE"));
+    expect(touched.visited()).toBe(true);
+    expect(await f.fingerprint(f.catalog)).toEqual(originalCatalog);
+    expect((await lstat(firstFile)).mtimeMs).toBeGreaterThan(beforeTouch.mtimeMs);
+    await f.cleanSlot();
+
+    const blocked = join(f.lease, "fixture-blocks-release");
+    const uncertain = beforePublish(f.profile, () => {
+      writeFileSync(blocked, "retain", { flag: "wx", mode: 0o600 });
+      return true;
+    });
+    expect(await retireAppIndexCache(retirement, uncertain.current, true))
+      .toEqual({ ok: false, error: "UNKNOWN", accepted: true });
+    expect(uncertain.visited()).toBe(true);
+    expect(await readFile(blocked, "utf8")).toBe("retain");
+    expect(await f.fingerprint(f.catalog)).toEqual(originalCatalog);
+    await rm(blocked);
+    await rmdir(f.lease);
+    await f.cleanSlot();
+
+    const nativeFiles = await f.nativeFiles();
+    const nativeDirectory = await f.fingerprint(f.index);
+    const metadata = async (path: string) => {
+      const s = await lstat(path, { bigint: true });
+      return [s.birthtimeNs, s.dev, s.ino, s.mode, s.uid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String);
+    };
+    const members = await Promise.all((await readdir(f.index)).sort().map(async name => [
+      name, await metadata(join(f.index, name)),
+    ]));
+    const inventoryDigest = sha(JSON.stringify([
+      2, "agentic-markdown-index-retirement-inventory", "limited-v1",
+      retirement.scopeKey, retirement.generation, await metadata(f.index), members,
+    ]));
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    expect(JSON.parse(await readFile(f.catalog, "utf8"))).toEqual({
+      version: 2, profile: "limited-v1", state: "retired", ...retirement, inventoryDigest,
+    });
+    const marker = await f.fingerprint(f.catalog);
+    const indexBytes = Number(nativeFiles.reduce((sum, file) => sum + file.size, 0n));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual({
+      ok: true, present: true, files: nativeFiles.length + 1, catalogBytes: Number(marker.size),
+      indexBytes, totalBytes: Number(marker.size) + indexBytes,
+    });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: true });
+    await runFixture(f.scratch, "reopen");
+    expect(await f.fingerprint(f.catalog)).toEqual(marker);
+    expect(await f.fingerprint(f.index)).toEqual(nativeDirectory);
+    expect(await f.nativeFiles()).toEqual(nativeFiles);
+
+    const changed = nativeFiles[0];
+    if (!changed) throw Error("Native fixture files missing");
+    const changedPath = join(f.index, changed.name);
+    const stat = await lstat(changedPath);
+    await utimes(changedPath, stat.atime, new Date(stat.mtimeMs + 10_000));
+    const modified = await f.fingerprint(changedPath);
+    expect(modified).toMatchObject({ ino: changed.ino, size: changed.size, hash: changed.hash });
+    expect(modified.mtime).not.toBe(changed.mtime);
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual(failed("MISMATCH"));
+    expect(await f.fingerprint(f.catalog)).toEqual(marker);
+    expect(await f.fingerprint(changedPath)).toEqual(modified);
     expect(f.workers()).toBe(nativeWorkers);
     await f.cleanSlot();
   } finally {

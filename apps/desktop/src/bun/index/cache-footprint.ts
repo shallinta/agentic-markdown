@@ -1,15 +1,24 @@
+import { createHash } from "node:crypto";
 import { lstatSync, type BigIntStats, type Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
-import { IndexReuseCleanupError, type IndexReuseInventoryIdentity } from "./reuse-catalog";
+import { IndexReuseCleanupError, type IndexRetirementTarget, type IndexReuseInventoryIdentity } from "./reuse-catalog";
 
 const maxIndexFiles = 128;
 
 function sameMetadata(before: BigIntStats, after: BigIntStats) {
   return before.dev === after.dev && before.ino === after.ino &&
     before.uid === after.uid && before.mode === after.mode && before.nlink === after.nlink &&
-    before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+    before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs &&
+    before.birthtimeNs === after.birthtimeNs;
+}
+
+function identityStamp(stat: BigIntStats) {
+  return [
+    stat.birthtimeNs, stat.dev, stat.ino, stat.mode, stat.uid, stat.nlink,
+    stat.size, stat.mtimeNs, stat.ctimeNs,
+  ].map(String);
 }
 
 async function closeDirectory(dir: Dir) {
@@ -58,13 +67,16 @@ export async function captureIndexFootprint(
     checkLease();
   };
   const inventory = [{ path: profile, stat: profileStat }];
-  const recheck = () => {
+  const recheckInventory = (includeProfile: boolean) => {
     checkInspection();
-    for (const { path, stat } of inventory)
+    for (const { path, stat } of inventory) {
+      if (!includeProfile && path === profile) continue;
       if (!sameMetadata(stat, lstatSync(path, { bigint: true })))
         throw Error("Index cache inventory changed");
+    }
     checkLease();
   };
+  const recheck = () => recheckInventory(true);
   const readFileMetadata = (path: string, expected?: BigIntStats, privateMode = false) => {
     const stat = lstatSync(path, { bigint: true });
     if (!stat.isFile() || stat.uid !== owner || stat.nlink !== 1n || stat.size < 0n ||
@@ -90,6 +102,7 @@ export async function captureIndexFootprint(
       (expected && !sameMetadata(expected.index, indexStat)))
     throw Error("Index cache directory unavailable");
   inventory.push({ path: index, stat: indexStat });
+  const nativeFileStart = inventory.length;
   const checkIndex = () => {
     checkInspection();
     if (!sameMetadata(indexStat, lstatSync(index, { bigint: true })))
@@ -102,5 +115,15 @@ export async function captureIndexFootprint(
   return {
     status: "existing" as const, recheck, files: names.size + 1,
     catalogBytes, indexBytes, totalBytes: catalogBytes + indexBytes,
+    recheckAfterStaging: () => recheckInventory(false),
+    inventoryDigest({ scopeKey, generation }: IndexRetirementTarget) {
+      const files = inventory.slice(nativeFileStart)
+        .map(({ path, stat }) => [basename(path), identityStamp(stat)] as const)
+        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+      return createHash("sha256").update(JSON.stringify([
+        2, "agentic-markdown-index-retirement-inventory", "limited-v1",
+        scopeKey, generation, identityStamp(indexStat), files,
+      ])).digest("hex");
+    },
   };
 }

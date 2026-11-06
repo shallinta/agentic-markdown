@@ -68,7 +68,7 @@ async function profileContainsOnlyLease(directory: string, check: () => void) {
 }
 
 export async function retireIndexReuse(
-  directory: string, target: IndexRetirementTarget, current: () => boolean
+  directory: string, target: IndexRetirementTarget, current: () => boolean, seal?: true
 ): Promise<RetirementResult> {
   if (!current()) return fail("CANCELLED");
   const acquired = await acquireIndexReuseSlot(directory);
@@ -111,6 +111,22 @@ export async function retireIndexReuse(
     const { catalog, identity } = cached;
     if (catalog.scopeKey !== target.scopeKey) return fail("SCHEMA");
     if (catalog.generation !== target.generation) return fail("MISMATCH");
+    if (seal) {
+      if (cached.status === "retired" && cached.catalog.version !== 2) return fail("SCHEMA");
+      const { assertInventoryLease } = slot;
+      const footprint = await captureIndexFootprint(
+        directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity
+      );
+      footprint.recheck();
+      if (footprint.status !== "existing") return fail("UNAVAILABLE");
+      const inventoryDigest = footprint.inventoryDigest(target);
+      if (cached.status === "retired") {
+        return cached.catalog.version === 2 && cached.catalog.inventoryDigest === inventoryDigest
+          ? { ok: true, alreadyRetired: true } : fail("MISMATCH");
+      }
+      await slot.retireCatalog(target, identity, footprint.recheckAfterStaging, inventoryDigest);
+      return { ok: true, alreadyRetired: false };
+    }
     if (cached.status === "retired") {
       slot.assertCatalogIdentity(identity);
       return { ok: true, alreadyRetired: true };

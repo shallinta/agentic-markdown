@@ -26,11 +26,12 @@ export interface IndexReuseCatalog {
 }
 
 export interface IndexRetirementTarget { scopeKey: string; generation: number }
-interface RetiredCatalog extends IndexRetirementTarget {
-  version: 1;
+interface RetiredCatalogBase extends IndexRetirementTarget {
   profile: "limited-v1";
   state: "retired";
 }
+type RetiredCatalog = RetiredCatalogBase &
+  ({ version: 1 } | { version: 2; inventoryDigest: string });
 
 export interface IndexReuseInventoryIdentity {
   catalog: BigIntStats;
@@ -49,7 +50,10 @@ interface IndexReuseSlot {
   assertCatalogIdentity(identity: IndexReuseInventoryIdentity): void;
   readCatalog(): Promise<CatalogRead>;
   writeCatalog(catalog: IndexReuseCatalog, beforeCommit?: () => void): Promise<void>;
-  retireCatalog(target: IndexRetirementTarget, identity: IndexReuseInventoryIdentity, beforeCommit: () => void): Promise<void>;
+  retireCatalog(
+    target: IndexRetirementTarget, identity: IndexReuseInventoryIdentity,
+    beforeCommit: () => void, inventoryDigest?: string
+  ): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -99,9 +103,12 @@ export function readIndexRetirementTarget(value: unknown): IndexRetirementTarget
 }
 
 function validRetiredCatalog(value: unknown): value is RetiredCatalog {
-  return record(value) && keys(value, "generation,profile,scopeKey,state,version") &&
-    value.version === 1 && value.profile === "limited-v1" && value.state === "retired" &&
-    typeof value.scopeKey === "string" && digest.test(value.scopeKey) && natural(value.generation);
+  if (!record(value) || value.profile !== "limited-v1" || value.state !== "retired" ||
+      typeof value.scopeKey !== "string" || !digest.test(value.scopeKey) || !natural(value.generation))
+    return false;
+  if (value.version === 1) return keys(value, "generation,profile,scopeKey,state,version");
+  return value.version === 2 && keys(value, "generation,inventoryDigest,profile,scopeKey,state,version") &&
+    typeof value.inventoryDigest === "string" && digest.test(value.inventoryDigest);
 }
 
 function hasCode(error: unknown, code: string) {
@@ -310,9 +317,12 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
           if (!validCatalog(catalog)) throw Error("Invalid index reuse catalog");
           await publishCatalog(catalog, beforeCommit);
         },
-        async retireCatalog(target, identity, beforeCommit) {
+        async retireCatalog(target, identity, beforeCommit, inventoryDigest) {
           const { scopeKey, generation } = target;
-          const marker = { version: 1, profile: "limited-v1", state: "retired", scopeKey, generation } as const;
+          const base = { profile: "limited-v1", state: "retired", scopeKey, generation } as const;
+          const marker = inventoryDigest === undefined
+            ? { version: 1 as const, ...base }
+            : { version: 2 as const, ...base, inventoryDigest };
           if (!validRetiredCatalog(marker)) throw Error("Invalid index retirement marker");
           assertCatalogIdentity(identity);
           await publishCatalog(marker, beforeCommit, identity);

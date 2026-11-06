@@ -98,7 +98,8 @@ function existingProfile({ home, pin, cacheCurrent, boundaryFailure }: CacheBoun
   return { ok: true as const, directory };
 }
 
-export async function retireAppIndexCache(input: IndexRetirementTarget, current: () => boolean) {
+export async function retireAppIndexCache(input: IndexRetirementTarget, current: () => boolean, seal?: true) {
+  if (seal !== undefined && seal !== true) return fail("INPUT");
   const target = readIndexRetirementTarget(input);
   if (!target) return fail("INPUT");
   const boundary = appCacheBoundary(current);
@@ -107,7 +108,7 @@ export async function retireAppIndexCache(input: IndexRetirementTarget, current:
   try {
     const profile = existingProfile(boundary);
     if (!profile.ok) return profile;
-    const result = await retireIndexReuse(profile.directory, target, cacheCurrent);
+    const result = await retireIndexReuse(profile.directory, target, cacheCurrent, seal);
     return !result.ok && result.error === "CANCELLED" ? boundaryFailure() : result;
   } catch {
     callerCurrent();

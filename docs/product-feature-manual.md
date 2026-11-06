@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064av 的 alpha.232 已验证内部退役槽可记录回收准备状态，并在新进程复核。记录保留索引原目录和文件。见[F-064av 迭代](iterations/F-064av-retired-index-reclaim-intent.md)。
+
 F-064au 用合成索引验证了同槽目录排他移动。产品缓存仍只提供内部退役和预检。见[F-064au 实验](iterations/F-064au-retired-index-exclusive-stage-probe.md)。
 
 F-064at 的 alpha.231 已验证内部回收预检，可核对退役摘要、原生格式和实际文件名册。预检保留文件，普通窗口继续使用直接搜索。见[F-064at 迭代](iterations/F-064at-retired-index-reclaim-preflight.md)。

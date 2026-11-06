@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink, utimes, writeFile } from "node:fs/promises";
+import { constants, mkdirSync, readdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import {
   inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, reopenAppIndexCache,
-  retireAppIndexCache, searchAppIndexCache,
+  prepareRetiredIndexReclaim, retireAppIndexCache, searchAppIndexCache,
 } from "./app-cache";
 import { record } from "./protocol";
 
@@ -25,7 +25,10 @@ const wrongGeneration = { ...retirement, generation: 2 };
 const failed = <E extends string>(error: E) => ({ ok: false as const, error, accepted: false });
 const current = () => true;
 
-async function runFixture(scratch: string, childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen") {
+async function runFixture(
+  scratch: string,
+  childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen"
+) {
   const child = Bun.spawn([process.execPath, "test", import.meta.path], {
     env: {
       ...process.env,
@@ -104,6 +107,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "sealed");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "preflight");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "intent");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -530,6 +535,204 @@ test.skipIf(mode !== "preflight-reopen")("a new process confirms the reclaim dig
     expect(await f.fingerprint(f.catalog)).toEqual(catalog);
     expect(await f.fingerprint(f.index)).toEqual(directory);
     expect(await f.nativeFiles()).toEqual(native);
+    await f.cleanSlot();
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "intent")("preparing a reclaim intent seals the original placement without moving native files", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  f.startRecording();
+  const candidate = { ...retirement, inventoryDigest: sha("unrelated sealed inventory") };
+  const prepared = (target = candidate, guard = current) => prepareRetiredIndexReclaim(target, guard);
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toEqual({
+      ok: true, generation: 1, applied: 1, hits: [{ id: "fixture-a", from: 3, to: 9 }],
+    });
+  }
+  try {
+    let guards = 0;
+    expect(await prepared({ ...candidate, inventoryDigest: "wrong" }, () => { guards++; return true; }))
+      .toEqual(failed("INPUT"));
+    expect(guards).toBe(0);
+    expect(await prepared(candidate, () => false)).toEqual(failed("CANCELLED"));
+    expect(await prepared()).toEqual(failed("UNAVAILABLE"));
+    expect(await readdir(f.scratch)).toEqual([]);
+    await seed();
+    const active = await f.fingerprint(f.catalog);
+    expect(await prepared()).toEqual(failed("SCHEMA"));
+    expect(await f.fingerprint(f.catalog)).toEqual(active);
+    expect(await retireAppIndexCache(retirement, current)).toEqual({ ok: true, alreadyRetired: false });
+    const legacy = await f.fingerprint(f.catalog);
+    expect(await prepared()).toEqual(failed("SCHEMA"));
+    expect(await f.fingerprint(f.catalog)).toEqual(legacy);
+    expect(f.workers()).toBe(1);
+    await f.cleanSlot();
+    await rm(f.home, { recursive: true, force: true });
+
+    await seed();
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const preflight = await inspectRetiredIndexReclaim(retirement, current);
+    if (!preflight.ok) throw Error("Fixture sealed preflight refused: " + preflight.error);
+    const target = { ...retirement, inventoryDigest: preflight.inventoryDigest };
+    const sealed = await f.fingerprint(f.catalog);
+    const files = await f.nativeFiles();
+    const directory = await f.fingerprint(f.index);
+    const nativeWorkers = f.workers();
+    expect(await prepared(candidate)).toEqual(failed("MISMATCH"));
+    expect(await prepared({ ...target, ...wrongScope })).toEqual(failed("SCHEMA"));
+    expect(await prepared({ ...target, ...wrongGeneration })).toEqual(failed("MISMATCH"));
+
+    const occupied = join(f.lease, "keep");
+    await mkdir(f.lease, { mode: 0o700 });
+    await writeFile(occupied, "busy", { mode: 0o600 });
+    expect(await prepared(target)).toEqual(failed("BUSY"));
+    expect(await readFile(occupied, "utf8")).toBe("busy");
+    await rm(occupied);
+    await rmdir(f.lease);
+    const pending = join(f.profile, ".reclaim-pending");
+    await mkdir(pending, { mode: 0o700 });
+    const keep = join(pending, "keep");
+    await writeFile(keep, "separate", { mode: 0o600 });
+    expect(await prepared(target)).toEqual(failed("UNAVAILABLE"));
+    expect(await readFile(keep, "utf8")).toBe("separate");
+    await rm(keep);
+    await rmdir(pending);
+
+    const cancelled = beforePublish(f.profile, () => false);
+    expect(await prepared(target, cancelled.current)).toEqual(failed("CANCELLED"));
+    expect(cancelled.visited()).toBe(true);
+    expect(await f.fingerprint(f.catalog)).toEqual(sealed);
+    await f.cleanSlot();
+
+    const collided = beforePublish(f.profile, () => {
+      mkdirSync(pending, { mode: 0o700 });
+      writeFileSync(keep, "late", { mode: 0o600 });
+      return true;
+    });
+    expect(await prepared(target, collided.current)).toEqual(failed("UNAVAILABLE"));
+    expect(collided.visited()).toBe(true);
+    expect(await readFile(keep, "utf8")).toBe("late");
+    expect(await f.fingerprint(f.catalog)).toEqual(sealed);
+    await rm(keep);
+    await rmdir(pending);
+    await f.cleanSlot();
+
+    const directoryStat = await lstat(f.index, { bigint: true });
+    const childStamps = await Promise.all((await readdir(f.index)).sort().map(async name => {
+      const s = await lstat(join(f.index, name), { bigint: true });
+      return [name, [s.birthtimeNs, s.dev, s.ino, s.mode, s.uid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String)];
+    }));
+    const stagingDigest = sha(JSON.stringify([
+      3, "agentic-markdown-index-reclaim-intent", "limited-v1", target.scopeKey, target.generation,
+      target.inventoryDigest,
+      [directoryStat.dev, directoryStat.ino, directoryStat.birthtimeNs, directoryStat.uid, directoryStat.mode].map(String),
+      childStamps,
+    ]));
+    expect(await prepared(target)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(JSON.parse(await readFile(f.catalog, "utf8"))).toEqual({
+      version: 3, profile: "limited-v1", state: "reclaim-prepared", ...target, stagingDigest,
+    });
+    const intent = await f.fingerprint(f.catalog);
+    expect(intent.ino).not.toBe(sealed.ino);
+    expect(intent.links).toBe(1n);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual({
+      ok: true, present: true, files: preflight.files, catalogBytes: Number(intent.size),
+      indexBytes: Number(files.reduce((sum, file) => sum + file.size, 0n)),
+      totalBytes: Number(files.reduce((sum, file) => sum + file.size, intent.size)),
+    });
+    await runFixture(f.scratch, "intent-reopen");
+    expect(await f.fingerprint(f.catalog)).toEqual(intent);
+    expect(await f.fingerprint(f.index)).toEqual(directory);
+    expect(await f.nativeFiles()).toEqual(files);
+    await f.cleanSlot();
+
+    const member = files[0];
+    if (!member) throw Error("Fixture native file missing");
+    const changed = join(f.index, member.name);
+    const stat = await lstat(changed);
+    await utimes(changed, stat.atime, new Date(stat.mtimeMs + 10_000));
+    const changedFile = await f.fingerprint(changed);
+    expect(await prepared(target)).toEqual(failed("MISMATCH"));
+    expect(await f.fingerprint(changed)).toEqual(changedFile);
+    expect(await f.fingerprint(f.catalog)).toEqual(intent);
+    expect(f.workers()).toBe(nativeWorkers);
+    await f.cleanSlot();
+
+    await rm(f.home, { recursive: true, force: true });
+    await seed();
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const secondPreflight = await inspectRetiredIndexReclaim(retirement, current);
+    if (!secondPreflight.ok) throw Error("Second sealed fixture refused: " + secondPreflight.error);
+    const second = { ...retirement, inventoryDigest: secondPreflight.inventoryDigest };
+    const secondFiles = await f.nativeFiles();
+    const secondWorkers = f.workers();
+    const profileHandle = await open(f.profile, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const profileStat = await profileHandle.stat({ bigint: true });
+    const prototype = Object.getPrototypeOf(profileHandle) as Pick<typeof profileHandle, "sync">;
+    const sync = prototype.sync;
+    await profileHandle.close();
+    let injected = false;
+    prototype.sync = async function(this: typeof profileHandle) {
+      const stat = await this.stat({ bigint: true });
+      if (stat.dev === profileStat.dev && stat.ino === profileStat.ino) {
+        const afterPublish: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
+        if (record(afterPublish) && afterPublish.version === 3) {
+          injected = true;
+          throw Error("Fixture postpublication sync failure");
+        }
+      }
+      await sync.call(this);
+    };
+    try {
+      expect(await prepared(second)).toEqual({ ok: false, error: "UNKNOWN", accepted: true });
+    } finally {
+      prototype.sync = sync;
+    }
+    expect(injected).toBe(true);
+    expect(JSON.parse(await readFile(f.catalog, "utf8"))).toMatchObject({
+      version: 3, state: "reclaim-prepared", ...second,
+    });
+    const uncertain = await f.fingerprint(f.catalog);
+    expect(await f.nativeFiles()).toEqual(secondFiles);
+    await f.cleanSlot();
+    expect(await prepared(second)).toEqual({ ok: true, alreadyPrepared: true });
+    expect(await f.fingerprint(f.catalog)).toEqual(uncertain);
+    expect(await f.nativeFiles()).toEqual(secondFiles);
+    expect(f.workers()).toBe(secondWorkers);
+    await f.cleanSlot();
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "intent-reopen")("a fresh process confirms a prepared record without reopening native", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual(["home"]);
+  const marker: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
+  if (!record(marker) || marker.version !== 3 || typeof marker.inventoryDigest !== "string")
+    throw Error("Prepared fixture missing");
+  const target = { ...retirement, inventoryDigest: marker.inventoryDigest };
+  const catalog = await f.fingerprint(f.catalog);
+  const directory = await f.fingerprint(f.index);
+  const files = await f.nativeFiles();
+  f.startRecording();
+  try {
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyPrepared: true });
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await reopenAppIndexCache(input, current, 0)).toEqual(failed("SCHEMA"));
+    expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await retireAppIndexCache(retirement, current)).toEqual(failed("SCHEMA"));
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual(failed("SCHEMA"));
+    expect(await inspectRetiredIndexReclaim(retirement, current)).toEqual(failed("SCHEMA"));
+    expect(f.workers()).toBe(0);
+    expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+    expect(await f.fingerprint(f.index)).toEqual(directory);
+    expect(await f.nativeFiles()).toEqual(files);
     await f.cleanSlot();
   } finally {
     f.stopRecording();

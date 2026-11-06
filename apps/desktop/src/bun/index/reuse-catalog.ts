@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   constants,
+  fstatSync,
   lstatSync,
   renameSync,
   unlinkSync,
@@ -26,6 +27,13 @@ export interface IndexReuseCatalog {
 }
 
 export interface IndexRetirementTarget { scopeKey: string; generation: number }
+export interface IndexReclaimIntentTarget extends IndexRetirementTarget { inventoryDigest: string }
+export interface PreparedReclaimCatalog extends IndexReclaimIntentTarget {
+  version: 3;
+  profile: "limited-v1";
+  state: "reclaim-prepared";
+  stagingDigest: string;
+}
 interface RetiredCatalogBase extends IndexRetirementTarget {
   profile: "limited-v1";
   state: "retired";
@@ -42,6 +50,7 @@ type CatalogRead =
   | { status: "cold" }
   | { status: "existing"; catalog: IndexReuseCatalog; identity: IndexReuseInventoryIdentity }
   | { status: "retired"; catalog: RetiredCatalog; identity: IndexReuseInventoryIdentity }
+  | { status: "prepared"; catalog: PreparedReclaimCatalog; identity: IndexReuseInventoryIdentity }
   | { status: "invalid" };
 
 interface IndexReuseSlot {
@@ -53,6 +62,11 @@ interface IndexReuseSlot {
   retireCatalog(
     target: IndexRetirementTarget, identity: IndexReuseInventoryIdentity,
     beforeCommit: () => void, inventoryDigest?: string
+  ): Promise<void>;
+  prepareReclaimCatalog(
+    marker: PreparedReclaimCatalog,
+    identity: IndexReuseInventoryIdentity,
+    proof: { alreadyPrepared: boolean; beforeCommit: () => void; verifyNative: () => void }
   ): Promise<void>;
   release(): Promise<void>;
 }
@@ -102,6 +116,22 @@ export function readIndexRetirementTarget(value: unknown): IndexRetirementTarget
     return { scopeKey, generation };
 }
 
+export function readIndexReclaimIntentTarget(value: unknown): IndexReclaimIntentTarget | undefined {
+  if (!record(value) || !keys(value, "generation,inventoryDigest,scopeKey")) return;
+  const { scopeKey, generation, inventoryDigest } = value;
+  if (typeof scopeKey === "string" && digest.test(scopeKey) && natural(generation) &&
+      typeof inventoryDigest === "string" && digest.test(inventoryDigest))
+    return { scopeKey, generation, inventoryDigest };
+}
+
+function validPreparedCatalog(value: unknown): value is PreparedReclaimCatalog {
+  return record(value) && keys(value, "generation,inventoryDigest,profile,scopeKey,stagingDigest,state,version") &&
+    value.version === 3 && value.profile === "limited-v1" && value.state === "reclaim-prepared" &&
+    typeof value.scopeKey === "string" && digest.test(value.scopeKey) && natural(value.generation) &&
+    typeof value.inventoryDigest === "string" && digest.test(value.inventoryDigest) &&
+    typeof value.stagingDigest === "string" && digest.test(value.stagingDigest);
+}
+
 function validRetiredCatalog(value: unknown): value is RetiredCatalog {
   if (!record(value) || value.profile !== "limited-v1" || value.state !== "retired" ||
       typeof value.scopeKey !== "string" || !digest.test(value.scopeKey) || !natural(value.generation))
@@ -132,6 +162,12 @@ function sameFile(left: BigIntStats, right: BigIntStats) {
     left.size === right.size &&
     left.mtimeNs === right.mtimeNs &&
     left.ctimeNs === right.ctimeNs;
+}
+
+function samePublishedCatalog(staged: BigIntStats, published: BigIntStats) {
+  return sameInode(staged, published) && staged.birthtimeNs === published.birthtimeNs &&
+    staged.uid === published.uid && staged.mode === published.mode && staged.nlink === published.nlink &&
+    staged.size === published.size && staged.mtimeNs === published.mtimeNs;
 }
 
 async function closeCatalogFile(file: FileHandle) {
@@ -194,7 +230,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
     };
 
     async function publishCatalog(
-      value: IndexReuseCatalog | RetiredCatalog,
+      value: IndexReuseCatalog | RetiredCatalog | PreparedReclaimCatalog,
       beforeCommit?: () => void,
       identity?: IndexReuseInventoryIdentity
     ) {
@@ -253,10 +289,94 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
               latest.size !== BigInt(Buffer.byteLength(contents)))
             throw Error("Index retirement staging changed");
         }
-        renameSync(tempPath, catalogPath);
+        try {
+          renameSync(tempPath, catalogPath);
+        } catch (error) {
+          if (value.version === 3) throw new IndexReuseCleanupError("Index reclaim preparation publication unconfirmed");
+          throw error;
+        }
+        return written;
       } catch (error) {
         if (created) cleanStaging();
         throw error;
+      }
+    }
+
+    async function readCatalog(): Promise<CatalogRead> {
+      try {
+        assertLease();
+        const index = present(indexPath);
+        const catalog = present(catalogPath);
+        if (!index && !catalog) return { status: "cold" };
+        if (!index || !ownedDirectory(index) || !catalog || !privateFile(catalog) ||
+            catalog.size > BigInt(maxCatalogBytes))
+          return { status: "invalid" };
+        const file = await open(
+          catalogPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+        );
+        let value: unknown;
+        try {
+          const opened = await file.stat({ bigint: true });
+          if (!privateFile(opened) || !sameFile(opened, catalog))
+            return { status: "invalid" };
+          const bytes = Buffer.alloc(Number(opened.size) + 1);
+          let length = 0;
+          while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (!bytesRead) break;
+            length += bytesRead;
+          }
+          const after = await file.stat({ bigint: true });
+          if (!privateFile(after) || !sameFile(opened, after) || BigInt(length) !== opened.size)
+            return { status: "invalid" };
+          value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+            .decode(bytes.subarray(0, length)));
+        } finally {
+          await closeCatalogFile(file);
+        }
+        assertLease();
+        const latestCatalog = present(catalogPath);
+        const latestIndex = present(indexPath);
+        if (!latestCatalog || !privateFile(latestCatalog) || !sameFile(catalog, latestCatalog) ||
+            !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex))
+          return { status: "invalid" };
+        const identity = { catalog, index };
+        if (validCatalog(value)) return { status: "existing", catalog: value, identity };
+        if (validRetiredCatalog(value)) return { status: "retired", catalog: value, identity };
+        if (validPreparedCatalog(value)) return { status: "prepared", catalog: value, identity };
+        return { status: "invalid" };
+      } catch (error) {
+        if (error instanceof IndexReuseCleanupError) throw error;
+        return { status: "invalid" };
+      }
+    }
+
+    function assertReclaimProfile(profile: FileHandle) {
+      const current = assertLease(true);
+      const held = fstatSync(profile.fd, { bigint: true });
+      if (!privateDirectory(held) || !sameInode(current, held) ||
+          directoryStat.birthtimeNs !== held.birthtimeNs || directoryStat.mode !== held.mode ||
+          current.mode !== held.mode || present(join(directory, ".reclaim-pending")))
+        throw Error("Index reclaim profile unavailable");
+    }
+
+    async function syncReclaimCatalog(
+      profile: FileHandle, expected: PreparedReclaimCatalog, staged: BigIntStats, verifyNative: () => void
+    ) {
+      try {
+        assertReclaimProfile(profile);
+        await profile.sync();
+        const saved = await readCatalog();
+        if (saved.status !== "prepared" ||
+            saved.catalog.scopeKey !== expected.scopeKey || saved.catalog.generation !== expected.generation ||
+            saved.catalog.inventoryDigest !== expected.inventoryDigest || saved.catalog.stagingDigest !== expected.stagingDigest ||
+            !samePublishedCatalog(staged, saved.identity.catalog))
+          throw Error("Index reclaim preparation changed");
+        assertReclaimProfile(profile);
+        assertCatalogIdentity(saved.identity);
+        verifyNative();
+      } catch {
+        throw new IndexReuseCleanupError("Index reclaim preparation sync or confirmation unconfirmed");
       }
     }
 
@@ -266,53 +386,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         indexPath,
         assertInventoryLease: () => assertLease(true),
         assertCatalogIdentity,
-        async readCatalog() {
-          try {
-            assertLease();
-            const index = present(indexPath);
-            const catalog = present(catalogPath);
-            if (!index && !catalog) return { status: "cold" };
-            if (!index || !ownedDirectory(index) || !catalog || !privateFile(catalog) ||
-                catalog.size > BigInt(maxCatalogBytes))
-              return { status: "invalid" };
-            const file = await open(
-              catalogPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-            );
-            let value: unknown;
-            try {
-              const opened = await file.stat({ bigint: true });
-              if (!privateFile(opened) || !sameFile(opened, catalog))
-                return { status: "invalid" };
-              const bytes = Buffer.alloc(Number(opened.size) + 1);
-              let length = 0;
-              while (length < bytes.length) {
-                const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
-                if (!bytesRead) break;
-                length += bytesRead;
-              }
-              const after = await file.stat({ bigint: true });
-              if (!privateFile(after) || !sameFile(opened, after) || BigInt(length) !== opened.size)
-                return { status: "invalid" };
-              value = JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
-                .decode(bytes.subarray(0, length)));
-            } finally {
-              await closeCatalogFile(file);
-            }
-            assertLease();
-            const latestCatalog = present(catalogPath);
-            const latestIndex = present(indexPath);
-            if (!latestCatalog || !privateFile(latestCatalog) || !sameFile(catalog, latestCatalog) ||
-                !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex))
-              return { status: "invalid" };
-            const identity = { catalog, index };
-            if (validCatalog(value)) return { status: "existing", catalog: value, identity };
-            if (validRetiredCatalog(value)) return { status: "retired", catalog: value, identity };
-            return { status: "invalid" };
-          } catch (error) {
-            if (error instanceof IndexReuseCleanupError) throw error;
-            return { status: "invalid" };
-          }
-        },
+        readCatalog,
         async writeCatalog(catalog, beforeCommit) {
           if (!validCatalog(catalog)) throw Error("Invalid index reuse catalog");
           await publishCatalog(catalog, beforeCommit);
@@ -326,6 +400,30 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
           if (!validRetiredCatalog(marker)) throw Error("Invalid index retirement marker");
           assertCatalogIdentity(identity);
           await publishCatalog(marker, beforeCommit, identity);
+        },
+        async prepareReclaimCatalog(marker, identity, { alreadyPrepared, beforeCommit, verifyNative }) {
+          if (!validPreparedCatalog(marker)) throw Error("Invalid index reclaim intent");
+          const profile = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+          try {
+            assertReclaimProfile(profile);
+            assertCatalogIdentity(identity);
+            const guard = () => {
+              beforeCommit();
+              assertReclaimProfile(profile);
+            };
+            let staged = identity.catalog;
+            if (alreadyPrepared) {
+              guard();
+              assertCatalogIdentity(identity);
+            } else {
+              const written = await publishCatalog(marker, guard, identity);
+              if (!written) throw new IndexReuseCleanupError("Index reclaim preparation publication unconfirmed");
+              staged = written;
+            }
+            await syncReclaimCatalog(profile, marker, staged, verifyNative);
+          } finally {
+            await closeCatalogFile(profile);
+          }
         },
         async release() {
           if (released) return;

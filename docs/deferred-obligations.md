@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064av 退役索引回收准备记录（2026-11-06）
+
+alpha.232 已验证 v3 准备记录及跨进程复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接待回收位置、遗留租约、实际回收、配额与最终离线。见[F-064av 迭代](iterations/F-064av-retired-index-reclaim-intent.md)。
+
 ## F-064au 退役索引排他移动实验（2026-11-06）
 
 alpha.231 的隔离实验验证目录身份及文件守恒。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接持久准备记录、中断恢复、实际回收、配额及最终离线。见[F-064au 迭代](iterations/F-064au-retired-index-exclusive-stage-probe.md)。

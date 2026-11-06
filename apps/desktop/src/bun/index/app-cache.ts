@@ -7,9 +7,12 @@ import { getAppHomePath } from "@agentic-markdown/shared/server";
 import { captureIndexFootprint } from "./cache-footprint";
 import { natural, record } from "./protocol";
 import {
-  inspectRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse, type IndexReuseInput,
+  inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
+  type IndexReuseInput,
 } from "./reuse";
-import { readIndexRetirementTarget, type IndexRetirementTarget } from "./reuse-catalog";
+import {
+  readIndexReclaimIntentTarget, readIndexRetirementTarget, type IndexReclaimIntentTarget, type IndexRetirementTarget,
+} from "./reuse-catalog";
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
 
@@ -102,18 +105,25 @@ function existingProfile({ home, pin, cacheCurrent, boundaryFailure }: CacheBoun
 
 export async function retireAppIndexCache(input: IndexRetirementTarget, current: () => boolean, seal?: true) {
   if (seal !== undefined && seal !== true) return fail("INPUT");
-  return useRetiredAppProfile(input, current, (directory, target, check) => retireIndexReuse(directory, target, check, seal));
+  return useRetiredAppProfile(
+    readIndexRetirementTarget(input), current, (directory, target, check) => retireIndexReuse(directory, target, check, seal)
+  );
 }
 
 export function inspectRetiredIndexReclaim(input: IndexRetirementTarget, current: () => boolean) {
-  return useRetiredAppProfile(input, current, inspectRetiredIndexReuse);
+  return useRetiredAppProfile(readIndexRetirementTarget(input), current, inspectRetiredIndexReuse);
 }
 
-async function useRetiredAppProfile<Result extends { ok: true } | { ok: false; error: string }>(
-  input: IndexRetirementTarget, current: () => boolean,
-  use: (directory: string, target: IndexRetirementTarget, current: () => boolean) => Promise<Result>
+export function prepareRetiredIndexReclaim(input: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, prepareRetiredIndexReuse);
+}
+
+async function useRetiredAppProfile<
+  Target extends IndexRetirementTarget, Result extends { ok: true } | { ok: false; error: string }
+>(
+  target: Target | undefined, current: () => boolean,
+  use: (directory: string, target: Target, current: () => boolean) => Promise<Result>
 ) {
-  const target = readIndexRetirementTarget(input);
   if (!target) return fail("INPUT");
   const boundary = appCacheBoundary(current);
   if (!boundary.ok) return boundary;

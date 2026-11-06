@@ -3,7 +3,9 @@ import { lstatSync, type BigIntStats, type Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { IndexReuseCleanupError, type IndexRetirementTarget, type IndexReuseInventoryIdentity } from "./reuse-catalog";
+import {
+  IndexReuseCleanupError, type IndexReclaimIntentTarget, type IndexRetirementTarget, type IndexReuseInventoryIdentity,
+} from "./reuse-catalog";
 
 const maxIndexFiles = 128;
 
@@ -67,16 +69,19 @@ export async function captureIndexFootprint(
     checkLease();
   };
   const inventory = [{ path: profile, stat: profileStat }];
-  const recheckInventory = (includeProfile: boolean) => {
-    checkInspection();
-    for (const { path, stat } of inventory) {
-      if (!includeProfile && path === profile) continue;
+  const recheckMembers = (start: number) => {
+    for (let index = start; index < inventory.length; index++) {
+      const { path, stat } = inventory[index];
       if (!sameIndexInventoryMetadata(stat, lstatSync(path, { bigint: true })))
         throw Error("Index cache inventory changed");
     }
+  };
+  const recheckInventory = (start: number) => {
+    checkInspection();
+    recheckMembers(start);
     checkLease();
   };
-  const recheck = () => recheckInventory(true);
+  const recheck = () => recheckInventory(0);
   const readFileMetadata = (path: string, expected?: BigIntStats, privateMode = false) => {
     const stat = lstatSync(path, { bigint: true });
     if (!stat.isFile() || stat.uid !== owner || stat.nlink !== 1n || stat.size < 0n ||
@@ -101,8 +106,8 @@ export async function captureIndexFootprint(
   if (!indexStat.isDirectory() || indexStat.uid !== owner || (indexStat.mode & 0o022n) !== 0n ||
       (expected && !sameIndexInventoryMetadata(expected.index, indexStat)))
     throw Error("Index cache directory unavailable");
+  const nativeStart = inventory.length;
   inventory.push({ path: index, stat: indexStat });
-  const nativeFileStart = inventory.length;
   const checkIndex = () => {
     checkInspection();
     if (!sameIndexInventoryMetadata(indexStat, lstatSync(index, { bigint: true })))
@@ -112,20 +117,32 @@ export async function captureIndexFootprint(
   const names = await readMembers(index, maxIndexFiles, checkIndex, (name) => {
     indexBytes += readFileMetadata(join(index, name));
   });
-  const nativeFiles = () => inventory.slice(nativeFileStart).map(({ path, stat }) => [basename(path), stat] as const);
+  const nativeFiles = () => inventory.slice(nativeStart + 1).map(({ path, stat }) => [basename(path), stat] as const);
+  const fileStamps = () => nativeFiles()
+    .map(([name, stat]) => [name, identityStamp(stat)] as const)
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   return {
     status: "existing" as const, recheck, files: names.size + 1,
     catalogBytes, indexBytes, totalBytes: catalogBytes + indexBytes,
-    recheckAfterStaging: () => recheckInventory(false),
+    recheckAfterStaging: () => recheckInventory(1),
+    recheckNative: () => {
+      checkLease();
+      recheckMembers(nativeStart);
+      checkLease();
+    },
     checkIndex,
     nativeFiles,
     inventoryDigest({ scopeKey, generation }: IndexRetirementTarget) {
-      const files = nativeFiles()
-        .map(([name, stat]) => [name, identityStamp(stat)] as const)
-        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
       return createHash("sha256").update(JSON.stringify([
         2, "agentic-markdown-index-retirement-inventory", "limited-v1",
-        scopeKey, generation, identityStamp(indexStat), files,
+        scopeKey, generation, identityStamp(indexStat), fileStamps(),
+      ])).digest("hex");
+    },
+    stagingDigest({ scopeKey, generation, inventoryDigest }: IndexReclaimIntentTarget) {
+      const { dev, ino, birthtimeNs, uid, mode } = indexStat;
+      return createHash("sha256").update(JSON.stringify([
+        3, "agentic-markdown-index-reclaim-intent", "limited-v1", scopeKey, generation, inventoryDigest,
+        [dev, ino, birthtimeNs, uid, mode].map(String), fileStamps(),
       ])).digest("hex");
     },
   };

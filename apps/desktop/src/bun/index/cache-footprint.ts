@@ -3,7 +3,7 @@ import { lstatSync, type BigIntStats, type Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
+import { INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME, reclaimStagingDigest } from "./purge-roster";
 import {
   IndexReuseCleanupError, reclaimDirectoryName, type IndexReclaimIntentTarget,
   type IndexRetirementTarget, type IndexReuseInventoryIdentity, type ReclaimPlacement,
@@ -152,10 +152,7 @@ export async function captureIndexFootprint(
       ])).digest("hex");
     },
     stagingDigest({ scopeKey, generation, inventoryDigest }: IndexReclaimIntentTarget) {
-      return createHash("sha256").update(JSON.stringify([
-        3, "agentic-markdown-index-reclaim-intent", "limited-v1", scopeKey, generation, inventoryDigest,
-        directoryStamp(), fileStamps(),
-      ])).digest("hex");
+      return reclaimStagingDigest({ scopeKey, generation, inventoryDigest }, directoryStamp(), fileStamps());
     },
   };
 }

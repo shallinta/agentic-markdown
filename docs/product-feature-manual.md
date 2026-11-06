@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064az 的 alpha.237 已验证内部缺失审计可核对待回收索引的现存成员和字节。审计只读取控制记录和元数据。见[F-064az 迭代](iterations/F-064az-staged-index-purge-progress-audit.md)。
+
 F-064ay 的 alpha.236 已验证待回收索引可生成固定文件名册，并在占用中单列其字节。原清单和索引文件保留。见[F-064ay 迭代](iterations/F-064ay-staged-index-purge-roster.md)。
 
 F-064ax 的 alpha.234 已验证有效待回收索引仍计入内部逻辑占用。统计会在位置、清单或文件失配时拒绝给出数值。见[F-064ax 迭代](iterations/F-064ax-staged-index-cache-footprint.md)。

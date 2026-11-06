@@ -6,7 +6,7 @@ import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
 import { natural, record } from "./protocol";
-import { encodePurgeRoster, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
+import { decodePurgeRoster, encodePurgeRoster, INDEX_PURGE_ROSTER_NAME, reclaimStagingDigest } from "./purge-roster";
 import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
@@ -19,7 +19,7 @@ import {
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
 
-const fail = <Error extends BoundaryError | "BUSY" | "MISSING" | "INPUT">(error: Error) =>
+const fail = <Error extends BoundaryError | "BUSY" | "MISSING" | "INPUT" | "SCHEMA" | "MISMATCH">(error: Error) =>
   ({ ok: false as const, error, accepted: false });
 const cacheName = "search-index";
 const profileName = "limited-v1";
@@ -198,11 +198,90 @@ function present(path: string): BigIntStats | undefined {
 
 class CacheBusy extends Error {}
 
+function assertNoCacheLease(profile: string) {
+  if (present(join(profile, ".lease"))) throw new CacheBusy();
+}
+
+function inspectionFailure(boundary: CacheBoundary, error: unknown, pendingProfile?: string) {
+  if (error instanceof CacheBusy) return fail("BUSY");
+  // A failed async read may have skipped its next lease check.
+  if (pendingProfile && !(error instanceof IndexReuseCleanupError) && boundary.cacheCurrent()) {
+    try {
+      assertNoCacheLease(pendingProfile);
+    } catch (leaseError) {
+      if (leaseError instanceof CacheBusy) return fail("BUSY");
+    }
+  }
+  boundary.callerCurrent();
+  return boundary.boundaryFailure();
+}
+
+function sameStamp(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+export async function inspectStagedIndexPurgeProgress(input: IndexReclaimIntentTarget, current: () => boolean) {
+  const target = readIndexReclaimIntentTarget(input);
+  if (!target) return fail("INPUT");
+  const boundary = appCacheBoundary(current);
+  if (!boundary.ok) return boundary;
+  let profile: string | undefined;
+  try {
+    const path = existingProfile(boundary);
+    if (!path.ok) return path;
+    profile = path.directory;
+    const check = () => {
+      if (!boundary.cacheCurrent()) throw Error("Index purge inspection invalidated");
+    };
+    check();
+    const profileStat = present(profile);
+    if (!profileStat) return fail("UNAVAILABLE");
+    const checkLease = () => assertNoCacheLease(path.directory);
+    const footprint = await captureIndexFootprint(
+      profile, profileStat, boundary.owner, check, checkLease, undefined, "pending", true
+    );
+    footprint.recheck();
+    if (footprint.status !== "existing" || !footprint.purgeStat) return fail("UNAVAILABLE");
+    const prepared = await readPreparedReclaimCatalog(profile, footprint.catalogStat, footprint.checkIndex);
+    footprint.recheck();
+    if (prepared?.catalog.scopeKey !== target.scopeKey) return fail("SCHEMA");
+    const { catalog, catalogSha256 } = prepared;
+    if (catalog.generation !== target.generation || catalog.inventoryDigest !== target.inventoryDigest)
+      return fail("MISMATCH");
+    const bytes = await readPinnedPurgeRoster(profile, footprint.purgeStat, footprint.checkIndex);
+    footprint.recheck();
+    const roster = bytes && decodePurgeRoster(bytes, boundary.owner);
+    if (!roster) return fail("SCHEMA");
+    if (roster.scopeKey !== catalog.scopeKey || roster.generation !== catalog.generation ||
+        roster.inventoryDigest !== catalog.inventoryDigest || roster.stagingDigest !== catalog.stagingDigest ||
+        roster.catalogSha256 !== catalogSha256 || !sameStamp(roster.directory, footprint.directoryStamp()) ||
+        reclaimStagingDigest(roster, roster.directory, roster.files) !== catalog.stagingDigest)
+      return fail("MISMATCH");
+    const expected = new Map(roster.files);
+    const remaining = footprint.fileStamps();
+    for (const [name, stamp] of remaining) {
+      const historical = expected.get(name);
+      if (!historical || !sameStamp(historical, stamp)) return fail("MISMATCH");
+    }
+    if (footprint.indexBytes > BigInt(Number.MAX_SAFE_INTEGER)) return fail("UNAVAILABLE");
+    footprint.recheck();
+    return {
+      ok: true as const,
+      expectedFiles: expected.size,
+      remainingFiles: remaining.length,
+      missingFiles: expected.size - remaining.length,
+      remainingIndexBytes: Number(footprint.indexBytes),
+    };
+  } catch (error) {
+    return inspectionFailure(boundary, error, profile);
+  }
+}
+
 /** Read metadata from only the fixed cache profile and its immediate index files. */
 export async function inspectAppIndexCacheFootprint(current: () => boolean) {
   const boundary = appCacheBoundary(current);
   if (!boundary.ok) return boundary;
-  const { home, owner, pin, cacheCurrent, callerCurrent, boundaryFailure } = boundary;
+  const { home, owner, pin, cacheCurrent } = boundary;
   const check = () => {
     if (!cacheCurrent()) throw Error("Index cache inspection invalidated");
   };
@@ -213,11 +292,8 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
   };
   const cache = join(home, cacheName);
   const profile = join(cache, profileName);
-  const lease = join(profile, ".lease");
   const pendingPath = join(profile, reclaimDirectoryName("pending"));
-  const checkLease = () => {
-    if (present(lease)) throw new CacheBusy();
-  };
+  const checkLease = () => assertNoCacheLease(profile);
   let pending = false;
   try {
     check();
@@ -262,16 +338,6 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
       ...(footprint.purgeStat ? { purgeBytes: Number(footprint.purgeStat.size) } : {}),
     };
   } catch (error) {
-    if (error instanceof CacheBusy) return fail("BUSY");
-    // A failed async read may have skipped its next lease check.
-    if (pending && !(error instanceof IndexReuseCleanupError) && cacheCurrent()) {
-      try {
-        checkLease();
-      } catch (leaseError) {
-        if (leaseError instanceof CacheBusy) return fail("BUSY");
-      }
-    }
-    callerCurrent();
-    return boundaryFailure();
+    return inspectionFailure(boundary, error, pending ? profile : undefined);
   }
 }

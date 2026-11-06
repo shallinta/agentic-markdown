@@ -5,15 +5,16 @@ import { join } from "node:path";
 
 import { sameIndexInventoryMetadata } from "./cache-footprint";
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
-import { INDEX_PURGE_ROSTER_BYTES, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
+import {
+  INDEX_PURGE_ROSTER_BYTES, INDEX_PURGE_ROSTER_NAME, INDEX_SEGMENT_EXTENSIONS, INDEX_UNMANAGED_CONTROLS,
+} from "./purge-roster";
 import { INDEX_REUSE_CATALOG_BYTES, IndexReuseCleanupError, validPreparedCatalog } from "./reuse-catalog";
 
 const bridgeConfig = Buffer.from("bridge=1\nschema=1\ntantivy=0.27.0\nprofile=literal-gram-v1\n");
 const maxControlBytes = 32 * 1024;
 const segmentID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 // Tantivy 0.27.0 SegmentMeta::relative_path. Temporary/custom files are outside this profile.
-const extensions = ["idx", "pos", "term", "store", "fast", "fieldnorm"];
-const unmanaged = new Set([".managed.json", "bridge.schema", ".tantivy-meta.lock", ".tantivy-writer.lock"]);
+const unmanaged = new Set(INDEX_UNMANAGED_CONTROLS);
 
 async function closeControl(file: FileHandle) {
   try {
@@ -109,7 +110,7 @@ function committedFiles(value: unknown, generation: number) {
       return;
     segments.add(row.segment_id);
     const prefix = row.segment_id.replaceAll("-", "");
-    for (const extension of extensions) files.add(`${prefix}.${extension}`);
+    for (const extension of INDEX_SEGMENT_EXTENSIONS) files.add(`${prefix}.${extension}`);
     let deleted = 0;
     if (row.deletes !== null) {
       const { deletes } = row;

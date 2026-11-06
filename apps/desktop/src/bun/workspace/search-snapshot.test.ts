@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ContentSearchInput } from "../../shared/content-search";
 import { createDocumentService } from "../documents";
 import type { IndexRequest, IndexResult } from "../index/protocol";
 
@@ -301,7 +302,107 @@ test.skipIf(childScenario !== "file-filters")(
   15_000
 );
 
-for (const scenario of ["native", "transport", "candidates", "file-filters"] as const)
+test.skipIf(childScenario !== "path-filters")(
+  "searches contained paths using combined filters without widening root or body limits",
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "workspace-path-filters-"));
+    let selected = join(fixture, "root");
+    const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
+    const workspace = createWorkspaceService({
+      documents,
+      pickDirectory: () => Promise.resolve(selected),
+    });
+    async function scan(name: string) {
+      await workspace.request({ ...env(), op: "select" });
+      for (let i = 0; i < 1000; i++) {
+        const state = await workspace.request({ ...env(), op: "state" });
+        const root = state.ok && state.roots.find((item) => item.name === name);
+        if (root && root.status === "complete") return root;
+        await Bun.sleep(2);
+      }
+      throw Error("Missing complete root");
+    }
+    try {
+      await mkdir(join(selected, "项目 甲"), { recursive: true });
+      await mkdir(join(selected, "项目 乙 草稿"), { recursive: true });
+      await writeFile(join(selected, "项目 甲", "note.md"), "target 甲");
+      await writeFile(join(selected, "项目 乙 草稿", "note.md"), "target 乙");
+      await writeFile(join(selected, "项目 乙 草稿", "oversize.md"), "x".repeat(65_537));
+      const root = await scan("root");
+      const page = await workspace.request({
+        ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0,
+      });
+      if (!page.ok || !page.nodes) throw Error("Missing page");
+      const entries = page.nodes;
+      const byFolder = (name: string) => {
+        const parent = entries.find((node) => node.name === name)?.handle;
+        return entries.find((node) => node.name === "note.md" && node.parent === parent)?.handle;
+      };
+      const alpha = byFolder("项目 甲");
+      const beta = byFolder("项目 乙 草稿");
+      if (!alpha || !beta) throw Error("Missing matching file names");
+      const opened = await workspace.open({ ...env(), root: root.handle, entry: beta });
+      if (!opened.ok || !opened.snapshot) throw Error("Missing granted file");
+      const { handle } = opened.snapshot;
+      const input = {
+        root: root.handle, generation: root.generation, query: "target", handles: [handle],
+      };
+      const search = (filters: Pick<ContentSearchInput, "fileFilters" | "pathFilters">) =>
+        workspace.searchContentCandidates({ ...input, ...filters });
+      expect(await search({})).toEqual({ ok: false, error: "LIMIT" });
+      const both = await search({ fileFilters: ["note"] });
+      if (!both.ok) throw Error(JSON.stringify(both));
+      expect(both.coverage.map(({ entry }) => entry).sort()).toEqual([alpha, beta].sort());
+      const excludeDraft = { kind: "-path", value: "草稿/" } as const;
+      expect(await search({ pathFilters: [excludeDraft] })).toMatchObject({
+        ok: true,
+        coverage: [{ entry: alpha, hit: { from: 0, to: 6 } }],
+        mappings: [{ handle, kind: "outside" }],
+      });
+      expect(await search({
+        fileFilters: ["note"],
+        pathFilters: [{ kind: "path", value: "项目 乙 草稿/" }],
+      })).toMatchObject({
+        ok: true,
+        coverage: [{ entry: beta, hit: { from: 0, to: 6 } }],
+        mappings: [{ handle, kind: "matched", entry: beta }],
+      });
+      expect(await search({
+        fileFilters: ["n", "o", "t", "e", ".", "m", "d"],
+        pathFilters: [excludeDraft],
+      })).toMatchObject({ ok: true, coverage: [{ entry: alpha }] });
+      expect(await search({
+        fileFilters: ["n", "o", "t", "e", ".", "m", "d", "no"],
+        pathFilters: [excludeDraft],
+      })).toEqual({ ok: false, error: "INVALID" });
+      expect(await search({ pathFilters: [{ kind: "path", value: "workspace-path-filters-" }] }))
+        .toMatchObject({ ok: true, coverage: [], mappings: [{ handle, kind: "outside" }] });
+      for (const value of ["/项目", "../项目", "项目//甲"])
+        expect(await search({ pathFilters: [{ kind: "path", value }] }))
+          .toEqual({ ok: false, error: "INVALID" });
+
+      selected = join(fixture, "wide");
+      await mkdir(selected);
+      for (let index = 0; index < 17; index++)
+        await writeFile(join(selected, `note-${index}.md`), "target");
+      const wide = await scan("wide");
+      expect(await workspace.searchContentCandidates({
+        ...input,
+        root: wide.handle,
+        generation: wide.generation,
+        handles: [],
+        pathFilters: [{ kind: "path", value: "note-16.md" }],
+      })).toEqual({ ok: false, error: "LIMIT" });
+    } finally {
+      await workspace.dispose();
+      await documents.dispose();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+  15_000
+);
+
+for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters"] as const)
   test.skipIf(!!childScenario)(
     `isolated workspace index ${scenario} checks`,
     async () => {

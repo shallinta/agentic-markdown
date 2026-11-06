@@ -16,11 +16,13 @@ import {
   type ContentSearchRequest,
 } from "@/shared/content-search";
 import {
+  CONTENT_SEARCH_FILTER_COUNT_LIMIT,
   CONTENT_SEARCH_FILTER_TEXT_LIMIT,
-  formatContentSearchFileFilter,
+  formatContentSearchFilter,
   matchesContentSearchFileFilters,
-  parseContentSearchFileFilters,
-  validContentSearchFileFilters,
+  matchesContentSearchPathFilters,
+  parseContentSearchFilters,
+  relativeContentSearchPath,
 } from "@/shared/content-search-filters";
 import type { DocumentRequest } from "@/shared/documents";
 import type { WorkspaceNode, WorkspaceRoot } from "@/shared/workspace";
@@ -40,10 +42,15 @@ const incomplete = "查询范围不完整，部分文档的内容版本无法确
 const changed = "文件夹或文档状态已变更，请重新查询。";
 const initialStatus = "输入字面量后开始查询。";
 const filterErrors = {
-  invalid: "文件名筛选无效。请检查空值、引号、重复项或不支持的字符。",
-  unsupported: "此处只支持 file: 文件名筛选。",
+  invalid: "筛选条件无效。请检查空值、引号、重复项和路径写法。",
+  unsupported: "此处支持 file:、path: 和 -path:。",
   limit: "筛选条件过长或超过 8 条。",
 };
+const filterGroups = [
+  { kind: "file", label: "文件名" },
+  { kind: "path", label: "包含路径" },
+  { kind: "-path", label: "排除路径" },
+] as const;
 const buttonClass =
   "hover:bg-muted focus-visible:outline-ring rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50";
 const fieldClass =
@@ -53,6 +60,7 @@ type Query = Extract<ContentSearchRequest, { op: "query" }>;
 type Merged = Extract<ReturnType<typeof mergeContentSearch>, { ok: true }>;
 type PresentedHit = Merged["hits"][number] & {
   name: string;
+  relativePath?: string;
   location: ContentSearchLocation;
   binding?: ContentSearchDocumentBinding;
 };
@@ -86,16 +94,32 @@ function cancel(requestId: string) {
     .catch(() => undefined);
 }
 
-function pickableFileNames(nodes: readonly WorkspaceNode[] | undefined, entries: number | undefined) {
+function pickableFilters(
+  nodes: readonly WorkspaceNode[] | undefined,
+  entries: number | undefined,
+  rootPath: string | undefined
+) {
   if (!nodes || nodes.length !== entries) return [];
   let count = 0;
   const names = new Set<string>();
+  const paths = new Set<string>();
   for (const node of nodes) {
     if (node.kind !== "file") continue;
     if (++count > CONTENT_SEARCH_LIMITS.documents) return [];
-    if (validContentSearchFileFilters([node.name])) names.add(node.name);
+    names.add(node.name);
+    if (rootPath) {
+      const path = relativeContentSearchPath(rootPath, node.displayPath);
+      if (path) paths.add(path);
+    }
   }
-  return [...names];
+  return filterGroups.map(({ kind, label }) => ({
+    kind,
+    label,
+    options: [...(kind === "file" ? names : paths)].flatMap((value) => {
+      const token = formatContentSearchFilter(kind, value);
+      return parseContentSearchFilters(token).ok ? [{ value, token }] : [];
+    }),
+  }));
 }
 
 export function ContentSearchPanel({
@@ -129,23 +153,34 @@ export function ContentSearchPanel({
   // Retain the clicked DOM button when the document load invalidates its results.
   const [focusedHit, setFocusedHit] = useState<Pick<PresentedHit, "entry" | "name"> | null>(null);
   const ready = selectedRoot?.status === "complete";
-  const fileFilters = useMemo(() => parseContentSearchFileFilters(filterText), [filterText]);
-  const filterError = fileFilters.ok ? undefined : filterErrors[fileFilters.error];
+  const filters = useMemo(() => parseContentSearchFilters(filterText), [filterText]);
+  const filterError = filters.ok ? undefined : filterErrors[filters.error];
   const rootNodes = open && ready ? folders.getSnapshot().nodes[selectedRoot.handle] : undefined;
   const entryCount = selectedRoot?.entries;
-  const pickerNames = useMemo(() => pickableFileNames(rootNodes, entryCount), [rootNodes, entryCount]);
-  const previousFilters = filterText.trimEnd();
-  const pickerOptions = pickerNames.map((name) => {
-    const token = formatContentSearchFileFilter(name);
-    const next = previousFilters ? `${previousFilters} ${token}` : token;
-    return {
-      name,
-      next,
-      available: fileFilters.ok &&
-        next.length <= CONTENT_SEARCH_FILTER_TEXT_LIMIT &&
-        validContentSearchFileFilters([...fileFilters.values, name]),
-    };
-  });
+  const rootPath = selectedRoot?.displayPath;
+  const pickerGroups = useMemo(
+    () => pickableFilters(rootNodes, entryCount, rootPath),
+    [rootNodes, entryCount, rootPath]
+  );
+  const pickerOptions = useMemo(() => {
+    const previous = filterText.trimEnd();
+    const room = filters.ok &&
+      filters.fileFilters.length + filters.pathFilters.length < CONTENT_SEARCH_FILTER_COUNT_LIMIT;
+    return pickerGroups.map((group) => ({
+      ...group,
+      options: group.options.map((option) => {
+        const next = previous ? `${previous} ${option.token}` : option.token;
+        const repeated = filters.ok && (group.kind === "file"
+          ? filters.fileFilters.includes(option.value)
+          : filters.pathFilters.some(({ kind, value }) => kind === group.kind && value === option.value));
+        return {
+          ...option,
+          next,
+          available: room && !repeated && next.length <= CONTENT_SEARCH_FILTER_TEXT_LIMIT,
+        };
+      }),
+    }));
+  }, [filterText, filters, pickerGroups]);
 
   const retire = useCallback(() => {
     const previous = active.current;
@@ -232,7 +267,7 @@ export function ContentSearchPanel({
     cancelLocation("已取消定位。");
     setFocusedHit(null);
     reset(initialStatus);
-    if (!fileFilters.ok) return;
+    if (!filters.ok) return;
     const selection = getSelection();
     const workspace = folders.getSnapshot();
     const root = workspace.roots.find((item) => item.handle === selection.handle);
@@ -250,7 +285,8 @@ export function ContentSearchPanel({
       setStatus(errors.NOT_READY);
       return;
     }
-    const names = new Map<string, string>();
+    const files = new Map<string, { name: string; path: string | undefined }>();
+    const nameCounts = new Map<string, number>();
     let rootFileCount = 0;
     for (const node of nodes) {
       if (node.kind !== "file") continue;
@@ -258,8 +294,17 @@ export function ContentSearchPanel({
         setStatus(errors.LIMIT);
         return;
       }
-      if (matchesContentSearchFileFilters(node.name, fileFilters.values))
-        names.set(node.handle, node.name);
+      const path = relativeContentSearchPath(root.displayPath, node.displayPath);
+      nameCounts.set(node.name, (nameCounts.get(node.name) ?? 0) + 1);
+      if (filters.pathFilters.length) {
+        if (!path) {
+          setStatus("查询范围不完整，无法确认文件的相对路径。");
+          return;
+        }
+        if (!matchesContentSearchPathFilters(path, filters.pathFilters)) continue;
+      }
+      if (matchesContentSearchFileFilters(node.name, filters.fileFilters))
+        files.set(node.handle, { name: node.name, path });
     }
     const capture = controller.captureContentSearch();
     if (!capture.ok) {
@@ -273,7 +318,8 @@ export function ContentSearchPanel({
       generation: root.generation,
       query,
       handles: capture.documents.map(({ handle }) => handle),
-      ...(fileFilters.values.length ? { fileFilters: fileFilters.values } : {}),
+      ...(filters.fileFilters.length ? { fileFilters: filters.fileFilters } : {}),
+      ...(filters.pathFilters.length ? { pathFilters: filters.pathFilters } : {}),
     };
     if (!validContentSearchRequest(request)) {
       setStatus(errors.INVALID);
@@ -288,6 +334,7 @@ export function ContentSearchPanel({
         return (
           getSelection().revision === selection.revision &&
           latestRoot?.generation === root.generation &&
+          latestRoot.displayPath === root.displayPath &&
           latestRoot.status === "complete" &&
           latestRoot.showHidden === root.showHidden &&
           latestRoot.observation === root.observation &&
@@ -327,8 +374,8 @@ export function ContentSearchPanel({
       }
       if (
         response.op !== "query" ||
-        response.coverage.length !== names.size ||
-        response.coverage.some(({ entry }) => !names.has(entry))
+        response.coverage.length !== files.size ||
+        response.coverage.some(({ entry }) => !files.has(entry))
       ) {
         reset(incomplete);
         return;
@@ -348,18 +395,19 @@ export function ContentSearchPanel({
       }
       const hits: PresentedHit[] = [];
       for (const hit of merged.hits) {
-        const name = names.get(hit.entry);
+        const file = files.get(hit.entry);
         const diskHash = coverage.get(hit.entry)?.hash;
         const binding = bindings.get(hit.entry);
         const version = binding && versions.get(binding.handle);
-        if (!name || !diskHash || ((binding || hit.source === "memory") && !version)) {
+        if (!file?.name || !diskHash || ((binding || hit.source === "memory") && !version)) {
           reset(incomplete);
           return;
         }
         const { from, to, source } = hit;
         hits.push({
           ...hit,
-          name,
+          name: file.name,
+          relativePath: (nameCounts.get(file.name) ?? 0) > 1 ? file.path : undefined,
           binding,
           location: { query, from, to, source, diskHash, version },
         });
@@ -510,37 +558,42 @@ export function ContentSearchPanel({
                 reset(initialStatus);
               }}
             />
-            <label className="block text-xs" htmlFor={filterId}>文件名筛选</label>
+            <label className="block text-xs" htmlFor={filterId}>文件名与路径筛选</label>
             <input
               id={filterId}
               className={fieldClass}
               type="text"
               maxLength={CONTENT_SEARCH_FILTER_TEXT_LIMIT}
-              placeholder={'file:"会议 纪要"'}
+              placeholder={'path:"项目 甲/" -path:草稿'}
               value={filterText}
               aria-invalid={!!filterError}
               aria-describedby={filterError ? filterErrorId : undefined}
               onChange={(event) => changeFilters(event.target.value)}
             />
             {filterError && <p id={filterErrorId} role="alert" className="text-destructive text-xs">{filterError}</p>}
-            <label className="block text-xs" htmlFor={pickerId}>从文件夹选择文件名</label>
+            <label className="block text-xs" htmlFor={pickerId}>从文件夹选择筛选条件</label>
             <select
               id={pickerId}
               className={fieldClass}
               value=""
-              disabled={!pickerOptions.some(({ available }) => available)}
+              disabled={!pickerOptions.some(({ options }) => options.some(({ available }) => available))}
               onChange={(event) => {
-                const option = pickerOptions.find(({ name }) => name === event.target.value);
+                const option = pickerOptions.flatMap(({ options }) => options)
+                  .find(({ token }) => token === event.target.value);
                 if (option?.available) changeFilters(option.next);
               }}
             >
               <option value="">选择后添加到筛选栏</option>
-              {pickerOptions.map(({ name, available }) => (
-                <option key={name} value={name} disabled={!available}>{name}</option>
+              {pickerOptions.map(({ kind, label, options }) => options.length > 0 && (
+                <optgroup key={kind} label={label}>
+                  {options.map(({ token, value, available }) => (
+                    <option key={token} value={token} disabled={!available}>{value}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             <div className="flex flex-wrap gap-1">
-              <button type="submit" className={buttonClass} disabled={!ready || busy || !query.trim() || !fileFilters.ok}>查询正文</button>
+              <button type="submit" className={buttonClass} disabled={!ready || busy || !query.trim() || !filters.ok}>查询正文</button>
               <button type="button" className={buttonClass} disabled={!busy} onClick={() => reset(errors.CANCELLED)}>取消查询</button>
               <button type="button" className={buttonClass} onClick={() => {
                 cancelLocation("已取消定位。");
@@ -572,6 +625,9 @@ export function ContentSearchPanel({
                       }}
                     >
                       <span className="font-medium">{hit.name}</span>
+                      {match?.relativePath && (
+                        <span className="text-muted-foreground block">{match.relativePath}</span>
+                      )}
                       {match && (
                         <span className="text-muted-foreground block">
                           {match.source === "memory" ? "未保存正文" : "磁盘正文"} · UTF-16 [{match.from}, {match.to})

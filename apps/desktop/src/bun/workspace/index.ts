@@ -12,8 +12,12 @@ import type {
 } from "../../shared/content-search";
 import { validContentSearchPrepareRequest } from "../../shared/content-search";
 import {
+  CONTENT_SEARCH_FILTER_COUNT_LIMIT,
   matchesContentSearchFileFilters,
+  matchesContentSearchPathFilters,
+  relativeContentSearchPath,
   validContentSearchFileFilters,
+  validContentSearchPathFilters,
 } from "../../shared/content-search-filters";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
@@ -1192,9 +1196,12 @@ export function createWorkspaceService({
     async searchContentCandidates(input, signal) {
       if (signal?.aborted) return { ok: false, error: "CANCELLED" };
       if (indexTask) return { ok: false, error: "BUSY" };
+      const { fileFilters, pathFilters } = input;
       if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
           new Set(input.handles).size !== input.handles.length ||
-          (input.fileFilters !== undefined && !validContentSearchFileFilters(input.fileFilters)))
+          (fileFilters !== undefined && !validContentSearchFileFilters(fileFilters)) ||
+          (pathFilters !== undefined && !validContentSearchPathFilters(pathFilters)) ||
+          (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > CONTENT_SEARCH_FILTER_COUNT_LIMIT)
         return { ok: false, error: "INVALID" };
       if (input.handles.length > INDEX_LIMITS.documents)
         return { ok: false, error: "LIMIT" };
@@ -1204,12 +1211,19 @@ export function createWorkspaceService({
       const admission = documents.captureContentSearchBindings(handles);
       if (!admission) return { ok: false, error: "UNAVAILABLE" };
       const { root, entries, showHidden } = snapshot;
-      const fileFilters = input.fileFilters ?? [];
-      const searched = fileFilters.length
-        ? new Map([...entries].filter(([, file]) =>
-            matchesContentSearchFileFilters(basename(file.path), fileFilters)
-          ))
-        : entries;
+      let searched = entries;
+      if (fileFilters || pathFilters) {
+        searched = new Map();
+        for (const [entry, file] of entries) {
+          if (pathFilters) {
+            const path = relativeContentSearchPath(root.authorization.path, file.path);
+            if (path === undefined) return { ok: false, error: "UNAVAILABLE" };
+            if (!matchesContentSearchPathFilters(path, pathFilters)) continue;
+          }
+          if (!fileFilters || matchesContentSearchFileFilters(basename(file.path), fileFilters))
+            searched.set(entry, file);
+        }
+      }
       const current = () => admission.current() && snapshot.current();
       const check = () => {
         if (!current()) throw Error("Content search invalidated");

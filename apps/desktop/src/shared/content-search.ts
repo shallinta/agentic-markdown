@@ -1,4 +1,9 @@
-import { validContentSearchFileFilters } from "./content-search-filters";
+import {
+  CONTENT_SEARCH_FILTER_COUNT_LIMIT,
+  validContentSearchFileFilters,
+  validContentSearchPathFilters,
+  type ContentSearchPathFilter,
+} from "./content-search-filters";
 import { isDocumentSnapshot } from "./document-snapshot";
 import type { DocumentSnapshot } from "./documents";
 import { perfRecord, perfUuid } from "./perf-lab";
@@ -15,6 +20,7 @@ export interface ContentSearchInput {
   query: string;
   handles: readonly string[];
   fileFilters?: readonly string[];
+  pathFilters?: readonly ContentSearchPathFilter[];
 }
 
 export interface ContentSearchDocumentBinding {
@@ -219,11 +225,21 @@ export function validContentSearchRequest(
       perfUuid(value.targetRequestId)
     );
   const queryKeys = [...base, "root", "generation", "query", "handles"];
+  let filterCount = 0;
+  if (Object.prototype.hasOwnProperty.call(value, "fileFilters")) {
+    if (!validContentSearchFileFilters(value.fileFilters)) return false;
+    queryKeys.push("fileFilters");
+    filterCount += value.fileFilters.length;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "pathFilters")) {
+    if (!validContentSearchPathFilters(value.pathFilters)) return false;
+    queryKeys.push("pathFilters");
+    filterCount += value.pathFilters.length;
+  }
   return (
     value.op === "query" &&
-    (exact(value, queryKeys) ||
-      (exact(value, [...queryKeys, "fileFilters"]) &&
-        validContentSearchFileFilters(value.fileFilters))) &&
+    exact(value, queryKeys) &&
+    filterCount <= CONTENT_SEARCH_FILTER_COUNT_LIMIT &&
     perfUuid(value.root) &&
     natural(value.generation) &&
     typeof value.query === "string" &&

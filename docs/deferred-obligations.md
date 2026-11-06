@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064k 路径筛选有限通过（2026-11-06）
+
+alpha.198 已通过路径包含、排除与同名结果区分的真实 WK 代验。筛选条件只比较当前授权根内的相对路径。OBL-006、OBL-018、OBL-026、OBL-035 仍由 F-064 承接，最终离线留待人工。见[F-064k 迭代](iterations/F-064k-content-search-path-filters.md)。
+
 ## F-064j 文件名筛选有限通过（2026-11-06）
 
 alpha.197 已通过单根真实 WK 代验。筛选只缩小当次授权查询范围。OBL-006、OBL-018、OBL-026、OBL-035 仍由 F-064 承接，完整受控服务、调度、持久缓存及 schema 继续开放。见[F-064j 迭代](iterations/F-064j-content-search-file-filter.md)。

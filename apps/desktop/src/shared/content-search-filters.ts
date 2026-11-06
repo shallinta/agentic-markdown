@@ -3,23 +3,30 @@ import { perfRecord } from "./perf-lab";
 export const CONTENT_SEARCH_FILTER_TEXT_LIMIT = 16_384;
 export const CONTENT_SEARCH_FILTER_COUNT_LIMIT = 8;
 const maxValueLength = 256;
+const maxRootAliasLength = 4096;
 const forbidden = /\p{Cc}|[\uD800-\uDFFF]/u;
 
 export interface ContentSearchPathFilter {
   kind: "path" | "-path";
   value: string;
 }
-type FilterKind = "file" | ContentSearchPathFilter["kind"];
+type FilterKind = "file" | "root" | ContentSearchPathFilter["kind"];
+
+interface RootFilter {
+  alias: string;
+  from: number;
+  to: number;
+}
 
 type FilterParseResult =
-  | { ok: true; fileFilters: string[]; pathFilters: ContentSearchPathFilter[] }
+  | { ok: true; fileFilters: string[]; pathFilters: ContentSearchPathFilter[]; root?: RootFilter }
   | { ok: false; error: "invalid" | "unsupported" | "limit" };
 
-function validValue(value: unknown): value is string {
+function validValue(value: unknown, maxLength = maxValueLength): value is string {
   return (
     typeof value === "string" &&
     value.length > 0 &&
-    value.length <= maxValueLength &&
+    value.length <= maxLength &&
     !forbidden.test(value)
   );
 }
@@ -93,10 +100,11 @@ export function parseContentSearchFilters(raw: string): FilterParseResult {
     return { ok: false, error: "limit" };
   if (/(?!\s)\p{Cc}/u.test(raw)) return { ok: false, error: "invalid" };
   const whitespace = /\s*/uy;
-  const kindPrefix = /(file|-?path):/uy;
+  const kindPrefix = /(file|-?path|root):/uy;
   const token = /("(?:[^"\\]|\\[\s\S])*"|[^"\s]+)(?=\s|$)/uy;
   const fileFilters: string[] = [];
   const pathFilters: ContentSearchPathFilter[] = [];
+  let root: RootFilter | undefined;
   let offset = 0;
   while (offset < raw.length) {
     whitespace.lastIndex = offset;
@@ -105,9 +113,9 @@ export function parseContentSearchFilters(raw: string): FilterParseResult {
     if (offset === raw.length) break;
     kindPrefix.lastIndex = offset;
     const kind = kindPrefix.exec(raw)?.[1];
-    if (kind !== "file" && kind !== "path" && kind !== "-path")
+    if (kind !== "file" && kind !== "path" && kind !== "-path" && kind !== "root")
       return { ok: false, error: "unsupported" };
-    if (fileFilters.length + pathFilters.length === CONTENT_SEARCH_FILTER_COUNT_LIMIT)
+    if (fileFilters.length + pathFilters.length + Number(!!root) === CONTENT_SEARCH_FILTER_COUNT_LIMIT)
       return { ok: false, error: "limit" };
 
     token.lastIndex = kindPrefix.lastIndex;
@@ -122,9 +130,14 @@ export function parseContentSearchFilters(raw: string): FilterParseResult {
         return { ok: false, error: "invalid" };
       }
     }
-    if (typeof value === "string" && value.length > maxValueLength)
+    const maxLength = kind === "root" ? maxRootAliasLength : maxValueLength;
+    if (typeof value === "string" && value.length > maxLength)
       return { ok: false, error: "limit" };
-    if (kind === "file") {
+    if (kind === "root") {
+      if (root || !validValue(value, maxRootAliasLength))
+        return { ok: false, error: "invalid" };
+      root = { alias: value, from: offset, to: token.lastIndex };
+    } else if (kind === "file") {
       if (!validFileValue(value) || fileFilters.includes(value))
         return { ok: false, error: "invalid" };
       fileFilters.push(value);
@@ -136,11 +149,22 @@ export function parseContentSearchFilters(raw: string): FilterParseResult {
     }
     offset = token.lastIndex;
   }
-  return { ok: true, fileFilters, pathFilters };
+  return { ok: true, fileFilters, pathFilters, ...(root ? { root } : {}) };
 }
 
 export function formatContentSearchFilter(kind: FilterKind, value: string): string {
   return kind + ":" + JSON.stringify(value);
+}
+
+export function selectContentSearchRootFilter(raw: string, alias: string): string | undefined {
+  if (!validValue(alias, maxRootAliasLength)) return;
+  const parsed = parseContentSearchFilters(raw);
+  if (!parsed.ok) return;
+  const token = formatContentSearchFilter("root", alias);
+  const next = parsed.root
+    ? raw.slice(0, parsed.root.from) + token + raw.slice(parsed.root.to)
+    : raw + (raw && !/\s$/u.test(raw) ? " " : "") + token;
+  if (parseContentSearchFilters(next).ok) return next;
 }
 
 export function matchesContentSearchFileFilters(

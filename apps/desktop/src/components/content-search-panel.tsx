@@ -2,6 +2,7 @@ import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "
 
 import { mergeContentSearch } from "@/client/content-search";
 import type { ContentSearchLocation } from "@/client/content-search-location";
+import { resolveContentSearchRoot } from "@/client/content-search-root";
 import type { createDocumentController } from "@/client/documents";
 import type { createFolderWorkspace } from "@/client/workspace";
 import { electrobun } from "@/lib/electrobun";
@@ -23,6 +24,7 @@ import {
   matchesContentSearchPathFilters,
   parseContentSearchFilters,
   relativeContentSearchPath,
+  selectContentSearchRootFilter,
 } from "@/shared/content-search-filters";
 import type { DocumentRequest } from "@/shared/documents";
 import type { WorkspaceNode, WorkspaceRoot } from "@/shared/workspace";
@@ -43,8 +45,13 @@ const changed = "文件夹或文档状态已变更，请重新查询。";
 const initialStatus = "输入字面量后开始查询。";
 const filterErrors = {
   invalid: "筛选条件无效。请检查空值、引号、重复项和路径写法。",
-  unsupported: "此处支持 file:、path: 和 -path:。",
+  unsupported: "此处支持 root:、file:、path: 和 -path:。",
   limit: "筛选条件过长或超过 8 条。",
+};
+const rootErrors = {
+  ambiguous: "当前窗口有同名文件夹，请用完整路径区分，或从筛选菜单选择。",
+  unknown: "当前窗口没有加入此文件夹。",
+  selection: "请在文件树选中顶层文件夹，或添加 root: 筛选条件。",
 };
 const filterGroups = [
   { kind: "file", label: "文件名" },
@@ -152,12 +159,38 @@ export function ContentSearchPanel({
   const [result, setResult] = useState<Presented | null>(null);
   // Retain the clicked DOM button when the document load invalidates its results.
   const [focusedHit, setFocusedHit] = useState<Pick<PresentedHit, "entry" | "name"> | null>(null);
-  const ready = selectedRoot?.status === "complete";
   const filters = useMemo(() => parseContentSearchFilters(filterText), [filterText]);
-  const filterError = filters.ok ? undefined : filterErrors[filters.error];
-  const rootNodes = open && ready ? folders.getSnapshot().nodes[selectedRoot.handle] : undefined;
-  const entryCount = selectedRoot?.entries;
-  const rootPath = selectedRoot?.displayPath;
+  const workspace = folders.getSnapshot();
+  const resolution = filters.ok
+    ? resolveContentSearchRoot(workspace.roots, filters.root?.alias, selectedRoot?.handle ?? null)
+    : undefined;
+  const searchRoot = resolution?.ok ? resolution.root : undefined;
+  const ready = searchRoot?.status === "complete";
+  const filterError = filters.ok
+    ? resolution?.ok === false && resolution.error !== "selection" ? rootErrors[resolution.error] : undefined
+    : filterErrors[filters.error];
+  const rootNodes = open && ready ? workspace.nodes[searchRoot.handle] : undefined;
+  const entryCount = searchRoot?.entries;
+  const rootPath = searchRoot?.displayPath;
+  const rootChoices = useMemo(() => workspace.roots.flatMap((root) => {
+    const token = formatContentSearchFilter("root", root.displayPath);
+    return parseContentSearchFilters(token).ok
+      ? [{ handle: root.handle, alias: root.displayPath, label: `${root.name} · ${root.displayPath}`, token }]
+      : [];
+  }), [workspace.roots]);
+  const rootOptions = useMemo(() => {
+    if (!filters.ok) return [];
+    const existing = filters.root;
+    const room = !!existing ||
+      filters.fileFilters.length + filters.pathFilters.length < CONTENT_SEARCH_FILTER_COUNT_LIMIT;
+    const separator = filterText && !/\s$/u.test(filterText) ? 1 : 0;
+    return rootChoices.map((option) => ({
+      ...option,
+      available: room && (existing
+        ? filterText.length - (existing.to - existing.from) + option.token.length
+        : filterText.length + separator + option.token.length) <= CONTENT_SEARCH_FILTER_TEXT_LIMIT,
+    }));
+  }, [filterText, filters, rootChoices]);
   const pickerGroups = useMemo(
     () => pickableFilters(rootNodes, entryCount, rootPath),
     [rootNodes, entryCount, rootPath]
@@ -165,7 +198,8 @@ export function ContentSearchPanel({
   const pickerOptions = useMemo(() => {
     const previous = filterText.trimEnd();
     const room = filters.ok &&
-      filters.fileFilters.length + filters.pathFilters.length < CONTENT_SEARCH_FILTER_COUNT_LIMIT;
+      filters.fileFilters.length + filters.pathFilters.length + Number(!!filters.root) <
+        CONTENT_SEARCH_FILTER_COUNT_LIMIT;
     return pickerGroups.map((group) => ({
       ...group,
       options: group.options.map((option) => {
@@ -270,9 +304,15 @@ export function ContentSearchPanel({
     if (!filters.ok) return;
     const selection = getSelection();
     const workspace = folders.getSnapshot();
-    const root = workspace.roots.find((item) => item.handle === selection.handle);
+    const rootAlias = filters.root?.alias;
+    const resolution = resolveContentSearchRoot(workspace.roots, rootAlias, selection.handle);
+    if (!resolution.ok) {
+      setStatus(rootErrors[resolution.error]);
+      return;
+    }
+    const root = resolution.root;
     if (
-      root?.handle !== selectedRoot.handle ||
+      root.handle !== searchRoot.handle ||
       root.status !== "complete" ||
       workspace.busy ||
       workspace.error
@@ -330,10 +370,13 @@ export function ContentSearchPanel({
       pending: true,
       scopeCurrent() {
         const latest = folders.getSnapshot();
-        const latestRoot = latest.roots.find((item) => item.handle === root.handle);
+        const latestSelection = getSelection();
+        const resolved = resolveContentSearchRoot(latest.roots, rootAlias, latestSelection.handle);
+        if (!resolved.ok || resolved.root.handle !== root.handle) return false;
+        const latestRoot = resolved.root;
         return (
-          getSelection().revision === selection.revision &&
-          latestRoot?.generation === root.generation &&
+          (rootAlias !== undefined || latestSelection.revision === selection.revision) &&
+          latestRoot.generation === root.generation &&
           latestRoot.displayPath === root.displayPath &&
           latestRoot.status === "complete" &&
           latestRoot.showHidden === root.showHidden &&
@@ -516,8 +559,8 @@ export function ContentSearchPanel({
         type="button"
         ref={trigger}
         className={buttonClass}
-        disabled={!ready && !open}
-        title={selectedRoot ? undefined : "请先在文件树选中顶层文件夹。"}
+        disabled={!workspace.roots.length && !open}
+        title={workspace.roots.length ? undefined : "请先加入文件夹。"}
         aria-expanded={open}
         aria-controls={open ? resultId : undefined}
         onClick={() => {
@@ -529,16 +572,19 @@ export function ContentSearchPanel({
           setOpen(!open);
         }}
       >
-        在此文件夹中搜索正文
+        搜索单个文件夹正文
       </button>
-      {selectedRoot && !ready && !open && (
+      {searchRoot && !ready && !open && (
         <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p>
       )}
       {open && (
         <section id={resultId} aria-label="文件夹正文搜索" className="mt-2 max-h-[40vh] space-y-2 overflow-auto rounded border p-2">
           <p className="text-muted-foreground break-words text-xs">
-            {selectedRoot ? `搜索范围：${selectedRoot.name}` : "请先在文件树选中顶层文件夹。"}
+            {searchRoot
+              ? `搜索范围：${searchRoot.name} · ${searchRoot.displayPath}`
+              : resolution?.ok === false && resolution.error === "selection" ? rootErrors.selection : "请确认搜索范围。"}
           </p>
+          {searchRoot && !ready && <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p>}
           <p className="text-muted-foreground text-xs">
             区分大小写，每篇显示首个匹配。文件夹最多 16 篇，查询正文合计 64 KiB。
           </p>
@@ -558,32 +604,47 @@ export function ContentSearchPanel({
                 reset(initialStatus);
               }}
             />
-            <label className="block text-xs" htmlFor={filterId}>文件名与路径筛选</label>
+            <label className="block text-xs" htmlFor={filterId}>搜索筛选条件</label>
             <input
               id={filterId}
               className={fieldClass}
               type="text"
               maxLength={CONTENT_SEARCH_FILTER_TEXT_LIMIT}
-              placeholder={'path:"项目 甲/" -path:草稿'}
+              placeholder={'root:"项目 甲" file:纪要'}
               value={filterText}
               aria-invalid={!!filterError}
               aria-describedby={filterError ? filterErrorId : undefined}
               onChange={(event) => changeFilters(event.target.value)}
             />
             {filterError && <p id={filterErrorId} role="alert" className="text-destructive text-xs">{filterError}</p>}
-            <label className="block text-xs" htmlFor={pickerId}>从文件夹选择筛选条件</label>
+            <label className="block text-xs" htmlFor={pickerId}>选择筛选条件</label>
             <select
               id={pickerId}
               className={fieldClass}
               value=""
-              disabled={!pickerOptions.some(({ options }) => options.some(({ available }) => available))}
+              disabled={!rootOptions.some(({ available }) => available) &&
+                !pickerOptions.some(({ options }) => options.some(({ available }) => available))}
               onChange={(event) => {
+                const choice = event.target.value;
+                const rootOption = rootOptions.find(({ handle }) => handle === choice);
+                if (rootOption?.available) {
+                  const next = selectContentSearchRootFilter(filterText, rootOption.alias);
+                  if (next !== undefined) changeFilters(next);
+                  return;
+                }
                 const option = pickerOptions.flatMap(({ options }) => options)
-                  .find(({ token }) => token === event.target.value);
+                  .find(({ token }) => token === choice);
                 if (option?.available) changeFilters(option.next);
               }}
             >
               <option value="">选择后添加到筛选栏</option>
+              {rootOptions.length > 0 && (
+                <optgroup label="搜索文件夹">
+                  {rootOptions.map(({ handle, label, available }) => (
+                    <option key={handle} value={handle} disabled={!available}>{label}</option>
+                  ))}
+                </optgroup>
+              )}
               {pickerOptions.map(({ kind, label, options }) => options.length > 0 && (
                 <optgroup key={kind} label={label}>
                   {options.map(({ token, value, available }) => (

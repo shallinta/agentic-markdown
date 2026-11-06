@@ -2,6 +2,8 @@
 
 ## 文件夹正文搜索与索引（F-064）
 
+F-064l 的 alpha.199 把入口改为「搜索单个文件夹正文」。可使用文件树选中的顶层文件夹，也可加 `root:笔记` 指定当前窗口的根。同名根用完整路径区分，选择器会填入该路径。换根会保留其他筛选条件。见[F-064l 迭代](iterations/F-064l-content-search-root-selector.md)。
+
 F-064k 的 alpha.198 支持在同一个筛选栏混用 `path:`、`-path:` 和 `file:`。例如 `path:"项目 甲/" -path:草稿 file:纪要`。路径相对于本次搜索的顶层文件夹，选择器也可以加入包含或排除条件。同名结果附相对路径。见[F-064k 迭代](iterations/F-064k-content-search-path-filters.md)。
 
 F-064j 的 alpha.197 增加文件名筛选。在正文搜索面板输入 `file:笔记` 或 `file:"会议 纪要"`，也可以用文件名选择器填入同一栏。多个条件同时生效，按区分大小写的文件名包含匹配。筛选改变后需要重新查询。见[F-064j 迭代](iterations/F-064j-content-search-file-filter.md)。

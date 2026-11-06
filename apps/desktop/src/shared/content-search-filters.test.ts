@@ -8,6 +8,7 @@ import {
   matchesContentSearchPathFilters,
   parseContentSearchFilters,
   relativeContentSearchPath,
+  selectContentSearchRootFilter,
   validContentSearchFileFilters,
   validContentSearchPathFilters,
 } from "./content-search-filters";
@@ -48,7 +49,7 @@ test("distinguishes malformed file syntax from unsupported token forms", () => {
   ]) {
     expect(parseContentSearchFilters(raw)).toEqual({ ok: false, error: "invalid" });
   }
-  for (const raw of ["root:notes", "-file:notes", "File:notes", "file:a notes"]) {
+  for (const raw of ["workspace:notes", "-file:notes", "File:notes", "file:a notes"]) {
     expect(parseContentSearchFilters(raw)).toEqual({
       ok: false, error: "unsupported",
     });
@@ -127,6 +128,52 @@ test("projects the exact canonical path below the slash boundary", () => {
   }
 });
 
+test("a root alias preserves exact spelling and identifies its complete token span", () => {
+  const exactToken = formatContentSearchFilter("root", '/卷/同名 "项目" 📝');
+  expect(exactToken).toBe('root:"/卷/同名 \\"项目\\" 📝"');
+  const raw = "file:纪要 \t" + exactToken + "  -path:草稿/";
+  expect(parseContentSearchFilters(raw)).toEqual({
+    ok: true,
+    fileFilters: ["纪要"],
+    pathFilters: [{ kind: "-path", value: "草稿/" }],
+    root: { alias: '/卷/同名 "项目" 📝', from: 9, to: 9 + exactToken.length },
+  });
+  expect(parseContentSearchFilters("root:唯一")).toEqual({
+    ok: true, fileFilters: [], pathFilters: [], root: { alias: "唯一", from: 0, to: 7 },
+  });
+});
+
+test("selecting another root replaces only the root token or appends one", () => {
+  expect(selectContentSearchRootFilter('  file:"纪要" root:旧根 \t-path:草稿/ ', "/卷/新根"))
+    .toBe('  file:"纪要" root:"/卷/新根" \t-path:草稿/ ');
+  expect(selectContentSearchRootFilter("file:纪要  ", " 新根 "))
+    .toBe('file:纪要  root:" 新根 "');
+  expect(selectContentSearchRootFilter("file:纪要", "新根"))
+    .toBe('file:纪要 root:"新根"');
+  expect(selectContentSearchRootFilter("", "新根")).toBe('root:"新根"');
+  expect(selectContentSearchRootFilter('root:"unclosed', "新根")).toBeUndefined();
+  expect(selectContentSearchRootFilter("file:纪要", "坏\n名称")).toBeUndefined();
+});
+
+test("one root shares the total cap and accepts at most 4096 UTF-16 code units", () => {
+  const seven = Array.from({ length: 7 }, (_, index) => "file:" + index).join(" ");
+  expect(parseContentSearchFilters(seven + " root:新")).toMatchObject({ ok: true });
+  expect(parseContentSearchFilters(seven + " root:新 path:目录")).toEqual({
+    ok: false, error: "limit",
+  });
+  expect(selectContentSearchRootFilter(seven + " path:目录", "新")).toBeUndefined();
+  expect(selectContentSearchRootFilter(seven + " root:旧", "新"))
+    .toBe(seven + ' root:"新"');
+  const max = "😀".repeat(2048);
+  expect(parseContentSearchFilters(formatContentSearchFilter("root", max)))
+    .toMatchObject({ ok: true, root: { alias: max } });
+  expect(parseContentSearchFilters(formatContentSearchFilter("root", max + "a")))
+    .toEqual({ ok: false, error: "limit" });
+  for (const raw of ["root:", 'root:""', 'root:"\\t"', 'root:"\\udc00"', "root:甲 root:乙"]) {
+    expect(parseContentSearchFilters(raw)).toEqual({ ok: false, error: "invalid" });
+  }
+});
+
 test("query wire accepts omitted or dense valid file filters and rejects extra fields", () => {
   const query = {
     protocolVersion: 1,
@@ -153,6 +200,7 @@ test("query wire accepts omitted or dense valid file filters and rejects extra f
   }
   expect(validContentSearchRequest({ ...query, fileFilters: ["a"], path: "x" }))
     .toBe(false);
+  expect(validContentSearchRequest({ ...query, rootAlias: "目录" })).toBe(false);
   expect(validContentSearchRequest({
     protocolVersion: 1,
     requestId: crypto.randomUUID(),

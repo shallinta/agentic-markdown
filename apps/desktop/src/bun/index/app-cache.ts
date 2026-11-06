@@ -5,6 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
+import { prepareColdIndex, readColdIndexInput, type ColdIndexGuard, type ColdIndexInput } from "./cold-prepare";
 import { natural, record } from "./protocol";
 import { verifyPurgeSubset } from "./purge-proof";
 import { encodePurgeRoster, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
@@ -111,6 +112,41 @@ function existingProfile({ home, pin, cacheCurrent, boundaryFailure }: CacheBoun
   return { ok: true as const, directory };
 }
 
+async function initializeProfile({ home, pin, cacheCurrent, boundaryFailure }: CacheBoundary) {
+  let directory = home;
+  for (const name of [cacheName, profileName]) {
+    if (!cacheCurrent()) return boundaryFailure();
+    directory = join(directory, name);
+    try {
+      await mkdir(directory, { mode: 0o700 });
+    } catch (error) {
+      if (!record(error) || error.code !== "EEXIST") throw error;
+    }
+    if (!cacheCurrent()) return boundaryFailure();
+    pin(directory, true);
+  }
+  return { ok: true as const, directory };
+}
+
+export async function prepareColdAppIndexCache(input: ColdIndexInput, guard: ColdIndexGuard) {
+  const parsed = readColdIndexInput(input);
+  if (!parsed.ok) return parsed;
+  if (!guard || typeof guard.current !== "function" || typeof guard.verify !== "function") return fail("INPUT");
+  const { current, verify } = guard;
+  const boundary = appCacheBoundary(current);
+  if (!boundary.ok) return boundary;
+  const { cacheCurrent, callerCurrent, boundaryFailure } = boundary;
+  try {
+    const profile = await initializeProfile(boundary);
+    if (!profile.ok) return profile;
+    const result = await prepareColdIndex(profile.directory, parsed, { current: cacheCurrent, verify });
+    return !result.ok && result.error === "CANCELLED" ? boundaryFailure() : result;
+  } catch {
+    callerCurrent();
+    return boundaryFailure();
+  }
+}
+
 export async function retireAppIndexCache(input: IndexRetirementTarget, current: () => boolean, seal?: true) {
   if (seal !== undefined && seal !== true) return fail("INPUT");
   return useRetiredAppProfile(
@@ -184,26 +220,11 @@ function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exac
 async function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: boolean, maxLogicalBytes?: number) {
   const boundary = appCacheBoundary(current);
   if (!boundary.ok) return boundary;
-  const { home, pin, cacheCurrent, callerCurrent, boundaryFailure } = boundary;
+  const { cacheCurrent, callerCurrent, boundaryFailure } = boundary;
   try {
-    let directory = home;
-    if (exact) {
-      const profile = existingProfile(boundary);
-      if (!profile.ok) return profile;
-      directory = profile.directory;
-    } else {
-      for (const name of [cacheName, profileName]) {
-        if (!cacheCurrent()) return boundaryFailure();
-        directory = join(directory, name);
-        try {
-          await mkdir(directory, { mode: 0o700 });
-        } catch (error) {
-          if (!record(error) || error.code !== "EEXIST") throw error;
-        }
-        if (!cacheCurrent()) return boundaryFailure();
-        pin(directory, true);
-      }
-    }
+    const profile = exact ? existingProfile(boundary) : await initializeProfile(boundary);
+    if (!profile.ok) return profile;
+    const { directory } = profile;
     if (!cacheCurrent()) return boundaryFailure();
     const result = exact
       ? await reopenWithIndexReuse(directory, input, cacheCurrent, maxLogicalBytes)

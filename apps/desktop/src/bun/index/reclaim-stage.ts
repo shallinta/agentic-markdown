@@ -53,14 +53,14 @@ export function loadReclaimStage(): ReclaimStage | undefined {
   };
 }
 
-export function loadReclaimPublisher(recordName: ReclaimRecord | "catalog") {
+export function loadReclaimPublisher(recordName: ReclaimRecord | "catalog" | "cold-catalog") {
   const native = loadSaveNative();
   if (typeof native?.createTemp !== "function" || typeof native.removeTemp !== "function") return;
   const { createTemp, removeTemp } = native;
   const replacing = recordName === "catalog";
   const publish = replacing ? native.replace : native.publishExclusive;
   if (typeof publish !== "function") return;
-  const destination = recordName === "catalog" ? "catalog.json" : INDEX_RECLAIM_RECORD_NAMES[recordName];
+  const destination = recordName === "catalog" || recordName === "cold-catalog" ? "catalog.json" : INDEX_RECLAIM_RECORD_NAMES[recordName];
   return {
     create(profileFd: number, name: string) {
       const fd: unknown = Reflect.apply(createTemp, native, [profileFd, name]);

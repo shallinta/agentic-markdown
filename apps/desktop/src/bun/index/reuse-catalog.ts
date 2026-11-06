@@ -19,6 +19,11 @@ const digest = /^[a-f0-9]{64}$/;
 const indexId = /^[A-Za-z0-9-]{1,32}$/;
 
 export class IndexReuseCleanupError extends Error {}
+export interface HeldIndexProfile {
+  profileFd: number;
+  checkProfile: () => void;
+  sync: () => Promise<void>;
+}
 
 export interface IndexReuseCatalog {
   version: 1;
@@ -103,6 +108,7 @@ interface IndexReuseSlot {
   withCompletionPlacement<Result>(
     expected: BigIntStats | undefined, use: (held: HeldCompletionPlacement) => Promise<Result>
   ): Promise<Result>;
+  withIndexProfile<Result>(use: (held: HeldIndexProfile) => Promise<Result>): Promise<Result>;
   release(): Promise<void>;
 }
 
@@ -590,6 +596,16 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
             } finally {
               if (pending) await closeCatalogFile(pending);
             }
+          } finally {
+            await closeCatalogFile(profile);
+          }
+        },
+        async withIndexProfile(use) {
+          const profile = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+          try {
+            const checkProfile = () => assertProfileDescriptor(profile);
+            checkProfile();
+            return await use({ profileFd: profile.fd, checkProfile, sync: () => profile.sync() });
           } finally {
             await closeCatalogFile(profile);
           }

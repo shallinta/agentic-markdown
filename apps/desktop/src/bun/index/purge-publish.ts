@@ -5,9 +5,11 @@ import { join } from "node:path";
 import { sameIndexInventoryMetadata } from "./cache-footprint";
 import { INDEX_RECLAIM_RECORD_NAMES, type ReclaimRecord } from "./purge-roster";
 import { loadReclaimPublisher } from "./reclaim-stage";
-import { IndexReuseCleanupError, reclaimDirectoryName, type HeldCompletionPlacement, type HeldIndexPlacement } from "./reuse-catalog";
+import {
+  IndexReuseCleanupError, reclaimDirectoryName, type HeldCompletionPlacement, type HeldIndexPlacement, type HeldIndexProfile,
+} from "./reuse-catalog";
 
-type Destination = ReclaimRecord | "catalog";
+type Destination = ReclaimRecord | "catalog" | "cold-catalog";
 interface HeldProfile {
   profileFd: number;
   check: () => void;
@@ -24,10 +26,15 @@ function closeProfile(directory: Dir) {
 
 function assertStagedLayout(profile: string, temporary: string, held: HeldProfile, destination: Destination) {
   held.check();
-  const names = new Set(["catalog.json", ".lease", temporary]);
-  if (destination === "catalog") names.add(INDEX_RECLAIM_RECORD_NAMES.complete);
-  else names.add(reclaimDirectoryName("pending"));
-  if (destination !== "purge") names.add(INDEX_RECLAIM_RECORD_NAMES.purge);
+  const names = new Set([".lease", temporary]);
+  if (destination === "cold-catalog") {
+    names.add(reclaimDirectoryName("original"));
+  } else {
+    names.add("catalog.json");
+    if (destination === "catalog") names.add(INDEX_RECLAIM_RECORD_NAMES.complete);
+    else names.add(reclaimDirectoryName("pending"));
+    if (destination !== "purge") names.add(INDEX_RECLAIM_RECORD_NAMES.purge);
+  }
   const directory = opendirSync(profile, { bufferSize: names.size });
   try {
     while (names.size) {
@@ -65,6 +72,12 @@ export function replaceReclaimCatalog(
   profile: string, held: HeldCompletionPlacement, contents: Buffer, beforeCommit: () => void
 ) {
   return publishIndexRecord(profile, { ...held, check: held.checkAbsent }, contents, beforeCommit, "catalog");
+}
+
+export function publishColdIndexCatalog(
+  profile: string, held: HeldIndexProfile, contents: Buffer, beforeCommit: () => void
+) {
+  return publishIndexRecord(profile, { ...held, check: held.checkProfile }, contents, beforeCommit, "cold-catalog");
 }
 
 function publishIndexRecord(
@@ -115,7 +128,8 @@ function publishIndexRecord(
     cleanup = false;
     try {
       const installed = fstatSync(fd, { bigint: true });
-      const name = destination === "catalog" ? "catalog.json" : INDEX_RECLAIM_RECORD_NAMES[destination];
+      const name = destination === "catalog" || destination === "cold-catalog"
+        ? "catalog.json" : INDEX_RECLAIM_RECORD_NAMES[destination];
       if (!sameOwnedFile(staged, installed) || staged.size !== installed.size || staged.mtimeNs !== installed.mtimeNs ||
           !sameIndexInventoryMetadata(installed, lstatSync(join(profile, name), { bigint: true })))
         throw Error("Purge roster publication changed");

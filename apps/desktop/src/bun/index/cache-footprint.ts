@@ -225,6 +225,44 @@ export async function captureVacantIndexSlot(profile: string, check: () => void,
   return { profile: pinnedProfile, catalog: catalog?.stat, recheck };
 }
 
+export async function captureColdNativeIndex(profile: string, check: () => void, checkLease: () => BigIntStats) {
+  const pinnedProfile = checkLease();
+  const checkProfile = () => {
+    if (!sameIndexInventoryMetadata(pinnedProfile, checkLease()))
+      throw Error("Cold index slot membership changed");
+  };
+  const names = await readMembers(profile, 2, () => { check(); checkProfile(); });
+  checkProfile();
+  if (names.size !== 2 || !names.has(".lease") || !names.has("index")) return;
+
+  const index = join(profile, "index");
+  const indexStat = lstatSync(index, { bigint: true });
+  if (!indexStat.isDirectory() || indexStat.uid !== pinnedProfile.uid || (indexStat.mode & 0o022n) !== 0n)
+    throw Error("Cold index directory unavailable");
+  const checkIndex = () => {
+    checkLease();
+    if (!sameIndexInventoryMetadata(indexStat, lstatSync(index, { bigint: true })))
+      throw Error("Cold index directory changed");
+  };
+  const files = new Map<string, BigIntStats>();
+  await readMembers(index, INDEX_PURGE_ROSTER_FILES, () => { check(); checkIndex(); }, (name) => {
+    const stat = lstatSync(join(index, name), { bigint: true });
+    if (!stat.isFile() || stat.uid !== pinnedProfile.uid || stat.nlink !== 1n || stat.size < 0n)
+      throw Error("Cold index file unavailable");
+    files.set(name, stat);
+  });
+  const recheck = () => {
+    checkIndex();
+    for (const [name, stat] of files)
+      if (!sameIndexInventoryMetadata(stat, lstatSync(join(index, name), { bigint: true })))
+        throw Error("Cold index file changed");
+    checkIndex();
+  };
+  checkProfile();
+  recheck();
+  return { indexStat, files, recheck, checkProfile };
+}
+
 /** The completion record outlives the optional empty pending directory. */
 export async function captureCompletedPlacement(
   profile: string, profileStat: BigIntStats, owner: bigint, check: () => void, checkLease: () => void

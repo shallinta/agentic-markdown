@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ao 的 alpha.226 已验证内部只读索引的显式逻辑字节预算。缓存超预算时不会打开原生会话。窗口仍使用直接搜索。见[F-064ao 迭代](iterations/F-064ao-index-read-byte-admission.md)。
+
 F-064an 的 alpha.225 将普通直接搜索正文合计提高到 128 KiB。筛选前最多 32 篇，单文件和定位仍限 64 KiB。见[F-064an 迭代](iterations/F-064an-direct-search-128-kib.md)。
 
 F-064am 的 alpha.224 将普通直接搜索扩大到筛选前 32 篇。正文合计 64 KiB，文件夹、当前打开绑定和独立文件句柄各最多 16。见[F-064am 迭代](iterations/F-064am-direct-search-32-documents.md)。

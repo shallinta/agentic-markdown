@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import type { Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 
+import { captureIndexFootprint } from "./cache-footprint";
 import {
   INDEX_LIMITS,
   encodeChanges,
   keys,
+  natural,
   record,
   scalar,
   type IndexChange,
@@ -58,16 +60,18 @@ export function searchWithIndexReuse(
 export function reopenWithIndexReuse(
   directory: string,
   input: IndexReuseInput,
-  current: () => boolean
+  current: () => boolean,
+  maxLogicalBytes?: number
 ): Promise<ExactReuseResult> {
-  return runIndexReuse(directory, input, current, true);
+  return runIndexReuse(directory, input, current, true, maxLogicalBytes);
 }
 
 function runIndexReuse(directory: string, input: IndexReuseInput, current: () => boolean, exact: false): Promise<ReuseResult>;
-function runIndexReuse(directory: string, input: IndexReuseInput, current: () => boolean, exact: true): Promise<ExactReuseResult>;
+function runIndexReuse(directory: string, input: IndexReuseInput, current: () => boolean, exact: true, maxLogicalBytes?: number): Promise<ExactReuseResult>;
 async function runIndexReuse(
-  directory: string, input: IndexReuseInput, current: () => boolean, exact: boolean
+  directory: string, input: IndexReuseInput, current: () => boolean, exact: boolean, maxLogicalBytes?: number
 ): Promise<ExactReuseResult> {
+  if (maxLogicalBytes !== undefined && !natural(maxLogicalBytes)) return fail("INPUT");
   if (!current()) return fail("CANCELLED");
   const { scopeKey, query } = input;
   const source: unknown = input.rows;
@@ -164,7 +168,16 @@ async function runIndexReuse(
         return fail("LIMIT");
       }
     }
-    check();
+    if (maxLogicalBytes !== undefined && cached.status === "existing") {
+      const { identity } = cached;
+      const { assertInventoryLease } = slot;
+      const footprint = await captureIndexFootprint(
+        directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity
+      );
+      footprint.recheck();
+      if (footprint.status !== "existing") return fail("UNAVAILABLE");
+      if (footprint.totalBytes > BigInt(maxLogicalBytes)) return fail("LIMIT");
+    } else check();
     session = createIndexSession();
     const opened = await session.open(slot.indexPath, exact ? "reader-only" : prior ? "writer-existing" : "create-new");
     if (opened.ok) nativeGeneration = opened.generation;

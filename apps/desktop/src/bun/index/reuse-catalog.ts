@@ -25,13 +25,19 @@ export interface IndexReuseCatalog {
   entries: readonly { id: string; hash: string }[];
 }
 
+export interface IndexReuseInventoryIdentity {
+  catalog: BigIntStats;
+  index: BigIntStats;
+}
+
 type CatalogRead =
   | { status: "cold" }
-  | { status: "existing"; catalog: IndexReuseCatalog }
+  | { status: "existing"; catalog: IndexReuseCatalog; identity: IndexReuseInventoryIdentity }
   | { status: "invalid" };
 
 interface IndexReuseSlot {
   indexPath: string;
+  assertInventoryLease(this: void): BigIntStats;
   readCatalog(): Promise<CatalogRead>;
   writeCatalog(catalog: IndexReuseCatalog, beforeCommit?: () => void): Promise<void>;
   release(): Promise<void>;
@@ -133,15 +139,17 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
     }
     const leaseStat = await lstat(leasePath, { bigint: true });
     let released = false;
-    const assertLease = () => {
+    const assertLease = (inventory = false) => {
       const root = present(directory);
       const lease = present(leasePath);
       if (
         released ||
         !root || !privateDirectory(root) || !sameInode(directoryStat, root) ||
-        !lease || !privateDirectory(lease) || !sameInode(leaseStat, lease)
+        !lease || !privateDirectory(lease) || !sameInode(leaseStat, lease) ||
+        (inventory && (lease.mode !== leaseStat.mode || lease.nlink !== leaseStat.nlink || !sameFile(leaseStat, lease)))
       )
         throw Error("Index reuse lease unavailable");
+      return root;
     };
     assertLease();
 
@@ -149,6 +157,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
       ok: true,
       slot: {
         indexPath,
+        assertInventoryLease: () => assertLease(true),
         async readCatalog() {
           try {
             assertLease();
@@ -188,7 +197,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
                 !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex) ||
                 !validCatalog(value))
               return { status: "invalid" };
-            return { status: "existing", catalog: value };
+            return { status: "existing", catalog: value, identity: { catalog, index } };
           } catch (error) {
             if (error instanceof IndexReuseCleanupError) throw error;
             return { status: "invalid" };

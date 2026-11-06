@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { mkdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { reopenAppIndexCache, searchAppIndexCache } from "./app-cache";
+import { inspectAppIndexCacheFootprint, reopenAppIndexCache, searchAppIndexCache } from "./app-cache";
 import { record } from "./protocol";
 import { createIndexSession } from "./session";
 
@@ -71,7 +72,8 @@ test.skipIf(!isolated)("only exact same-roster storage starts a reader-only nati
   const first = { id: "fixture-a", raw: "\uFEFF😀target\r\n" };
   const second = { id: "fixture-b", raw: "无匹配" };
   const input = { scopeKey: sha("fixture-exact-index-scope"), rows: [first, second], query: "target" };
-  const reopen = (query = input, current = () => true) => reopenAppIndexCache(query, current);
+  const reopen = (query = input, current = () => true, maxLogicalBytes?: number) =>
+    reopenAppIndexCache(query, current, maxLogicalBytes);
   const success = (applied: number) => ({
     ok: true as const, generation: 1, applied, hits: [{ id: first.id, from: 3, to: 9 }],
   });
@@ -118,9 +120,14 @@ test.skipIf(!isolated)("only exact same-roster storage starts a reader-only nati
 
   try {
     Object.defineProperty(globalThis, "Worker", { value: RecordingWorker, configurable: true });
+    let invalidBudgetChecks = 0;
+    for (const invalid of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])
+      expect(await reopen(input, () => { invalidBudgetChecks++; return true; }, invalid)).toEqual(failed("INPUT"));
+    expect(invalidBudgetChecks).toBe(0);
     expect(await reopen()).toEqual(failed("UNAVAILABLE"));
     expect(await readdir(scratch)).toEqual([]);
     await mkdir(home, { mode: 0o700 });
+    expect(await reopen(input, () => true, 0)).toEqual(failed("MISSING"));
     expect(await reopen()).toEqual(failed("MISSING"));
     expect(await readdir(home)).toEqual([]);
     await mkdir(cache, { mode: 0o700 });
@@ -182,24 +189,108 @@ test.skipIf(!isolated)("only exact same-roster storage starts a reader-only nati
     }
     await writeFile(catalog, originalCatalog);
     noNative();
-    const stable = await snapshotStorage();
+    let stable = await snapshotStorage();
+    const logicalBytes = stable.reduce((total, file) => total + Number(file.size), 0);
+    const catalogBytes = Number(stable[0].size);
+    expect(logicalBytes).toBeGreaterThan(catalogBytes);
+    expect(await inspectAppIndexCacheFootprint(() => true)).toEqual({
+      ok: true, present: true, files: stable.length,
+      catalogBytes, indexBytes: logicalBytes - catalogBytes, totalBytes: logicalBytes,
+    });
+    expect(await reopen(input, () => true, logicalBytes - 1)).toEqual(failed("LIMIT"));
+    expect(await reopen({ ...input, rows: [first] }, () => true, 0)).toEqual(failed("MISMATCH"));
+    expect(await reopen({ ...input, scopeKey: sha("another-scope") }, () => true, 0)).toEqual(failed("SCHEMA"));
+    expect(await reopen(input, () => false, logicalBytes)).toEqual(failed("CANCELLED"));
+    expect(await reopen(input, () => { throw Error("Synthetic budget proof failure"); }, logicalBytes))
+      .toEqual(failed("UNAVAILABLE"));
+    expect(await snapshotStorage()).toEqual(stable);
+    await noLease();
+    noNative();
 
-    expect(await reopen({ ...input, rows: [second, first] })).toEqual(success(0));
+    const extra = join(index, "fixture-abnormal-member");
+    const linkTarget = join(home, "fixture-unrelated-target");
+    await writeFile(linkTarget, "keep", { mode: 0o600 });
+    await symlink(linkTarget, extra);
+    try {
+      expect(await reopen(input, () => true, Number.MAX_SAFE_INTEGER)).toEqual(failed("UNAVAILABLE"));
+      expect(await readlink(extra)).toBe(linkTarget);
+      expect(await readFile(linkTarget, "utf8")).toBe("keep");
+    } finally {
+      await rm(extra);
+    }
+    await mkdir(extra);
+    try {
+      expect(await reopen(input, () => true, Number.MAX_SAFE_INTEGER)).toEqual(failed("UNAVAILABLE"));
+      expect(await readdir(extra)).toEqual([]);
+    } finally {
+      await rmdir(extra);
+    }
+    expect(await snapshotStorage()).toEqual(stable);
+    await noLease();
+    noNative();
+
+    let checksBeforeOpen = 0;
+    expect(await reopen({ ...input, rows: [second, first] }, () => {
+      if (!workers) checksBeforeOpen++;
+      return true;
+    }, logicalBytes)).toEqual(success(0));
     expect(workers).toBe(1);
+    expect(checksBeforeOpen).toBeGreaterThan(1);
     expect(commands.splice(0)).toEqual([["open", "reader-only"], "verify-roster", "query", "close"]);
     expect(await snapshotStorage()).toEqual(stable);
     await noLease();
 
+    let checked = 0;
+    expect(await reopen(input, () => ++checked < checksBeforeOpen, logicalBytes)).toEqual(failed("CANCELLED"));
+    const beforeMetadataChange = await lstat(catalog);
+    checked = 0;
+    expect(await reopen(input, () => {
+      if (++checked === checksBeforeOpen)
+        utimesSync(catalog, beforeMetadataChange.atime, new Date(beforeMetadataChange.mtimeMs + 10_000));
+      return true;
+    }, logicalBytes)).toEqual(failed("UNAVAILABLE"));
+    const afterMetadataChange = await snapshotStorage();
+    expect(afterMetadataChange[0].mtime > stable[0].mtime).toBe(true);
+    expect(afterMetadataChange).toEqual([{ ...stable[0], mtime: afterMetadataChange[0].mtime }, ...stable.slice(1)]);
+    stable = afterMetadataChange;
+    await noLease();
+
+    const replacementMarker = join(index, "fixture-replacement");
+    let movedIndex = false;
+    checked = 0;
+    try {
+      expect(await reopen(input, () => {
+        if (++checked === checksBeforeOpen) {
+          renameSync(index, parked);
+          movedIndex = true;
+          mkdirSync(index, { mode: 0o700 });
+          writeFileSync(replacementMarker, "unrelated", { mode: 0o600 });
+        }
+        return true;
+      }, logicalBytes)).toEqual(failed("UNAVAILABLE"));
+      expect(await readdir(index)).toEqual(["fixture-replacement"]);
+      expect(await readFile(replacementMarker, "utf8")).toBe("unrelated");
+      await noLease();
+    } finally {
+      if (movedIndex) {
+        await rm(index, { recursive: true, force: true });
+        await rename(parked, index);
+      }
+    }
+    expect(await snapshotStorage()).toEqual(stable);
+    expect(workers).toBe(1);
+    expect(commands).toEqual([]);
+
     let current = true;
     const entered = Promise.withResolvers<() => void>();
     holdQuery = entered.resolve;
-    const pending = reopen(input, () => current);
+    const pending = reopen(input, () => current, logicalBytes);
     const resume = await Promise.race([
       entered.promise, pending.then((result) => { throw Error("Expected native query: " + JSON.stringify(result)); }),
     ]);
     try {
       expect(await readdir(profile)).toContain(".lease");
-      expect(await reopen()).toEqual(failed("BUSY"));
+      expect(await reopen(input, () => true, logicalBytes)).toEqual(failed("BUSY"));
       expect(workers).toBe(2);
       current = false;
     } finally {

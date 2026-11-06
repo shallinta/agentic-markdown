@@ -1,19 +1,19 @@
 import { lstatSync, realpathSync, type BigIntStats } from "node:fs";
-import { mkdir, opendir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { getAppHomePath } from "@agentic-markdown/shared/server";
 
-import { record } from "./protocol";
+import { captureIndexFootprint } from "./cache-footprint";
+import { natural, record } from "./protocol";
 import { reopenWithIndexReuse, searchWithIndexReuse, type IndexReuseInput } from "./reuse";
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
 
-const fail = <Error extends BoundaryError | "BUSY" | "MISSING">(error: Error) =>
+const fail = <Error extends BoundaryError | "BUSY" | "MISSING" | "INPUT">(error: Error) =>
   ({ ok: false as const, error, accepted: false });
 const cacheName = "search-index";
 const profileName = "limited-v1";
-const maxIndexFiles = 128;
 const absent = { ok: true as const, present: false, files: 0, catalogBytes: 0, indexBytes: 0, totalBytes: 0 };
 
 function appCacheBoundary(current: () => boolean) {
@@ -75,13 +75,15 @@ export function searchAppIndexCache(input: IndexReuseInput, current: () => boole
   return queryAppIndexCache(input, current, false);
 }
 
-export function reopenAppIndexCache(input: IndexReuseInput, current: () => boolean) {
-  return queryAppIndexCache(input, current, true);
+export function reopenAppIndexCache(input: IndexReuseInput, current: () => boolean, maxLogicalBytes?: number) {
+  if (maxLogicalBytes !== undefined && !natural(maxLogicalBytes))
+    return Promise.resolve(fail("INPUT"));
+  return queryAppIndexCache(input, current, true, maxLogicalBytes);
 }
 
 function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: false): ReturnType<typeof searchWithIndexReuse>;
-function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: true): ReturnType<typeof reopenWithIndexReuse>;
-async function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: boolean) {
+function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: true, maxLogicalBytes?: number): ReturnType<typeof reopenWithIndexReuse>;
+async function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: boolean, maxLogicalBytes?: number) {
   const boundary = appCacheBoundary(current);
   if (!boundary.ok) return boundary;
   const { home, pin, cacheCurrent, callerCurrent, boundaryFailure } = boundary;
@@ -108,8 +110,9 @@ async function queryAppIndexCache(input: IndexReuseInput, current: () => boolean
       pin(directory, true);
     }
     if (!cacheCurrent()) return boundaryFailure();
-    const run = exact ? reopenWithIndexReuse : searchWithIndexReuse;
-    const result = await run(directory, input, cacheCurrent);
+    const result = exact
+      ? await reopenWithIndexReuse(directory, input, cacheCurrent, maxLogicalBytes)
+      : await searchWithIndexReuse(directory, input, cacheCurrent);
     if (!result.ok && (result.error === "UNKNOWN" || result.error === "SCHEMA" || result.error === "BUSY"))
       return result;
     return cacheCurrent() ? result : boundaryFailure();
@@ -124,36 +127,6 @@ function present(path: string): BigIntStats | undefined {
     return lstatSync(path, { bigint: true });
   } catch (error) {
     if (!record(error) || error.code !== "ENOENT") throw error;
-  }
-}
-
-function sameMetadata(before: BigIntStats, after: BigIntStats) {
-  return before.dev === after.dev && before.ino === after.ino &&
-    before.uid === after.uid && before.mode === after.mode && before.nlink === after.nlink &&
-    before.size === after.size && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
-}
-
-async function readMembers(
-  path: string, max: number, check: () => void, observe?: (name: string) => void
-) {
-  check();
-  const dir = await opendir(path, { bufferSize: 16 });
-  const names = new Set<string>();
-  try {
-    check();
-    while (true) {
-      const entry = await dir.read();
-      check();
-      if (!entry) return names;
-      const { name } = entry;
-      if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\0") ||
-          names.size >= max || names.has(name))
-        throw Error("Index cache inventory unavailable");
-      names.add(name);
-      observe?.(name);
-    }
-  } finally {
-    await dir.close();
   }
 }
 
@@ -178,27 +151,6 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
   const checkLease = () => {
     if (present(lease)) throw new CacheBusy();
   };
-  const checkInspection = () => {
-    check();
-    checkLease();
-  };
-  const inventory: { path: string; stat: BigIntStats }[] = [];
-  const readFileMetadata = (path: string, privateMode = false) => {
-    const stat = lstatSync(path, { bigint: true });
-    if (!stat.isFile() || stat.uid !== owner || stat.nlink !== 1n || stat.size < 0n ||
-        (privateMode && (stat.mode & 0o077n) !== 0n))
-      throw Error("Index cache file unavailable");
-    inventory.push({ path, stat });
-    return stat.size;
-  };
-  const recheckInventory = () => {
-    checkInspection();
-    for (const { path, stat } of inventory)
-      if (!sameMetadata(stat, lstatSync(path, { bigint: true })))
-        throw Error("Index cache inventory changed");
-    checkLease();
-  };
-
   try {
     check();
     const cacheStat = present(cache);
@@ -207,29 +159,13 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
     const profileStat = present(profile);
     if (!profileStat) return absentAt(profile);
     pin(profile, true, profileStat);
-    inventory.push({ path: profile, stat: profileStat });
-    const members = await readMembers(profile, 2, checkInspection);
-    checkInspection();
-    if (!members.size) {
-      recheckInventory();
-      return { ...absent };
-    }
-    if (members.size !== 2 || !members.has("catalog.json") || !members.has("index"))
-      return fail("UNAVAILABLE");
-
-    const catalogBytes = readFileMetadata(join(profile, "catalog.json"), true);
-    if (catalogBytes === 0n) return fail("UNAVAILABLE");
-    const index = join(profile, "index");
-    inventory.push({ path: index, stat: pin(index, false) });
-    let indexBytes = 0n;
-    const names = await readMembers(index, maxIndexFiles, checkInspection, (name) => {
-      indexBytes += readFileMetadata(join(index, name));
-    });
-    const totalBytes = catalogBytes + indexBytes;
+    const footprint = await captureIndexFootprint(profile, profileStat, owner, check, checkLease);
+    footprint.recheck();
+    if (footprint.status === "empty") return { ...absent };
+    const { files, catalogBytes, indexBytes, totalBytes } = footprint;
     if (totalBytes > BigInt(Number.MAX_SAFE_INTEGER)) return fail("UNAVAILABLE");
-    recheckInventory();
     return {
-      ok: true as const, present: true, files: names.size + 1,
+      ok: true as const, present: true, files,
       catalogBytes: Number(catalogBytes), indexBytes: Number(indexBytes), totalBytes: Number(totalBytes),
     };
   } catch (error) {

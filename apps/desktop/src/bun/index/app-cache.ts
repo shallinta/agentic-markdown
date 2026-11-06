@@ -6,7 +6,7 @@ import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
 import {
-  prepareColdIndex, readActiveIndexInput, readColdIndexInput, refreshActiveIndex,
+  prepareColdIndex, readActiveIndexInput, readColdIndexInput, reconcileActiveIndex, refreshActiveIndex,
   type ActiveIndexInput, type ColdIndexGuard, type ColdIndexInput,
 } from "./cold-prepare";
 import { natural, record } from "./protocol";
@@ -28,7 +28,7 @@ import {
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
 
-const fail = <Error extends BoundaryError | "BUSY" | "MISSING" | "INPUT" | "SCHEMA" | "MISMATCH">(error: Error) =>
+const fail = <Error extends BoundaryError | "BUSY" | "MISSING" | "INPUT" | "LIMIT" | "SCHEMA" | "MISMATCH">(error: Error) =>
   ({ ok: false as const, error, accepted: false });
 const cacheName = "search-index";
 const profileName = "limited-v1";
@@ -141,6 +141,13 @@ export function refreshActiveAppIndexCache(input: ActiveIndexInput, guard: ColdI
   const parsed = readActiveIndexInput(input);
   if (!parsed.ok) return Promise.resolve(parsed);
   return useAppIndexWriter(parsed, guard, existingProfile, refreshActiveIndex);
+}
+
+export function reconcileActiveAppIndexCache(input: ActiveIndexInput, guard: ColdIndexGuard) {
+  const parsed = readActiveIndexInput(input);
+  if (!parsed.ok) return Promise.resolve(parsed);
+  if (parsed.expectedGeneration === Number.MAX_SAFE_INTEGER) return Promise.resolve(fail("LIMIT"));
+  return useAppIndexWriter(parsed, guard, existingProfile, reconcileActiveIndex);
 }
 
 type WriterProfile<Error extends BoundaryError | "MISSING"> =

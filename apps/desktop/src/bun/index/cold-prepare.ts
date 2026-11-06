@@ -65,12 +65,27 @@ export async function prepareColdIndex(directory: string, input: ColdIndexInput,
 }
 
 export function refreshActiveIndex(directory: string, input: ActiveIndexInput, guard: ColdIndexGuard) {
-  return writeIndex(directory, input, guard, input.expectedGeneration);
+  return writeIndex(directory, input, guard, { mode: "refresh", expectedGeneration: input.expectedGeneration });
+}
+
+export async function reconcileActiveIndex(directory: string, input: ActiveIndexInput, guard: ColdIndexGuard) {
+  const result = await writeIndex(directory, input, guard, { mode: "reconcile", expectedGeneration: input.expectedGeneration });
+  if (!result.ok) return result;
+  const { generation, documents } = result;
+  return { ok: true as const, generation, documents };
+}
+
+interface ActiveIndexWrite {
+  mode: "refresh" | "reconcile";
+  expectedGeneration: number;
 }
 
 async function writeIndex(
-  directory: string, { scopeKey, rows }: ColdIndexInput, { current, verify }: ColdIndexGuard, expectedGeneration?: number
+  directory: string, { scopeKey, rows }: ColdIndexInput, { current, verify }: ColdIndexGuard, activeWrite?: ActiveIndexWrite
 ): Promise<IndexWriteResult> {
+  const expectedGeneration = activeWrite?.expectedGeneration;
+  const reconciling = activeWrite?.mode === "reconcile";
+  if (reconciling && expectedGeneration === Number.MAX_SAFE_INTEGER) return fail("LIMIT");
   if (!current()) return fail("CANCELLED");
   const acquired = await acquireIndexReuseSlot(directory);
   if (!acquired.ok) return fail(acquired.error === "UNKNOWN" || current() ? acquired.error : "CANCELLED");
@@ -87,6 +102,7 @@ async function writeIndex(
     check();
     if (valid !== true) throw new IndexWriteSourceStale();
   };
+  const verifyRoster = (session: ReturnType<typeof createIndexSession>) => session.verifyRoster(rows);
 
   let outcome: IndexWriteResult;
   try {
@@ -140,7 +156,7 @@ async function writeIndex(
     }
   }
 
-  async function captureActive(generation: number) {
+  async function captureActive(generation: number, nativeGeneration: number) {
     check();
     const cached = await slot.readCatalog();
     check();
@@ -155,20 +171,27 @@ async function writeIndex(
     if (!native || !sameIndexInventoryMetadata(native.indexStat, identity.index)) return fail("SCHEMA");
     const recheck = () => { check(); native.checkProfile(); native.recheck(); };
     const prior = await readPinnedReclaimCatalog(directory, identity.catalog, recheck);
-    if (!prior || !await validReclaimLayout(slot.indexPath, native.files, generation, recheck)) return fail("SCHEMA");
+    if (!prior || !await validReclaimLayout(slot.indexPath, native.files, nativeGeneration, recheck)) return fail("SCHEMA");
     recheck();
-    return { ok: true as const, entries: cached.catalog.entries, identity, contents: prior.bytes, recheck };
+    return { ok: true as const, entries: cached.catalog.entries, identity, contents: prior.bytes, recheck, native };
   }
 
+  type ActiveProof = Extract<Awaited<ReturnType<typeof captureActive>>, { ok: true }>;
+  type NativeProof = NonNullable<Awaited<ReturnType<typeof captureIndexPublicationInventory>>>;
+
   async function run() {
-    const active = expectedGeneration === undefined ? undefined : await captureActive(expectedGeneration);
+    const initial = expectedGeneration ?? 0;
+    const active = activeWrite ? await captureActive(initial, initial + Number(reconciling)) : undefined;
     if (active?.ok === false) return active;
     const vacant = active ? undefined : await captureVacantIndexSlot(directory, check, assertInventoryLease);
     const initialCheck = active?.recheck ?? vacant?.recheck;
     if (!initialCheck) return fail("SCHEMA");
-    const initial = expectedGeneration ?? 0;
     const entries = rows.map(({ id, raw }) => ({ id, hash: createHash("sha256").update(raw).digest("hex") }))
       .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    if (active && reconciling) {
+      await verifySource();
+      return verifyAndPublish(active.native, initial + 1, entries, 0, active);
+    }
     const roster = new Set(rows.map(({ id }) => id));
     const previous = new Map(active?.entries.map(({ id, hash }) => [id, hash]));
     const changed = new Set(entries.filter(({ id, hash }) => previous.get(id) !== hash).map(({ id }) => id));
@@ -186,7 +209,6 @@ async function writeIndex(
     await verifySource();
     initialCheck();
     const generation = initial + Number(applied > 0);
-    const verifyRoster = (session: ReturnType<typeof createIndexSession>) => session.verifyRoster(rows);
     if (active && !applied) {
       const checked = await nativePhase("reader-only", generation, initialCheck, verifyRoster);
       if (!checked.ok) return checked;
@@ -212,6 +234,13 @@ async function writeIndex(
     if (!native || !created || !sameDirectory(created, native.indexStat)) return fail("SCHEMA");
     const checkNative = () => { check(); native.recheck(); native.checkProfile(); };
     if (!await validReclaimLayout(slot.indexPath, native.files, generation, checkNative)) return fail("SCHEMA");
+    return verifyAndPublish(native, generation, entries, applied, active);
+  }
+
+  async function verifyAndPublish(
+    native: NativeProof, generation: number, entries: IndexReuseCatalog["entries"], applied: number, active?: ActiveProof
+  ) {
+    const checkNative = () => { check(); native.recheck(); native.checkProfile(); };
     const checked = await nativePhase("reader-only", generation, checkNative, verifyRoster);
     if (!checked.ok) return checked;
     if (checked.generation !== generation) return fail("UNKNOWN");

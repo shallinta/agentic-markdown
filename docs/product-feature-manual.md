@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bj 的 alpha.247 已验证内部补齐落后一代的清单。仅在完整授权名册匹配时补写，原生索引文件保持不变。见[F-064bj 迭代](iterations/F-064bj-reconcile-active-index-catalog.md)。
+
 F-064bi 的 alpha.246 已验证同范围的内部索引更新。目标名册无变化时只读核验。有变化时先提交一批，再核对完整名册并替换清单。普通窗口仍沿用现有搜索路径。见[F-064bi 迭代](iterations/F-064bi-refresh-active-index.md)。
 
 F-064bh 的 alpha.245 已验证可信工作区可为已授权、已建立观察的一个根目录显式建索引。观察失效、取消或正文变化会拒绝迟到结果。普通窗口仍沿用现有搜索路径。见[F-064bh 迭代](iterations/F-064bh-prepare-observed-workspace-index.md)。

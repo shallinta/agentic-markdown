@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bk 为已观察的工作区更新索引（2026-11-06）
+
+alpha.248 已验证单根的工作区显式更新与补齐清单。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。普通窗口接入、跨根、未保存覆盖、调度、自动配额和最终离线继续承接。见[F-064bk 迭代](iterations/F-064bk-refresh-observed-workspace-index.md)。
+
 ## F-064bj 补齐落后一代的索引清单（2026-11-06）
 
 alpha.247 已验证原生恰好领先一代且名册完全匹配时可显式恢复清单。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。工作区更新接入、其他失配状态、跨根、未保存覆盖、自动配额及最终离线继续承接。见[F-064bj 迭代](iterations/F-064bj-reconcile-active-index-catalog.md)。

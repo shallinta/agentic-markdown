@@ -19,7 +19,7 @@ const fail = <E extends string>(error: E) => ({ ok: false as const, error });
 const first = "\uFEFF# 中文\r\n😀target\r\n";
 const second = "没有匹配词的行\n";
 
-test.skipIf(isolated)("isolated observed preparation exits with a clean fixture", async () => {
+test.skipIf(isolated)("isolated observed index lifecycle exits with a clean fixture", async () => {
   const scratch = await realpath(await mkdtemp(join(tmpdir(), prefix)));
   try {
     const child = Bun.spawn([process.execPath, "test", import.meta.path], {
@@ -51,7 +51,7 @@ async function awaitFixture<T>(ready: () => T | undefined | Promise<T | undefine
   throw Error("Fixture did not settle");
 }
 
-test.skipIf(!isolated)("only current observed root rows prepare a cold index with verified native receipts", async () => {
+test.skipIf(!isolated)("observed root rows fence index preparation, refresh and reconciliation", async () => {
   const scratch = await realpath(tmpdir());
   const home = join(scratch, "app");
   if (!basename(scratch).startsWith(prefix) ||
@@ -156,11 +156,11 @@ test.skipIf(!isolated)("only current observed root rows prepare a cold index wit
     const hint = workspace.captureIndexWatchHint(root.handle, root.generation);
     return hint.ok ? hint : undefined;
   });
-  async function heldPreparation(root: WorkspaceRoot, signal?: AbortSignal) {
+  async function holdRosterReceipt<Result>(start: () => Promise<Result>) {
     const entered = Promise.withResolvers<() => void>();
     holdRoster = entered.resolve;
     try {
-      const pending = prepare(root, signal);
+      const pending = start();
       const resume = await Promise.race([
         entered.promise,
         pending.then(result => { throw Error("Expected native roster receipt: " + JSON.stringify(result)); }),
@@ -170,11 +170,14 @@ test.skipIf(!isolated)("only current observed root rows prepare a cold index wit
       holdRoster = undefined;
     }
   }
-  async function removeFixtureIndex() {
-    await rm(profile, { recursive: true });
+  function resetTrace() {
     workers = 0;
     operations.length = 0;
     leases.clear();
+  }
+  async function removeFixtureIndex() {
+    await rm(profile, { recursive: true });
+    resetTrace();
   }
 
   try {
@@ -229,7 +232,7 @@ test.skipIf(!isolated)("only current observed root rows prepare a cold index wit
     expect((await readdir(profile)).sort()).toEqual(["catalog.json", "index"]);
 
     await removeFixtureIndex();
-    const invalidated = await heldPreparation(root);
+    const invalidated = await holdRosterReceipt(() => prepare(root));
     try {
       expect((await readdir(profile)).sort()).toEqual([".lease", "index"]);
       expect(await prepare(root)).toEqual(fail("BUSY"));
@@ -253,7 +256,7 @@ test.skipIf(!isolated)("only current observed root rows prepare a cold index wit
 
     await removeFixtureIndex();
     const controller = new AbortController();
-    const cancelled = await heldPreparation(root, controller.signal);
+    const cancelled = await holdRosterReceipt(() => prepare(root, controller.signal));
     try {
       controller.abort();
       expect(await prepare(root)).toEqual(fail("BUSY"));
@@ -267,7 +270,7 @@ test.skipIf(!isolated)("only current observed root rows prepare a cold index wit
 
     await removeFixtureIndex();
     const changed = first.replace("中文", "改文");
-    const staleBody = await heldPreparation(root);
+    const staleBody = await holdRosterReceipt(() => prepare(root));
     try {
       const before = await lstat(firstPath, { bigint: true });
       await writeFile(firstPath, changed);
@@ -287,6 +290,103 @@ test.skipIf(!isolated)("only current observed root rows prepare a cold index wit
     expect(leases.size).toBe(1);
     expect(renewed.current()).toBe(true);
     expect(await readFile(firstPath, "utf8")).toBe(changed);
+    expect(await readFile(secondPath, "utf8")).toBe(second);
+
+    await removeFixtureIndex();
+    async function rescan(previous: WorkspaceRoot) {
+      await request({ op: "rescan", root: previous.handle });
+      const current = await settle();
+      expect(current.generation).toBeGreaterThan(previous.generation);
+      return current;
+    }
+    function indexTarget(scan: WorkspaceRoot, expectedIndexGeneration: number) {
+      return { handle: scan.handle, scanGeneration: scan.generation, expectedIndexGeneration };
+    }
+    async function contentRows(scan: WorkspaceRoot, expected: string) {
+      const current = await workspace.captureIndexRows(scan.handle, scan.generation);
+      if (!current.ok) throw Error("Fixture rows unavailable: " + current.error);
+      const entry = current.rows.find(({ raw }) => raw === expected)?.entry;
+      if (!entry) throw Error("Missing updated fixture row");
+      return { entry, rows: current.rows.map(({ id, raw }) => ({ id, raw })) };
+    }
+    const indexed = (query: string) => workspace.searchExistingIndex(root.handle, root.generation, query, undefined, {
+      requireObserved: true, maxLogicalBytes: 1024 * 1024,
+    });
+
+    // The preceding case changed the source but never created a cache.
+    // Establish an independent baseline using the actual new scan.
+    root = await rescan(root);
+    const baseline = await cleanHint(root);
+    expect(await prepare(root)).toEqual({ ok: true, generation: 1, documents: 2 });
+    resetTrace();
+    const originalScan = root;
+    watchStatus = "establishing";
+    await awaitFixture(() => baseline.current() ? undefined : true);
+    const updatedBody = first.replace("target", "更新");
+    await writeFile(firstPath, updatedBody);
+    root = await rescan(root);
+    expect(root.generation).not.toBe(1);
+    expect(await workspace.refreshObservedIndex(indexTarget(root, 1), preAborted.signal)).toEqual(fail("CANCELLED"));
+    expect(await workspace.refreshObservedIndex(indexTarget(originalScan, 1))).toEqual(fail("STALE"));
+    expect(await workspace.refreshObservedIndex(indexTarget(root, 1))).toEqual(fail("UNAVAILABLE"));
+    expect(await workspace.reconcileObservedIndex(indexTarget(root, 1))).toEqual(fail("UNAVAILABLE"));
+    expect(operations).toEqual([]);
+    expect(workers).toBe(0);
+
+    watchStatus = "watching";
+    await cleanHint(root);
+    const updated = await contentRows(root, updatedBody);
+    expect(await workspace.refreshObservedIndex(indexTarget(root, 2))).toEqual(fail("MISMATCH"));
+    expect(await workspace.reconcileObservedIndex(indexTarget(root, 2))).toEqual(fail("MISMATCH"));
+    expect(workers).toBe(0);
+    expect(await workspace.refreshObservedIndex(indexTarget(root, 1)))
+      .toEqual({ ok: true, generation: 2, documents: 2, applied: 1 });
+    const refreshTrace = (completeRows: typeof updated.rows) => [
+      [1, "open", "writer-existing"], [1, "apply"], [1, "close"], [1, "exit", 0],
+      [2, "open", "reader-only"], [2, "verify-roster", completeRows], [2, "close"], [2, "exit", 0],
+    ];
+    expect(operations).toEqual(refreshTrace(updated.rows));
+    expect(leases.size).toBe(1);
+    expect(await indexed("更新")).toEqual({ ok: true, hits: [{ entry: updated.entry, from: 9, to: 11 }] });
+    const refreshedCatalog = await readFile(catalog, "utf8");
+
+    resetTrace();
+    const finalBody = first.replace("target", "终稿");
+    await writeFile(firstPath, finalBody);
+    root = await rescan(root);
+    const cleanBeforeInterruption = await cleanHint(root);
+    const finalRows = await contentRows(root, finalBody);
+    const interrupted = await holdRosterReceipt(() => workspace.refreshObservedIndex(indexTarget(root, 2)));
+    try {
+      expect(await workspace.reconcileObservedIndex(indexTarget(root, 2))).toEqual(fail("BUSY"));
+      expect(await indexed("终稿")).toEqual(fail("BUSY"));
+      dirty = true;
+      await awaitFixture(() => cleanBeforeInterruption.current() ? undefined : true);
+      dirty = false;
+    } finally {
+      interrupted.resume();
+    }
+    expect(await interrupted.pending).toEqual(fail("STALE"));
+    expect(operations).toEqual(refreshTrace(finalRows.rows));
+    expect(leases.size).toBe(1);
+    expect(await readFile(catalog, "utf8")).toBe(refreshedCatalog);
+    expect((await readdir(profile)).sort()).toEqual(["catalog.json", "index"]);
+
+    resetTrace();
+    root = await settle();
+    await cleanHint(root);
+    expect(await indexed("终稿")).toEqual(fail("MISMATCH"));
+    expect(workers).toBe(0);
+    expect(await workspace.reconcileObservedIndex(indexTarget(root, 2)))
+      .toEqual({ ok: true, generation: 3, documents: 2 });
+    expect(operations).toEqual([
+      [1, "open", "reader-only"], [1, "verify-roster", finalRows.rows], [1, "close"], [1, "exit", 0],
+    ]);
+    expect(leases.size).toBe(1);
+    const reconciled = await contentRows(root, finalBody);
+    expect(await indexed("终稿")).toEqual({ ok: true, hits: [{ entry: reconciled.entry, from: 9, to: 11 }] });
+    expect((await readdir(profile)).sort()).toEqual(["catalog.json", "index"]);
+    expect(await readFile(firstPath, "utf8")).toBe(finalBody);
     expect(await readFile(secondPath, "utf8")).toBe(second);
     expect(documents.locations()).toEqual([]);
   } finally {

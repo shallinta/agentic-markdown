@@ -63,7 +63,10 @@ import {
   type SingleFileAuthorization,
 } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
-import { prepareColdAppIndexCache, reopenAppIndexCache } from "../index/app-cache";
+import {
+  prepareColdAppIndexCache, reconcileActiveAppIndexCache, refreshActiveAppIndexCache, reopenAppIndexCache,
+} from "../index/app-cache";
+import type { ColdIndexGuard, ColdIndexInput } from "../index/cold-prepare";
 import { INDEX_LIMITS, keys, natural, record, scalar } from "../index/protocol";
 
 import {
@@ -141,12 +144,23 @@ interface ObservedIndexOptions { requireObserved: true; maxLogicalBytes: number 
 type ExistingIndexSearch =
   | { ok: true; hits: ExistingIndexHit[] }
   | { ok: false; error: IndexScopeError | "INPUT" | "MISSING" | "MISMATCH" | "SCHEMA" | "UNKNOWN" };
-type ObservedIndexPreparation =
-  | { ok: true; generation: number; documents: number }
-  | { ok: false; error: IndexScopeError | "INPUT" | "SCHEMA" | "UNKNOWN" };
+interface ObservedIndexReceipt { ok: true; generation: number; documents: number }
+type ObservedIndexError = IndexScopeError | "INPUT" | "SCHEMA" | "UNKNOWN";
+type ObservedActiveIndexError = ObservedIndexError | "MISSING" | "MISMATCH";
+type ObservedIndexPreparation = ObservedIndexReceipt | { ok: false; error: ObservedIndexError };
+type ObservedIndexReconciliation = ObservedIndexReceipt | { ok: false; error: ObservedActiveIndexError };
+type ObservedIndexRefresh = (ObservedIndexReceipt & { applied: number }) | { ok: false; error: ObservedActiveIndexError };
+interface ObservedIndexTarget { handle: string; scanGeneration: number; expectedIndexGeneration: number }
+
+function validObservedIndexTarget(value: unknown): value is ObservedIndexTarget {
+  return record(value) && keys(value, "expectedIndexGeneration,handle,scanGeneration") &&
+    typeof value.handle === "string" && natural(value.scanGeneration) && natural(value.expectedIndexGeneration);
+}
 
 export interface TrustedWorkspaceService extends WorkspaceService {
   prepareObservedIndex(handle: string, generation: number, signal?: AbortSignal): Promise<ObservedIndexPreparation>;
+  refreshObservedIndex(target: ObservedIndexTarget, signal?: AbortSignal): Promise<ObservedIndexRefresh>;
+  reconcileObservedIndex(target: ObservedIndexTarget, signal?: AbortSignal): Promise<ObservedIndexReconciliation>;
   searchExistingIndex(
     handle: string, generation: number, query: string, signal?: AbortSignal, options?: ObservedIndexOptions
   ): Promise<ExistingIndexSearch>;
@@ -519,6 +533,41 @@ export function createWorkspaceService({
       return failure();
     }
   }
+
+  async function runObservedIndexWrite<Result extends ObservedIndexReceipt, Error extends ObservedActiveIndexError>(
+    handle: string, generation: number, signal: AbortSignal | undefined,
+    write: (input: ColdIndexInput, guard: ColdIndexGuard) => Promise<Result | { ok: false; error: Error }>
+  ) {
+    const scope = captureIndexProof(handle, generation, signal, true);
+    if (!scope.ok) return scope;
+    let current = scope.current;
+    const task = Promise.resolve().then(async (): Promise<Result | { ok: false; error: Error | IndexScopeError | "UNKNOWN" }> => {
+      try {
+        const ticket = await captureIndexRowsOwned(scope);
+        if (!ticket.ok) return ticket;
+        current = ticket.current;
+        const result = await write({
+          scopeKey: ticket.scopeKey,
+          rows: ticket.rows.map(({ id, raw }) => ({ id, raw })),
+        }, { current, verify: ticket.verify });
+        if (!result.ok && result.error === "UNKNOWN") return { ok: false, error: "UNKNOWN" };
+        if (!current()) return scope.failure();
+        return result.ok ? result : { ok: false, error: result.error };
+      } catch (error) {
+        scope.invalidate(error);
+        return scope.failure();
+      }
+    });
+    indexTask = task;
+    try {
+      const result = await task;
+      if (!result.ok && result.error === "UNKNOWN") return result;
+      return current() ? result : scope.failure();
+    } finally {
+      indexTask = undefined;
+    }
+  }
+
   async function openWorkspaceFile(
     root: Root,
     entry: string,
@@ -1763,36 +1812,21 @@ export function createWorkspaceService({
         indexTask = undefined;
       }
     },
-    async prepareObservedIndex(handle, generation, signal) {
-      const scope = captureIndexProof(handle, generation, signal, true);
-      if (!scope.ok) return scope;
-      let current = scope.current;
-      const task = Promise.resolve().then(async (): Promise<ObservedIndexPreparation> => {
-        try {
-          const ticket = await captureIndexRowsOwned(scope);
-          if (!ticket.ok) return ticket;
-          current = ticket.current;
-          const result = await prepareColdAppIndexCache({
-            scopeKey: ticket.scopeKey,
-            rows: ticket.rows.map(({ id, raw }) => ({ id, raw })),
-          }, { current, verify: ticket.verify });
-          if (!result.ok && result.error === "UNKNOWN") return { ok: false, error: "UNKNOWN" };
-          if (!current()) return scope.failure();
-          if (!result.ok) return { ok: false, error: result.error };
-          return { ok: true, generation: result.generation, documents: result.documents };
-        } catch (error) {
-          scope.invalidate(error);
-          return scope.failure();
-        }
-      });
-      indexTask = task;
-      try {
-        const result = await task;
-        if (!result.ok && result.error === "UNKNOWN") return result;
-        return current() ? result : scope.failure();
-      } finally {
-        indexTask = undefined;
-      }
+    prepareObservedIndex(handle, generation, signal) {
+      return runObservedIndexWrite(handle, generation, signal, prepareColdAppIndexCache);
+    },
+    async refreshObservedIndex(target, signal) {
+      if (!validObservedIndexTarget(target)) return { ok: false, error: "INPUT" };
+      const { handle, scanGeneration, expectedIndexGeneration } = target;
+      return runObservedIndexWrite(handle, scanGeneration, signal, (input, guard) =>
+        refreshActiveAppIndexCache({ ...input, expectedGeneration: expectedIndexGeneration }, guard));
+    },
+    async reconcileObservedIndex(target, signal) {
+      if (!validObservedIndexTarget(target)) return { ok: false, error: "INPUT" };
+      const { handle, scanGeneration, expectedIndexGeneration } = target;
+      if (expectedIndexGeneration === Number.MAX_SAFE_INTEGER) return { ok: false, error: "LIMIT" };
+      return runObservedIndexWrite(handle, scanGeneration, signal, (input, guard) =>
+        reconcileActiveAppIndexCache({ ...input, expectedGeneration: expectedIndexGeneration }, guard));
     },
     async searchExistingIndex(handle, generation, query, signal, options) {
       if (!scalar(query, INDEX_LIMITS.query) || !query.trim()) return { ok: false, error: "INPUT" };

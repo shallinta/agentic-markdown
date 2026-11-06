@@ -96,6 +96,13 @@ interface ContentSearchBinding {
   verify(check: () => void): Promise<void>;
   readStandalone?(this: void, maxBytes: number, check: () => void): Promise<Buffer>;
   verifyStandalone?(this: void, check: () => void): Promise<void>;
+  prepareStandaloneSnapshot?(
+    this: void,
+    requestId: string,
+    expectedHash: string,
+    check: () => void,
+    verifyScope: (check: () => void) => Promise<void>
+  ): Promise<DocumentResponse>;
 }
 export interface TrustedDocumentService extends DocumentService {
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
@@ -543,9 +550,11 @@ export function createDocumentService({
     onTiming?.("diskReadMs", performance.now() - readStart);
     return content;
   }
-  async function snapshot(grant: Grant, generation: number, task: Task, maxBytes?: number): Promise<DocumentSnapshot> {
+  async function snapshot(
+    grant: Grant, generation: number, task: Task, maxBytes?: number, guard?: () => void
+  ): Promise<DocumentSnapshot> {
     if (trashGuard(grant.path, grant.fingerprint, grant.directories)) throw new DocumentFailure("BUSY");
-    const content = await stableBytes(grant, () => checkTask(task, generation), maxBytes);
+    const content = await stableBytes(grant, guard ?? (() => checkTask(task, generation)), maxBytes);
     const length = content.length;
     const decodeStart = onTiming ? performance.now() : 0;
     let text: string;
@@ -562,7 +571,9 @@ export function createDocumentService({
       content[0] === 0xef && content[1] === 0xbb && content[2] === 0xbf;
     if (fidelity.bom !== byteBom) throw new DocumentFailure("INVALID_UTF8");
     onTiming?.("decodeAnalyzeMs", performance.now() - decodeStart);
+    guard?.();
     const writeCapability = await capability(grant);
+    guard?.();
     const previous = identities.get(grant.identityKey);
     const recovered = !previous ? mru?.lookup(grant.path, grant.fingerprint) : undefined;
     const occupied = recovered && [...identities.entries()].some(([key, value]) => value.documentId === recovered && key !== grant.identityKey);
@@ -772,21 +783,27 @@ export function createDocumentService({
           };
           if (grant.explicitStandalone === true && !scope) {
             const directories = grant.directories;
+            const checkBinding = () => {
+              if (!current() || grant.explicitStandalone !== true || grant.directories !== directories)
+                throw new DocumentFailure("INVALID_HANDLE");
+            };
+            const checkTrash = () => {
+              if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
+            };
+            const checkRead = (callerCheck: () => void) => () => {
+              try {
+                callerCheck();
+              } catch {
+                throw new DocumentFailure("CANCELLED");
+              }
+              checkBinding();
+              if (!admissionCurrent()) throw new DocumentFailure("CANCELLED");
+              checkTrash();
+            };
             const withStandalone = async <T>(
-              callerCheck: () => void,
-              action: (opened: Grant, check: () => void) => Promise<T>
+              check: () => void,
+              action: (opened: Grant) => Promise<T>
             ) => {
-              const check = () => {
-                try {
-                  callerCheck();
-                } catch {
-                  throw new DocumentFailure("CANCELLED");
-                }
-                if (!current() || grant.explicitStandalone !== true || grant.directories !== directories)
-                  throw new DocumentFailure("INVALID_HANDLE");
-                if (!admissionCurrent()) throw new DocumentFailure("CANCELLED");
-                if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
-              };
               try {
                 check();
                 const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -794,7 +811,7 @@ export function createDocumentService({
                 let result: T;
                 try {
                   check();
-                  result = await action({ ...grant, file }, check);
+                  result = await action({ ...grant, file });
                   check();
                 } finally {
                   await file.close();
@@ -808,10 +825,66 @@ export function createDocumentService({
             binding.readStandalone = async (maxBytes, check) => {
               if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.bytes)
                 throw new DocumentFailure("INVALID_REQUEST");
-              return withStandalone(check, (opened, current) => stableBytes(opened, current, maxBytes));
+              const current = checkRead(check);
+              return withStandalone(current, (opened) => stableBytes(opened, current, maxBytes));
             };
             binding.verifyStandalone = (check) =>
-              withStandalone(check, async (opened) => { await verify(opened); });
+              withStandalone(checkRead(check), async (opened) => { await verify(opened); });
+            binding.prepareStandaloneSnapshot = async (requestId, expectedHash, callerCheck, verifyScope) => {
+              if (!validate({ protocolVersion: 1, requestId, handle }, true) ||
+                  !/^[a-f0-9]{64}$/.test(expectedHash))
+                return failure(requestId, "INVALID_REQUEST");
+              if (!admissionCurrent()) return failure(requestId, "CANCELLED");
+              const isObserved = () => observations.get(handle)?.documentId === identity.documentId;
+              if (isObserved()) return failure(requestId, "BUSY");
+              const watchEpoch = observationEpochs.get(handle)?.epoch;
+              const generation = epoch;
+              const ownAuthorization = ++searchAdmissionGeneration;
+              const { task, promise } = taskFor(requestId);
+              task.handle = handle;
+              // A superseding document action resolves cancellation early. The
+              // workspace still owns this preparation until its descriptor closes.
+              const finished = Promise.withResolvers<void>();
+              enqueue(task, async () => {
+                const check = () => {
+                  callerCheck();
+                  checkTask(task, generation);
+                  checkBinding();
+                  if (isObserved()) throw new DocumentFailure("BUSY");
+                  if (disposing || running !== task || selecting || revealing ||
+                      saving || writeBarrier || createAdmissionOwner || folderMutationLease ||
+                      acceptance.busy() ||
+                      searchAdmissionGeneration !== ownAuthorization || saveStartGeneration !== save ||
+                      selectBarrierGeneration !== barrier || observationEpochs.get(handle)?.epoch !== watchEpoch ||
+                      grants.size !== grantCount || !captured.every((binding) => binding.current()))
+                    throw new DocumentFailure("CANCELLED");
+                  checkTrash();
+                };
+                try {
+                  check();
+                  await verifyScope(check);
+                  const next = await withStandalone(check, async (opened) => {
+                    const snapshotValue = await snapshot(opened, generation, task, CONTENT_SEARCH_LIMITS.bytes, check);
+                    if (snapshotValue.hash !== expectedHash) throw new DocumentFailure("FILE_CHANGED");
+                    await verifyScope(check);
+                    const bytes = await stableBytes(opened, check, CONTENT_SEARCH_LIMITS.bytes);
+                    if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
+                      throw new DocumentFailure("FILE_CHANGED");
+                    return snapshotValue;
+                  });
+                  check();
+                  commit(grant, next, task, generation);
+                  return result(requestId, next);
+                } catch (error) {
+                  return failure(requestId, codeOf(error));
+                } finally {
+                  finished.resolve();
+                }
+              });
+              const response = await promise;
+              await finished.promise;
+              return response;
+            };
           }
         }
         return { binding, current };

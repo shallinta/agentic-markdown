@@ -2,6 +2,8 @@
 
 ## 文件夹正文搜索与索引（F-064）
 
+F-064u 的 alpha.207 验证了独立文件的内部定位准备。打开的标签复用原版本，关闭的标签通过原句柄准备快照。两种路径都要核对查询所用的正文摘要。独立文件搜索及定位入口仍待窗口接入。见[F-064u 迭代](iterations/F-064u-prepare-retained-search-location.md)。
+
 F-064t 的 alpha.206 验证了目录与保留授权的独立文件可共用一次内部有界查询。可见父目录已有同一文件时只搜索一次。普通窗口仍使用现有的文件夹搜索，独立文件入口和定位由后续接入。见[F-064t 迭代](iterations/F-064t-bounded-mixed-workspace-search.md)。
 
 F-064s 的 alpha.205 验证了独立文件关闭标签后可用原授权读取稳定正文。读取限 64 KiB，保持原文档版本和正文基线。独立文件仍可从文件树重开，普通窗口搜索继续覆盖文件夹。见[F-064s 迭代](iterations/F-064s-retained-standalone-search-snapshot.md)。

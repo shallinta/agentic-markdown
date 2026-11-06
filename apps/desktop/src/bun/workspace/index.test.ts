@@ -23,6 +23,7 @@ import type {
   WorkspaceRoot,
 } from "../../shared/workspace";
 import { createDocumentService } from "../documents";
+import { checkWriteCapability } from "../documents/write-capability";
 
 import { authorizeRoot } from "./authorization";
 import { createHiddenPreferences } from "./preferences";
@@ -649,6 +650,210 @@ test("content search preparation cannot publish a snapshot invalidated at the co
   scenario = "cancel";
   expect(await prepare("moved!")).toEqual({ ok: false, error: "CANCELLED" });
   expect(documents.locations()).toEqual([]);
+});
+
+const searchHash = (text: string) => createHash("sha256").update(text).digest("hex");
+const documentEnvelope = () => ({ protocolVersion: 1 as const, requestId: crypto.randomUUID() });
+
+async function pickSearchFile(file: string) {
+  selected = file;
+  const picked = await documents.select(documentEnvelope());
+  if (!picked.ok || !picked.snapshot) throw Error("Expected a retained picker grant");
+  return picked.snapshot;
+}
+
+test("retained search preparation reopens the same closed grant and reuses the exact open version", async () => {
+  const file = join(directory, "standalone.md");
+  const original = "\uFEFF# 标题\r\n🎯 target\r\n";
+  const revised = "\uFEFF# 改写\r\n🎯 target\r\n";
+  await writeFile(file, original);
+  const initial = await pickSearchFile(file);
+  const { handle, documentId, revision, hash, locationId } = initial;
+  const active = { handle, documentId, revision, hash, watchEpoch: 1, watchToken: crypto.randomUUID() };
+  expect(await documents.observe({ ...documentEnvelope(), ...active, active: true }))
+    .toMatchObject({ ok: true });
+  const prepare = (
+    expectedHash: string,
+    binding?: { handle: string; documentId: string; revision: number; hash: string },
+  ) => workspace.prepareRetainedContentSearchDocument({
+    roots: [], entry: handle, expectedHash, ...(binding ? { binding } : {}),
+  }, crypto.randomUUID());
+  const locations = documents.locations();
+  const assets = documents.assetEpochs();
+  const baseline = () => documents.captureContentSearchBindings([handle])?.bindings[0];
+  expect(await prepare(hash)).toEqual({ ok: false, error: "BUSY" });
+  const version = { handle, documentId, revision, hash };
+  expect(await prepare(hash, { ...version, revision: revision + 1 })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare(hash, version)).toEqual({ ok: true, target: { kind: "reuse", ...version } });
+  expect(baseline()).toMatchObject(version);
+  expect(await documents.observe({ ...documentEnvelope(), ...active, active: false }))
+    .toMatchObject({ ok: true });
+
+  const same = await prepare(hash);
+  if (!same.ok || !("snapshot" in same.target)) throw Error(JSON.stringify(same));
+  expect(same.target).toMatchObject({
+    kind: "retained",
+    snapshot: { ...version, locationId, text: original, explicitStandalone: true },
+  });
+  await writeFile(file, revised);
+  expect(await prepare(hash)).toEqual({ ok: false, error: "STALE" });
+  expect(baseline()).toMatchObject(version);
+  const query = await workspace.searchContentCandidatesForWorkspace({
+    roots: [], standaloneHandles: [handle], handles: [], query: "target",
+  });
+  const coverage = query.ok ? query.coverage[0] : undefined;
+  if (coverage?.entry !== handle) throw Error("Expected the current retained search hit");
+  expect(coverage.hash).toBe(searchHash(revised));
+  const updated = await prepare(coverage.hash);
+  if (!updated.ok || !("snapshot" in updated.target)) throw Error(JSON.stringify(updated));
+  expect(updated.target).toMatchObject({
+    kind: "retained",
+    snapshot: { handle, documentId, locationId, revision: revision + 1, hash: searchHash(revised), text: revised },
+  });
+  expect(updated.target.snapshot.mirror).toMatchObject({ revision: 0, hash: searchHash(revised) });
+  expect(updated.target.snapshot.mirror?.token).not.toBe(initial.mirror?.token);
+  expect(baseline()).toMatchObject({ handle, documentId, revision: revision + 1, hash: searchHash(revised) });
+  expect(documents.locations()).toEqual(locations);
+  expect(documents.assetEpochs()).toEqual(assets);
+  expect(await readFile(file, "utf8")).toBe(revised);
+});
+
+test("retained preparation rejects duplicate grants and files absorbed by a visible root", async () => {
+  const originalPath = join(directory, "original.md");
+  const aliasPath = join(directory, "alias.md");
+  const hiddenPath = join(directory, ".hidden.md");
+  await writeFile(originalPath, "target");
+  await symlink(originalPath, aliasPath);
+  await writeFile(hiddenPath, "hidden target");
+  const original = await pickSearchFile(originalPath);
+  const alternate = await pickSearchFile(aliasPath);
+  const hidden = await pickSearchFile(hiddenPath);
+  expect(alternate.handle).not.toBe(original.handle);
+  expect(alternate.documentId).toBe(original.documentId);
+  const input = { roots: [], entry: original.handle, expectedHash: original.hash };
+  const alternateBinding = {
+    handle: alternate.handle, documentId: alternate.documentId, revision: alternate.revision, hash: alternate.hash,
+  };
+  const prepare = (data: Parameters<typeof workspace.prepareRetainedContentSearchDocument>[0] = input) =>
+    workspace.prepareRetainedContentSearchDocument(data, crypto.randomUUID());
+  expect(await prepare({ ...input, binding: alternateBinding })).toEqual({ ok: false, error: "INVALID" });
+  expect(await prepare()).toEqual({ ok: false, error: "STALE" });
+  expect(await documents.release({ ...documentEnvelope(), handle: alternate.handle })).toMatchObject({ ok: true });
+  expect(await prepare()).toMatchObject({ ok: true, target: { kind: "retained", snapshot: { handle: original.handle } } });
+
+  selected = directory;
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const roots = [{ handle: root.handle, generation: root.generation }];
+  expect(await prepare()).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare({ ...input, roots })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare({ roots, entry: hidden.handle, expectedHash: hidden.hash }))
+    .toMatchObject({ ok: true, target: { kind: "retained", snapshot: { handle: hidden.handle, text: "hidden target" } } });
+  expect(documents.locations().map(({ handle }) => handle)).toEqual([original.handle, hidden.handle]);
+});
+
+test("retained preparation refuses late disk, cancellation and Trash changes without adopting the new baseline", async () => {
+  await workspace.dispose();
+  await documents.dispose();
+  const file = join(directory, "guarded.md");
+  const original = "target before";
+  const revised = "target after";
+  function capabilityGate() {
+    return { entered: Promise.withResolvers<void>(), resume: Promise.withResolvers<void>() };
+  }
+  let gate: ReturnType<typeof capabilityGate> | undefined;
+  documents = createDocumentService({
+    pickFile: () => Promise.resolve(selected),
+    async capability(grant) {
+      const result = await checkWriteCapability(grant);
+      const state = gate;
+      if (state) {
+        gate = undefined;
+        state.entered.resolve();
+        await state.resume.promise;
+      }
+      return result;
+    },
+  });
+  workspace = createWorkspaceService({ documents, pickDirectory: () => Promise.resolve(null) });
+  await writeFile(file, original);
+  const initial = await pickSearchFile(file);
+  const { handle, documentId, revision, hash, locationId } = initial;
+  const otherFile = join(directory, "other.md");
+  await writeFile(otherFile, "another document");
+  const other = await pickSearchFile(otherFile);
+  const locations = documents.locations();
+  const prepare = (text: string, signal?: AbortSignal) => workspace.prepareRetainedContentSearchDocument({
+    roots: [], entry: handle, expectedHash: searchHash(text),
+  }, crypto.randomUUID(), signal);
+  async function rejectLate(
+    text: string, invalidate: () => void | Promise<void>, code: "CANCELLED" | "BUSY" | "STALE",
+    signal?: AbortSignal,
+  ) {
+    const state = capabilityGate();
+    gate = state;
+    const pending = prepare(text, signal);
+    try {
+      await Promise.race([state.entered.promise, pending.then((result) => {
+        throw Error("Expected retained capability check before completion: " + JSON.stringify(result));
+      })]);
+      await invalidate();
+    } finally {
+      gate = undefined;
+      state.resume.resolve();
+    }
+    expect(await pending).toEqual({ ok: false, error: code });
+    expect(documents.locations()).toEqual(locations);
+    expect(documents.captureContentSearchBindings([handle])?.bindings[0])
+      .toMatchObject({ handle, documentId, revision, hash });
+  }
+
+  await rejectLate(original, () => writeFile(file, revised), "STALE");
+  const cancel = new AbortController();
+  await rejectLate(revised, () => { cancel.abort(); }, "CANCELLED", cancel.signal);
+  const canonical = await realpath(file);
+  await rejectLate(revised, () => {
+    documents.setTrashGuard((path) => path === canonical);
+  }, "BUSY");
+  documents.setTrashGuard(() => false);
+
+  const state = capabilityGate();
+  gate = state;
+  const superseded = prepare(revised);
+  let queued: ReturnType<typeof documents.read> | undefined;
+  try {
+    await Promise.race([state.entered.promise, superseded.then(() => { throw Error("Expected held preparation"); })]);
+    queued = documents.read({ ...documentEnvelope(), handle: other.handle });
+    expect(await Promise.race([
+      superseded.then(() => true),
+      Bun.sleep(50).then(() => false),
+    ])).toBe(false);
+  } finally {
+    gate = undefined;
+    state.resume.resolve();
+  }
+  expect(await superseded).toEqual({ ok: false, error: "CANCELLED" });
+  expect(await queued).toMatchObject({ ok: true, snapshot: { handle: other.handle } });
+  expect(documents.captureContentSearchBindings([handle])?.bindings[0])
+    .toMatchObject({ handle, documentId, revision, hash });
+
+  expect(await prepare(revised)).toMatchObject({
+    ok: true,
+    target: { kind: "retained", snapshot: { handle, documentId, locationId, revision: revision + 1, text: revised } },
+  });
+
+  const oversized = "x".repeat(65_537);
+  await writeFile(file, oversized);
+  expect(await prepare(oversized)).toEqual({ ok: false, error: "LIMIT" });
+  await rename(file, join(directory, "old.md"));
+  await writeFile(file, "replaced target");
+  expect(await prepare("replaced target")).toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations()).toEqual(locations);
+  expect(documents.captureContentSearchBindings([handle])?.bindings[0])
+    .toMatchObject({ handle, documentId, revision: revision + 1, hash: searchHash(revised) });
+  expect(await documents.release({ ...documentEnvelope(), handle })).toMatchObject({ ok: true });
+  expect(await prepare("replaced target")).toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations().map(({ handle }) => handle)).toEqual([other.handle]);
 });
 
 test("content search reuse respects a Trash receipt left quarantined after its lease", async () => {

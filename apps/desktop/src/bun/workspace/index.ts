@@ -5,14 +5,17 @@ import { basename, dirname, join, relative } from "node:path";
 
 import type {
   ContentSearchCandidates,
+  ContentSearchDocumentBinding,
   ContentSearchInput,
   ContentSearchPrepareInput,
   ContentSearchPrepared,
   ContentSearchRootSetInput,
+  ContentSearchScopeRoot,
   SearchMapping,
 } from "../../shared/content-search";
 import {
   CONTENT_SEARCH_LIMITS,
+  validContentSearchDocumentBinding,
   validContentSearchPrepareRequest,
   validContentSearchScopeRoots,
 } from "../../shared/content-search";
@@ -26,8 +29,10 @@ import {
 } from "../../shared/content-search-filters";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
+import type { DocumentSnapshot } from "../../shared/documents";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
 import { perfUuid } from "../../shared/perf-lab";
+import { hashPattern } from "../../shared/save-content";
 import {
   WORKSPACE_CACHE_BYTES,
   WORKSPACE_MAX_ROOTS,
@@ -52,7 +57,7 @@ import type {
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 import { DocumentPathError, authorizeSingleFile } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
-import { INDEX_LIMITS, record, scalar } from "../index/protocol";
+import { INDEX_LIMITS, keys, record, scalar } from "../index/protocol";
 
 import {
   authorizeRoot,
@@ -107,6 +112,21 @@ interface Root {
 interface Owner extends DocumentScope {
   root: Root;
 }
+interface ContentSearchRetainedPrepareInput {
+  roots: readonly ContentSearchScopeRoot[];
+  entry: string;
+  expectedHash: string;
+  binding?: ContentSearchDocumentBinding;
+}
+export type ContentSearchRetainedPrepared =
+  | Extract<ContentSearchPrepared, { ok: false }>
+  | {
+      ok: true;
+      target:
+        | { kind: "retained"; snapshot: DocumentSnapshot }
+        | ({ kind: "reuse" } & ContentSearchDocumentBinding);
+    };
+
 export interface TrustedWorkspaceService extends WorkspaceService {
   searchSnapshot(
     root: string,
@@ -131,6 +151,11 @@ export interface TrustedWorkspaceService extends WorkspaceService {
     requestId: string,
     signal?: AbortSignal
   ): Promise<ContentSearchPrepared>;
+  prepareRetainedContentSearchDocument(
+    input: ContentSearchRetainedPrepareInput,
+    requestId: string,
+    signal?: AbortSignal
+  ): Promise<ContentSearchRetainedPrepared>;
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
@@ -1164,6 +1189,26 @@ export function createWorkspaceService({
       return lease;
     }
   });
+  function captureSearchRoster(requested: readonly ContentSearchScopeRoot[], signal?: AbortSignal) {
+    const roster = [...roots];
+    const workspaceEpoch = epoch;
+    const selectionGeneration = searchSelectionGeneration;
+    const ready = () => !disposed && !indexDisposing && !workerStopped &&
+      !selecting && !removalAdmission && !scanParked && !preferencePending &&
+      !removeStandalone.busy() && !folderRemoval.busy() && !signal?.aborted;
+    if (disposed || indexDisposing || workerStopped)
+      return { ok: false, error: "UNAVAILABLE" } as const;
+    if (!ready()) return { ok: false, error: "BUSY" } as const;
+    if (requested.length !== roster.length || requested.some(({ handle, generation }, index) =>
+      roster[index]?.meta.handle !== handle || roster[index]?.meta.generation !== generation))
+      return { ok: false, error: "STALE" } as const;
+    return {
+      ok: true as const,
+      current: () => ready() && workspaceEpoch === epoch &&
+        selectionGeneration === searchSelectionGeneration && roots.length === roster.length &&
+        roster.every((root, index) => roots[index] === root),
+    };
+  }
   async function searchContentCandidatesForRoots(
     input: ContentSearchRootSetInput,
     signal?: AbortSignal,
@@ -1201,23 +1246,8 @@ export function createWorkspaceService({
     if (!rootless && !validContentSearchScopeRoots(requestedRoots))
       return { ok: false, error: "INVALID" };
     const requested = rootless ? [] : input.roots;
-    const roster = mixed ? [...roots] : undefined;
-    const workspaceEpoch = epoch;
-    const selectionGeneration = searchSelectionGeneration;
-    const workspaceReady = () => !disposed && !indexDisposing && !workerStopped &&
-      !selecting && !removalAdmission && !scanParked && !preferencePending &&
-      !removeStandalone.busy() && !folderRemoval.busy() && !signal?.aborted;
-    if (roster) {
-      if (disposed || indexDisposing || workerStopped)
-        return { ok: false, error: "UNAVAILABLE" };
-      if (!workspaceReady()) return { ok: false, error: "BUSY" };
-      if (requested.length !== roster.length || requested.some(({ handle, generation }, index) =>
-        roster[index]?.meta.handle !== handle || roster[index]?.meta.generation !== generation))
-        return { ok: false, error: "STALE" };
-    }
-    const workspaceCurrent = () => !roster ||
-      (workspaceReady() && workspaceEpoch === epoch && selectionGeneration === searchSelectionGeneration &&
-        roots.length === roster.length && roster.every((root, index) => roots[index] === root));
+    const roster = mixed ? captureSearchRoster(requested, signal) : undefined;
+    if (roster?.ok === false) return roster;
 
     const captures: (Extract<ReturnType<typeof captureIndexRoot>, { ok: true }> & {
       searched: ReadonlyMap<string, ScanFile>;
@@ -1256,7 +1286,7 @@ export function createWorkspaceService({
     const admittedHandles = [...new Set([...handles, ...retainedHandles])];
     const admission = documents.captureContentSearchBindings(admittedHandles);
     if (!admission) return { ok: false, error: "UNAVAILABLE" };
-    const current = () => workspaceCurrent() && admission.current() &&
+    const current = () => (!roster || roster.current()) && admission.current() &&
       captures.every((capture) => capture.current());
     const check = () => {
       if (!current()) throw Error("Content search invalidated");
@@ -1575,6 +1605,106 @@ export function createWorkspaceService({
         };
       } catch (error) {
         return failure(error instanceof DocumentPathError ? error.code : "UNAVAILABLE");
+      }
+    },
+    async prepareRetainedContentSearchDocument(input, requestId, signal) {
+      if (signal?.aborted) return { ok: false, error: "CANCELLED" };
+      if (indexTask) return { ok: false, error: "BUSY" };
+      if (!record(input)) return { ok: false, error: "INVALID" };
+      const { entry, expectedHash } = input;
+      const hasBinding = Object.prototype.hasOwnProperty.call(input, "binding");
+      const binding = hasBinding ? input.binding : undefined;
+      if (!keys(input, hasBinding ? "binding,entry,expectedHash,roots" : "entry,expectedHash,roots") ||
+          !perfUuid(requestId) || !perfUuid(entry) ||
+          typeof expectedHash !== "string" || !hashPattern.test(expectedHash) ||
+          (hasBinding && (!validContentSearchDocumentBinding(binding) ||
+            binding.handle !== entry || binding.hash !== expectedHash)))
+        return { ok: false, error: "INVALID" };
+      const requestedRoots: unknown = input.roots;
+      const requested = validContentSearchScopeRoots(requestedRoots) ? requestedRoots : [];
+      if (!requested.length && (!Array.isArray(requestedRoots) || requestedRoots.length ||
+          Object.keys(requestedRoots).length))
+        return { ok: false, error: "INVALID" };
+      const roster = captureSearchRoster(requested, signal);
+      if (!roster.ok) return roster;
+      const captures: Extract<ReturnType<typeof captureIndexRoot>, { ok: true }>[] = [];
+      for (const { handle, generation } of requested) {
+        const captured = captureIndexRoot(handle, generation, signal);
+        if (!captured.ok) return captured;
+        captures.push(captured);
+      }
+      const admission = documents.captureContentSearchBindings([entry]);
+      if (!admission) return { ok: false, error: "BUSY" };
+      const retained = admission.bindings[0];
+      if (!retained?.readStandalone || !retained.prepareStandaloneSnapshot)
+        return { ok: false, error: "STALE" };
+      const { path, fingerprint, documentId, revision, hash, readStandalone, prepareStandaloneSnapshot } = retained;
+      const visible = () => captures.some(({ root, entries }) => {
+        const node = root.byPath.get(path);
+        return node !== undefined && entries.has(node.handle);
+      });
+      const peers = documents.locations().filter((item) => item.path === path);
+      if (visible() || peers.length !== 1 || peers[0].handle !== entry ||
+          (binding && (binding.documentId !== documentId || binding.revision !== revision || binding.hash !== hash)))
+        return { ok: false, error: "STALE" };
+      const check = () => {
+        if (signal?.aborted) throw new DocumentPathError("CANCELLED");
+        if (!roster.current() || captures.some((captured) => !captured.current()) || visible())
+          throw new DocumentPathError("FILE_CHANGED");
+      };
+      const verifyScope = async (current: () => void) => {
+        try {
+          for (const { root } of captures) await verifyRoot(root.authorization, current);
+          current();
+        } catch (error) {
+          if (record(error) && (error.code === "ENOENT" || error.code === "ENOTDIR"))
+            throw new DocumentPathError("FILE_CHANGED");
+          throw error;
+        }
+      };
+      const failRetained = (code: unknown): ContentSearchRetainedPrepared => ({
+        ok: false,
+        error: signal?.aborted || code === "CANCELLED" ? "CANCELLED"
+          : code === "BUSY" ? "BUSY"
+          : code === "TOO_LARGE" ? "LIMIT"
+          : code === "FILE_CHANGED" || code === "INVALID_HANDLE" || code === "INVALID_UTF8"
+            ? "STALE" : "UNAVAILABLE",
+      });
+      const task = Promise.resolve().then(async (): Promise<ContentSearchRetainedPrepared> => {
+        if (!binding) {
+          const prepared = await prepareStandaloneSnapshot(requestId, expectedHash, check, verifyScope);
+          if (!prepared.ok) return failRetained(prepared.error);
+          return prepared.snapshot
+            ? { ok: true, target: { kind: "retained", snapshot: prepared.snapshot } }
+            : { ok: false, error: "UNAVAILABLE" };
+        }
+        const current = () => {
+          check();
+          if (!admission.current()) throw new DocumentPathError("FILE_CHANGED");
+        };
+        await verifyScope(current);
+        const bytes = await readStandalone(INDEX_LIMITS.bytes, current);
+        if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
+          throw new DocumentPathError("FILE_CHANGED");
+        current();
+        return { ok: true, target: { kind: "reuse", handle: entry, documentId, revision, hash } };
+      });
+      indexTask = task;
+      try {
+        const prepared = await task;
+        if (prepared.ok) {
+          check();
+          const currentPeers = documents.locations().filter((item) => item.path === path);
+          if (currentPeers.length !== 1 || currentPeers[0].handle !== entry ||
+              currentPeers[0].fingerprint !== fingerprint || currentPeers[0].documentId !== documentId ||
+              (prepared.target.kind === "reuse" && !admission.current()))
+            return { ok: false, error: "STALE" };
+        }
+        return prepared;
+      } catch (error) {
+        return failRetained(record(error) ? error.code : undefined);
+      } finally {
+        indexTask = undefined;
       }
     },
     createFolder:(value)=>folders.request(value),

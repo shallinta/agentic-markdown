@@ -170,7 +170,7 @@ export function validContentSearchScopeRoots(
   return true;
 }
 
-function validBinding(value: unknown): value is ContentSearchDocumentBinding {
+export function validContentSearchDocumentBinding(value: unknown): value is ContentSearchDocumentBinding {
   return (
     perfRecord(value) &&
     exact(value, ["handle", "documentId", "revision", "hash"]) &&
@@ -205,7 +205,7 @@ export function validContentSearchPrepareRequest(
     digest(value.expectedHash) &&
     (exact(value, keys) ||
       (exact(value, [...keys, "binding"]) &&
-        validBinding(value.binding) &&
+        validContentSearchDocumentBinding(value.binding) &&
         value.binding.hash === value.expectedHash))
   );
 }
@@ -237,7 +237,7 @@ export function validContentSearchPrepareResponse(
   if (binding) {
     return (
       kind === "reuse" &&
-      validBinding(target) &&
+      validContentSearchDocumentBinding(target) &&
       target.handle === binding.handle &&
       target.documentId === binding.documentId &&
       target.revision === binding.revision &&

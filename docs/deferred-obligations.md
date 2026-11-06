@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064u 独立文件定位准备（2026-11-06）
+
+alpha.207 已验证内部保留句柄定位准备。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。混合查询与定位的传输、窗口入口由后续切片承接。见[F-064u 迭代](iterations/F-064u-prepare-retained-search-location.md)。
+
 ## F-064t 有界混合查询（2026-11-06）
 
 alpha.206 已验证内部目录与独立文件混合查询。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。独立文件定位、查询传输与窗口接入由后续切片承接。见[F-064t 迭代](iterations/F-064t-bounded-mixed-workspace-search.md)。

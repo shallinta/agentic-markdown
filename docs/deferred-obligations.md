@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064aj 内部工作区严格只读查询（2026-11-06）
+
+alpha.222 已验有界内部授权查询、取消和终态复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。成本、正式接入、撤权处置、配额及最终离线继续承接。见[F-064aj 迭代](iterations/F-064aj-trusted-workspace-readonly-index.md)。
+
 ## F-064ai 原生索引正文名册核对（2026-11-06）
 
 alpha.221 已验证同代失配、原生边界与实际包内核对。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。正式接入、撤权处置、配额及最终离线继续承接。见[F-064ai 迭代](iterations/F-064ai-verify-native-index-roster.md)。

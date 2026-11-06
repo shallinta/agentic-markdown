@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064aj 的 alpha.222 已验证内部工作区可以查询匹配的现有私有索引，命中使用当次扫描条目。普通窗口仍使用直接搜索。见[F-064aj 迭代](iterations/F-064aj-trusted-workspace-readonly-index.md)。
+
 F-064ai 的 alpha.221 已验证严格重开时核对原生索引实际保存的全部行。名册失配时拒绝查询，普通窗口仍使用直接搜索。见[F-064ai 迭代](iterations/F-064ai-verify-native-index-roster.md)。
 
 F-064ah 的 alpha.220 已验证现有私有索引的严格只读重开。范围和正文名册一致才启动原生查询，普通窗口仍使用直接搜索。见[F-064ah 迭代](iterations/F-064ah-exact-index-readonly-reopen.md)。

@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 草稿恢复（F-066）
+
+F-066b 已验证私有检查点的排他发布与跨进程读回，目前是合成文件实验，尚无用户可用的草稿恢复入口。见[F-066b 迭代](iterations/F-066b-private-checkpoint-publication.md)。
+
 ## 独立阅读窗口的已保存快照（F-021d）
 
 F-021d 在 alpha.263 实验入口验证当前已保存文档可投递到独立阅读窗口，首轮范围 64 KiB。打开后显示该次快照，主窗后续编辑独立进行。见[F-021d 迭代](iterations/F-021d-saved-reading-snapshot-probe.md)。

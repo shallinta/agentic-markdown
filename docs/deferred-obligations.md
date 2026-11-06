@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-066b 私有检查点排他发布（2026-11-07）
+
+隔离验证已完成。OBL-036 仍承接真实草稿写入、整理、关闭及恢复。OBL-034、OBL-065、OBL-067 按原责任跟踪。见[F-066b 迭代](iterations/F-066b-private-checkpoint-publication.md)。
+
 ## F-021d 已保存快照投递实验（2026-11-06）
 
 alpha.263 已验证现有授权内的已保存快照与单向投递。OBL-029 仍承接主题迁移，完整正文容量、正式入口、未保存同步及最终离线待后续。见[F-021d 迭代](iterations/F-021d-saved-reading-snapshot-probe.md)。

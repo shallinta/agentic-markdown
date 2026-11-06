@@ -46,6 +46,10 @@ const queryWorkspace = () => ({
   op: "query-workspace" as const,
   standaloneHandles: [id(), id()],
 });
+const streamQuery = () => ({ ...query(), fragments: true as const, stream: true as const });
+const streamWorkspace = () => ({ ...queryWorkspace(), fragments: true as const, stream: true as const });
+const cancelQuery = (targetRequestId: string) => ({ ...envelope(), op: "cancel" as const, targetRequestId });
+const emptySearch: ContentSearchCandidates = { ok: true, coverage: [], mappings: [] };
 const prepareRetained = () => ({
   ...envelope(),
   op: "prepare-retained" as const,
@@ -422,6 +426,199 @@ test.each(["cancel", "suspend"] as const)(
     expect(await rpc.run(query())).toMatchObject({ ok: true });
   }
 );
+
+test("stream replacements retain only the latest admitted snapshot until the active query settles", async () => {
+  const firstGate = Promise.withResolvers<ContentSearchCandidates>();
+  const lastGate = Promise.withResolvers<ContentSearchCandidates>();
+  type ProgressSink = (event: ContentSearchFileProgress) => void;
+  const firstStarted = Promise.withResolvers<{ signal: AbortSignal; emit?: ProgressSink }>();
+  const lastStarted = Promise.withResolvers<{ signal: AbortSignal; emit?: ProgressSink }>();
+  const first = streamQuery();
+  const middle = streamWorkspace();
+  const last = {
+    ...streamWorkspace(), query: "新😀", handles: [id()],
+    fileFilters: ["笔记"], pathFilters: [{ kind: "path" as const, value: "小组" }],
+  };
+  const snapshot = structuredClone(last);
+  const calls: string[] = [];
+  const output: ContentSearchProgress[] = [];
+  const rpc = createContentSearchRPC({
+    searchContentCandidates(input, signal, emit) {
+      if (!signal) throw Error("Missing active stream abort signal");
+      calls.push(input.query);
+      firstStarted.resolve({ signal, emit });
+      return firstGate.promise;
+    },
+    searchContentCandidatesForWorkspace(input, signal, emit) {
+      if (!signal) throw Error("Missing latest stream abort signal");
+      calls.push(input.query);
+      expect(input).toMatchObject(snapshot);
+      lastStarted.resolve({ signal, emit });
+      return lastGate.promise;
+    },
+    prepareRetainedContentSearchDocument: () => Promise.resolve({ ok: false, error: "STALE" }),
+  }, undefined, event => output.push(event));
+  rpc.setReady(true);
+  const firstResult = rpc.run(first);
+  const active = await Promise.race([
+    firstStarted.promise, firstResult.then(() => { throw Error("Initial stream settled without entering workspace"); }),
+  ]);
+  if (!active.emit) throw Error("Missing active stream progress");
+  const firstEntry = id();
+  active.emit({ sequence: 1, entry: firstEntry, kind: "redacted" });
+  expect(await rpc.run(first)).toMatchObject({ error: "BUSY" });
+  expect(active.signal.aborted).toBe(false);
+
+  const middleResult = rpc.run(middle);
+  expect(active.signal.aborted).toBe(true);
+  expect(await rpc.run(middle)).toMatchObject({ error: "BUSY" });
+  const lastResult = rpc.run(last);
+  expect(await middleResult).toMatchObject({ requestId: middle.requestId, error: "CANCELLED" });
+  expect(await rpc.run(cancelQuery(middle.requestId))).toMatchObject({ error: "STALE" });
+  expect(await rpc.run(cancelQuery(first.requestId))).toMatchObject({ ok: true, op: "cancel" });
+  expect(await rpc.run(query())).toMatchObject({ error: "BUSY" });
+  expect(await rpc.run(queryRoots())).toMatchObject({ error: "BUSY" });
+  expect(await rpc.prepare(prepareRetained())).toMatchObject({ error: "BUSY" });
+  active.emit({ sequence: 2, entry: id(), kind: "redacted" });
+  expect(output).toHaveLength(1);
+  expect(calls).toEqual([first.query]);
+
+  last.query = "已修改";
+  last.roots[0].handle = id();
+  last.roots[1].generation++;
+  last.standaloneHandles.reverse();
+  last.handles[0] = id();
+  last.fileFilters[0] = "无关";
+  last.pathFilters[0].value = "其他目录";
+  let drained = false;
+  const drain = rpc.drain().then(() => { drained = true; });
+  await Promise.resolve();
+  expect(drained).toBe(false);
+  firstGate.resolve(emptySearch);
+  expect(await firstResult).toMatchObject({ requestId: first.requestId, error: "CANCELLED" });
+  const latest = await Promise.race([
+    lastStarted.promise, lastResult.then(() => { throw Error("Latest stream settled without entering workspace"); }),
+  ]);
+  expect(calls).toEqual([first.query, snapshot.query]);
+  expect(await rpc.run(cancelQuery(first.requestId))).toMatchObject({ error: "STALE" });
+  expect(drained).toBe(false);
+  expect(latest.signal.aborted).toBe(false);
+  active.emit({ sequence: 2, entry: id(), kind: "redacted" });
+  if (!latest.emit) throw Error("Missing latest stream progress");
+  const lastEntry = id();
+  latest.emit({ sequence: 1, entry: lastEntry, kind: "redacted" });
+  const terminal = {
+    ok: true as const, coverage: [],
+    mappings: [{ handle: snapshot.handles[0], kind: "unresolved" as const }],
+  };
+  lastGate.resolve(terminal);
+  expect(await lastResult).toEqual({
+    ...terminal, protocolVersion: 1, requestId: snapshot.requestId, op: "query-workspace",
+    roots: snapshot.roots, standaloneHandles: snapshot.standaloneHandles,
+  });
+  await drain;
+  expect(drained).toBe(true);
+  latest.emit({ sequence: 2, entry: id(), kind: "redacted" });
+  expect(output).toEqual([
+    { protocolVersion: 1, requestId: first.requestId, sequence: 1, entry: firstEntry, kind: "redacted" },
+    { protocolVersion: 1, requestId: snapshot.requestId, sequence: 1, entry: lastEntry, kind: "redacted" },
+  ]);
+});
+
+test("a queued stream can be cancelled by its own ID while the retired stream drains", async () => {
+  const gate = Promise.withResolvers<ContentSearchCandidates>();
+  const first = streamWorkspace();
+  const queued = streamQuery();
+  let started = 0;
+  const rpc = createContentSearchRPC({
+    searchContentCandidates() { started++; return Promise.resolve(emptySearch); },
+    searchContentCandidatesForWorkspace: () => gate.promise,
+  });
+  rpc.setReady(true);
+  const active = rpc.run(first);
+  const pending = rpc.run(queued);
+  expect(await rpc.run(cancelQuery(id()))).toMatchObject({ error: "STALE" });
+  expect(await rpc.run(cancelQuery(queued.requestId))).toMatchObject({ ok: true, op: "cancel" });
+  expect(await pending).toMatchObject({ requestId: queued.requestId, error: "CANCELLED" });
+  expect(await rpc.run(cancelQuery(queued.requestId))).toMatchObject({ error: "STALE" });
+  expect(await rpc.run(query())).toMatchObject({ error: "BUSY" });
+  expect(started).toBe(0);
+  gate.resolve(emptySearch);
+  expect(await active).toMatchObject({ requestId: first.requestId, error: "CANCELLED" });
+  await rpc.drain();
+  expect(started).toBe(0);
+});
+
+test.each(["suspend", "setReady"] as const)("window transition retires both stream slots and preserves drain (%s)", async transition => {
+  const gate = Promise.withResolvers<ContentSearchCandidates>();
+  let calls = 0;
+  const rpc = createContentSearchRPC({
+    searchContentCandidates() { return ++calls === 1 ? gate.promise : Promise.resolve(emptySearch); },
+  });
+  rpc.setReady(true);
+  const active = rpc.run(streamQuery());
+  const pending = rpc.run(streamQuery());
+  let resume = () => rpc.setReady(true);
+  if (transition === "suspend") resume = rpc.suspend();
+  else rpc.setReady(false);
+  expect(await pending).toMatchObject({ error: "CANCELLED" });
+  expect(await rpc.run(streamQuery())).toMatchObject({ error: "NOT_READY" });
+  let drained = false;
+  const drain = rpc.drain().then(() => { drained = true; });
+  resume();
+  expect(await rpc.run(query())).toMatchObject({ error: "BUSY" });
+  expect(drained).toBe(false);
+  expect(calls).toBe(1);
+  gate.resolve(emptySearch);
+  expect(await active).toMatchObject({ error: "CANCELLED" });
+  await drain;
+  expect(drained).toBe(true);
+  expect(calls).toBe(1);
+  expect(await rpc.run(streamQuery())).toMatchObject({ ok: true });
+  expect(calls).toBe(2);
+});
+
+test("uncertain active stream rejects the queued replacement without starting it", async () => {
+  const gate = Promise.withResolvers<ContentSearchCandidates>();
+  let calls = 0;
+  const rpc = createContentSearchRPC({
+    searchContentCandidates() { return ++calls === 1 ? gate.promise : Promise.resolve(emptySearch); },
+  });
+  rpc.setReady(true);
+  const first = streamQuery();
+  const queued = streamQuery();
+  const active = rpc.run(first);
+  const pending = rpc.run(queued);
+  expect(calls).toBe(1);
+  gate.resolve({ ok: false, error: "UNKNOWN" });
+  expect(await active).toMatchObject({ requestId: first.requestId, error: "UNKNOWN" });
+  expect(await pending).toMatchObject({ requestId: queued.requestId, error: "UNAVAILABLE" });
+  await rpc.drain();
+  expect(calls).toBe(1);
+});
+
+test("stream requests cannot replace an active nonstream query or a prepare operation", async () => {
+  const queryGate = Promise.withResolvers<ContentSearchCandidates>();
+  const prepareGate = Promise.withResolvers<ContentSearchRetainedPrepared>();
+  let signal: AbortSignal | undefined;
+  let calls = 0;
+  const rpc = createContentSearchRPC({
+    searchContentCandidates(_input, abort) { signal = abort; calls++; return queryGate.promise; },
+    prepareRetainedContentSearchDocument(_input, _requestId, abort) { signal = abort; return prepareGate.promise; },
+  });
+  rpc.setReady(true);
+  const nonstream = rpc.run(query());
+  expect(await rpc.run(streamQuery())).toMatchObject({ error: "BUSY" });
+  expect(signal?.aborted).toBe(false);
+  queryGate.resolve(emptySearch);
+  expect(await nonstream).toMatchObject({ ok: true });
+  const prepare = rpc.prepare(prepareRetained());
+  expect(await rpc.run(streamQuery())).toMatchObject({ error: "BUSY" });
+  expect(signal?.aborted).toBe(false);
+  prepareGate.resolve({ ok: false, error: "STALE" });
+  expect(await prepare).toMatchObject({ error: "STALE" });
+  expect(calls).toBe(1);
+});
 
 test("retained preparation works without a release callback and drains cancelled I/O", async () => {
   const request = prepareRetained();

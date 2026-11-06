@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bm 的 alpha.250 已验证连续修改并提交正文查询时，旧查询先收尾，等待中的只执行最新请求。旧进度不会覆盖最新结果。见[F-064bm 迭代](iterations/F-064bm-latest-window-search-query.md)。
+
 F-064bl 使用 alpha.248 比较了两种有界查询。直接搜索在两档合成语料中的中位耗时均更低，普通窗口继续使用直接搜索。见[F-064bl 迭代](iterations/F-064bl-index-candidate-search-cost.md)。
 
 F-064bk 的 alpha.248 已验证可信工作区可显式更新同根索引，并在符合条件时补齐清单。恢复需要当前观察和文件证明，普通窗口沿用直接搜索。见[F-064bk 迭代](iterations/F-064bk-refresh-observed-workspace-index.md)。

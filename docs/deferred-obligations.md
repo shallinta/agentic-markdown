@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bm 接续窗口正文搜索（2026-11-06）
+
+alpha.250 已验证普通窗口流式查询的有界接续，部分承接 OBL-018。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。索引后台调度、自动配额、跨根及最终离线继续登记。见[F-064bm 迭代](iterations/F-064bm-latest-window-search-query.md)。
+
 ## F-064bl 索引候选查询成本对照（2026-11-06）
 
 两批包形态对照通过，继续沿用 alpha.248 与普通直接搜索。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。下一片先承接查询取消与接续。见[F-064bl 迭代](iterations/F-064bl-index-candidate-search-cost.md)。

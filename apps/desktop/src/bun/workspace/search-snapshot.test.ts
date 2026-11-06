@@ -1340,9 +1340,12 @@ test.skipIf(childScenario !== "mixed")(
       expect(plainTerminal).toMatchObject({ ok: true });
       expect(wireEvents).toEqual([]);
       const stream = { ...plainRequest, ...env(), stream: true as const };
+      const nextStream = { ...stream, ...env() };
       const blocked = readGate();
       gate = blocked;
       let finished = false;
+      let nextFinished = false;
+      let nextPending: ReturnType<typeof streamingRPC.run> | undefined;
       const wirePending = streamingRPC.run(stream).then((response) => {
         finished = true;
         return response;
@@ -1360,8 +1363,14 @@ test.skipIf(childScenario !== "mixed")(
         expect(await streamingRPC.run(cancel)).toEqual({
           protocolVersion: 1, requestId: cancel.requestId, ok: true, op: "cancel",
         });
-        expect(await streamingRPC.run({ ...stream, ...env() })).toMatchObject({ error: "BUSY" });
+        nextPending = streamingRPC.run(nextStream).then((response) => {
+          nextFinished = true;
+          return response;
+        });
+        expect(await streamingRPC.run({ ...plainRequest, ...env() })).toMatchObject({ error: "BUSY" });
         expect(finished).toBe(false);
+        expect(nextFinished).toBe(false);
+        expect(wireEvents).toEqual([firstWireEvent(stream.requestId)]);
       } finally {
         gate = undefined;
         blocked.resume.resolve();
@@ -1369,14 +1378,13 @@ test.skipIf(childScenario !== "mixed")(
       expect(await wirePending).toEqual({
         protocolVersion: 1, requestId: stream.requestId, ok: false, error: "CANCELLED",
       });
-      expect(wireEvents.splice(0)).toEqual([firstWireEvent(stream.requestId)]);
-      const nextStream = { ...stream, ...env() };
-      expect(await streamingRPC.run(nextStream)).toEqual({ ...plainTerminal, requestId: nextStream.requestId });
+      expect(await nextPending).toEqual({ ...plainTerminal, requestId: nextStream.requestId });
       expect(wireEvents).toEqual([
+        firstWireEvent(stream.requestId),
         firstWireEvent(nextStream.requestId),
         { protocolVersion: 1, requestId: nextStream.requestId, ...standaloneProgress },
       ]);
-      expect(wireEvents.every((event) => validContentSearchProgress(event, nextStream))).toBe(true);
+      expect(wireEvents.slice(1).every((event) => validContentSearchProgress(event, nextStream))).toBe(true);
       await streamingRPC.drain();
 
       await interrupt(groupedProgress, async () => {

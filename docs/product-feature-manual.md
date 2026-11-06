@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 主副分栏（F-031）
+
+F-031a 在 alpha.258 隔离实验台验证文件树、主区和副区从左到右排列，两区各至少 160 CSS px。键盘调整、收起及实体鼠标拖动已验。正常文档工作区的副区入口和原生窗口下限待接入。见[F-031a 迭代](iterations/F-031a-primary-secondary-layout-probe.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

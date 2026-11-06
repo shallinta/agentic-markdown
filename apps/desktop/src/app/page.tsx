@@ -60,6 +60,11 @@ const SecurityLab = lazy(() =>
     default: module.SecurityLab,
   }))
 );
+const LayoutLab = lazy(() =>
+  import("@/components/layout-lab").then((module) => ({
+    default: module.LayoutLab,
+  }))
+);
 const SearchLab = lazy(() =>
   import("@/components/search-lab").then((module) => ({
     default: module.SearchLab,
@@ -103,6 +108,7 @@ export function Page() {
         openDocumentProbe?: boolean;
         canonicalProbe?: boolean;
         securityProbe?: boolean;
+        layoutProbe?: boolean;
       };
     }
   ).__AGENTIC_MARKDOWN_PERF_LAB__;
@@ -113,6 +119,8 @@ export function Page() {
           <SecurityLab />
         ) : lab.canonicalProbe ? (
           <CanonicalLab />
+        ) : lab.layoutProbe ? (
+          <LayoutLab />
         ) : lab.editorProbe ||
           lab.denseProbe ||
           lab.responsiveProbe ||

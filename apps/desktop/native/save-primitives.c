@@ -213,12 +213,15 @@ static napi_value create_private_directory(napi_env env,napi_callback_info info)
   int saved=errno;return creation_throw(env,saved==EEXIST?exists:failed);
 }
 
+#include "reclaim-stage.h"
+
 static napi_value init(napi_env env,napi_value exports) {
   napi_property_descriptor properties[]={
     {"createFileExclusive",NULL,create_file_exclusive,NULL,NULL,NULL,napi_default,NULL},
     {"publishExclusive",NULL,publish_exclusive,NULL,NULL,NULL,napi_default,NULL},
     {"createPrivateDirectory",NULL,create_private_directory,NULL,NULL,NULL,napi_default,NULL},
     {"publishDirectoryExclusive",NULL,publish_directory_exclusive,NULL,NULL,NULL,napi_default,NULL},
+    {"stageRetiredIndex",NULL,stage_retired_index,NULL,NULL,NULL,napi_default,NULL},
     {"createTemp",NULL,create,NULL,NULL,NULL,napi_default,NULL},
     {"copyMetadata",NULL,metadata,NULL,NULL,NULL,napi_default,NULL},
     {"fullSync",NULL,sync_full,NULL,NULL,NULL,napi_default,NULL},

@@ -8,7 +8,7 @@ import { captureIndexFootprint } from "./cache-footprint";
 import { natural, record } from "./protocol";
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
-  type IndexReuseInput,
+  stageRetiredIndexReuse, type IndexReuseInput,
 } from "./reuse";
 import {
   readIndexReclaimIntentTarget, readIndexRetirementTarget, type IndexReclaimIntentTarget, type IndexRetirementTarget,
@@ -116,6 +116,10 @@ export function inspectRetiredIndexReclaim(input: IndexRetirementTarget, current
 
 export function prepareRetiredIndexReclaim(input: IndexReclaimIntentTarget, current: () => boolean) {
   return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, prepareRetiredIndexReuse);
+}
+
+export function stageRetiredIndexReclaim(input: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, stageRetiredIndexReuse);
 }
 
 async function useRetiredAppProfile<

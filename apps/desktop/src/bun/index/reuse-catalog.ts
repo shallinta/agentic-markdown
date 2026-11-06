@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  closeSync,
   constants,
   fstatSync,
   lstatSync,
@@ -34,6 +35,9 @@ export interface PreparedReclaimCatalog extends IndexReclaimIntentTarget {
   state: "reclaim-prepared";
   stagingDigest: string;
 }
+export type ReclaimPlacement = "original" | "pending";
+export const reclaimDirectoryName = (placement: ReclaimPlacement) =>
+  placement === "original" ? "index" : ".reclaim-pending";
 interface RetiredCatalogBase extends IndexRetirementTarget {
   profile: "limited-v1";
   state: "retired";
@@ -50,7 +54,7 @@ type CatalogRead =
   | { status: "cold" }
   | { status: "existing"; catalog: IndexReuseCatalog; identity: IndexReuseInventoryIdentity }
   | { status: "retired"; catalog: RetiredCatalog; identity: IndexReuseInventoryIdentity }
-  | { status: "prepared"; catalog: PreparedReclaimCatalog; identity: IndexReuseInventoryIdentity }
+  | { status: "prepared"; catalog: PreparedReclaimCatalog; identity: IndexReuseInventoryIdentity; placement: ReclaimPlacement }
   | { status: "invalid" };
 
 interface IndexReuseSlot {
@@ -58,6 +62,8 @@ interface IndexReuseSlot {
   assertInventoryLease(this: void): BigIntStats;
   assertCatalogIdentity(identity: IndexReuseInventoryIdentity): void;
   readCatalog(): Promise<CatalogRead>;
+  readPrepareCatalog(): Promise<CatalogRead>;
+  readStageCatalog(): Promise<CatalogRead>;
   writeCatalog(catalog: IndexReuseCatalog, beforeCommit?: () => void): Promise<void>;
   retireCatalog(
     target: IndexRetirementTarget, identity: IndexReuseInventoryIdentity,
@@ -68,6 +74,15 @@ interface IndexReuseSlot {
     identity: IndexReuseInventoryIdentity,
     proof: { alreadyPrepared: boolean; beforeCommit: () => void; verifyNative: () => void }
   ): Promise<void>;
+  withStageDirectories<Result>(
+    placement: ReclaimPlacement, identity: IndexReuseInventoryIdentity,
+    openOriginal: ((profileFd: number) => number) | undefined,
+    use: (held: {
+      profileFd: number; indexFd: number;
+      check: (placement: ReclaimPlacement) => void;
+      sync: () => Promise<void>;
+    }) => Promise<Result>
+  ): Promise<Result>;
   release(): Promise<void>;
 }
 
@@ -164,10 +179,10 @@ function sameFile(left: BigIntStats, right: BigIntStats) {
     left.ctimeNs === right.ctimeNs;
 }
 
-function samePublishedCatalog(staged: BigIntStats, published: BigIntStats) {
-  return sameInode(staged, published) && staged.birthtimeNs === published.birthtimeNs &&
-    staged.uid === published.uid && staged.mode === published.mode && staged.nlink === published.nlink &&
-    staged.size === published.size && staged.mtimeNs === published.mtimeNs;
+function sameRenameStableMetadata(before: BigIntStats, after: BigIntStats) {
+  return sameInode(before, after) && before.birthtimeNs === after.birthtimeNs &&
+    before.uid === after.uid && before.mode === after.mode && before.nlink === after.nlink &&
+    before.size === after.size && before.mtimeNs === after.mtimeNs;
 }
 
 async function closeCatalogFile(file: FileHandle) {
@@ -186,6 +201,8 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
   const leasePath = join(directory, ".lease");
   const catalogPath = join(directory, "catalog.json");
   const indexPath = join(directory, "index");
+  const pendingPath = join(directory, ".reclaim-pending");
+  const placementPath = (placement: ReclaimPlacement) => join(directory, reclaimDirectoryName(placement));
   const ownedDirectory = (stat: BigIntStats) => stat.isDirectory() && stat.uid === owner;
   const privateDirectory = (stat: BigIntStats) =>
     ownedDirectory(stat) && (stat.mode & 0o077n) === 0n;
@@ -218,13 +235,16 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
       return root;
     };
     assertLease();
+    const assertCatalogFile = (expected: BigIntStats) => {
+      const catalog = present(catalogPath);
+      if (!catalog || !privateFile(catalog) || !sameFile(expected, catalog) || catalog.mode !== expected.mode)
+        throw Error("Index reuse catalog identity changed");
+    };
     const assertCatalogIdentity = (identity: IndexReuseInventoryIdentity) => {
       assertLease(true);
-      const catalog = present(catalogPath);
+      assertCatalogFile(identity.catalog);
       const index = present(indexPath);
-      if (!catalog || !privateFile(catalog) || !sameFile(identity.catalog, catalog) ||
-          catalog.mode !== identity.catalog.mode ||
-          !index || !ownedDirectory(index) || !sameFile(identity.index, index) ||
+      if (!index || !ownedDirectory(index) || !sameFile(identity.index, index) ||
           index.mode !== identity.index.mode || index.nlink !== identity.index.nlink)
         throw Error("Index reuse catalog or index identity changed");
     };
@@ -302,10 +322,15 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
       }
     }
 
-    async function readCatalog(): Promise<CatalogRead> {
+    async function readCatalog(mode: "ordinary" | "prepare" | "stage" = "ordinary"): Promise<CatalogRead> {
       try {
         assertLease();
-        const index = present(indexPath);
+        const original = present(indexPath);
+        const pending = present(pendingPath);
+        if (pending && (mode === "ordinary" || (mode === "stage" ? original : !original)))
+          return { status: "invalid" };
+        const placement = pending && !original ? "pending" : "original";
+        const index = original ?? pending;
         const catalog = present(catalogPath);
         if (!index && !catalog) return { status: "cold" };
         if (!index || !ownedDirectory(index) || !catalog || !privateFile(catalog) ||
@@ -336,14 +361,15 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         }
         assertLease();
         const latestCatalog = present(catalogPath);
-        const latestIndex = present(indexPath);
+        const latestIndex = present(placementPath(placement));
         if (!latestCatalog || !privateFile(latestCatalog) || !sameFile(catalog, latestCatalog) ||
-            !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex))
+            !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex) ||
+            (mode !== "prepare" && present(placement === "original" ? pendingPath : indexPath)))
           return { status: "invalid" };
         const identity = { catalog, index };
-        if (validCatalog(value)) return { status: "existing", catalog: value, identity };
-        if (validRetiredCatalog(value)) return { status: "retired", catalog: value, identity };
-        if (validPreparedCatalog(value)) return { status: "prepared", catalog: value, identity };
+        if (validPreparedCatalog(value)) return { status: "prepared", catalog: value, identity, placement };
+        if (placement === "original" && validCatalog(value)) return { status: "existing", catalog: value, identity };
+        if (placement === "original" && validRetiredCatalog(value)) return { status: "retired", catalog: value, identity };
         return { status: "invalid" };
       } catch (error) {
         if (error instanceof IndexReuseCleanupError) throw error;
@@ -351,13 +377,26 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
       }
     }
 
-    function assertReclaimProfile(profile: FileHandle) {
+    function assertProfileDescriptor(profile: FileHandle) {
       const current = assertLease(true);
       const held = fstatSync(profile.fd, { bigint: true });
       if (!privateDirectory(held) || !sameInode(current, held) ||
           directoryStat.birthtimeNs !== held.birthtimeNs || directoryStat.mode !== held.mode ||
-          current.mode !== held.mode || present(join(directory, ".reclaim-pending")))
+          current.mode !== held.mode)
         throw Error("Index reclaim profile unavailable");
+    }
+
+    function assertReclaimProfile(profile: FileHandle) {
+      assertProfileDescriptor(profile);
+      if (present(pendingPath)) throw Error("Index reclaim alternate already present");
+    }
+
+    function closeStageDescriptor(fd: number) {
+      try {
+        closeSync(fd);
+      } catch {
+        throw new IndexReuseCleanupError("Index staging descriptor close unconfirmed");
+      }
     }
 
     async function syncReclaimCatalog(
@@ -370,7 +409,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         if (saved.status !== "prepared" ||
             saved.catalog.scopeKey !== expected.scopeKey || saved.catalog.generation !== expected.generation ||
             saved.catalog.inventoryDigest !== expected.inventoryDigest || saved.catalog.stagingDigest !== expected.stagingDigest ||
-            !samePublishedCatalog(staged, saved.identity.catalog))
+            !sameRenameStableMetadata(staged, saved.identity.catalog))
           throw Error("Index reclaim preparation changed");
         assertReclaimProfile(profile);
         assertCatalogIdentity(saved.identity);
@@ -386,7 +425,9 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         indexPath,
         assertInventoryLease: () => assertLease(true),
         assertCatalogIdentity,
-        readCatalog,
+        readCatalog: () => readCatalog(),
+        readPrepareCatalog: () => readCatalog("prepare"),
+        readStageCatalog: () => readCatalog("stage"),
         async writeCatalog(catalog, beforeCommit) {
           if (!validCatalog(catalog)) throw Error("Invalid index reuse catalog");
           await publishCatalog(catalog, beforeCommit);
@@ -421,6 +462,37 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
               staged = written;
             }
             await syncReclaimCatalog(profile, marker, staged, verifyNative);
+          } finally {
+            await closeCatalogFile(profile);
+          }
+        },
+        async withStageDirectories(placement, identity, openOriginal, use) {
+          const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+          const profile = await open(directory, flags);
+          try {
+            assertProfileDescriptor(profile);
+            const index = placement === "pending" ? await open(pendingPath, flags) : undefined;
+            const indexFd = index?.fd ?? openOriginal?.(profile.fd);
+            if (indexFd === undefined) throw Error("Index staging addon unavailable");
+            try {
+              const check = (target: ReclaimPlacement) => {
+                assertProfileDescriptor(profile);
+                assertCatalogFile(identity.catalog);
+                const held = fstatSync(indexFd, { bigint: true });
+                const named = present(placementPath(target));
+                if (!named || !ownedDirectory(held) || (held.mode & 0o022n) !== 0n ||
+                    !sameRenameStableMetadata(identity.index, held) ||
+                    (target === placement && !sameFile(identity.index, held)) ||
+                    !sameRenameStableMetadata(held, named) || !sameFile(held, named) ||
+                    present(target === "original" ? pendingPath : indexPath))
+                  throw Error("Index staging placement unavailable");
+              };
+              check(placement);
+              return await use({ profileFd: profile.fd, indexFd, check, sync: () => profile.sync() });
+            } finally {
+              if (index) await closeCatalogFile(index);
+              else closeStageDescriptor(indexFd);
+            }
           } finally {
             await closeCatalogFile(profile);
           }

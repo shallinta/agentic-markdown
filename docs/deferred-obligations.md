@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064aw 退役索引移入待回收位置（2026-11-06）
+
+alpha.233 已验证内部排他移动及跨进程位置复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接暂存占用、删除名册、遗留租约、撤权接入及最终离线。见[F-064aw 迭代](iterations/F-064aw-retired-index-stage.md)。
+
 ## F-064av 退役索引回收准备记录（2026-11-06）
 
 alpha.232 已验证 v3 准备记录及跨进程复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接待回收位置、遗留租约、实际回收、配额与最终离线。见[F-064av 迭代](iterations/F-064av-retired-index-reclaim-intent.md)。

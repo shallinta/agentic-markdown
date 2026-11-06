@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064aw 的 alpha.233 已验证内部显式移动可把准备后的私有索引移入待回收位置。保留清单和文件，未释放磁盘空间。见[F-064aw 迭代](iterations/F-064aw-retired-index-stage.md)。
+
 F-064av 的 alpha.232 已验证内部退役槽可记录回收准备状态，并在新进程复核。记录保留索引原目录和文件。见[F-064av 迭代](iterations/F-064av-retired-index-reclaim-intent.md)。
 
 F-064au 用合成索引验证了同槽目录排他移动。产品缓存仍只提供内部退役和预检。见[F-064au 实验](iterations/F-064au-retired-index-exclusive-stage-probe.md)。

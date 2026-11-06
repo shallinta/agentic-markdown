@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
+import { join } from "node:path";
 
 import { captureIndexFootprint } from "./cache-footprint";
 import {
@@ -15,9 +16,11 @@ import {
   type IndexResult,
 } from "./protocol";
 import { validReclaimLayout } from "./reclaim-layout";
+import { loadReclaimStage } from "./reclaim-stage";
 import {
   acquireIndexReuseSlot,
   IndexReuseCleanupError,
+  reclaimDirectoryName,
   type IndexReclaimIntentTarget,
   type IndexRetirementTarget,
   type IndexReuseCatalog,
@@ -78,7 +81,7 @@ async function profileContainsOnlyLease(directory: string, check: () => void) {
 async function useRetirementSlot<Result extends { ok: true }>(
   directory: string, target: IndexRetirementTarget, current: () => boolean,
   use: (slot: RetirementSlot, cached: ProvenCatalog, check: () => void) => Promise<Result | RetirementFailure>,
-  allowPrepared = false
+  mode: "retirement" | "prepare" | "stage" = "retirement"
 ): Promise<Result | RetirementFailure> {
   if (!current()) return fail("CANCELLED");
   const acquired = await acquireIndexReuseSlot(directory);
@@ -105,9 +108,10 @@ async function useRetirementSlot<Result extends { ok: true }>(
 
   async function run(): Promise<Result | RetirementFailure> {
     check();
-    const cached = await slot.readCatalog();
+    const cached = await (mode === "stage" ? slot.readStageCatalog()
+      : mode === "prepare" ? slot.readPrepareCatalog() : slot.readCatalog());
     check();
-    if (cached.status === "invalid" || (!allowPrepared && cached.status === "prepared")) return fail("SCHEMA");
+    if (cached.status === "invalid" || (mode === "retirement" && cached.status === "prepared")) return fail("SCHEMA");
     if (cached.status === "cold") {
       const checkCold = () => {
         check();
@@ -126,10 +130,12 @@ async function useRetirementSlot<Result extends { ok: true }>(
 }
 
 function captureRetirementFootprint(
-  directory: string, { assertInventoryLease }: RetirementSlot, { identity }: ProvenCatalog, check: () => void
+  directory: string, { assertInventoryLease }: RetirementSlot, cached: ProvenCatalog, check: () => void
 ) {
+  const { identity } = cached;
+  const placement = cached.status === "prepared" ? cached.placement : "original";
   return captureIndexFootprint(
-    directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity
+    directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity, placement
   );
 }
 
@@ -141,9 +147,10 @@ async function verifyRetiredFootprint(
   footprint.recheck();
   if (footprint.status !== "existing") return fail("UNAVAILABLE");
   const inventoryDigest = footprint.inventoryDigest(target);
-  if (inventoryDigest !== expectedDigest) return fail("MISMATCH");
+  const placement = cached.status === "prepared" ? cached.placement : "original";
+  if (placement === "original" && inventoryDigest !== expectedDigest) return fail("MISMATCH");
   const valid = await validReclaimLayout(
-    slot.indexPath, new Map(footprint.nativeFiles()), target.generation, footprint.checkIndex
+    join(directory, reclaimDirectoryName(placement)), new Map(footprint.nativeFiles()), target.generation, footprint.checkIndex
   );
   footprint.recheck();
   if (!valid) return fail("SCHEMA");
@@ -214,7 +221,53 @@ export function prepareRetiredIndexReuse(directory: string, target: IndexReclaim
       });
       return { ok: true, alreadyPrepared };
     },
-    true
+    "prepare"
+  );
+}
+
+export function stageRetiredIndexReuse(directory: string, target: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetirementSlot<{ ok: true; alreadyStaged: boolean }>(
+    directory, target, current, async (slot, cached, check) => {
+      if (cached.status !== "prepared") return fail("SCHEMA");
+      if (cached.catalog.inventoryDigest !== target.inventoryDigest) return fail("MISMATCH");
+      const verified = await verifyRetiredFootprint(directory, slot, cached, check, target, target.inventoryDigest);
+      if (!verified.ok) return verified;
+      const { stagingDigest } = cached.catalog;
+      if (verified.footprint.stagingDigest(target) !== stagingDigest) return fail("MISMATCH");
+      const alreadyStaged = cached.placement === "pending";
+      const native = alreadyStaged ? undefined : loadReclaimStage();
+      if (!alreadyStaged && !native) return fail("UNAVAILABLE");
+
+      return slot.withStageDirectories(cached.placement, cached.identity, native?.openIndex, async (held) => {
+        verified.footprint.recheck();
+        held.check(cached.placement);
+        if (native) {
+          const result = native.stage(held.profileFd, held.indexFd);
+          if (result !== "staged") return fail(result);
+        }
+        try {
+          const checkPending = () => held.check("pending");
+          checkPending();
+          await held.sync();
+          checkPending();
+          const saved = await slot.readStageCatalog();
+          if (saved.status !== "prepared" || saved.placement !== "pending" ||
+              saved.catalog.scopeKey !== target.scopeKey || saved.catalog.generation !== target.generation ||
+              saved.catalog.inventoryDigest !== target.inventoryDigest || saved.catalog.stagingDigest !== stagingDigest)
+            throw Error("Index staging marker changed");
+          const terminal = await verifyRetiredFootprint(
+            directory, slot, saved, checkPending, target, target.inventoryDigest
+          );
+          if (!terminal.ok || terminal.footprint.stagingDigest(target) !== stagingDigest)
+            throw Error("Index staging inventory changed");
+          checkPending();
+        } catch {
+          throw new IndexReuseCleanupError("Index staging sync or confirmation unconfirmed");
+        }
+        return { ok: true, alreadyStaged };
+      });
+    },
+    "stage"
   );
 }
 

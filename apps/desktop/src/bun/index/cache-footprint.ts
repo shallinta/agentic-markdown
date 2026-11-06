@@ -4,7 +4,8 @@ import { opendir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
 import {
-  IndexReuseCleanupError, type IndexReclaimIntentTarget, type IndexRetirementTarget, type IndexReuseInventoryIdentity,
+  IndexReuseCleanupError, reclaimDirectoryName, type IndexReclaimIntentTarget,
+  type IndexRetirementTarget, type IndexReuseInventoryIdentity, type ReclaimPlacement,
 } from "./reuse-catalog";
 
 const maxIndexFiles = 128;
@@ -62,7 +63,8 @@ export async function captureIndexFootprint(
   owner: bigint,
   check: () => void,
   checkLease: () => void,
-  expected?: IndexReuseInventoryIdentity
+  expected?: IndexReuseInventoryIdentity,
+  placement: ReclaimPlacement = "original"
 ) {
   const checkInspection = () => {
     check();
@@ -92,16 +94,17 @@ export async function captureIndexFootprint(
   };
 
   const memberLimit = expected ? 3 : 2;
+  const indexName = reclaimDirectoryName(placement);
   const members = await readMembers(profile, memberLimit, checkInspection);
   checkInspection();
   if (!members.size && !expected) return { status: "empty" as const, recheck };
-  if (members.size !== memberLimit || !members.has("catalog.json") || !members.has("index") ||
+  if (members.size !== memberLimit || !members.has("catalog.json") || !members.has(indexName) ||
       (expected && !members.has(".lease")))
     throw Error("Index cache layout unavailable");
 
   const catalogBytes = readFileMetadata(join(profile, "catalog.json"), expected?.catalog, true);
   if (catalogBytes === 0n) throw Error("Index cache catalog unavailable");
-  const index = join(profile, "index");
+  const index = join(profile, indexName);
   const indexStat = lstatSync(index, { bigint: true });
   if (!indexStat.isDirectory() || indexStat.uid !== owner || (indexStat.mode & 0o022n) !== 0n ||
       (expected && !sameIndexInventoryMetadata(expected.index, indexStat)))

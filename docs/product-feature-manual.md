@@ -2,6 +2,8 @@
 
 ## 文件夹正文搜索与索引（F-064）
 
+F-064m 的 alpha.200 加入内部多根查询，一次核对参与查询的已授权目录并共享索引会话与总预算。该能力已经包内原生验证，界面仍使用单文件夹查询。见[F-064m 迭代](iterations/F-064m-bounded-multi-root-content-search.md)。
+
 F-064l 的 alpha.199 把入口改为「搜索单个文件夹正文」。可使用文件树选中的顶层文件夹，也可加 `root:笔记` 指定当前窗口的根。同名根用完整路径区分，选择器会填入该路径。换根会保留其他筛选条件。见[F-064l 迭代](iterations/F-064l-content-search-root-selector.md)。
 
 F-064k 的 alpha.198 支持在同一个筛选栏混用 `path:`、`-path:` 和 `file:`。例如 `path:"项目 甲/" -path:草稿 file:纪要`。路径相对于本次搜索的顶层文件夹，选择器也可以加入包含或排除条件。同名结果附相对路径。见[F-064k 迭代](iterations/F-064k-content-search-path-filters.md)。

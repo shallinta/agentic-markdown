@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -402,7 +403,186 @@ test.skipIf(childScenario !== "path-filters")(
   15_000
 );
 
-for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters"] as const)
+test.skipIf(childScenario !== "multi-root")(
+  "combines complete roots in one native query and rejects the whole result on invalidation",
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "workspace-multi-root-"));
+    const firstPath = join(fixture, "one", "同名");
+    const secondPath = join(fixture, "two", "同名");
+    const widePath = join(fixture, "wide");
+    const firstRaw = "\uFEFF😀target\r\n";
+    const secondRaw = "乙😀target";
+    const pad = "x".repeat(33_000);
+    let picked = firstPath;
+    const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
+    const workspace = createWorkspaceService({ documents, pickDirectory: () => Promise.resolve(picked) });
+    const OriginalWorker = globalThis.Worker;
+    const operations: string[] = [];
+    let holdQuery: ((resume: () => void) => void) | undefined;
+    let closing: Promise<void> | undefined;
+    class RecordingWorker extends OriginalWorker {
+      override postMessage(message: unknown) {
+        const op = typeof message === "object" && message && "op" in message ? message.op : undefined;
+        if (typeof op === "string") operations.push(op);
+        if (op === "query" && holdQuery) holdQuery(() => super.postMessage(message));
+        else super.postMessage(message);
+      }
+    }
+
+    async function addRoot(path: string) {
+      picked = path;
+      const canonical = await realpath(path);
+      const selected = await workspace.request({ ...env(), op: "select" });
+      if (!selected.ok) throw Error("Unable to add fixture root");
+      for (let i = 0; i < 1000; i++) {
+        const state = await workspace.request({ ...env(), op: "state" });
+        const root = state.ok && state.roots.find((item) => item.displayPath === canonical);
+        if (root && root.status === "complete") return { handle: root.handle, generation: root.generation };
+        await Bun.sleep(2);
+      }
+      throw Error("Fixture root scan did not complete");
+    }
+
+    async function findEntry(root: { handle: string; generation: number }) {
+      const page = await workspace.request({
+        ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0,
+      });
+      const entry = page.ok && page.nodes?.find(({ name }) => name === "同名.md");
+      if (!entry) throw Error("Missing scanned Markdown entry");
+      return entry.handle;
+    }
+
+    const coverage = (entry: string, raw: string) => ({
+      entry,
+      hash: createHash("sha256").update(raw).digest("hex"),
+      bytes: Buffer.byteLength(raw),
+      hit: { from: 3, to: 9 },
+    });
+    const removedSlot = async () => {
+      expect(await lstat(slot).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+    };
+    try {
+      await mkdir(join(firstPath, "项目 甲"), { recursive: true });
+      await mkdir(join(secondPath, "项目 乙"), { recursive: true });
+      await mkdir(widePath);
+      await writeFile(join(firstPath, "项目 甲", "同名.md"), firstRaw);
+      await writeFile(join(secondPath, "项目 乙", "同名.md"), secondRaw);
+      await writeFile(join(firstPath, "budget.md"), pad);
+      await writeFile(join(secondPath, "budget.md"), pad);
+      for (let index = 0; index < 14; index++)
+        await writeFile(join(widePath, `sample-${index}.md`), "target");
+
+      const first = await addRoot(firstPath);
+      const second = await addRoot(secondPath);
+      const wide = await addRoot(widePath);
+      const firstEntry = await findEntry(first);
+      const secondEntry = await findEntry(second);
+      const opened = await workspace.open({ ...env(), root: second.handle, entry: secondEntry });
+      if (!opened.ok || !opened.snapshot) throw Error("Missing second-root grant");
+      const { handle, documentId, revision, hash } = opened.snapshot;
+      const input = { roots: [first, second], query: "target", handles: [handle] };
+      const firstOnly = { ...input, pathFilters: [{ kind: "path", value: "项目 甲/" }] } as const;
+      const search = (
+        request: Parameters<typeof workspace.searchContentCandidatesForRoots>[0] = input,
+        signal?: AbortSignal
+      ) => workspace.searchContentCandidatesForRoots(request, signal);
+
+      expect(await search({ ...input, roots: [] })).toEqual({ ok: false, error: "INVALID" });
+      expect(await search({ ...input, roots: [first, first] })).toEqual({ ok: false, error: "INVALID" });
+      expect(await search({
+        ...input,
+        roots: Array.from({ length: 17 }, () => ({ handle: crypto.randomUUID(), generation: 1 })),
+      })).toEqual({ ok: false, error: "LIMIT" });
+      expect(await search({ ...input, roots: [first, { ...second, generation: second.generation + 1 }] }))
+        .toEqual({ ok: false, error: "STALE" });
+      expect(await search({ ...input, roots: [first, second, wide], fileFilters: ["同名"] }))
+        .toEqual({ ok: false, error: "LIMIT" });
+      expect(await search()).toEqual({ ok: false, error: "LIMIT" });
+      expect(await search({ ...input, roots: [first] })).toMatchObject({ ok: true });
+      expect(await search({ ...input, roots: [second] })).toMatchObject({ ok: true });
+
+      Object.defineProperty(globalThis, "Worker", { value: RecordingWorker, configurable: true });
+      const both = await search({ ...input, fileFilters: ["同名"] });
+      if (!both.ok) throw Error(JSON.stringify(both));
+      expect(both.coverage).toHaveLength(2);
+      expect(both.coverage).toContainEqual(coverage(firstEntry, firstRaw));
+      expect(both.coverage).toContainEqual(coverage(secondEntry, secondRaw));
+      expect(both.mappings).toEqual([{ handle, kind: "matched", entry: secondEntry, documentId, revision, hash }]);
+      expect(operations).toEqual(["open", "apply", "query", "close"]);
+      await removedSlot();
+      expect(await search(firstOnly)).toEqual({
+        ok: true,
+        coverage: [coverage(firstEntry, firstRaw)],
+        mappings: [{ handle, kind: "outside" }],
+      });
+      expect(await search({ ...input, pathFilters: [{ kind: "path", value: "项目 乙/" }] }))
+        .toMatchObject({ ok: true, coverage: [coverage(secondEntry, secondRaw)] });
+
+      async function pauseSearch(request: Parameters<typeof search>[0], signal?: AbortSignal) {
+        const entered = Promise.withResolvers<() => void>();
+        holdQuery = entered.resolve;
+        const pending = search(request, signal);
+        try {
+          const resume = await Promise.race([
+            entered.promise,
+            pending.then((result) => { throw Error("Native query was not dispatched: " + JSON.stringify(result)); }),
+          ]);
+          return { pending, resume };
+        } finally {
+          holdQuery = undefined;
+        }
+      }
+
+      const abort = new AbortController();
+      const aborted = await pauseSearch(firstOnly, abort.signal);
+      try {
+        expect((await lstat(slot)).isDirectory()).toBe(true);
+        abort.abort();
+      } finally {
+        aborted.resume();
+      }
+      expect(await aborted.pending).toEqual({ ok: false, error: "CANCELLED" });
+      await removedSlot();
+
+      const replaced = await pauseSearch(firstOnly);
+      try {
+        await rename(secondPath, join(fixture, "replaced-root"));
+        await mkdir(secondPath);
+      } finally {
+        replaced.resume();
+      }
+      const rejected = await replaced.pending;
+      expect(rejected.ok).toBe(false);
+      if (rejected.ok) throw Error("A zero-candidate root was replaced during the native query");
+      expect(["CANCELLED", "UNAVAILABLE"]).toContain(rejected.error);
+      expect(Object.keys(rejected).sort()).toEqual(["error", "ok"]);
+      await removedSlot();
+
+      const disposed = await pauseSearch({ ...firstOnly, roots: [first, wide], handles: [] });
+      try {
+        closing = workspace.dispose();
+        const settled = await Promise.race([
+          closing.then(() => true),
+          Bun.sleep(100).then(() => false),
+        ]);
+        expect(settled).toBe(false);
+      } finally {
+        disposed.resume();
+      }
+      expect(await disposed.pending).toEqual({ ok: false, error: "CANCELLED" });
+      await closing;
+      await removedSlot();
+    } finally {
+      Object.defineProperty(globalThis, "Worker", { value: OriginalWorker, configurable: true });
+      await (closing ?? workspace.dispose());
+      await documents.dispose();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+  15_000
+);
+
+for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters", "multi-root"] as const)
   test.skipIf(!!childScenario)(
     `isolated workspace index ${scenario} checks`,
     async () => {

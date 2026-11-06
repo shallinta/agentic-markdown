@@ -22,6 +22,7 @@ import {
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
+import { perfRecord, perfUuid } from "../../shared/perf-lab";
 import {
   WORKSPACE_CACHE_BYTES,
   WORKSPACE_MAX_ROOTS,
@@ -72,7 +73,12 @@ import {
   type ScanDirectory,
 } from "./scan";
 import { validScanBatch } from "./scan-protocol";
-import { readStableSearchBytes, searchSnapshot, searchSnapshotEvidence } from "./search-snapshot";
+import {
+  readStableSearchBytes,
+  searchSnapshot,
+  searchSnapshotEvidenceAcrossRoots,
+  SEARCH_SNAPSHOT_ROOT_LIMIT,
+} from "./search-snapshot";
 import { createTrashService } from "./trash-document";
 import { createScanWorker } from "./worker";
 
@@ -95,6 +101,10 @@ interface Root {
 interface Owner extends DocumentScope {
   root: Root;
 }
+export type ContentSearchRootSetInput = Omit<ContentSearchInput, "root" | "generation"> & {
+  roots: readonly { handle: string; generation: number }[];
+};
+
 export interface TrustedWorkspaceService extends WorkspaceService {
   searchSnapshot(
     root: string,
@@ -104,6 +114,10 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   ): ReturnType<typeof searchSnapshot>;
   searchContentCandidates(
     input: ContentSearchInput,
+    signal?: AbortSignal
+  ): Promise<ContentSearchCandidates>;
+  searchContentCandidatesForRoots(
+    input: ContentSearchRootSetInput,
     signal?: AbortSignal
   ): Promise<ContentSearchCandidates>;
   prepareContentSearchDocument(
@@ -1141,6 +1155,169 @@ export function createWorkspaceService({
       return lease;
     }
   });
+  async function searchContentCandidatesForRoots(
+    input: ContentSearchRootSetInput,
+    signal?: AbortSignal
+  ): Promise<ContentSearchCandidates> {
+    if (signal?.aborted) return { ok: false, error: "CANCELLED" };
+    if (indexTask) return { ok: false, error: "BUSY" };
+    const { fileFilters, pathFilters } = input;
+    if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
+        new Set(input.handles).size !== input.handles.length ||
+        (fileFilters !== undefined && !validContentSearchFileFilters(fileFilters)) ||
+        (pathFilters !== undefined && !validContentSearchPathFilters(pathFilters)) ||
+        (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > CONTENT_SEARCH_FILTER_COUNT_LIMIT ||
+        !Array.isArray(input.roots) || !input.roots.length)
+      return { ok: false, error: "INVALID" };
+    if (input.handles.length > INDEX_LIMITS.documents || input.roots.length > SEARCH_SNAPSHOT_ROOT_LIMIT)
+      return { ok: false, error: "LIMIT" };
+    const rootHandles = new Set<string>();
+    const requestedRoots: ContentSearchRootSetInput["roots"][number][] = [];
+    for (const request of input.roots) {
+      if (!perfRecord(request) || Object.keys(request).length !== 2 ||
+          !Object.prototype.propertyIsEnumerable.call(request, "handle") ||
+          !Object.prototype.propertyIsEnumerable.call(request, "generation") ||
+          !perfUuid(request.handle) || typeof request.generation !== "number" ||
+          !Number.isSafeInteger(request.generation) ||
+          request.generation < 0 || rootHandles.has(request.handle))
+        return { ok: false, error: "INVALID" };
+      rootHandles.add(request.handle);
+      requestedRoots.push({ handle: request.handle, generation: request.generation });
+    }
+
+    const captures: (Extract<ReturnType<typeof captureIndexRoot>, { ok: true }> & {
+      searched: ReadonlyMap<string, ScanFile>;
+    })[] = [];
+    const entryHandles = new Set<string>();
+    const filePaths = new Set<string>();
+    for (const { handle, generation } of requestedRoots) {
+      const snapshot = captureIndexRoot(handle, generation, signal);
+      if (!snapshot.ok) return snapshot;
+      const { root, entries } = snapshot;
+      const rootPath = root.authorization.path;
+      if (captures.some(({ root }) =>
+        containsPath(root.authorization.path, rootPath) ||
+        containsPath(rootPath, root.authorization.path)
+      )) return { ok: false, error: "INVALID" };
+      if (entryHandles.size + entries.size > INDEX_LIMITS.documents)
+        return { ok: false, error: "LIMIT" };
+      const filtered = fileFilters || pathFilters ? new Map<string, ScanFile>() : undefined;
+      for (const [entry, file] of entries) {
+        if (entryHandles.has(entry) || filePaths.has(file.path))
+          return { ok: false, error: "INVALID" };
+        entryHandles.add(entry);
+        filePaths.add(file.path);
+        if (pathFilters) {
+          const path = relativeContentSearchPath(rootPath, file.path);
+          if (path === undefined) return { ok: false, error: "UNAVAILABLE" };
+          if (!matchesContentSearchPathFilters(path, pathFilters)) continue;
+        }
+        if (filtered &&
+            (!fileFilters || matchesContentSearchFileFilters(basename(file.path), fileFilters)))
+          filtered.set(entry, file);
+      }
+      captures.push({ ...snapshot, searched: filtered ?? entries });
+    }
+    const handles = [...input.handles];
+    const admission = documents.captureContentSearchBindings(handles);
+    if (!admission) return { ok: false, error: "UNAVAILABLE" };
+    const current = () => admission.current() && captures.every((capture) => capture.current());
+    const check = () => {
+      if (!current()) throw Error("Content search invalidated");
+    };
+    const task = (async (): Promise<ContentSearchCandidates> => {
+      const result = await searchSnapshotEvidenceAcrossRoots(
+        captures.map(({ root, searched, showHidden }) => ({
+          authorization: root.authorization, files: searched, showHidden,
+        })),
+        input.query,
+        current
+      );
+      if (!result.ok) {
+        const error = result.error;
+        if (error === "INPUT") return { ok: false, error: "INVALID" };
+        return {
+          ok: false,
+          error: error === "LIMIT" || error === "BUSY" || error === "CANCELLED" || error === "UNKNOWN"
+            ? error
+            : "UNAVAILABLE",
+        };
+      }
+      const mappings: SearchMapping[] = [];
+      const matchedCounts = new Map<string, number>();
+      try {
+        for (const [index, handle] of handles.entries()) {
+          check();
+          const binding = admission.bindings[index];
+          if (!binding) {
+            mappings.push({ handle, kind: "unresolved" });
+            continue;
+          }
+          try {
+            await binding.verify(check);
+          } catch {
+            mappings.push({ handle, kind: "unresolved" });
+            continue;
+          }
+          check();
+          const capture = captures.find(({ root }) => containsPath(root.authorization.path, binding.path));
+          if (!capture) {
+            mappings.push({ handle, kind: "outside" });
+            continue;
+          }
+          const { root, entries, searched, showHidden } = capture;
+          const node = root.byPath.get(binding.path);
+          const file = node && entries.get(node.handle);
+          if (!node || file?.fingerprint !== binding.fingerprint) {
+            mappings.push({ handle, kind: "unresolved" });
+            continue;
+          }
+          if (!searched.has(node.handle)) {
+            try {
+              // Prove the scanned directory chain without reading excluded content.
+              const authorization = await authorizeEntry(
+                root.authorization, file.path, file.fingerprint, file.chain, showHidden, check
+              );
+              await authorization.file.close();
+              check();
+              const blocked = documents.trashBlocked(
+                authorization.path, authorization.fingerprint, authorization.directories
+              );
+              mappings.push({ handle, kind: blocked ? "unresolved" : "outside" });
+            } catch {
+              mappings.push({ handle, kind: "unresolved" });
+            }
+            continue;
+          }
+          matchedCounts.set(node.handle, (matchedCounts.get(node.handle) ?? 0) + 1);
+          mappings.push({
+            handle, kind: "matched", entry: node.handle,
+            documentId: binding.documentId, revision: binding.revision, hash: binding.hash,
+          });
+        }
+        for (const { root } of captures) await verifyRoot(root.authorization, check);
+        check();
+      } catch {
+        return { ok: false, error: current() ? "UNAVAILABLE" : "CANCELLED" };
+      }
+      return {
+        ok: true,
+        coverage: result.coverage,
+        mappings: mappings.map((mapping) =>
+          mapping.kind === "matched" && matchedCounts.get(mapping.entry) !== 1
+            ? { handle: mapping.handle, kind: "unresolved" }
+            : mapping
+        ),
+      };
+    })();
+    indexTask = task;
+    try {
+      const result = await task;
+      return result.ok && !current() ? { ok: false, error: "CANCELLED" } : result;
+    } finally {
+      indexTask = undefined;
+    }
+  }
   return {
     async resolveMRU(entries, check) {
       const items:import("../../shared/document-mru").MRUResolved[]=[];
@@ -1193,127 +1370,10 @@ export function createWorkspaceService({
         indexTask = undefined;
       }
     },
-    async searchContentCandidates(input, signal) {
-      if (signal?.aborted) return { ok: false, error: "CANCELLED" };
-      if (indexTask) return { ok: false, error: "BUSY" };
-      const { fileFilters, pathFilters } = input;
-      if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
-          new Set(input.handles).size !== input.handles.length ||
-          (fileFilters !== undefined && !validContentSearchFileFilters(fileFilters)) ||
-          (pathFilters !== undefined && !validContentSearchPathFilters(pathFilters)) ||
-          (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > CONTENT_SEARCH_FILTER_COUNT_LIMIT)
-        return { ok: false, error: "INVALID" };
-      if (input.handles.length > INDEX_LIMITS.documents)
-        return { ok: false, error: "LIMIT" };
-      const snapshot = captureIndexRoot(input.root, input.generation, signal);
-      if (!snapshot.ok) return snapshot;
-      const handles = [...input.handles];
-      const admission = documents.captureContentSearchBindings(handles);
-      if (!admission) return { ok: false, error: "UNAVAILABLE" };
-      const { root, entries, showHidden } = snapshot;
-      let searched = entries;
-      if (fileFilters || pathFilters) {
-        searched = new Map();
-        for (const [entry, file] of entries) {
-          if (pathFilters) {
-            const path = relativeContentSearchPath(root.authorization.path, file.path);
-            if (path === undefined) return { ok: false, error: "UNAVAILABLE" };
-            if (!matchesContentSearchPathFilters(path, pathFilters)) continue;
-          }
-          if (!fileFilters || matchesContentSearchFileFilters(basename(file.path), fileFilters))
-            searched.set(entry, file);
-        }
-      }
-      const current = () => admission.current() && snapshot.current();
-      const check = () => {
-        if (!current()) throw Error("Content search invalidated");
-      };
-      const task = (async (): Promise<ContentSearchCandidates> => {
-        const result = await searchSnapshotEvidence(root.authorization, searched, showHidden, input.query, current);
-        if (!result.ok) {
-          const error = result.error;
-          if (error === "INPUT") return { ok: false, error: "INVALID" };
-          return {
-            ok: false,
-            error: error === "LIMIT" || error === "BUSY" || error === "CANCELLED" || error === "UNKNOWN"
-              ? error
-              : "UNAVAILABLE",
-          };
-        }
-        const mappings: SearchMapping[] = [];
-        const matchedCounts = new Map<string, number>();
-        try {
-          for (const [index, handle] of handles.entries()) {
-            check();
-            const binding = admission.bindings[index];
-            if (!binding) {
-              mappings.push({ handle, kind: "unresolved" });
-              continue;
-            }
-            try {
-              await binding.verify(check);
-            } catch {
-              mappings.push({ handle, kind: "unresolved" });
-              continue;
-            }
-            check();
-            if (!containsPath(root.authorization.path, binding.path)) {
-              mappings.push({ handle, kind: "outside" });
-              continue;
-            }
-            const node = root.byPath.get(binding.path);
-            const file = node && entries.get(node.handle);
-            if (!node || file?.fingerprint !== binding.fingerprint) {
-              mappings.push({ handle, kind: "unresolved" });
-              continue;
-            }
-            if (!searched.has(node.handle)) {
-              try {
-                // The grant and scan must still identify the same authorized file.
-                // Prove the scan's directory chain without reading excluded content.
-                const authorization = await authorizeEntry(
-                  root.authorization, file.path, file.fingerprint, file.chain, showHidden, check
-                );
-                await authorization.file.close();
-                check();
-                const blocked = documents.trashBlocked(
-                  authorization.path, authorization.fingerprint, authorization.directories
-                );
-                mappings.push({ handle, kind: blocked ? "unresolved" : "outside" });
-              } catch {
-                mappings.push({ handle, kind: "unresolved" });
-              }
-              continue;
-            }
-            matchedCounts.set(node.handle, (matchedCounts.get(node.handle) ?? 0) + 1);
-            mappings.push({
-              handle, kind: "matched", entry: node.handle,
-              documentId: binding.documentId, revision: binding.revision, hash: binding.hash,
-            });
-          }
-          await verifyRoot(root.authorization, check);
-          check();
-        } catch {
-          return { ok: false, error: current() ? "UNAVAILABLE" : "CANCELLED" };
-        }
-        return {
-          ok: true,
-          coverage: result.coverage,
-          mappings: mappings.map((mapping) =>
-            mapping.kind === "matched" && matchedCounts.get(mapping.entry) !== 1
-              ? { handle: mapping.handle, kind: "unresolved" }
-              : mapping
-          ),
-        };
-      })();
-      indexTask = task;
-      try {
-        const result = await task;
-        return result.ok && !current() ? { ok: false, error: "CANCELLED" } : result;
-      } finally {
-        indexTask = undefined;
-      }
+    searchContentCandidates({ root, generation, ...input }, signal) {
+      return searchContentCandidatesForRoots({ ...input, roots: [{ handle: root, generation }] }, signal);
     },
+    searchContentCandidatesForRoots,
     async prepareContentSearchDocument(input, requestId, signal) {
       if (signal?.aborted) return { ok: false, error: "CANCELLED" };
       if (!validContentSearchPrepareRequest({ ...input, protocolVersion: 1, requestId }))

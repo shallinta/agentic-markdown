@@ -4,7 +4,14 @@ import { natural, record } from "./protocol";
 
 export const INDEX_PURGE_ROSTER_NAME = ".reclaim-purge.json";
 export const INDEX_PURGE_ROSTER_BYTES = 64 * 1024;
+export const INDEX_PURGE_COMPLETE_NAME = ".reclaim-complete.json";
+export const INDEX_PURGE_COMPLETE_BYTES = 4 * 1024;
 export const INDEX_PURGE_ROSTER_FILES = 128;
+export const INDEX_RECLAIM_RECORD_NAMES = {
+  purge: INDEX_PURGE_ROSTER_NAME,
+  complete: INDEX_PURGE_COMPLETE_NAME,
+} as const;
+export type ReclaimRecord = keyof typeof INDEX_RECLAIM_RECORD_NAMES;
 export const INDEX_SEGMENT_EXTENSIONS = ["idx", "pos", "term", "store", "fast", "fieldnorm"];
 export const INDEX_UNMANAGED_CONTROLS = [".managed.json", "bridge.schema", ".tantivy-meta.lock", ".tantivy-writer.lock"];
 
@@ -46,6 +53,17 @@ export function encodePurgeRoster(
     scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, files,
   }));
   if (bytes.length <= INDEX_PURGE_ROSTER_BYTES) return bytes;
+}
+
+export function encodePurgeCompletion(roster: PurgeRoster, rosterBytes: Buffer) {
+  const { scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, files } = roster;
+  const rosterSha256 = createHash("sha256").update(rosterBytes).digest("hex");
+  const bytes = Buffer.from(JSON.stringify({
+    version: 1, profile: "limited-v1", state: "empty-confirmed",
+    scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, rosterSha256,
+    directory, expectedFiles: files.length,
+  }));
+  if (bytes.length <= INDEX_PURGE_COMPLETE_BYTES) return bytes;
 }
 
 const digest = /^[a-f0-9]{64}$/;

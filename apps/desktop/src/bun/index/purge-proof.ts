@@ -1,4 +1,4 @@
-import type { captureIndexFootprint } from "./cache-footprint";
+import { sameIndexInventoryMetadata, type captureIndexFootprint } from "./cache-footprint";
 import { decodePurgeRoster, reclaimStagingDigest } from "./purge-roster";
 import { readPinnedPurgeRoster, readPreparedReclaimCatalog } from "./reclaim-layout";
 import type { IndexReclaimIntentTarget } from "./reuse-catalog";
@@ -41,4 +41,11 @@ export async function verifyPurgeSubset(
   if (footprint.indexBytes > BigInt(Number.MAX_SAFE_INTEGER)) return fail("UNAVAILABLE");
   footprint.recheck();
   return { ok: true as const, footprint, purgeStat: footprint.purgeStat, roster, remaining, catalogSha256, rosterBytes: bytes };
+}
+
+type PurgeProof = Extract<Awaited<ReturnType<typeof verifyPurgeSubset>>, { ok: true }>;
+export function samePurgeRecords(before: PurgeProof, after: PurgeProof) {
+  return before.catalogSha256 === after.catalogSha256 && before.rosterBytes.equals(after.rosterBytes) &&
+    sameIndexInventoryMetadata(before.footprint.catalogStat, after.footprint.catalogStat) &&
+    sameIndexInventoryMetadata(before.purgeStat, after.purgeStat);
 }

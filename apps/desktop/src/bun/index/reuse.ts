@@ -15,11 +15,11 @@ import {
   type IndexHit,
   type IndexResult,
 } from "./protocol";
-import { samePurgeStamp, verifyPurgeSubset } from "./purge-proof";
-import { publishPurgeRoster } from "./purge-publish";
+import { samePurgeRecords, samePurgeStamp, verifyPurgeSubset } from "./purge-proof";
+import { publishReclaimRecord } from "./purge-publish";
 import { unlinkPurgeMember } from "./purge-remove";
-import { encodePurgeRoster, purgeMemberOrder } from "./purge-roster";
-import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
+import { encodePurgeCompletion, encodePurgeRoster, purgeMemberOrder } from "./purge-roster";
+import { readPinnedPurgeCompletion, readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import { loadReclaimStage } from "./reclaim-stage";
 import {
   acquireIndexReuseSlot,
@@ -136,12 +136,12 @@ async function useRetirementSlot<Result extends { ok: true }>(
 
 function captureRetirementFootprint(
   directory: string, { assertInventoryLease }: RetirementSlot, cached: ProvenCatalog, check: () => void,
-  includePurge = false
+  records: boolean | "completed" = false
 ) {
   const { identity } = cached;
   const placement = cached.status === "prepared" ? cached.placement : "original";
   return captureIndexFootprint(
-    directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity, placement, includePurge
+    directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity, placement, records
   );
 }
 
@@ -283,7 +283,7 @@ export function prepareStagedIndexReusePurge(directory: string, target: IndexRec
       if (cached.status !== "prepared" || cached.placement !== "pending") return fail("SCHEMA");
       const { catalog } = cached;
       if (catalog.inventoryDigest !== target.inventoryDigest) return fail("MISMATCH");
-      const alreadyPrepared = slot.hasPurgeRoster();
+      const alreadyPrepared = slot.hasReclaimRecord("purge");
       const verified = await verifyRetiredFootprint(
         directory, slot, cached, check, target, target.inventoryDigest, alreadyPrepared
       );
@@ -310,7 +310,7 @@ export function prepareStagedIndexReusePurge(directory: string, target: IndexRec
         held.check("pending");
         let installed = footprint.purgeStat;
         if (!installed) {
-          const result = publishPurgeRoster(directory, held, contents, footprint.recheckAfterStaging);
+          const result = publishReclaimRecord(directory, held, contents, footprint.recheckAfterStaging, "purge");
           if (!result.ok) return fail(result.error);
           installed = result.installed;
         }
@@ -375,10 +375,7 @@ export function removeStagedIndexReuseMember(directory: string, target: IndexPur
             { catalog: cached.identity.catalog, index }, "pending", true
           );
           const terminal = await verifyPurgeSubset(directory, snapshot, target, owner);
-          if (!terminal.ok || terminal.catalogSha256 !== proof.catalogSha256 ||
-              !terminal.rosterBytes.equals(proof.rosterBytes) ||
-              !sameIndexInventoryMetadata(proof.footprint.catalogStat, terminal.footprint.catalogStat) ||
-              !sameIndexInventoryMetadata(proof.purgeStat, terminal.purgeStat) ||
+          if (!terminal.ok || !samePurgeRecords(proof, terminal) ||
               terminal.remaining.length !== expected.length ||
               terminal.remaining.some(([member, stamp], i) =>
                 member !== expected[i][0] || !samePurgeStamp(expected[i][1], stamp)))
@@ -389,6 +386,68 @@ export function removeStagedIndexReuseMember(directory: string, target: IndexPur
         } catch {
           throw new IndexReuseCleanupError("Purge member sync or confirmation unconfirmed");
         }
+      });
+    },
+    "stage"
+  );
+}
+
+export function prepareEmptyStagedIndexReuseCompletion(directory: string, target: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetirementSlot<{ ok: true; alreadyPrepared: boolean }>(
+    directory, target, current, async (slot, cached, check) => {
+      if (cached.status !== "prepared" || cached.placement !== "pending") return fail("SCHEMA");
+      const owner = cached.identity.catalog.uid;
+      const alreadyPrepared = slot.hasReclaimRecord("complete");
+      const snapshot = await captureRetirementFootprint(directory, slot, cached, check, alreadyPrepared ? "completed" : true);
+      const proof = await verifyPurgeSubset(directory, snapshot, target, owner);
+      if (!proof.ok) return proof;
+      if (proof.remaining.length) return fail("MISMATCH");
+      const contents = encodePurgeCompletion(proof.roster, proof.rosterBytes);
+      if (!contents) return fail("UNAVAILABLE");
+      const { footprint } = proof;
+      if (footprint.completionStat) {
+        const prior = await readPinnedPurgeCompletion(directory, footprint.completionStat, footprint.checkIndex);
+        footprint.recheck();
+        if (!prior) return fail("UNAVAILABLE");
+        if (!prior.equals(contents)) return fail("MISMATCH");
+      }
+
+      return slot.withStageDirectories("pending", cached.identity, undefined, async (held) => {
+        footprint.recheck();
+        held.check("pending");
+        try {
+          await held.syncPending();
+        } catch (error) {
+          if (alreadyPrepared) throw new IndexReuseCleanupError("Empty pending index sync unconfirmed");
+          throw error;
+        }
+        footprint.recheck();
+        held.check("pending");
+        let installed = footprint.completionStat;
+        if (!installed) {
+          const result = publishReclaimRecord(directory, held, contents, footprint.recheckAfterStaging, "complete");
+          if (!result.ok) return fail(result.error);
+          installed = result.installed;
+        }
+        try {
+          const checkPending = () => held.check("pending");
+          checkPending();
+          await held.sync();
+          const saved = await captureRetirementFootprint(directory, slot, cached, checkPending, "completed");
+          const terminal = await verifyPurgeSubset(directory, saved, target, owner);
+          if (!terminal.ok || terminal.remaining.length || !samePurgeRecords(proof, terminal) ||
+              !terminal.footprint.completionStat || !sameIndexInventoryMetadata(installed, terminal.footprint.completionStat))
+            throw Error("Empty pending index confirmation changed");
+          const actual = await readPinnedPurgeCompletion(
+            directory, terminal.footprint.completionStat, terminal.footprint.checkIndex
+          );
+          terminal.footprint.recheck();
+          checkPending();
+          if (!actual?.equals(contents)) throw Error("Empty pending index record changed");
+        } catch {
+          throw new IndexReuseCleanupError("Empty pending index completion unconfirmed");
+        }
+        return { ok: true, alreadyPrepared };
       });
     },
     "stage"
@@ -526,7 +585,7 @@ async function runIndexReuse(
       if (footprint.status !== "existing") return fail("UNAVAILABLE");
       if (footprint.totalBytes > BigInt(maxLogicalBytes)) return fail("LIMIT");
     } else check();
-    if (slot.hasPurgeRoster()) return fail("SCHEMA");
+    if (slot.hasReclaimRecord()) return fail("SCHEMA");
     session = createIndexSession();
     const opened = await session.open(slot.indexPath, exact ? "reader-only" : prior ? "writer-existing" : "create-new");
     if (opened.ok) nativeGeneration = opened.generation;

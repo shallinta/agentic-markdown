@@ -11,7 +11,8 @@ import { encodePurgeRoster, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
 import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
-  prepareStagedIndexReusePurge, removeStagedIndexReuseMember, stageRetiredIndexReuse, type IndexReuseInput,
+  prepareEmptyStagedIndexReuseCompletion, prepareStagedIndexReusePurge, removeStagedIndexReuseMember,
+  stageRetiredIndexReuse, type IndexReuseInput,
 } from "./reuse";
 import {
   IndexReuseCleanupError, reclaimDirectoryName, readIndexPurgeMemberTarget, readIndexReclaimIntentTarget,
@@ -132,6 +133,10 @@ export function prepareStagedIndexPurge(input: IndexReclaimIntentTarget, current
 
 export function removeStagedIndexPurgeMember(input: IndexPurgeMemberTarget, current: () => boolean) {
   return useRetiredAppProfile(readIndexPurgeMemberTarget(input), current, removeStagedIndexReuseMember);
+}
+
+export function prepareEmptyStagedIndexCompletion(input: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, prepareEmptyStagedIndexReuseCompletion);
 }
 
 async function useRetiredAppProfile<

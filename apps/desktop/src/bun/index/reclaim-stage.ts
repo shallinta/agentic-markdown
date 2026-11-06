@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 
 import { keys, natural, record } from "./protocol";
-import { INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
+import { INDEX_RECLAIM_RECORD_NAMES, type ReclaimRecord } from "./purge-roster";
 
 type StageResult = "staged" | "BUSY" | "UNAVAILABLE" | "UNKNOWN";
 interface ReclaimStage {
@@ -53,7 +53,7 @@ export function loadReclaimStage(): ReclaimStage | undefined {
   };
 }
 
-export function loadPurgePublisher() {
+export function loadReclaimPublisher() {
   const native = loadSaveNative();
   if (typeof native?.createTemp !== "function" || typeof native.removeTemp !== "function" ||
       typeof native.publishExclusive !== "function") return;
@@ -68,9 +68,9 @@ export function loadPurgePublisher() {
       if (Reflect.apply(removeTemp, native, [profileFd, name]) !== 0)
         throw Error("Purge roster staging cleanup unavailable");
     },
-    publish(profileFd: number, name: string) {
+    publish(profileFd: number, name: string, recordName: ReclaimRecord) {
       try {
-        return Reflect.apply(publishExclusive, native, [profileFd, name, INDEX_PURGE_ROSTER_NAME]) === 0
+        return Reflect.apply(publishExclusive, native, [profileFd, name, INDEX_RECLAIM_RECORD_NAMES[recordName]]) === 0
           ? "published" as const : "UNKNOWN" as const;
       } catch (error) {
         if (record(error) && error.code === "PUBLISH_EXISTS") return "BUSY" as const;

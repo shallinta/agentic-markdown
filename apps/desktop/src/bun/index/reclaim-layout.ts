@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { sameIndexInventoryMetadata } from "./cache-footprint";
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
 import {
-  INDEX_PURGE_ROSTER_BYTES, INDEX_PURGE_ROSTER_NAME, INDEX_SEGMENT_EXTENSIONS, INDEX_UNMANAGED_CONTROLS,
+  INDEX_PURGE_COMPLETE_BYTES, INDEX_PURGE_COMPLETE_NAME, INDEX_PURGE_ROSTER_BYTES, INDEX_PURGE_ROSTER_NAME,
+  INDEX_SEGMENT_EXTENSIONS, INDEX_UNMANAGED_CONTROLS,
 } from "./purge-roster";
 import { INDEX_REUSE_CATALOG_BYTES, IndexReuseCleanupError, validPreparedCatalog } from "./reuse-catalog";
 
@@ -69,6 +70,10 @@ export async function readPreparedReclaimCatalog(profile: string, pinned: BigInt
 
 export function readPinnedPurgeRoster(profile: string, pinned: BigIntStats, check: () => void) {
   return readControl(join(profile, INDEX_PURGE_ROSTER_NAME), pinned, INDEX_PURGE_ROSTER_BYTES, check);
+}
+
+export function readPinnedPurgeCompletion(profile: string, pinned: BigIntStats, check: () => void) {
+  return readControl(join(profile, INDEX_PURGE_COMPLETE_NAME), pinned, INDEX_PURGE_COMPLETE_BYTES, check);
 }
 
 function validSchema(value: unknown) {

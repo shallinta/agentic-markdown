@@ -3,8 +3,8 @@ import { closeSync, fstatSync, fsyncSync, lstatSync, opendirSync, writeSync, typ
 import { join } from "node:path";
 
 import { sameIndexInventoryMetadata } from "./cache-footprint";
-import { INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
-import { loadPurgePublisher } from "./reclaim-stage";
+import { INDEX_RECLAIM_RECORD_NAMES, type ReclaimRecord } from "./purge-roster";
+import { loadReclaimPublisher } from "./reclaim-stage";
 import { IndexReuseCleanupError, reclaimDirectoryName, type HeldIndexPlacement } from "./reuse-catalog";
 
 function closeProfile(directory: Dir) {
@@ -15,10 +15,11 @@ function closeProfile(directory: Dir) {
   }
 }
 
-function assertStagedLayout(profile: string, temporary: string, held: HeldIndexPlacement) {
+function assertStagedLayout(profile: string, temporary: string, held: HeldIndexPlacement, destination: ReclaimRecord) {
   held.check("pending");
-  const directory = opendirSync(profile, { bufferSize: 4 });
   const names = new Set(["catalog.json", ".lease", reclaimDirectoryName("pending"), temporary]);
+  if (destination === "complete") names.add(INDEX_RECLAIM_RECORD_NAMES.purge);
+  const directory = opendirSync(profile, { bufferSize: names.size });
   try {
     while (names.size) {
       const entry = directory.readSync();
@@ -45,8 +46,10 @@ function closeTemporary(fd: number) {
   }
 }
 
-export function publishPurgeRoster(profile: string, held: HeldIndexPlacement, contents: Buffer, beforeCommit: () => void) {
-  const native = loadPurgePublisher();
+export function publishReclaimRecord(
+  profile: string, held: HeldIndexPlacement, contents: Buffer, beforeCommit: () => void, destination: ReclaimRecord
+) {
+  const native = loadReclaimPublisher();
   if (!native) return { ok: false as const, error: "UNAVAILABLE" as const };
   const temporary = `.agentic-save-${randomUUID()}`;
   const path = join(profile, temporary);
@@ -80,19 +83,19 @@ export function publishPurgeRoster(profile: string, held: HeldIndexPlacement, co
     fsyncSync(fd);
     const staged = fstatSync(fd, { bigint: true });
     beforeCommit();
-    assertStagedLayout(profile, temporary, held);
+    assertStagedLayout(profile, temporary, held, destination);
     if (!sameOwnedFile(initial, staged) || staged.size !== BigInt(contents.length) ||
         !sameIndexInventoryMetadata(staged, fstatSync(fd, { bigint: true })) ||
         !sameIndexInventoryMetadata(staged, lstatSync(path, { bigint: true })))
       throw Error("Purge roster staging identity changed");
-    const outcome = native.publish(held.profileFd, temporary);
+    const outcome = native.publish(held.profileFd, temporary, destination);
     if (outcome === "UNKNOWN") cleanup = false;
     if (outcome !== "published") return { ok: false as const, error: outcome };
     cleanup = false;
     try {
       const installed = fstatSync(fd, { bigint: true });
       if (!sameOwnedFile(staged, installed) || staged.size !== installed.size || staged.mtimeNs !== installed.mtimeNs ||
-          !sameIndexInventoryMetadata(installed, lstatSync(join(profile, INDEX_PURGE_ROSTER_NAME), { bigint: true })))
+          !sameIndexInventoryMetadata(installed, lstatSync(join(profile, INDEX_RECLAIM_RECORD_NAMES[destination]), { bigint: true })))
         throw Error("Purge roster publication changed");
       return { ok: true as const, installed };
     } catch {

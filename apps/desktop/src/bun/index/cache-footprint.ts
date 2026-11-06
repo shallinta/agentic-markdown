@@ -3,7 +3,9 @@ import { lstatSync, type BigIntStats, type Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME, reclaimStagingDigest } from "./purge-roster";
+import {
+  INDEX_PURGE_COMPLETE_NAME, INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME, reclaimStagingDigest,
+} from "./purge-roster";
 import {
   IndexReuseCleanupError, reclaimDirectoryName, type IndexReclaimIntentTarget,
   type IndexRetirementTarget, type IndexReuseInventoryIdentity, type ReclaimPlacement,
@@ -65,8 +67,10 @@ export async function captureIndexFootprint(
   checkLease: () => void,
   expected?: IndexReuseInventoryIdentity,
   placement: ReclaimPlacement = "original",
-  includePurge = false
+  records: boolean | "completed" = false
 ) {
+  const includePurge = Boolean(records);
+  const includeComplete = records === "completed";
   const checkInspection = () => {
     check();
     checkLease();
@@ -94,20 +98,23 @@ export async function captureIndexFootprint(
     return stat;
   };
 
-  const memberLimit = (expected ? 3 : 2) + Number(includePurge);
+  const memberLimit = (expected ? 3 : 2) + Number(includePurge) + Number(includeComplete);
   const indexName = reclaimDirectoryName(placement);
   const members = await readMembers(profile, memberLimit, checkInspection);
   checkInspection();
   if (!members.size && !expected && placement === "original") return { status: "empty" as const, recheck };
   if (members.size !== memberLimit || !members.has("catalog.json") || !members.has(indexName) ||
       (expected && !members.has(".lease")) ||
-      (includePurge && (placement !== "pending" || !members.has(INDEX_PURGE_ROSTER_NAME))))
+      (includePurge && (placement !== "pending" || !members.has(INDEX_PURGE_ROSTER_NAME))) ||
+      (includeComplete && !members.has(INDEX_PURGE_COMPLETE_NAME)))
     throw Error("Index cache layout unavailable");
 
   const catalogStat = readFileMetadata(join(profile, "catalog.json"), expected?.catalog, true);
   const catalogBytes = catalogStat.size;
   if (catalogBytes === 0n) throw Error("Index cache catalog unavailable");
   const purgeStat = includePurge ? readFileMetadata(join(profile, INDEX_PURGE_ROSTER_NAME), undefined, true) : undefined;
+  const completionStat = includeComplete
+    ? readFileMetadata(join(profile, INDEX_PURGE_COMPLETE_NAME), undefined, true) : undefined;
   const index = join(profile, indexName);
   const indexStat = lstatSync(index, { bigint: true });
   if (!indexStat.isDirectory() || indexStat.uid !== owner || (indexStat.mode & 0o022n) !== 0n ||
@@ -133,8 +140,9 @@ export async function captureIndexFootprint(
     return [dev, ino, birthtimeNs, uid, mode].map(String);
   };
   return {
-    status: "existing" as const, recheck, files: names.size + 1 + Number(includePurge),
-    catalogStat, purgeStat, catalogBytes, indexBytes, totalBytes: catalogBytes + indexBytes + (purgeStat?.size ?? 0n),
+    status: "existing" as const, recheck, files: names.size + 1 + Number(includePurge) + Number(includeComplete),
+    catalogStat, purgeStat, completionStat, catalogBytes, indexBytes,
+    totalBytes: catalogBytes + indexBytes + (purgeStat?.size ?? 0n) + (completionStat?.size ?? 0n),
     recheckAfterStaging: () => recheckInventory(1),
     recheckNative: () => {
       checkLease();

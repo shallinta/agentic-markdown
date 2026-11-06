@@ -12,7 +12,7 @@ import { lstat, mkdir, open, rmdir, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
-import { INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
+import { INDEX_PURGE_ROSTER_FILES, INDEX_RECLAIM_RECORD_NAMES, type ReclaimRecord } from "./purge-roster";
 
 export const INDEX_REUSE_CATALOG_BYTES = 4096;
 const digest = /^[a-f0-9]{64}$/;
@@ -75,7 +75,7 @@ interface IndexReuseSlot {
   readCatalog(): Promise<CatalogRead>;
   readPrepareCatalog(): Promise<CatalogRead>;
   readStageCatalog(): Promise<CatalogRead>;
-  hasPurgeRoster(): boolean;
+  hasReclaimRecord(kind?: ReclaimRecord): boolean;
   writeCatalog(catalog: IndexReuseCatalog, beforeCommit?: () => void): Promise<void>;
   retireCatalog(
     target: IndexRetirementTarget, identity: IndexReuseInventoryIdentity,
@@ -222,7 +222,13 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
   const catalogPath = join(directory, "catalog.json");
   const indexPath = join(directory, "index");
   const pendingPath = join(directory, ".reclaim-pending");
-  const purgePath = join(directory, INDEX_PURGE_ROSTER_NAME);
+  const reclaimRecordPaths = {
+    purge: join(directory, INDEX_RECLAIM_RECORD_NAMES.purge),
+    complete: join(directory, INDEX_RECLAIM_RECORD_NAMES.complete),
+  };
+  const reclaimRecordPresent = (kind?: ReclaimRecord) => kind
+    ? present(reclaimRecordPaths[kind]) !== undefined
+    : present(reclaimRecordPaths.purge) !== undefined || present(reclaimRecordPaths.complete) !== undefined;
   const placementPath = (placement: ReclaimPlacement) => join(directory, reclaimDirectoryName(placement));
   const ownedDirectory = (stat: BigIntStats) => stat.isDirectory() && stat.uid === owner;
   const privateDirectory = (stat: BigIntStats) =>
@@ -346,7 +352,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
     async function readCatalog(mode: "ordinary" | "prepare" | "stage" = "ordinary"): Promise<CatalogRead> {
       try {
         assertLease();
-        if (mode !== "stage" && present(purgePath)) return { status: "invalid" };
+        if (mode !== "stage" && reclaimRecordPresent()) return { status: "invalid" };
         const original = present(indexPath);
         const pending = present(pendingPath);
         if (pending && (mode === "ordinary" || (mode === "stage" ? original : !original)))
@@ -387,7 +393,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         if (!latestCatalog || !privateFile(latestCatalog) || !sameFile(catalog, latestCatalog) ||
             !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex) ||
             (mode !== "prepare" && present(placement === "original" ? pendingPath : indexPath)) ||
-            (mode !== "stage" && present(purgePath)))
+            (mode !== "stage" && reclaimRecordPresent()))
           return { status: "invalid" };
         const identity = { catalog, index };
         if (validPreparedCatalog(value)) return { status: "prepared", catalog: value, identity, placement };
@@ -451,9 +457,9 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         readCatalog: () => readCatalog(),
         readPrepareCatalog: () => readCatalog("prepare"),
         readStageCatalog: () => readCatalog("stage"),
-        hasPurgeRoster() {
+        hasReclaimRecord(kind) {
           assertLease(true);
-          return present(purgePath) !== undefined;
+          return reclaimRecordPresent(kind);
         },
         async writeCatalog(catalog, beforeCommit) {
           if (!validCatalog(catalog)) throw Error("Invalid index reuse catalog");

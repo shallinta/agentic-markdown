@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ad 的 alpha.217 已验证私有索引槽的只读占用统计。统计按逻辑字节计，目录变化、租约或异常布局会阻止发布计数。普通窗口无新增入口。见[F-064ad 迭代](iterations/F-064ad-private-index-cache-footprint.md)。
+
 F-064ac 的 alpha.216 在隔离 App 数据目录验证私有索引槽。合成快照热重开保持代数并跳过写入。普通窗口继续使用直接搜索。见[F-064ac 迭代](iterations/F-064ac-private-app-index-cache-slot.md)。
 
 F-064ab 的 alpha.215 会在查询中显示已核对的篇数和暂定片段，查询完成后才提供定位。已打开文档的磁盘片段在暂定阶段遮蔽，最终采用核验后的正文和未保存覆盖。取消或范围变化会清除暂定片段。见[F-064ab 迭代](iterations/F-064ab-stream-window-search-previews.md)。

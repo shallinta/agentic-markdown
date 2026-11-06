@@ -13,7 +13,8 @@ import type { TrustedWorkspaceService } from "../workspace";
 /** Owned by one native window and its workspace. A stale view cannot publish a reply. */
 export function createContentSearchRPC(
   workspace: Pick<TrustedWorkspaceService, "searchContentCandidates"> &
-    Partial<Pick<TrustedWorkspaceService, "prepareContentSearchDocument">>,
+    Partial<Pick<TrustedWorkspaceService,
+      "prepareContentSearchDocument" | "searchContentCandidatesForRoots">>,
   release?: (handle: string) => Promise<boolean>
 ) {
   let ready = false;
@@ -120,24 +121,24 @@ export function createContentSearchRPC(
         return { ...envelope, ok: true, op: "cancel" };
       }
       if (active) return fail("BUSY");
+      const query = input.op === "query-roots"
+        ? { ...input, roots: input.roots.map(({ handle, generation }) => ({ handle, generation })) }
+        : input;
       const request = begin(input.requestId);
       try {
-        const result = await workspace.searchContentCandidates(
-          input,
-          request.signal
-        );
+        const result = query.op === "query-roots"
+          ? await workspace.searchContentCandidatesForRoots?.(query, request.signal)
+          : await workspace.searchContentCandidates(query, request.signal);
+        if (!result) return fail("UNAVAILABLE");
         if (!result.ok && result.error === "UNKNOWN") return fail("UNKNOWN");
         if (request.signal.aborted || !ready || suspended)
           return fail("CANCELLED");
         if (!result.ok) return fail(result.error);
-        const response = {
-          ...envelope,
-          ...result,
-          op: "query" as const,
-          root: input.root,
-          generation: input.generation,
-        };
-        return validContentSearchResponse(response, input)
+        const scope = query.op === "query-roots"
+          ? { op: query.op, roots: query.roots }
+          : { op: query.op, root: query.root, generation: query.generation };
+        const response = { ...envelope, ...result, ...scope };
+        return validContentSearchResponse(response, query)
           ? response
           : fail("UNAVAILABLE");
       } catch {

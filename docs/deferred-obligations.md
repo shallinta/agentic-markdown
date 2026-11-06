@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064n 多根传输有限通过（2026-11-06）
+
+alpha.201 包内已验证多根协议、取消、窗口退出边界及正式原生搜索，真实 WK 回归单根。OBL-006、OBL-018、OBL-026、OBL-035 继续由 F-064 承接。见[F-064n 迭代](iterations/F-064n-multi-root-search-transport.md)。
+
 ## F-064m 内部多根查询有限通过（2026-11-06）
 
 alpha.200 包内已验证多根授权、共享预算及取消后清理，真实 WK 回归单根。OBL-006、OBL-018、OBL-026、OBL-035 继续由 F-064 承接，尚待跨根入口、完整调度、持久缓存与 schema 验收。见[F-064m 迭代](iterations/F-064m-bounded-multi-root-content-search.md)。

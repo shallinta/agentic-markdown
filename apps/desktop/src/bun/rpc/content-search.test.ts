@@ -22,6 +22,20 @@ const query = (handles: string[] = []) => ({
   query: "😀",
   handles,
 });
+const queryRoots = () => ({
+  ...envelope(),
+  op: "query-roots" as const,
+  roots: [{ handle: id(), generation: 2 }, { handle: id(), generation: 1 }],
+  query: "😀",
+  handles: [],
+});
+const prepareHit = () => ({
+  ...envelope(),
+  root: id(),
+  generation: 1,
+  entry: id(),
+  expectedHash: "a".repeat(64),
+});
 
 test("content search wire rejects unbounded, unknown and inconsistent data", () => {
   const handle = id();
@@ -124,6 +138,75 @@ test("cancellation cannot hide an uncertain accepted native result", async () =>
   ).toMatchObject({ ok: true, op: "cancel" });
   gate.resolve({ ok: false, error: "UNKNOWN" });
   expect(await pending).toMatchObject({ error: "UNKNOWN" });
+});
+
+test("multi-root requests use their own scope in the existing query, prepare and cancel lane", async () => {
+  const single = Promise.withResolvers<ContentSearchCandidates>();
+  const multi = Promise.withResolvers<ContentSearchCandidates>();
+  const preparing = Promise.withResolvers<ContentSearchPrepared>();
+  const request = queryRoots();
+  const empty: ContentSearchCandidates = { ok: true, coverage: [], mappings: [] };
+  let calls = 0;
+  let signal: AbortSignal | undefined;
+  const rpc = createContentSearchRPC({
+    searchContentCandidates: () => single.promise,
+    searchContentCandidatesForRoots(input, abort) {
+      expect(input.roots).toEqual(request.roots);
+      signal = abort;
+      calls++;
+      return multi.promise;
+    },
+    prepareContentSearchDocument: () => preparing.promise,
+  }, () => Promise.resolve(true));
+
+  expect(await rpc.run(request)).toMatchObject({ error: "NOT_READY" });
+  rpc.setReady(true);
+  expect(await rpc.run({ ...request, roots: [request.roots[0], request.roots[0]] }))
+    .toMatchObject({ error: "INVALID" });
+  expect(calls).toBe(0);
+  const first = rpc.run(query());
+  expect(await rpc.run(request)).toMatchObject({ error: "BUSY" });
+  single.resolve(empty);
+  expect(await first).toMatchObject({ ok: true, op: "query" });
+
+  const prepare = rpc.prepare(prepareHit());
+  expect(await rpc.run(request)).toMatchObject({ error: "BUSY" });
+  preparing.resolve({ ok: false, error: "STALE" });
+  expect(await prepare).toMatchObject({ error: "STALE" });
+
+  const pending = rpc.run(request);
+  expect(await rpc.run(query())).toMatchObject({ error: "BUSY" });
+  expect(await rpc.prepare(prepareHit())).toMatchObject({ error: "BUSY" });
+  expect(await rpc.run({ ...envelope(), op: "cancel", targetRequestId: id() }))
+    .toMatchObject({ error: "STALE" });
+  expect(signal?.aborted).toBe(false);
+  expect(await rpc.run({ ...envelope(), op: "cancel", targetRequestId: request.requestId }))
+    .toMatchObject({ ok: true, op: "cancel" });
+  expect(signal?.aborted).toBe(true);
+  expect(await rpc.run(queryRoots())).toMatchObject({ error: "BUSY" });
+  multi.resolve(empty);
+  expect(await pending).toMatchObject({ error: "CANCELLED" });
+  await rpc.drain();
+  const receipt = await rpc.run(request);
+  expect(receipt).toEqual({
+    ...empty, protocolVersion: 1, requestId: request.requestId,
+    op: "query-roots", roots: request.roots,
+  });
+  expect(calls).toBe(2);
+});
+
+test("an uncertain multi-root result survives window retirement and drain", async () => {
+  const gate = Promise.withResolvers<ContentSearchCandidates>();
+  const rpc = createContentSearchRPC({
+    searchContentCandidates: () => Promise.resolve({ ok: false, error: "UNAVAILABLE" }),
+    searchContentCandidatesForRoots: () => gate.promise,
+  });
+  rpc.setReady(true);
+  const pending = rpc.run(queryRoots());
+  rpc.setReady(false);
+  gate.resolve({ ok: false, error: "UNKNOWN" });
+  expect(await pending).toMatchObject({ error: "UNKNOWN" });
+  await rpc.drain();
 });
 
 test.each([

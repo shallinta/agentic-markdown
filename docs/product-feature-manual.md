@@ -2,6 +2,8 @@
 
 ## 文件夹正文搜索与索引（F-064）
 
+F-064n 的 alpha.201 在内部传输增加有界多根请求，沿用现有取消和退出收尾。新协议已通过包内原生验证。普通窗口的多根范围控件由后续切片接入。见[F-064n 迭代](iterations/F-064n-multi-root-search-transport.md)。
+
 F-064m 的 alpha.200 加入内部多根查询，一次核对参与查询的已授权目录并共享索引会话与总预算。该能力已经包内原生验证，界面仍使用单文件夹查询。见[F-064m 迭代](iterations/F-064m-bounded-multi-root-content-search.md)。
 
 F-064l 的 alpha.199 把入口改为「搜索单个文件夹正文」。可使用文件树选中的顶层文件夹，也可加 `root:笔记` 指定当前窗口的根。同名根用完整路径区分，选择器会填入该路径。换根会保留其他筛选条件。见[F-064l 迭代](iterations/F-064l-content-search-root-selector.md)。

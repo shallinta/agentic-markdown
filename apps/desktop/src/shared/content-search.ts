@@ -9,6 +9,7 @@ import type { DocumentSnapshot } from "./documents";
 import { perfRecord, perfUuid } from "./perf-lab";
 
 export const CONTENT_SEARCH_LIMITS = {
+  roots: 16,
   documents: 16,
   bytes: 65_536,
   query: 4096,
@@ -21,6 +22,15 @@ export interface ContentSearchInput {
   handles: readonly string[];
   fileFilters?: readonly string[];
   pathFilters?: readonly ContentSearchPathFilter[];
+}
+
+export interface ContentSearchScopeRoot {
+  handle: string;
+  generation: number;
+}
+
+export interface ContentSearchRootSetInput extends Omit<ContentSearchInput, "root" | "generation"> {
+  roots: readonly ContentSearchScopeRoot[];
 }
 
 export interface ContentSearchDocumentBinding {
@@ -88,6 +98,7 @@ interface Envelope {
 export type ContentSearchRequest = Envelope &
   (
     | (ContentSearchInput & { op: "query" })
+    | (ContentSearchRootSetInput & { op: "query-roots" })
     | { op: "cancel"; targetRequestId: string }
   );
 export type ContentSearchPrepareRequest = Envelope & ContentSearchPrepareInput;
@@ -110,6 +121,13 @@ export type ContentSearchResponse =
       generation: number;
       coverage: SearchCoverage[];
       mappings: SearchMapping[];
+    })
+  | (Envelope & {
+      ok: true;
+      op: "query-roots";
+      roots: readonly ContentSearchScopeRoot[];
+      coverage: SearchCoverage[];
+      mappings: SearchMapping[];
     });
 
 function exact(value: Record<string, unknown>, keys: readonly string[]) {
@@ -123,6 +141,33 @@ function natural(value: unknown): value is number {
 }
 function digest(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+export function validContentSearchScopeRoots(
+  value: unknown
+): value is readonly ContentSearchScopeRoot[] {
+  if (
+    !Array.isArray(value) ||
+    !value.length ||
+    value.length > CONTENT_SEARCH_LIMITS.roots ||
+    Object.keys(value).length !== value.length
+  )
+    return false;
+  const handles = new Set<string>();
+  for (let index = 0; index < value.length; index++) {
+    const root: unknown = value[index];
+    if (
+      !Object.prototype.hasOwnProperty.call(value, index) ||
+      !perfRecord(root) ||
+      !exact(root, ["handle", "generation"]) ||
+      !perfUuid(root.handle) ||
+      !natural(root.generation) ||
+      handles.has(root.handle)
+    )
+      return false;
+    handles.add(root.handle);
+  }
+  return true;
 }
 
 function validBinding(value: unknown): value is ContentSearchDocumentBinding {
@@ -224,7 +269,9 @@ export function validContentSearchRequest(
       exact(value, [...base, "targetRequestId"]) &&
       perfUuid(value.targetRequestId)
     );
-  const queryKeys = [...base, "root", "generation", "query", "handles"];
+  if (value.op !== "query" && value.op !== "query-roots") return false;
+  const scopeKeys = value.op === "query" ? ["root", "generation"] : ["roots"];
+  const queryKeys = [...base, ...scopeKeys, "query", "handles"];
   let filterCount = 0;
   if (Object.prototype.hasOwnProperty.call(value, "fileFilters")) {
     if (!validContentSearchFileFilters(value.fileFilters)) return false;
@@ -237,11 +284,11 @@ export function validContentSearchRequest(
     filterCount += value.pathFilters.length;
   }
   return (
-    value.op === "query" &&
     exact(value, queryKeys) &&
     filterCount <= CONTENT_SEARCH_FILTER_COUNT_LIMIT &&
-    perfUuid(value.root) &&
-    natural(value.generation) &&
+    (value.op === "query"
+      ? perfUuid(value.root) && natural(value.generation)
+      : validContentSearchScopeRoots(value.roots)) &&
     typeof value.query === "string" &&
     value.query.length <= CONTENT_SEARCH_LIMITS.query &&
     value.query.trim().length > 0 &&
@@ -271,17 +318,25 @@ export function validContentSearchResponse(
     );
   if (value.ok !== true || value.op !== request.op) return false;
   if (request.op === "cancel") return exact(value, [...base, "op"]);
+  const queryKeys = [...base, "op", "coverage", "mappings"];
+  if (request.op === "query") {
+    if (
+      !exact(value, [...queryKeys, "root", "generation"]) ||
+      value.root !== request.root ||
+      value.generation !== request.generation
+    )
+      return false;
+  } else if (
+    !exact(value, [...queryKeys, "roots"]) ||
+    !validContentSearchScopeRoots(value.roots) ||
+    value.roots.length !== request.roots.length ||
+    value.roots.some((root, index) =>
+      root.handle !== request.roots[index].handle ||
+      root.generation !== request.roots[index].generation
+    )
+  )
+    return false;
   if (
-    !exact(value, [
-      ...base,
-      "op",
-      "root",
-      "generation",
-      "coverage",
-      "mappings",
-    ]) ||
-    value.root !== request.root ||
-    value.generation !== request.generation ||
     !Array.isArray(value.coverage) ||
     value.coverage.length > CONTENT_SEARCH_LIMITS.documents ||
     !Array.isArray(value.mappings) ||

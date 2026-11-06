@@ -8,9 +8,14 @@ import type {
   ContentSearchInput,
   ContentSearchPrepareInput,
   ContentSearchPrepared,
+  ContentSearchRootSetInput,
   SearchMapping,
 } from "../../shared/content-search";
-import { validContentSearchPrepareRequest } from "../../shared/content-search";
+import {
+  CONTENT_SEARCH_LIMITS,
+  validContentSearchPrepareRequest,
+  validContentSearchScopeRoots,
+} from "../../shared/content-search";
 import {
   CONTENT_SEARCH_FILTER_COUNT_LIMIT,
   matchesContentSearchFileFilters,
@@ -22,7 +27,6 @@ import {
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
-import { perfRecord, perfUuid } from "../../shared/perf-lab";
 import {
   WORKSPACE_CACHE_BYTES,
   WORKSPACE_MAX_ROOTS,
@@ -77,7 +81,6 @@ import {
   readStableSearchBytes,
   searchSnapshot,
   searchSnapshotEvidenceAcrossRoots,
-  SEARCH_SNAPSHOT_ROOT_LIMIT,
 } from "./search-snapshot";
 import { createTrashService } from "./trash-document";
 import { createScanWorker } from "./worker";
@@ -101,10 +104,6 @@ interface Root {
 interface Owner extends DocumentScope {
   root: Root;
 }
-export type ContentSearchRootSetInput = Omit<ContentSearchInput, "root" | "generation"> & {
-  roots: readonly { handle: string; generation: number }[];
-};
-
 export interface TrustedWorkspaceService extends WorkspaceService {
   searchSnapshot(
     root: string,
@@ -1162,28 +1161,18 @@ export function createWorkspaceService({
     if (signal?.aborted) return { ok: false, error: "CANCELLED" };
     if (indexTask) return { ok: false, error: "BUSY" };
     const { fileFilters, pathFilters } = input;
+    const requestedRoots: unknown = input.roots;
     if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
         new Set(input.handles).size !== input.handles.length ||
         (fileFilters !== undefined && !validContentSearchFileFilters(fileFilters)) ||
         (pathFilters !== undefined && !validContentSearchPathFilters(pathFilters)) ||
-        (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > CONTENT_SEARCH_FILTER_COUNT_LIMIT ||
-        !Array.isArray(input.roots) || !input.roots.length)
+        (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > CONTENT_SEARCH_FILTER_COUNT_LIMIT)
       return { ok: false, error: "INVALID" };
-    if (input.handles.length > INDEX_LIMITS.documents || input.roots.length > SEARCH_SNAPSHOT_ROOT_LIMIT)
+    if (input.handles.length > INDEX_LIMITS.documents ||
+        (Array.isArray(requestedRoots) && requestedRoots.length > CONTENT_SEARCH_LIMITS.roots))
       return { ok: false, error: "LIMIT" };
-    const rootHandles = new Set<string>();
-    const requestedRoots: ContentSearchRootSetInput["roots"][number][] = [];
-    for (const request of input.roots) {
-      if (!perfRecord(request) || Object.keys(request).length !== 2 ||
-          !Object.prototype.propertyIsEnumerable.call(request, "handle") ||
-          !Object.prototype.propertyIsEnumerable.call(request, "generation") ||
-          !perfUuid(request.handle) || typeof request.generation !== "number" ||
-          !Number.isSafeInteger(request.generation) ||
-          request.generation < 0 || rootHandles.has(request.handle))
-        return { ok: false, error: "INVALID" };
-      rootHandles.add(request.handle);
-      requestedRoots.push({ handle: request.handle, generation: request.generation });
-    }
+    if (!validContentSearchScopeRoots(requestedRoots))
+      return { ok: false, error: "INVALID" };
 
     const captures: (Extract<ReturnType<typeof captureIndexRoot>, { ok: true }> & {
       searched: ReadonlyMap<string, ScanFile>;

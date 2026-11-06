@@ -14,9 +14,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ContentSearchInput } from "../../shared/content-search";
+import { validContentSearchResponse, type ContentSearchInput } from "../../shared/content-search";
 import { createDocumentService } from "../documents";
 import type { IndexRequest, IndexResult } from "../index/protocol";
+import { createContentSearchRPC } from "../rpc/content-search";
 
 import { createWorkspaceService } from ".";
 
@@ -510,6 +511,47 @@ test.skipIf(childScenario !== "multi-root")(
       expect(both.mappings).toEqual([{ handle, kind: "matched", entry: secondEntry, documentId, revision, hash }]);
       expect(operations).toEqual(["open", "apply", "query", "close"]);
       await removedSlot();
+
+      const rpc = createContentSearchRPC(workspace);
+      const wire = {
+        ...env(),
+        op: "query-roots" as const,
+        ...input,
+        roots: [second, first],
+        fileFilters: ["同名"],
+      };
+      const wireFailure = (requestId: string, error: "NOT_READY" | "INVALID" | "STALE") => ({
+        protocolVersion: 1,
+        requestId,
+        ok: false,
+        error,
+      } as const);
+      expect(await rpc.run(wire)).toEqual(wireFailure(wire.requestId, "NOT_READY"));
+      rpc.setReady(true);
+      const malformed = { ...wire, ...env(), rootAlias: secondPath };
+      expect(await rpc.run(malformed)).toEqual(wireFailure(malformed.requestId, "INVALID"));
+      const duplicate = { ...wire, ...env(), roots: [second, second] };
+      expect(await rpc.run(duplicate)).toEqual(wireFailure(duplicate.requestId, "INVALID"));
+      const stale = { ...wire, ...env(), roots: [second, { ...first, generation: first.generation + 1 }] };
+      expect(await rpc.run(stale)).toEqual(wireFailure(stale.requestId, "STALE"));
+
+      operations.length = 0;
+      const reply = await rpc.run(wire);
+      expect(validContentSearchResponse(reply, wire)).toBe(true);
+      if (!reply.ok || reply.op !== "query-roots") throw Error("Missing native multi-root RPC reply");
+      expect(reply).toMatchObject({
+        protocolVersion: 1,
+        requestId: wire.requestId,
+        roots: [second, first],
+        mappings: both.mappings,
+      });
+      expect(reply.coverage).toHaveLength(2);
+      expect(reply.coverage).toContainEqual(coverage(firstEntry, firstRaw));
+      expect(reply.coverage).toContainEqual(coverage(secondEntry, secondRaw));
+      expect(validContentSearchResponse({ ...reply, roots: [first, second] }, wire)).toBe(false);
+      expect(operations).toEqual(["open", "apply", "query", "close"]);
+      await removedSlot();
+
       expect(await search(firstOnly)).toEqual({
         ok: true,
         coverage: [coverage(firstEntry, firstRaw)],

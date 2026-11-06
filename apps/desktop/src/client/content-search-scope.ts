@@ -130,8 +130,6 @@ export function captureContentSearchScope(
     return { ok: false, error: "not-ready" };
 
   const { kind } = resolved;
-  const expanded = kind === "single" && fileFilters.length + pathFilters.length > 0 &&
-    resolved.roots[0].entries <= CONTENT_SEARCH_LIMITS.filteredRootEntries;
   const leaves = kind === "all" ? standalone : [];
   if (leaves.length > CONTENT_SEARCH_LIMITS.standaloneHandles ||
       leaves.length > CONTENT_SEARCH_LIMITS.coverageDocuments)
@@ -142,6 +140,8 @@ export function captureContentSearchScope(
     root.status !== "complete" || (pages[index]?.length ?? 0) !== root.entries
   ))
     return { ok: false, error: "not-ready" };
+  const expanded = fileFilters.length + pathFilters.length > 0 &&
+    pages.reduce((count, page) => count + (page?.length ?? 0), leaves.length) <= CONTENT_SEARCH_LIMITS.filteredEntries;
   const handles = new Set(roots.map(({ handle }) => handle));
   const paths = new Set(roots.map(({ displayPath }) => displayPath));
   if (handles.size !== roots.length || paths.size !== roots.length)
@@ -198,8 +198,11 @@ export function captureContentSearchScope(
     locations.add(locationId);
     documents.add(documentId);
     if (matchesContentSearchFileFilters(fileName, fileFilters) &&
-        matchesContentSearchPathFilters(fileName, pathFilters))
+        matchesContentSearchPathFilters(fileName, pathFilters)) {
+      if (expanded && entries.size >= CONTENT_SEARCH_LIMITS.coverageDocuments)
+        return { ok: false, error: "limit" };
       entries.set(handle, { root: null, standalone: leaf, name: fileName, displayPath });
+    }
   }
 
   const selectionRevision = selection.revision;

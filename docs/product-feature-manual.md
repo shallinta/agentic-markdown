@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064br 的 alpha.256 已验证当前窗口可手动输入文件名或路径条件，从多个目录和独立文件的合计 256 个条目中缩小范围。去重后仍最多读取 32 篇、合计 128 KiB 正文。见[F-064br 迭代](iterations/F-064br-filter-larger-window-search.md)。
+
 F-064bq 的 alpha.255 已验证独立文档命中定位。若目录已显示同一文件，拒绝从独立路径定位。关闭标签后的独立文件仍可从当前窗口搜索结果重开。见[F-064bq 迭代](iterations/F-064bq-locate-retained-standalone-search-entry.md)。
 
 F-064bp 的 alpha.254 已验证单个大目录的筛选下拉框。可从已扫描条目选择文件名、包含或排除路径，选项会填入现有筛选语法。见[F-064bp 迭代](iterations/F-064bp-pick-filters-in-larger-folders.md)。

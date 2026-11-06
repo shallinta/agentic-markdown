@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createFolderWorkspace } from "../../client/workspace";
+import { validContentSearchProgress, validContentSearchResponse, type ContentSearchProgress } from "../../shared/content-search";
 import type {
   WorkspaceResponse,
   WorkspaceNode,
@@ -24,6 +25,7 @@ import type {
 } from "../../shared/workspace";
 import { createDocumentService } from "../documents";
 import { checkWriteCapability } from "../documents/write-capability";
+import { createContentSearchRPC } from "../rpc/content-search";
 
 import { authorizeRoot } from "./authorization";
 import { createHiddenPreferences } from "./preferences";
@@ -710,7 +712,7 @@ test("exact search location stays available above the root query coverage limit"
     root: root.handle, generation: root.generation, query: "target", handles: [], fileFilters: ["target.md"],
   })).toEqual({ ok: false, error: "LIMIT" });
   expect(await workspace.searchContentCandidatesForWorkspace({
-    roots, standaloneHandles: [], query: "target", handles: [], fragments: true, fileFilters: ["target.md"],
+    roots, standaloneHandles: [], query: "target", handles: [], fragments: true,
   })).toEqual({ ok: false, error: "LIMIT" });
   const prepare = (change: Partial<typeof input> = {}) =>
     workspace.prepareContentSearchDocument({ ...input, ...change }, crypto.randomUUID());
@@ -870,6 +872,106 @@ test("single filtered direct search preserves narrow legacy scope in deeply nest
   })).toMatchObject({
     ok: true, coverage: [{ entry: target.handle, fragments: { matches: [{ from: 3, to: 9 }] } }],
   });
+});
+
+test("typed window search filters two large roots and a retained file within shared bounds", async () => {
+  const firstPath = join(directory, "first");
+  const secondPath = join(directory, "second");
+  const firstNames = ["hit-a.md", "oversized.md", "skip-first.md",
+    ...Array.from({ length: 14 }, (_, index) => `first-${index}.md`)];
+  const secondNames = ["hit-b.md", "skip-second.md", ...Array.from({ length: 15 }, (_, index) => `second-${index}.md`)];
+  const rootRaw = "😀 target root";
+  const leafRaw = "\uFEFF😀target";
+  async function seed(path: string, names: string[]) {
+    const paths = new Map<string, string>();
+    for (const [index, name] of names.entries()) {
+      const depth = index < 8 ? 7 : 6;
+      const folder = join(path, `branch-${index}`, ...Array<string>(depth - 1).fill("nested"));
+      await mkdir(folder, { recursive: true });
+      const file = join(folder, name);
+      paths.set(name, file);
+      await writeFile(file, name === "oversized.md" ? "x".repeat(65_537)
+        : name.startsWith("hit-") ? rootRaw : "other");
+    }
+    return paths;
+  }
+  const firstPaths = await seed(firstPath, firstNames);
+  await seed(secondPath, secondNames);
+  const absorbedPath = firstPaths.get("hit-a.md");
+  if (!absorbedPath) throw Error("Missing absorbed fixture file");
+  const absorbed = await pickSearchFile(absorbedPath);
+  const leafPath = join(directory, "hit-leaf.md");
+  await writeFile(leafPath, leafRaw);
+  const leaf = await pickSearchFile(leafPath);
+  for (const path of [firstPath, secondPath]) {
+    selected = path;
+    good(await workspace.request(request("select")));
+    await settle();
+  }
+  const scope = (await settle()).roots;
+  expect(scope.map(({ entries }) => entries)).toEqual([127, 127]);
+  const roots = scope.map(({ handle, generation }) => ({ handle, generation }));
+  const a = (await nodes(scope[0])).find(({ name }) => name === "hit-a.md");
+  const b = (await nodes(scope[1])).find(({ name }) => name === "hit-b.md");
+  if (!a || !b) throw Error("Missing scanned root matches");
+  const progress: ContentSearchProgress[] = [];
+  const rpc = createContentSearchRPC(workspace, async handle =>
+    (await documents.release({ ...documentEnvelope(), handle })).ok, event => progress.push(event));
+  rpc.setReady(true);
+  const base = {
+    op: "query-workspace" as const, roots, standaloneHandles: [absorbed.handle, leaf.handle],
+    handles: [], query: "target",
+  };
+  const stream = { ...base, fragments: true as const, stream: true as const };
+  expect(await rpc.run({ ...documentEnvelope(), ...stream })).toMatchObject({ ok: false, error: "LIMIT" });
+  expect(await rpc.run({ ...documentEnvelope(), ...base, fileFilters: ["hit-"] }))
+    .toMatchObject({ ok: false, error: "LIMIT" });
+  expect(progress).toEqual([]);
+
+  const narrowed = { ...documentEnvelope(), ...stream, fileFilters: ["hit-"] };
+  const result = await rpc.run(narrowed);
+  expect(validContentSearchResponse(result, narrowed)).toBe(true);
+  if (!result.ok || result.op !== "query-workspace") throw Error(JSON.stringify(result));
+  expect(result.coverage.map(({ entry }) => entry)).toEqual([a.handle, b.handle, leaf.handle]);
+  expect(result.coverage.map(({ hash }) => hash)).toEqual([searchHash(rootRaw), searchHash(rootRaw), searchHash(leafRaw)]);
+  expect(result.coverage.map(({ fragments }) => fragments?.matches.map(({ from, to }) => ({ from, to }))))
+    .toEqual([[{ from: 3, to: 9 }], [{ from: 3, to: 9 }], [{ from: 3, to: 9 }]]);
+  expect(progress.map(({ sequence, entry }) => ({ sequence, entry }))).toEqual(
+    [a.handle, b.handle, leaf.handle].map((entry, index) => ({ sequence: index + 1, entry }))
+  );
+  expect(progress.every((event) => validContentSearchProgress(event, narrowed))).toBe(true);
+  expect(result.coverage.some(({ entry }) => entry === absorbed.handle)).toBe(false);
+  expect(await rpc.prepare({
+    ...documentEnvelope(), root: roots[1].handle, generation: roots[1].generation, entry: b.handle,
+    expectedHash: searchHash(rootRaw),
+  })).toMatchObject({ ok: true, target: { kind: "open", snapshot: { text: rootRaw } } });
+  expect(await rpc.prepare({
+    ...documentEnvelope(), op: "prepare-retained", roots, entry: leaf.handle, expectedHash: leaf.hash,
+  })).toMatchObject({ ok: true, target: { kind: "retained", snapshot: {
+    handle: leaf.handle, locationId: leaf.locationId, text: leafRaw,
+  } } });
+
+  const minusLarge = { kind: "-path" as const, value: "oversized.md" };
+  const count = (skip: string) => workspace.searchContentCandidatesForWorkspace({
+    ...base, fragments: true, pathFilters: [minusLarge, { kind: "-path", value: skip }],
+  });
+  const exactly32 = await count("skip-");
+  if (!exactly32.ok) throw Error(JSON.stringify(exactly32));
+  expect(exactly32.coverage).toHaveLength(32);
+  expect(await count("skip-first.md")).toEqual({ ok: false, error: "LIMIT" });
+  expect(await rpc.run({ ...narrowed, ...documentEnvelope(), roots: [...roots].reverse() }))
+    .toMatchObject({ ok: false, error: "STALE" });
+  expect(await rpc.run({
+    ...narrowed, ...documentEnvelope(), roots: [roots[0], { ...roots[1], generation: roots[1].generation + 1 }],
+  })).toMatchObject({ ok: false, error: "STALE" });
+  const extraPath = join(directory, "extra.md");
+  await writeFile(extraPath, "excluded");
+  const extra = await pickSearchFile(extraPath);
+  expect(await rpc.run({
+    ...narrowed, ...documentEnvelope(), standaloneHandles: [...base.standaloneHandles, extra.handle],
+  })).toMatchObject({ ok: false, error: "LIMIT" });
+  expect(progress).toHaveLength(3);
+  await rpc.drain();
 });
 
 async function pickSearchFile(file: string) {

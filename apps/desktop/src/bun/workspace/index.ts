@@ -357,7 +357,7 @@ export function createWorkspaceService({
   function captureFilteredRootMetadata(root: Root) {
     const { nodes, byPath, files, directories, registry } = root;
     const count = nodes.length;
-    const limit = CONTENT_SEARCH_LIMITS.filteredRootEntries;
+    const limit = CONTENT_SEARCH_LIMITS.filteredEntries;
     if (count > limit || byPath.size > limit || files.size + directories.size > limit)
       return { ok: false, error: "LIMIT" } as const;
     if (root.meta.entries !== count || byPath.size !== count)
@@ -398,12 +398,13 @@ export function createWorkspaceService({
   }
   function captureIndexRoot(
     handle: string, generation: number, signal?: AbortSignal, coverageLimit: number = INDEX_LIMITS.documents,
-    filtered = false
+    filtered?: "single" | "mixed"
   ) {
     const scope = captureIndexRootState(handle, generation, signal);
     if (!scope.ok) return scope;
     const { root, files, showHidden } = scope;
-    const metadata = filtered && files.size > coverageLimit ? captureFilteredRootMetadata(root) : undefined;
+    const metadata = filtered === "mixed" || (filtered === "single" && files.size > coverageLimit)
+      ? captureFilteredRootMetadata(root) : undefined;
     if (metadata?.ok === false) return metadata;
     if (!filtered && files.size > coverageLimit) return { ok: false, error: "LIMIT" } as const;
     const entries = new Map(files);
@@ -1562,16 +1563,22 @@ export function createWorkspaceService({
     if (!rootless && !validContentSearchScopeRoots(requestedRoots))
       return { ok: false, error: "INVALID" };
     const requested = rootless ? [] : input.roots;
-    const expanded = !mixed && fragments === true && requested.length === 1 &&
-      ((fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > 0);
     const roster = mixed ? captureSearchRoster(requested, signal) : undefined;
     if (roster?.ok === false) return roster;
+    const hasFilters = (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > 0;
+    let expanded: "single" | "mixed" | undefined;
+    if (fragments === true && hasFilters) {
+      if (!mixed && requested.length === 1) expanded = "single";
+      else if (mixed && roots.reduce((count, root) => count + root.nodes.length, retainedHandles.length) <=
+          CONTENT_SEARCH_LIMITS.filteredEntries) expanded = "mixed";
+    }
 
     const captures: (Extract<ReturnType<typeof captureIndexRoot>, { ok: true }> & {
       searched: ReadonlyMap<string, ScanFile>;
     })[] = [];
     const entryHandles = new Set<string>();
     const filesByPath = new Map<string, { file: ScanFile; root: Root; showHidden: boolean }>();
+    let searchedCount = 0;
     for (const { handle, generation } of requested) {
       const snapshot = captureIndexRoot(handle, generation, signal, coverageLimit, expanded);
       if (!snapshot.ok) return snapshot;
@@ -1599,7 +1606,8 @@ export function createWorkspaceService({
           filtered.set(entry, file);
       }
       const searched = filtered ?? entries;
-      if (expanded && searched.size > coverageLimit) return { ok: false, error: "LIMIT" };
+      searchedCount += searched.size;
+      if (expanded && searchedCount > coverageLimit) return { ok: false, error: "LIMIT" };
       captures.push({ ...snapshot, searched });
     }
     const handles = [...input.handles];
@@ -1664,11 +1672,13 @@ export function createWorkspaceService({
           initialRetainedChecks.push(verify);
           continue;
         }
-        if (entryHandles.size + standaloneByPath.size >= coverageLimit)
+        if (!expanded && entryHandles.size + standaloneByPath.size >= coverageLimit)
           return { ok: false, error: "LIMIT" };
         const name = basename(path);
         const included = (!fileFilters || matchesContentSearchFileFilters(name, fileFilters)) &&
           (!pathFilters || matchesContentSearchPathFilters(name, pathFilters));
+        if (expanded && included && searchedCount + standalone.length >= coverageLimit)
+          return { ok: false, error: "LIMIT" };
         standaloneByPath.set(path, { entry, fingerprint, included });
         if (included) standalone.push({ entry, path, read: readStandalone });
         else initialRetainedChecks.push(verify);

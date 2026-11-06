@@ -135,7 +135,7 @@ test("capture fails closed on missing pages, duplicate identities and invalid re
   )).toEqual({ ok: false, error: "incomplete" });
 });
 
-test("scope enforces total root and file limits before filters can exclude them", () => {
+test("scope enforces the root and unfiltered file limits", () => {
   const selection = { handle: null, revision: 1 };
   const manyRoots = Array.from({ length: 17 }, (_, index) => root(String(index), "/" + index, 0));
   expect(captureContentSearchScope(workspace(manyRoots, {}), "all", undefined, selection, [], []))
@@ -143,7 +143,7 @@ test("scope enforces total root and file limits before filters can exclude them"
   const a = root("a", "/a", 17);
   const b = root("b", "/b", 16);
   expect(captureContentSearchScope(
-    workspace([a, b], { a: filesFor(a), b: filesFor(b) }), "all", undefined, selection, ["note-1"], []
+    workspace([a, b], { a: filesFor(a), b: filesFor(b) }), "all", undefined, selection, [], []
   )).toEqual({ ok: false, error: "limit" });
   const exact = { ...a, entries: 16 };
   const captured = captureContentSearchScope(
@@ -175,7 +175,7 @@ test("single filtered scope admits up to 32 matches beyond the ordinary root cov
   expect(captureContentSearchScope(state, "selected", undefined, selection, [".md"], []))
     .toEqual({ ok: false, error: "limit" });
   expect(captureContentSearchScope(state, "all", undefined, selection, ["note-32.md"], []))
-    .toEqual({ ok: false, error: "limit" });
+    .toMatchObject({ ok: true, kind: "all", entries: single.entries });
 });
 
 test("single filtered scope counts directories in the metadata limit", () => {
@@ -218,6 +218,13 @@ test("legacy single filtered scope remains available with many directories and f
   );
   if (!captured.ok) throw Error("Missing legacy filtered scope");
   expect([...captured.entries.keys()]).toEqual(["note-0"]);
+  const independent = leaf("independent", "/leaf.md");
+  const mixed = captureContentSearchScope(
+    workspace([deep], { deep: nodes }), "all", undefined, { handle: null, revision: 1 }, [],
+    [{ kind: "path", value: "branch-0/" }], [independent],
+  );
+  if (!mixed.ok) throw Error("Missing deep legacy mixed scope");
+  expect([...mixed.entries.keys()]).toEqual(["note-0"]);
 });
 
 test("scope stays current only for the same ordered roots, metadata, and exact page refs", () => {
@@ -287,7 +294,7 @@ test("current-window scope accepts rootless retained entries and fences their ex
     .toEqual({ ok: false, error: "incomplete" });
 });
 
-test("mixed coverage shares prefilter count and filters retained files by logical basename", () => {
+test("mixed coverage filters retained files by logical basename", () => {
   const { state, selection, first } = fixture();
   const retained = leaf("independent", "/甲/单篇.md");
   const scoped = captureContentSearchScope(
@@ -307,12 +314,50 @@ test("mixed coverage shares prefilter count and filters retained files by logica
   )).toEqual({ ok: false, error: "incomplete" });
 });
 
+test("filtered window scope uses the aggregate metadata budget and the exact ordered roster", () => {
+  const a = root("a", "/a", 127);
+  const b = root("b", "/b", 127);
+  function page(owner: WorkspaceRoot): WorkspaceNode[] {
+    return Array.from({ length: 17 }, (_, index) => {
+      const nodes: WorkspaceNode[] = [];
+      let parent = owner.handle;
+      let relative = `branch-${index}`;
+      for (let depth = 0; depth < (index < 8 ? 7 : 6); depth++) {
+        const folder = file(owner, `${owner.handle}-dir-${index}-${depth}`, relative);
+        nodes.push({ ...folder, parent, kind: "directory" });
+        parent = folder.handle;
+        relative += "/nested";
+      }
+      const name = index === 0 ? "hit.md" : "other.md";
+      return [...nodes, { ...file(owner, `${owner.handle}-file-${index}`, relative + "/" + name), parent }];
+    }).flat();
+  }
+  const state = workspace([a, b], { a: page(a), b: page(b) });
+  const selection = { handle: null, revision: 1 };
+  const selected = leaf("independent", "/hit-leaf.md");
+  const excluded = leaf("excluded", "/other-leaf.md");
+  const leaves = [selected, excluded];
+  const narrowed = (standalone = leaves) =>
+    captureContentSearchScope(state, "all", undefined, selection, ["hit"], [], standalone);
+  const exact = narrowed();
+  if (!exact.ok) throw Error("Missing exact mixed metadata scope");
+  expect([...exact.entries.keys()]).toEqual(["a-file-0", "b-file-0", selected.handle]);
+  expect(exact.standaloneHandles).toEqual([selected.handle, excluded.handle]);
+  expect(exact.current(state, selection, leaves)).toBe(true);
+  expect(exact.current({ ...state, roots: [b, a] }, selection, leaves)).toBe(false);
+  expect(exact.current(state, selection, [...leaves].reverse())).toBe(false);
+  expect(narrowed([...leaves, leaf("overflow", "/overflow.md")]))
+    .toEqual({ ok: false, error: "limit" });
+  expect(captureContentSearchScope(state, "all", undefined, selection, [".md"], [], leaves))
+    .toEqual({ ok: false, error: "limit" });
+});
+
 test("the independent retained-handle cap still applies within the larger mixed coverage", () => {
   const selection = { handle: null, revision: 1 };
   const leaves = Array.from({ length: 16 }, (_, index) => leaf(`leaf-${index}`, `/leaf-${index}.md`));
   const wide = root("wide", "/wide", 17);
   expect(captureContentSearchScope(
-    workspace([wide], { wide: filesFor(wide) }), "all", undefined, selection, ["nothing"], [], leaves
+    workspace([wide], { wide: filesFor(wide) }), "all", undefined, selection, [], [], leaves
   )).toEqual({ ok: false, error: "limit" });
   const exact = { ...wide, entries: 16 };
   const scoped = captureContentSearchScope(

@@ -3,6 +3,7 @@ import { createElement, type ReactNode } from "react";
 import { CALLOUT_PRESENTATION, readCallout } from "../client/callout-extension";
 import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
+import type { ReaderImageReceiver } from "../client/reader-image-receiver";
 import { isOwnedReadingCode } from "../client/reading-code-ownership";
 import type { ReadingSearchRegistry } from "../client/reading-search-registry";
 import { ReadingCode } from "../components/reading-code";
@@ -10,6 +11,7 @@ import { ReadingHtmlBlock } from "../components/reading-html-block";
 import {
   ReadingImage,
   ReadingImagePlaceholder,
+  ReadingSnapshotImage,
 } from "../components/reading-image";
 import { MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS } from "../shared/local-images";
 
@@ -35,7 +37,8 @@ export function commonmarkContent(
   source: string,
   images?: LocalImages,
   codeCurrent?: () => boolean,
-  search?: ReadingSearchRegistry
+  search?: ReadingSearchRegistry,
+  snapshotImage?: { node: object; receiver: ReaderImageReceiver; current: () => boolean }
 ): ReactNode {
   let work = 0;
   let definitionWork = 0;
@@ -266,6 +269,8 @@ export function commonmarkContent(
         );
       case "image":
       case "imageReference":
+        if (snapshotImage?.node === node)
+          return <ReadingSnapshotImage key={key} {...snapshotImage} alt={node.alt || ""} search={search} />;
         if (images) {
           const reference =
             node.type === "image"

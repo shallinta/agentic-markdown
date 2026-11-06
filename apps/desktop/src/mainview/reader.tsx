@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { createCurrentCanonical } from "../client/current-canonical";
 import ReaderWorker from "../client/current-canonical.worker?worker&inline";
+import { firstReaderImageCandidate } from "../client/reader-image-candidate";
+import { createReaderImageReceiver, type ReaderImageReceiver } from "../client/reader-image-receiver";
 import { firstReadingBlock } from "../client/reading-position";
 import { createReadingSearchRegistry, type ReadingSearchRegistry } from "../client/reading-search-registry";
 import { copyReadingSelection } from "../client/reading-selection-copy";
@@ -15,7 +17,7 @@ import {
   commonmarkContent,
   isControlledReadingElement,
 } from "../security/commonmark-content";
-import { decodeReaderSnapshot, READER_SNAPSHOT_EVENT } from "../shared/reader-snapshot";
+import { decodeReaderSnapshotDelivery, READER_SNAPSHOT_EVENT } from "../shared/reader-snapshot";
 
 import { ReaderFind } from "./reader-find";
 
@@ -190,7 +192,7 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
   );
 }
 
-function renderReadingContent(root: Root, source: typeof fixture, label: string, experimental: boolean) {
+function renderReadingContent(root: Root, source: typeof fixture, label: string, experimental: boolean, imageReceiver?: ReaderImageReceiver) {
   const searchRegistry = experimental ? undefined : createReadingSearchRegistry();
   const canonical = createCurrentCanonical(
     () => source,
@@ -207,6 +209,7 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
   void canonical.request().then((result) => {
     if (closed) return;
     if (!result || !canonical.isCurrent(result)) {
+      imageReceiver?.close();
       root.render(<p role="alert">无法解析{label}。</p>);
       return;
     }
@@ -216,9 +219,14 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
     };
     const current = experimental ? undefined : () =>
       !closed && verifiedArticle?.isConnected === true && canonical.isCurrent(result);
+    const candidate = current && imageReceiver ? firstReaderImageCandidate(result.tree, source.text.length) : undefined;
+    const snapshotImage = candidate && current && imageReceiver?.setTarget(candidate.node)
+      ? { node: candidate.node, receiver: imageReceiver, current }
+      : undefined;
+    if (!snapshotImage) imageReceiver?.close();
     root.render(
       <Reader
-        content={commonmarkContent(result.tree, source.text, undefined, current, searchRegistry)}
+        content={commonmarkContent(result.tree, source.text, undefined, current, searchRegistry, snapshotImage)}
         label={label}
         experimental={experimental}
         retainVerifiedArticle={retainVerifiedArticle}
@@ -237,12 +245,13 @@ function waitForSnapshot(root: Root) {
   };
   const receive = (event: Event) => {
     removeReceiver();
-    const text = decodeReaderSnapshot(event instanceof CustomEvent ? event.detail : undefined);
-    if (text === undefined) {
+    const snapshot = decodeReaderSnapshotDelivery(event instanceof CustomEvent ? event.detail : undefined);
+    if (!snapshot) {
       root.render(<p role="alert">已保存版本无效。</p>);
       return;
     }
-    renderReadingContent(root, { documentId: "reader-snapshot", revision: 1, identity: {}, text }, "已保存版本", false);
+    const imageReceiver = snapshot.deliveryId ? createReaderImageReceiver(window, snapshot.deliveryId) : undefined;
+    renderReadingContent(root, { documentId: "reader-snapshot", revision: 1, identity: {}, text: snapshot.text }, "已保存版本", false, imageReceiver);
   };
   const timer = window.setTimeout(() => {
     removeReceiver();

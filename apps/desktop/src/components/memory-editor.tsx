@@ -49,6 +49,11 @@ import {
 import { listContinuationTransaction } from "@/client/list-continuation";
 import { registerListInputView, routeListInput } from "@/client/list-input";
 import type { ImageTransport } from "@/client/local-images";
+import {
+  createRasterPasteIntent,
+  type AuthorizeRasterPaste,
+  type RasterPasteTransport,
+} from "@/client/raster-paste-intent";
 import { editorOffset, rawOffset, rawText } from "@/client/raw-buffer";
 import { planSourceIndentation } from "@/client/source-indentation";
 import {
@@ -71,24 +76,43 @@ import { observeFrontmatter } from "../client/frontmatter-presentation";
 import { EditingCodeMenu } from "./editing-code-menu";
 import { SourceSearch } from "./source-search";
 
+const rasterPasteMessages = {
+  busy: "正在处理上一张粘贴图片，请稍后再试。",
+  size: "只能粘贴不超过 1 MiB 的 PNG 或 JPEG 图片。",
+  save: "请先保存当前文档，再粘贴图片。",
+  unavailable: "当前文档无法粘贴图片，请确认文档可写且已纳入工作区。",
+  position: "请将光标放在普通单行段落或独立空行中，再粘贴图片。",
+  rejected: "图片粘贴未完成，正文未更改。",
+  unknown: "无法确认图片是否已保存，正文未更改。请检查文档旁的 assets 文件夹。",
+  unlinked: "图片已保存到文档旁的 assets 文件夹，链接未插入。",
+};
+
 export function MemoryEditor({
   controller,
   documentId,
   frozen,
   readLocalImage,
   assetEpoch,
+  publishRaster,
+  authorizeRaster,
 }: {
   controller: ReturnType<typeof createDocumentController>;
   documentId: string;
   frozen: boolean;
   readLocalImage?: ImageTransport;
   assetEpoch?: string;
+  publishRaster?: RasterPasteTransport;
+  authorizeRaster?: AuthorizeRasterPaste;
 }) {
   const imageInputs = useRef({ readLocalImage, assetEpoch });
   imageInputs.current = { readLocalImage, assetEpoch };
+  const rasterInputs = useRef({ publishRaster, authorizeRaster });
+  rasterInputs.current = { publishRaster, authorizeRaster };
+  const checkRaster = useRef<(() => void) | undefined>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   useLayoutEffect(() => {
+    checkRaster.current?.();
     if (viewRef.current) {
       observeEditingImages(viewRef.current);
       observeHeadingFolding(viewRef.current);
@@ -116,14 +140,17 @@ export function MemoryEditor({
     const scrollTo = controller.getScrollSnapshot(documentId);
     const session = initialState.field(editorFaultSession);
     let alive = true;
+    let checkRasterTransaction: (() => void) | undefined;
     const view = new EditorView({
       state: initialState,
       parent: container.current,
       scrollTo,
       dispatchTransactions(transactions) {
         for (const transaction of transactions) {
-          if (controller.updateEditor(documentId, transaction))
+          if (controller.updateEditor(documentId, transaction)) {
             view.update([transaction]);
+            checkRasterTransaction?.();
+          }
         }
       },
     });
@@ -180,6 +207,44 @@ export function MemoryEditor({
         !view.composing
       );
     };
+    const raster = createRasterPasteIntent(controller, {
+      capture: () => {
+        const editor = controller.getEditor(documentId);
+        if (!currentView() || !view.hasFocus || !view.contentDOM.isConnected ||
+            editor?.state.field(editorFaultSession) !== session ||
+            session.fault || editor.state.readOnly ||
+            controller.getMode(documentId) !== "editing" || controller.isSafeSource(documentId) ||
+            !controller.canWrite(documentId) || controller.hasSaves() ||
+            view.compositionStarted || view.composing)
+          return undefined;
+        const source = controller.captureReadingSnapshotSource();
+        const location = controller.getSnapshot().snapshot?.displayPath;
+        return source?.documentId === documentId && location ? {
+          source, location, state: editor.state, bufferRevision: editor.revision,
+          activation: controller.getContentSearchActivation(),
+        } : undefined;
+      },
+      transport: () => rasterInputs.current.publishRaster,
+      authorize: () => rasterInputs.current.authorizeRaster,
+      dirty: () => controller.isDirty(documentId),
+      dispatch: transaction => {
+        if (view.state !== transaction.startState) return false;
+        view.dispatch(transaction);
+        return view.state === transaction.state;
+      },
+      report: reason => toast.info(rasterPasteMessages[reason], { id: `raster-paste-${documentId}` }),
+    });
+    checkRaster.current = checkRasterTransaction = raster.check;
+    const releaseRasterCheck = controller.subscribe(raster.check);
+    const pasteRaster = (event: ClipboardEvent) => {
+      if (view.hasFocus && controller.getMode(documentId) === "editing" &&
+          controller.getEditor(documentId)?.state === view.state)
+        raster.paste(event);
+    };
+    view.contentDOM.addEventListener("paste", pasteRaster, true);
+    view.contentDOM.addEventListener("compositionstart", raster.invalidate, true);
+    view.contentDOM.addEventListener("blur", raster.invalidate, true);
+    view.dom.ownerDocument.defaultView?.addEventListener("blur", raster.invalidate);
     const removeEmojiCompletion = registerEmojiCompletion(
       view,
       () =>
@@ -674,6 +739,13 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      raster.dispose();
+      checkRaster.current = undefined;
+      releaseRasterCheck();
+      view.contentDOM.removeEventListener("paste", pasteRaster, true);
+      view.contentDOM.removeEventListener("compositionstart", raster.invalidate, true);
+      view.contentDOM.removeEventListener("blur", raster.invalidate, true);
+      view.dom.ownerDocument.defaultView?.removeEventListener("blur", raster.invalidate);
       releaseContentSearch();
       releaseQuickFocus();
       removeEmojiCompletion();

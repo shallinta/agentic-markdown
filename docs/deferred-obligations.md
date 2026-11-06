@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-053b / F-022d 图片接入（2026-11-07）
+
+工作区编辑模式已接单张位图写入和一次撤销。拖入、独立文件的资产写权限及目录模板继续跟踪。独立阅读窗已接首张授权图片，多图及更大图片保持开放。OBL-010、OBL-031 与最终离线继续跟踪。见[F-053b 迭代](iterations/F-053b-publish-pasted-raster-image.md)和[F-022d 迭代](iterations/F-022d-one-authorized-image-in-independent-reader.md)。
+
 ## F-039a 普通 WK 多标签观察（2026-11-07）
 
 1、5 标签实测及现有解析诊断已记录。OBL-024 的 WebKit 资源归因、分类配额、总上限和回收仍待承接。F-072 和副区的可见文档保护保持开放。见[F-039a 迭代](iterations/F-039a-observe-wk-inactive-tab-resources.md)。

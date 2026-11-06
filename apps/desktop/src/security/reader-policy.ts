@@ -20,3 +20,7 @@ export const READER_CONTENT_SECURITY_POLICY = [
   "base-uri 'none'",
   "form-action 'none'",
 ].join("; ");
+
+export const READER_SNAPSHOT_CONTENT_SECURITY_POLICY = READER_CONTENT_SECURITY_POLICY.replace(
+  "img-src 'none'", "img-src data:"
+);

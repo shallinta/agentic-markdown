@@ -129,6 +129,8 @@ export type WorkspaceResponse = { protocolVersion: 1; requestId: string } & (
 export interface WorkspaceService {
   createMarkdown?(value: unknown): Promise<import("./create-markdown").CreateMarkdownResponse>;
   createFolder?(value: unknown): Promise<import("./create-folder").CreateFolderResponse>;
+  publishRasterPaste?(value: unknown): Promise<import("./raster-paste").RasterPasteResponse>;
+  getRasterPasteSequence?(): import("./raster-paste").RasterPasteSequenceResponse;
   trashDocument?(value: unknown): Promise<import("./trash-document").TrashResponse>;
   duplicateMarkdown?(value: unknown): Promise<import("./create-markdown").CreateMarkdownResponse>;
   removeStandalone(value: unknown): import("./standalone-removal").RemovalResponse;

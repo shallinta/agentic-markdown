@@ -31,6 +31,8 @@ import {
 } from "@/client/inline-format-input";
 import { longLineProtection } from "@/client/long-line-protection";
 import { createQuickOpen } from "@/client/quick-open";
+import type { RasterPasteSource } from "@/client/raster-paste-intent";
+import { captureRasterWorkspaceAuthority, createRasterPasteTransport } from "@/client/raster-paste-workspace";
 import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeRecentTabKey } from "@/client/recent-tab-shortcut";
@@ -137,6 +139,20 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
+  const [publishRaster] = useState(() => createRasterPasteTransport({
+    getFloor: async () => electrobun.rpc?.request.getRasterPasteSequence({}, { maxRequestTime: 4000 }),
+    publish: async request => {
+      const rpc = electrobun.rpc;
+      if (!rpc) return { ok: false, requestId: request.requestId, error: "UNAVAILABLE" };
+      return rpc.request.publishRasterPaste(request, { maxRequestTime: 12000 });
+    },
+  }));
+  const authorizeRaster = useCallback((source: RasterPasteSource) => {
+    const active = controller.getSnapshot().snapshot;
+    if (active?.handle !== source.handle || active.documentId !== source.documentId)
+      return undefined;
+    return captureRasterWorkspaceAuthority(folders, source.handle, active.displayPath);
+  }, [controller, folders]);
   const [mru] = useState(() => createDocumentMRU({
     begin: request => electrobun.rpc ? electrobun.rpc.request.beginMRUSession(request, { maxRequestTime: 4000 }) : Promise.reject(Error("RPC unavailable")),
     record: request => electrobun.rpc ? electrobun.rpc.request.recordDocumentActivation(request, { maxRequestTime: 4000 }) : Promise.reject(Error("RPC unavailable")),
@@ -517,6 +533,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     controller,
     folders,
     folderState,
+    publishRaster,
+    authorizeRaster,
     state,
     canonical,
     readingTheme,
@@ -1111,6 +1129,8 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
             ) : (
               <MemoryEditor
                 readLocalImage={readLocalImage}
+                publishRaster={workspace.publishRaster}
+                authorizeRaster={workspace.authorizeRaster}
                 assetEpoch={
                   workspace.folderState.assetEpochs?.[snapshot.handle]
                 }

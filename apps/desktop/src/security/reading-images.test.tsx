@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test";
 
+import { Children, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { parseReadingMarkdown as parseCanonicalMarkdown } from "../client/canonical-parser";
 import { createLocalImages } from "../client/local-images";
+import { firstReaderImageCandidate } from "../client/reader-image-candidate";
+import { createReaderImageReceiver } from "../client/reader-image-receiver";
+import { ReadingImagePlaceholder, ReadingSnapshotImage } from "../components/reading-image";
 
 import {
   commonmarkContent,
@@ -27,6 +31,30 @@ test("reference image uses first definition and does not fetch before intersecti
   expect(html).not.toContain("src=");
   expect(calls).toBe(0);
   images.dispose();
+});
+
+test("independent reading attaches a receiver only to the selected AST node", () => {
+  const source = "![first](same.png) ![later](same.png)";
+  const tree = parseCanonicalMarkdown(source);
+  const candidate = firstReaderImageCandidate(tree, source.length);
+  if (!candidate) throw new Error("missing first image");
+  const receiver = createReaderImageReceiver(new EventTarget(), crypto.randomUUID());
+  function imageTypes(content: ReactNode): unknown[] {
+    return Children.toArray(content).flatMap((element) => {
+      if (!isValidElement<{ children?: ReactNode }>(element)) return [];
+      if (element.type === ReadingSnapshotImage || element.type === ReadingImagePlaceholder) return [element.type];
+      return imageTypes(element.props.children);
+    });
+  }
+  try {
+    receiver.setTarget(candidate.node);
+    expect(imageTypes(commonmarkContent(tree, source))).toEqual([ReadingImagePlaceholder, ReadingImagePlaceholder]);
+    expect(imageTypes(commonmarkContent(tree, source, undefined, undefined, undefined, {
+      node: candidate.node, receiver, current: () => false,
+    }))).toEqual([ReadingSnapshotImage, ReadingImagePlaceholder]);
+  } finally {
+    receiver.close();
+  }
 });
 
 test("image audit narrowly permits raster data, rejects every active URL/attribute", () => {

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 
+import { READER_IMAGE_SNAPSHOT_MAX_BYTES } from "../../shared/reader-image-snapshot";
+
 import {
   handleImageWorkerRequest,
   validImageWorkerRequest,
@@ -23,6 +25,26 @@ const request = {
     },
   },
 };
+
+test("reader worker profile allows one fixed name and applies its own canonical byte budget", async () => {
+  const scoped = { ...request, job: { ...request.job, profile: "reader-snapshot" } };
+  expect(validImageWorkerRequest(scoped)).toBe(true);
+  for (const patch of [
+    { profile: "other" }, { profile: false }, { profile: undefined }, { profile: null },
+    { maxBytes: READER_IMAGE_SNAPSHOT_MAX_BYTES }, { path: "/tmp/a.png" },
+  ]) expect(validImageWorkerRequest({ ...scoped, job: { ...scoped.job, ...patch } })).toBe(false);
+
+  const read = (data: string) => async () => Promise.resolve({
+    ok: true as const, mime: "image/png" as const, width: 1, height: 1, identity: "a".repeat(64), data,
+  });
+  const exact = Buffer.alloc(READER_IMAGE_SNAPSHOT_MAX_BYTES).toString("base64");
+  const over = Buffer.alloc(READER_IMAGE_SNAPSHOT_MAX_BYTES + 1).toString("base64");
+  expect(exact.length).toBe(over.length);
+  expect((await handleImageWorkerRequest(scoped, read(exact))).result.ok).toBe(true);
+  expect((await handleImageWorkerRequest(scoped, read(over))).result).toEqual({ ok: false, error: "UNAVAILABLE" });
+  expect((await handleImageWorkerRequest(scoped, read("AB=="))).result).toEqual({ ok: false, error: "UNAVAILABLE" });
+  expect((await handleImageWorkerRequest(request, read(over))).result.ok).toBe(true);
+});
 test("asset scope is optional but any supplied scope has an exact bounded runtime schema", () => {
   const assetRoot = {
     path: "/tmp",

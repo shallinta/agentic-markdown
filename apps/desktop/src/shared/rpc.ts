@@ -94,6 +94,14 @@ export interface DesktopRPCType {
         params: import("./create-folder").CreateFolderRequest;
         response: import("./create-folder").CreateFolderResponse;
       };
+      publishRasterPaste: {
+        params: import("./raster-paste").RasterPasteRequest;
+        response: import("./raster-paste").RasterPasteResponse;
+      };
+      getRasterPasteSequence: {
+        params: Record<string, never>;
+        response: import("./raster-paste").RasterPasteSequenceResponse;
+      };
       openWorkspaceDocument: {
         params: import("./workspace").WorkspaceOpenRequest;
         response: DocumentResponse;

@@ -35,6 +35,14 @@ import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
 import { perfUuid } from "../../shared/perf-lab";
+import {
+  parseRasterPasteRequest,
+  rasterPasteRequestId,
+  type RasterPasteError,
+  type RasterPasteRequest,
+  type RasterPasteResponse,
+  type RasterPasteSequenceResponse,
+} from "../../shared/raster-paste";
 import { hashPattern } from "../../shared/save-content";
 import {
   WORKSPACE_CACHE_BYTES,
@@ -85,6 +93,7 @@ import { createDirectoryRegistry } from "./created-directories";
 import { createFolderRemoval } from "./folder-removal";
 import type { HiddenPreferences } from "./preferences";
 import type { HiddenRemoval } from "./preferences";
+import { publishRasterAsset, type RasterAssetNative } from "./publish-raster-asset";
 import { createReconciliation } from "./reconciliation";
 import {
   openDirectoryDescriptor,
@@ -202,6 +211,8 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   duplicateMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   createFolder(value: unknown): Promise<CreateFolderResponse>;
+  publishRasterPaste(value: unknown): Promise<RasterPasteResponse>;
+  getRasterPasteSequence(): RasterPasteSequenceResponse;
   trashDocument(value: unknown): Promise<import("../../shared/trash-document").TrashResponse>;
   reconciliation: Pick<
     ReturnType<typeof createReconciliation>,
@@ -333,6 +344,8 @@ export function createWorkspaceService({
   const openingRoots = new Map<Root, number>();
   let indexTask: Promise<unknown> | undefined;
   let indexDisposing = false;
+  let rasterPasteSequence = 0;
+  let rasterPasteTask: Promise<RasterPasteResponse> | undefined;
   function captureIndexRootState(handle: string, generation: number, signal?: AbortSignal) {
     const root = roots.find((candidate) => candidate.meta.handle === handle);
     if (!root || !live(root, generation)) return { ok: false, error: "STALE" } as const;
@@ -1408,6 +1421,89 @@ export function createWorkspaceService({
       } catch (error) { release(); throw error; }
     }
   };
+  async function publishRasterPasteOwned(input: RasterPasteRequest): Promise<RasterPasteResponse> {
+    const { requestId, handle, documentId, expectedRevision, expectedHash, data } = input;
+    const fail = (error: RasterPasteError): RasterPasteResponse => ({ ok: false, requestId, error });
+    if (disposed || indexDisposing) return fail("UNAVAILABLE");
+    if (removalAdmission || removeStandalone.busy() || folderRemoval.busy() || selecting ||
+        preferencePending || openingRoots.size || manualCandidates.size) return fail("ADMITTED_BUSY");
+    const binding = documents.locations().find(item => item.handle === handle && item.documentId === documentId);
+    if (!binding) return fail("UNAUTHORIZED");
+    const { path, fingerprint } = binding;
+    const matches = roots.flatMap(root => {
+      const node = root.byPath.get(path);
+      if (!root.live || root.meta.status !== "complete" || node?.kind !== "file") return [];
+      const file = root.files.get(node.handle);
+      if (file?.path !== path || file.fingerprint !== fingerprint ||
+          !visiblePath(root.authorization.path, path, root.meta.showHidden)) return [];
+      return [{ root, node, file }];
+    });
+    if (matches.length !== 1) return fail("UNAUTHORIZED");
+    const [{ root, node, file }] = matches;
+    const authorization = root.authorization;
+    const { handle: rootHandle, generation, showHidden } = root.meta;
+    const { byPath, files, registry, scanVersion } = root;
+    const registryVersion = registry.version();
+    const parent = dirname(path);
+    const parentNode = parent === authorization.path ? undefined : byPath.get(parent);
+    if (parent === authorization.path ? node.parent !== rootHandle :
+      parentNode?.kind !== "directory" || parentNode.handle !== node.parent) return fail("UNAUTHORIZED");
+    const chain = file.chain.map(part => ({ ...part }));
+    const directories = [...authorization.directories, ...chain];
+    const parentProof = directories[directories.length - 1];
+    if (parentProof?.path !== parent) return fail("STALE");
+    const blocked = () => documents.trashBlocked(path, fingerprint, directories) ||
+      documents.trashBlocked(parent, parentProof.fingerprint, directories) ||
+      documents.trashBlocked(join(parent, "assets"), undefined, directories);
+    if (blocked()) return fail("ADMITTED_BUSY");
+    const lease = await creationHost.acquire({
+      rootHandle, generation, ...(parentNode ? { directoryHandle: parentNode.handle } : {}),
+    }).catch(() => undefined);
+    if (!lease) return fail("STALE");
+    try {
+      const owner = createOwner;
+      const target = lease.target;
+      const current = () => !!owner && createOwner === owner && scanParked && !indexDisposing &&
+        live(root, generation) && root.meta.status === "complete" && root.meta.showHidden === showHidden &&
+        root.authorization === authorization && root.byPath === byPath && root.files === files &&
+        root.registry === registry && registry.version() === registryVersion && root.scanVersion === scanVersion &&
+        byPath.get(path) === node && files.get(node.handle) === file && file.path === path &&
+        file.fingerprint === fingerprint && (!parentNode || byPath.get(parent) === parentNode);
+      if (!current() || target.root !== authorization || target.path !== parent ||
+          target.chain.length !== chain.length || !target.chain.every((part, index) =>
+            part.path === chain[index].path && part.fingerprint === chain[index].fingerprint)) return fail("STALE");
+      if (blocked()) return fail("ADMITTED_BUSY");
+      let native: RasterAssetNative;
+      try { native = creationHost.native() as RasterAssetNative; }
+      catch { return fail("UNAVAILABLE"); }
+      const result = await documents.withPastedRasterSource(
+        { handle, documentId, expectedRevision, expectedHash },
+        { path, fingerprint },
+        () => current() && !blocked(),
+        ticket => publishRasterAsset({
+          native,
+          target,
+          bytes: Buffer.from(data, "base64"),
+          current: ticket.current,
+          revalidate: ticket.revalidate,
+        })
+      );
+      if (result.ok) {
+        if (!result.value.ok) return fail(result.value.error);
+        if (!current()) return fail("UNKNOWN");
+        return { ok: true, requestId, relativePath: result.value.relativePath };
+      }
+      switch (result.error) {
+        case "UNKNOWN": case "SAVE_UNCERTAIN": return fail("UNKNOWN");
+        case "BUSY": return fail("ADMITTED_BUSY");
+        case "INVALID_HANDLE": return fail("UNAUTHORIZED");
+        case "FILE_CHANGED": case "CANCELLED": return fail("STALE");
+        case "INVALID_REQUEST": return fail("INVALID");
+        case "READ_ONLY": case "CONFLICT": return fail(result.error);
+        default: return fail("UNAVAILABLE");
+      }
+    } finally { lease.release(); }
+  }
   const creation = createMarkdownService(creationHost);
   const duplication = createMarkdownService(creationHost, true);
   const trash=createTrashService({documents,run:trashRun,receiptBytes(bytes){if(workspaceUsed()-trashReceiptBytes+reconciliation.bytes()+bytes>cacheLimit)throw Error("Trash receipt budget");trashReceiptBytes=bytes;},async acquire(target){
@@ -2212,6 +2308,23 @@ export function createWorkspaceService({
       }
     },
     createFolder:(value)=>folders.request(value),
+    getRasterPasteSequence: () => disposed || indexDisposing
+      ? { ok: false, error: "UNAVAILABLE" }
+      : { ok: true, sequence: rasterPasteSequence },
+    async publishRasterPaste(value) {
+      const input = parseRasterPasteRequest(value);
+      if (!input) return { ok: false, requestId: rasterPasteRequestId(value), error: "INVALID" };
+      const { requestId, sequence } = input;
+      if (sequence <= rasterPasteSequence) return { ok: false, requestId, error: "STALE" };
+      if (rasterPasteTask) return { ok: false, requestId, error: "BUSY" };
+      if (disposed || indexDisposing) return { ok: false, requestId, error: "UNAVAILABLE" };
+      rasterPasteSequence = sequence;
+      const task = Promise.resolve().then(() => publishRasterPasteOwned(input)).catch((): RasterPasteResponse =>
+        ({ ok: false, requestId, error: "UNKNOWN" }));
+      rasterPasteTask = task;
+      try { return await task; }
+      finally { rasterPasteTask = undefined; }
+    },
     trashDocument:(value)=>trash.request(value),
     trashLifecycle:trash,
     createMarkdown: (value) => creation.request(value),
@@ -2489,6 +2602,7 @@ export function createWorkspaceService({
       epoch++;
       while (running) await new Promise((resolve) => setTimeout(resolve, 1));
       await indexTask;
+      await rasterPasteTask;
       worker.dispose();
     },
   };

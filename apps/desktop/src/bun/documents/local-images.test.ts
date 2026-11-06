@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   localImageReference,
@@ -20,6 +20,7 @@ import {
   validLocalImageResult,
   validLocalImageResponse,
 } from "../../shared/local-images";
+import { READER_IMAGE_SNAPSHOT_MAX_BYTES } from "../../shared/reader-image-snapshot";
 
 import { imageFormat } from "./image-format";
 import { readLocalImage } from "./local-image-operation";
@@ -53,6 +54,11 @@ afterEach(async () => {
 });
 const read = (reference: string, hook?: () => Promise<void>) =>
   readLocalImage({ authorization: grant, reference }, nativePath, hook);
+const readSnapshot = (reference: string, scoped = false, hook?: () => Promise<void>) =>
+  readLocalImage({
+    authorization: grant, reference, profile: "reader-snapshot",
+    ...(scoped ? { assetRoot: { path: dirname(dirname(grant.path)), directories: grant.directories } } : {}),
+  }, nativePath, hook);
 test("relative decoding rejects network, absolute and ambiguous inputs", () => {
   for (const value of [
     "https://x/a.png",
@@ -113,6 +119,56 @@ test("PNG and internal symlink read only the authorized object", async () => {
       expect(Buffer.from(value.data, "base64")).toEqual(icon);
     }
   }
+});
+test("reader profile opens only literal nofollow components from the authorized source chain", async () => {
+  await mkdir(join(root, "docs/sub"));
+  await writeFile(join(root, "docs/sub/p.png"), icon);
+  await symlink("图 像.png", join(root, "docs/alias.png"));
+  await symlink("sub", join(root, "docs/alias-sub"));
+  await link(join(root, "outside.png"), join(root, "docs/hard.png"));
+  await writeFile(join(root, "parent.png"), icon);
+  await writeFile(join(root, "docs/raster.svg"), icon);
+  for (const reference of ["./图%20像.png", "sub/p.png", "../parent.png"]) {
+    const result = await readSnapshot(reference, true);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(Buffer.from(result.data, "base64")).toEqual(icon);
+  }
+  expect((await readSnapshot("../parent.png")).ok).toBe(false);
+  for (const reference of [
+    "alias.png", "alias-sub/p.png", "hard.png", "../../escape.png", "sub//p.png", "sub/./p.png",
+    "sub/../图%20像.png", "alias-sub/../图%20像.png", "sub%2Fp.png", "%2e%2e/parent.png", "raster.svg",
+  ]) expect((await readSnapshot(reference, true)).ok).toBe(false);
+  expect((await read("alias.png")).ok).toBe(true);
+  expect((await read("alias-sub/p.png")).ok).toBe(true);
+  expect((await readSnapshot("../parent.png", true, async () => {
+    await rename(join(root, "docs"), join(root, "moved-docs"));
+    await symlink("moved-docs", join(root, "docs"));
+  })).ok).toBe(false);
+});
+
+test("reader profile rejects post-resolution link replacement and caps actual PNG size before reading", async () => {
+  const exact = (size: number) => {
+    const chunk = Buffer.alloc(size - icon.length);
+    chunk.writeUInt32BE(chunk.length - 12, 0);
+    chunk.write("teSt", 4, "ascii");
+    chunk.writeUInt32BE(Bun.hash.crc32(chunk.subarray(4, -4)), chunk.length - 4);
+    return Buffer.concat([icon.subarray(0, 33), chunk, icon.subarray(33)]);
+  };
+  const atLimit = exact(READER_IMAGE_SNAPSHOT_MAX_BYTES);
+  await writeFile(join(root, "docs/exact.png"), atLimit);
+  await writeFile(join(root, "docs/over.png"), exact(READER_IMAGE_SNAPSHOT_MAX_BYTES + 1));
+  const result = await readSnapshot("exact.png");
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.mime).toBe("image/png");
+    expect(Buffer.from(result.data, "base64")).toEqual(atLimit);
+  }
+  expect((await readSnapshot("over.png")).ok).toBe(false);
+  expect((await read("over.png")).ok).toBe(true);
+  expect((await readSnapshot("exact.png", false, async () => {
+    await unlink(join(root, "docs/exact.png"));
+    await symlink("图 像.png", join(root, "docs/exact.png"));
+  })).ok).toBe(false);
 });
 test("escape, same-prefix, outside symlink, hardlink and non-image are rejected", async () => {
   await mkdir(join(root, "docs-extra"));
@@ -203,7 +259,7 @@ test("PNG duplicate dimensions and APNG are not accepted", () => {
     ).toThrow();
   }
 });
-test("JPEG scans beyond the first SOF and rejects competing dimensions", () => {
+test("JPEG scans beyond the first SOF and rejects competing dimensions", async () => {
   const sof = Buffer.from([255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0]);
   const scan = Buffer.from([255, 218, 0, 8, 1, 1, 0, 0, 63, 0, 0, 255, 217]);
   const jpeg = Buffer.concat([Buffer.from([255, 216]), sof, scan]);
@@ -212,6 +268,13 @@ test("JPEG scans beyond the first SOF and rejects competing dimensions", () => {
     width: 1,
     height: 1,
   });
+  await writeFile(join(root, "docs/image.jpg"), jpeg);
+  const strict = await readSnapshot("image.jpg");
+  expect(strict.ok).toBe(true);
+  if (strict.ok) {
+    expect(strict.mime).toBe("image/jpeg");
+    expect(Buffer.from(strict.data, "base64")).toEqual(jpeg);
+  }
   expect(() =>
     imageFormat(Buffer.concat([Buffer.from([255, 216]), sof, sof, scan]))
   ).toThrow();

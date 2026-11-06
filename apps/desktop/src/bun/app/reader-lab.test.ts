@@ -1,9 +1,12 @@
 import { expect, test } from "bun:test";
+import { runInNewContext } from "node:vm";
 
 import { PACKAGED_READER_SNAPSHOT_URL } from "../../security/reader-policy";
 import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
-import { readerSnapshotDeliveryScript } from "../../shared/reader-snapshot";
+import { parseReaderImageSnapshot, READER_IMAGE_SNAPSHOT_EVENT } from "../../shared/reader-image-snapshot";
+import { decodeReaderSnapshotDelivery, readerSnapshotDeliveryScript, READER_SNAPSHOT_EVENT } from "../../shared/reader-snapshot";
+import type { ReadingSnapshotImageRead } from "../documents";
 
 import { createReaderLab } from "./reader-lab";
 
@@ -91,50 +94,64 @@ const source = {
 };
 const readyEvent = (url: string) => ({ data: { detail: url } });
 
-function snapshotFixture(timeoutMs?: number) {
-  const registered = Promise.withResolvers<void>();
-  const captured = Promise.withResolvers<{ ok: true; base64: string; current(): boolean }>();
+function snapshotFixture(timeoutMs?: number, candidate?: (base64: string, signal: AbortSignal) => Promise<string | undefined>, imageTimeoutMs?: number) {
+  const captured = Promise.withResolvers<{ ok: true; base64: string; current(): boolean; readImage?: ReadingSnapshotImageRead }>();
   const callers: (() => boolean)[] = [];
   const sources: unknown[] = [];
+  const options: unknown[] = [];
   const calls: string[] = [];
-  const events = new Map<string, () => void>();
-  let onReady: ((event: unknown) => void) | undefined;
-  const child = {
-    url: PACKAGED_READER_SNAPSHOT_URL,
-    webview: {
+  const makeChild = () => {
+    const registered = Promise.withResolvers<void>();
+    const events = new Map<string, () => void>();
+    const webviewEvents = new Map<string, (event: unknown) => void>();
+    const scripts: string[] = [];
+    return {
       url: PACKAGED_READER_SNAPSHOT_URL,
-      isRemoved: false,
-      on: (_name: "dom-ready", callback: (event: unknown) => void) => {
-        onReady = callback;
-        registered.resolve();
+      webview: {
+        url: PACKAGED_READER_SNAPSHOT_URL,
+        isRemoved: false,
+        on: (name: string, callback: (event: unknown) => void) => {
+          webviewEvents.set(name, callback);
+          if (name === "dom-ready") registered.resolve();
+        },
+        executeJavascript: (script: string) => { calls.push(script); scripts.push(script); },
       },
-      executeJavascript: (script: string) => calls.push(script),
-    },
-    on: (event: string, callback: () => void) => events.set(event, callback),
-    show: () => calls.push("show"),
-    requestClose: () => calls.push("request-close"),
-    close: () => calls.push("close"),
+      on: (event: string, callback: () => void) => events.set(event, callback),
+      show: () => calls.push("show"),
+      requestClose: () => calls.push("request-close"),
+      close: () => calls.push("close"),
+      registered, scripts,
+      emit: (event: string) => events.get(event)?.(),
+      webEvent: (name: string, url = PACKAGED_READER_SNAPSHOT_URL) => webviewEvents.get(name)?.(readyEvent(url)),
+    };
   };
+  let child = makeChild();
+  let opened = false;
   const main = { url: PACKAGED_VIEW_URL, on: () => undefined, activate: () => undefined };
   const lab = createReaderLab(undefined, {
-    capture: (request, current) => {
+    capture: (request, current, settings) => {
       sources.push(request);
       callers.push(current);
+      options.push(settings);
       return captured.promise;
     },
     open: () => {
       calls.push("open");
+      if (opened) child = makeChild();
+      opened = true;
       return child;
     },
-    timeoutMs,
+    timeoutMs, candidate, imageTimeoutMs,
   });
   lab.bindMain(main);
   return {
-    lab, main, child, calls, sources, callers, captured, registered,
+    lab, main, calls, sources, callers, captured, options,
+    get child() { return child; },
+    get registered() { return child.registered; },
     open: () => lab.openReadingSnapshot(source, main),
     ready: (url = PACKAGED_VIEW_URL) => lab.openAfterMainReady(main, readyEvent(url)),
-    dom: (url = PACKAGED_READER_SNAPSHOT_URL) => onReady?.(readyEvent(url)),
-    emit: (event: string) => events.get(event)?.(),
+    dom: (url = PACKAGED_READER_SNAPSHOT_URL) => child.webEvent("dom-ready", url),
+    emit: (event: string) => child.emit(event),
   };
 }
 
@@ -253,4 +270,191 @@ test("snapshot route times out a held capture without stacking reads or creating
   f.dom();
   expect(await retry).toEqual({ ok: true, submitted: true });
   f.lab.dispose();
+});
+
+const imageResult = { ok: true, mime: "image/png", width: 2, height: 3, data: "AA==", current: () => true } as const;
+const unavailable = { ok: false, error: "UNAVAILABLE" } as const;
+
+function readDeliveryEvents(scripts: readonly string[]) {
+  const events: CustomEvent[] = [];
+  const window = { dispatchEvent: (event: CustomEvent) => events.push(event) };
+  for (const script of scripts) runInNewContext(script, { CustomEvent, window });
+  return events;
+}
+
+test("image work starts after the body is submitted, with one exact fixed receipt", async () => {
+  const entered = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<Awaited<ReturnType<ReadingSnapshotImageRead>>>();
+  const seen: string[] = [];
+  const f = snapshotFixture(undefined, (base64) => {
+    expect(f.calls[f.calls.length - 1]).toBe("show");
+    seen.push(base64);
+    return Promise.resolve("图%20像.png");
+  });
+  try {
+    f.ready();
+    const body = f.open();
+    f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: (reference, current) => {
+      expect(current()).toBe(true);
+      seen.push(reference);
+      entered.resolve();
+      return finish.promise;
+    } });
+    await f.registered.promise;
+    f.child.webEvent("did-commit-navigation");
+    f.dom();
+    f.dom();
+    expect(await body).toEqual({ ok: true, submitted: true });
+    await entered.promise;
+    expect(f.options).toEqual([{ includeImage: true }]);
+    expect(seen).toEqual(["5Lit", "图%20像.png"]);
+    const [bodyEvent] = readDeliveryEvents(f.child.scripts);
+    expect(bodyEvent?.type).toBe(READER_SNAPSHOT_EVENT);
+    const bodyReceipt = decodeReaderSnapshotDelivery(bodyEvent?.detail);
+    if (!bodyReceipt?.deliveryId) throw Error("missing body image ID");
+    expect(bodyReceipt.text).toBe("中");
+    expect(f.child.scripts).toHaveLength(1);
+    finish.resolve(imageResult);
+    await Bun.sleep(0);
+    const [, imageEvent] = readDeliveryEvents(f.child.scripts);
+    expect(imageEvent?.type).toBe(READER_IMAGE_SNAPSHOT_EVENT);
+    expect(parseReaderImageSnapshot(imageEvent?.detail, bodyReceipt.deliveryId)).toEqual({
+      protocolVersion: 1, deliveryId: bodyReceipt.deliveryId, slot: 0,
+      status: "image", mime: "image/png", width: 2, height: 3, data: "AA==",
+    });
+    expect(f.child.scripts).toHaveLength(2);
+  } finally {
+    finish.resolve(unavailable);
+    f.lab.dispose();
+  }
+});
+
+test("plain body and candidate miss avoid an image read, while known image failure sends only unavailable", async () => {
+  for (const mode of ["plain", "missing", "candidate-failure", "read-failure", "stale"] as const) {
+    let candidates = 0;
+    let reads = 0;
+    const f = snapshotFixture(undefined, () => {
+      candidates++;
+      if (mode === "candidate-failure") return Promise.reject(Error("candidate failed"));
+      return Promise.resolve(mode === "missing" ? undefined : "raster.png");
+    });
+    try {
+      f.ready();
+      const body = f.open();
+      f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, ...(mode === "plain" ? {} : {
+        readImage: () => {
+          reads++;
+          return Promise.resolve(mode === "stale" ? { ...imageResult, current: () => false } : unavailable);
+        },
+      }) });
+      await f.registered.promise;
+      f.dom();
+      expect(await body).toEqual({ ok: true, submitted: true });
+      await Bun.sleep(0);
+      const [bodyEvent, asset] = readDeliveryEvents(f.child.scripts);
+      expect(bodyEvent?.type).toBe(READER_SNAPSHOT_EVENT);
+      expect(candidates).toBe(mode === "plain" ? 0 : 1);
+      expect(reads).toBe(mode === "read-failure" || mode === "stale" ? 1 : 0);
+      if (mode === "plain") expect(bodyEvent?.detail).toBe("5Lit");
+      if (mode === "read-failure") {
+        const deliveryId = decodeReaderSnapshotDelivery(bodyEvent?.detail)?.deliveryId;
+        if (!deliveryId) throw Error("missing bound ID");
+        expect(asset?.type).toBe(READER_IMAGE_SNAPSHOT_EVENT);
+        expect(parseReaderImageSnapshot(asset?.detail, deliveryId)).toEqual({ protocolVersion: 1, slot: 0, deliveryId, status: "unavailable" });
+      } else expect(asset).toBeUndefined();
+    } finally {
+      f.lab.dispose();
+    }
+  }
+});
+
+test("late image from closed reader A cannot reach reader B", async () => {
+  const entered = Promise.withResolvers<() => boolean>();
+  const finishA = Promise.withResolvers<Awaited<ReturnType<ReadingSnapshotImageRead>>>();
+  const signals: AbortSignal[] = [];
+  const f = snapshotFixture(undefined, (_base64, signal) => {
+    signals.push(signal);
+    return Promise.resolve("raster.png");
+  });
+  let reads = 0;
+  try {
+    f.ready();
+    const resultA = f.open();
+    f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: (_reference, current) => {
+      if (++reads === 1) {
+        entered.resolve(current);
+        return finishA.promise;
+      }
+      return Promise.resolve(imageResult);
+    } });
+    await f.registered.promise;
+    const childA = f.child;
+    f.dom();
+    expect(await resultA).toEqual({ ok: true, submitted: true });
+    const currentA = await entered.promise;
+    expect(currentA()).toBe(true);
+    childA.emit("close");
+    expect(currentA()).toBe(false);
+    expect(signals[0]?.aborted).toBe(true);
+
+    const resultB = f.open();
+    await Bun.sleep(0);
+    const childB = f.child;
+    expect(childB).not.toBe(childA);
+    await childB.registered.promise;
+    f.dom();
+    expect(await resultB).toEqual({ ok: true, submitted: true });
+    finishA.resolve(imageResult);
+    await Bun.sleep(0);
+    expect(childA.scripts).toHaveLength(1);
+    expect(childB.scripts).toHaveLength(2);
+    const [a] = readDeliveryEvents(childA.scripts);
+    const [b, image] = readDeliveryEvents(childB.scripts);
+    const idA = decodeReaderSnapshotDelivery(a?.detail)?.deliveryId;
+    const idB = decodeReaderSnapshotDelivery(b?.detail)?.deliveryId;
+    if (!idA || !idB) throw Error("missing reader IDs");
+    expect(idA).not.toBe(idB);
+    expect(parseReaderImageSnapshot(image?.detail, idA)).toBeUndefined();
+    expect(parseReaderImageSnapshot(image?.detail, idB)?.status).toBe("image");
+  } finally {
+    finishA.resolve(unavailable);
+    f.lab.dispose();
+  }
+});
+
+test("held candidate aborts on deadline, quit suspension, or committed child or main navigation", async () => {
+  for (const cause of ["deadline", "suspend", "child-navigation", "main-navigation", "dispose"] as const) {
+    const entered = Promise.withResolvers<AbortSignal>();
+    const finished = Promise.withResolvers<string>();
+    let reads = 0;
+    const f = snapshotFixture(undefined, (_base64, signal) => {
+      entered.resolve(signal);
+      return finished.promise;
+    }, cause === "deadline" ? 10 : undefined);
+    try {
+      f.ready();
+      const body = f.open();
+      f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: () => {
+        reads++;
+        return Promise.resolve(imageResult);
+      } });
+      await f.registered.promise;
+      f.dom();
+      expect(await body).toEqual({ ok: true, submitted: true });
+      const signal = await entered.promise;
+      if (cause === "deadline") await Bun.sleep(20);
+      if (cause === "suspend") f.lab.suspendSnapshots()();
+      if (cause === "child-navigation") f.child.webEvent("did-commit-navigation");
+      if (cause === "main-navigation") { f.lab.retireMainReady(f.main); f.ready(); }
+      if (cause === "dispose") f.lab.dispose();
+      expect(signal.aborted).toBe(true);
+      finished.resolve("raster.png");
+      await Bun.sleep(0);
+      expect(reads).toBe(0);
+      expect(f.child.scripts).toHaveLength(1);
+    } finally {
+      finished.resolve("raster.png");
+      f.lab.dispose();
+    }
+  }
 });

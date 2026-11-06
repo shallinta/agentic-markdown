@@ -5,6 +5,7 @@ import {
   READER_SNAPSHOT_EVENT,
   READER_SNAPSHOT_MAX_BYTES,
   decodeReaderSnapshot,
+  decodeReaderSnapshotDelivery,
   readerSnapshotDeliveryScript,
 } from "./reader-snapshot";
 
@@ -23,6 +24,33 @@ test("dispatches only a fixed event with canonical base64, preserving saved UTF-
   expect(events[0]?.detail).toBe(base64);
   expect(decodeReaderSnapshot(events[0]?.detail)).toBe(original);
   expect(decodeReaderSnapshot("")).toBe("");
+});
+
+test("only an exact, valid body envelope carries a trusted image delivery ID", () => {
+  const deliveryId = "da88d15c-e444-414b-98d5-a318a0b51034";
+  const text = "\uFEFF# 已保存 📖\r\n";
+  const data = Buffer.from(text).toString("base64");
+  const value = { protocolVersion: 1, deliveryId, data };
+  const script = readerSnapshotDeliveryScript(data, deliveryId);
+  if (script === undefined) throw new Error("missing body delivery expression");
+  const events: CustomEvent[] = [];
+  runInNewContext(script, { CustomEvent, window: { dispatchEvent: (event: CustomEvent) => events.push(event) } });
+  expect(events).toHaveLength(1);
+  expect(events[0]?.type).toBe(READER_SNAPSHOT_EVENT);
+  expect(events[0]?.detail).toEqual(value);
+  expect(decodeReaderSnapshotDelivery(events[0]?.detail)).toEqual({ text, deliveryId });
+  expect(decodeReaderSnapshotDelivery(data)).toEqual({ text });
+  expect(decodeReaderSnapshotDelivery({ ...value, data: "" })).toEqual({ text: "", deliveryId });
+  expect(decodeReaderSnapshot(value)).toBeUndefined();
+  expect(readerSnapshotDeliveryScript(data, `${deliveryId}";window.injected=1`)).toBeUndefined();
+  let read = false;
+  const accessor = { protocolVersion: 1, deliveryId, get data() { read = true; return data; } };
+  for (const invalid of [
+    { ...value, path: "/tmp/body.md" }, { ...value, [Symbol("extra")]: true },
+    { ...value, protocolVersion: 2 }, { ...value, deliveryId: deliveryId.replace("414b", "514b") },
+    { ...value, data: "AB==" }, { ...value, data: "/w==" }, accessor,
+  ]) expect(decodeReaderSnapshotDelivery(invalid)).toBeUndefined();
+  expect(read).toBe(false);
 });
 
 test("rejects noncanonical, invalid UTF-8 and over-limit snapshots", () => {

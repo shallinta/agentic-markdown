@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { READER_CONTENT_SECURITY_POLICY } from "./src/security/reader-policy";
+import { READER_CONTENT_SECURITY_POLICY, READER_SNAPSHOT_CONTENT_SECURITY_POLICY } from "./src/security/reader-policy";
 import { shellContentSecurityPolicy } from "./src/security/shell-policy";
 import { electrobunViteAliases } from "./.hutch/devkit/api/config/electrobun-vite";
 
@@ -45,9 +45,11 @@ export default defineConfig({
               `'sha256-${createHash("sha256").update(match[1]).digest("base64")}'`
           );
           const filename = path.resolve(context.filename);
-          const policy = filename === readerEntry || filename === readerSnapshotEntry
-            ? READER_CONTENT_SECURITY_POLICY
-            : shellContentSecurityPolicy(hashes, Boolean(context.server));
+          const policy = filename === readerSnapshotEntry
+            ? READER_SNAPSHOT_CONTENT_SECURITY_POLICY
+            : filename === readerEntry
+              ? READER_CONTENT_SECURITY_POLICY
+              : shellContentSecurityPolicy(hashes, Boolean(context.server));
           return html.replace(
             '<meta charset="UTF-8" />',
             `<meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="${policy}" />`

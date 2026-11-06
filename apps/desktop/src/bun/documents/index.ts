@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, watch, type FSWatcher } from "node:fs";
+import { constants, fstatSync, lstatSync, watch, type BigIntStats, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 
 import { CONTENT_SEARCH_LIMITS } from "../../shared/content-search";
 import { validDuplicateVersion, type DuplicateSource } from "../../shared/create-markdown";
@@ -16,7 +16,7 @@ import {
   type SaveDocumentRequest,
   type WriteCapability,
 } from "../../shared/documents";
-import { validLocalImageRequest } from "../../shared/local-images";
+import { localImageReference, validLocalImageRequest, type LocalImageResult } from "../../shared/local-images";
 import { READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import { validMirror } from "../../shared/save-content";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
@@ -114,14 +114,27 @@ interface ReadingSnapshotSource {
   expectedHash: string;
 }
 type ReadingSnapshotCapture =
-  | { ok: true; base64: string; current(): boolean }
+  | { ok: true; base64: string; current: () => boolean; readImage?: ReadingSnapshotImageRead }
   | { ok: false; error: DocumentErrorCode };
+export type ReadingSnapshotImageRead = (reference: string, childCurrent: () => boolean) => Promise<
+  | (Pick<Extract<LocalImageResult, { ok: true }>, "ok" | "mime" | "width" | "height" | "data"> & { current(): boolean })
+  | { ok: false; error: "UNAVAILABLE" }
+>;
+interface PastedRasterSourceProof { path: string; fingerprint: string }
+interface PastedRasterSourceTicket {
+  current(this: void): boolean;
+  revalidate(this: void): Promise<boolean>;
+}
+type PastedRasterSourceResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: DocumentErrorCode | "UNKNOWN" };
 
 export interface TrustedDocumentService extends DocumentService {
   /** Existing observed grant only. The receipt checks logical ownership after capture. */
   captureReadingSnapshot(
     source: ReadingSnapshotSource,
-    current?: () => boolean
+    current?: () => boolean,
+    options?: { includeImage: true }
   ): Promise<ReadingSnapshotCapture>;
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
   beginSearchAdmission(): { current(): boolean } | undefined;
@@ -135,6 +148,13 @@ export interface TrustedDocumentService extends DocumentService {
   inspectTrash(handle: string, documentId: string): Omit<SingleFileAuthorization,"file"> | null;
   withDuplicateBuffer(source: DuplicateSource, payload: { text: string; hash: string }, action: Parameters<TrustedDocumentService["withDuplicateSource"]>[1]): Promise<boolean>;
   withDuplicateSource(source: DuplicateSource, action: (source: { bytes: Uint8Array; hash: string; fileName: string; checkCurrent(): void; revalidate(): Promise<void> }) => Promise<void>): Promise<boolean>;
+  /** Requires the caller's exact workspace creation lease, independently of the grant. */
+  withPastedRasterSource<T>(
+    source: ReadingSnapshotSource,
+    expected: PastedRasterSourceProof,
+    callerCurrent: () => boolean,
+    action: (ticket: PastedRasterSourceTicket) => Promise<T>
+  ): Promise<PastedRasterSourceResult<T>>;
   withCreateBarrier(action: () => Promise<void> | void): Promise<boolean>;
   openCreatedAuthorized(request: unknown, authorize: () => Promise<SingleFileAuthorization>, scope: DocumentScope, sink: (snapshot: DocumentSnapshot) => void): Promise<DocumentResponse>;
   acquireFolderMutationLease(): Promise<FolderMutationLease | null>;
@@ -528,11 +548,19 @@ export function createDocumentService({
       throw new DocumentFailure("INVALID_HANDLE");
   };
 
-  async function stableBytes(grant: Grant, check: () => void, maxBytes = MAX_DOCUMENT_BYTES) {
+  function sameReadingStamp(expected: BigIntStats, actual: BigIntStats) {
+    return actual.isFile() && fileFingerprint(actual) === fileFingerprint(expected) &&
+      actual.size === expected.size && actual.mtimeNs === expected.mtimeNs &&
+      actual.ctimeNs === expected.ctimeNs && actual.mode === expected.mode && actual.nlink === expected.nlink;
+  }
+
+  async function stableBytes(grant: Grant, check: () => void, maxBytes = MAX_DOCUMENT_BYTES, captureStamp?: (stamp: BigIntStats) => void) {
     const readStart = onTiming ? performance.now() : 0;
     check();
     const before = await verify(grant);
     check();
+    const fdBefore = captureStamp ? fstatSync(grant.file.fd, { bigint: true }) : undefined;
+    if (fdBefore && !sameReadingStamp(before, fdBefore)) throw new DocumentFailure("FILE_CHANGED");
     if (before.size > BigInt(maxBytes))
       throw new DocumentFailure("TOO_LARGE");
     const bytes = Buffer.alloc(
@@ -564,9 +592,112 @@ export function createDocumentService({
       throw new DocumentFailure("FILE_CHANGED");
     }
     if (length > maxBytes) throw new DocumentFailure("TOO_LARGE");
+    if (captureStamp && fdBefore) {
+      const fdAfter = fstatSync(grant.file.fd, { bigint: true });
+      if (!sameReadingStamp(fdBefore, fdAfter) || !sameReadingStamp(after, fdAfter))
+        throw new DocumentFailure("FILE_CHANGED");
+      captureStamp(fdAfter);
+    }
     const content = bytes.subarray(0, length);
     onTiming?.("diskReadMs", performance.now() - readStart);
     return content;
+  }
+  async function withPastedRasterSource<T>(
+    source: ReadingSnapshotSource,
+    expected: PastedRasterSourceProof,
+    callerCurrent: () => boolean,
+    action: (ticket: PastedRasterSourceTicket) => Promise<T>
+  ): Promise<PastedRasterSourceResult<T>> {
+    const { handle, documentId, expectedRevision, expectedHash } = source;
+    const { path: expectedPath, fingerprint: expectedFingerprint } = expected;
+    if (typeof handle !== "string" || handle.length !== 36 || !uuidPattern.test(handle) ||
+        typeof documentId !== "string" || documentId.length !== 36 || !uuidPattern.test(documentId) ||
+        !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
+        typeof expectedHash !== "string" || expectedHash.length !== 64 || !/^[a-f0-9]{64}$/.test(expectedHash))
+      return { ok: false, error: "INVALID_REQUEST" };
+    let outcome: { ok: true; value: T } | undefined;
+    let actionStarted = false;
+    try {
+      const entered = await service.withCreateBarrier(async () => {
+        const owner = createAdmissionOwner;
+        const grant = grants.get(handle);
+        if (!grant) throw new DocumentFailure("INVALID_HANDLE");
+        const { identityKey, path, fingerprint, directories, scope } = grant;
+        if (path !== expectedPath || fingerprint !== expectedFingerprint)
+          throw new DocumentFailure("FILE_CHANGED");
+        const identity = identities.get(identityKey);
+        const observed = observations.get(handle);
+        if (identity?.documentId !== documentId || identity.revision !== expectedRevision ||
+            identity.hash !== expectedHash || observed?.documentId !== documentId ||
+            observed.revision !== expectedRevision || observed.hash !== expectedHash)
+          throw new DocumentFailure("CONFLICT");
+        const generation = epoch;
+        const currentCaller = () => {
+          try { return callerCurrent(); }
+          catch { return false; }
+        };
+        const checkLogical = () => {
+          if (!currentCaller() || disposed || disposing || createAdmissionOwner !== owner || epoch !== generation)
+            throw new DocumentFailure("CANCELLED");
+          if (grants.get(handle) !== grant || grant.identityKey !== identityKey ||
+              grant.path !== path || grant.fingerprint !== fingerprint ||
+              grant.directories !== directories || grant.scope !== scope ||
+              identities.get(identityKey) !== identity || uncertain.has(documentId) ||
+              observations.get(handle) !== observed ||
+              (observed.last !== undefined && observed.last !== "unchanged"))
+            throw new DocumentFailure("CONFLICT");
+          if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
+        };
+        checkLogical();
+        const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        let active = true;
+        try {
+          const stamp = await file.stat({ bigint: true });
+          const checkPhysical = () => {
+            if (!active) throw new DocumentFailure("CANCELLED");
+            checkLogical();
+            const now = fstatSync(file.fd, { bigint: true });
+            if (!now.isFile() || fileFingerprint(now) !== fingerprint ||
+                now.size !== stamp.size || now.mtimeNs !== stamp.mtimeNs ||
+                now.ctimeNs !== stamp.ctimeNs || now.mode !== stamp.mode)
+              throw new DocumentFailure("FILE_CHANGED");
+          };
+          const verifySaved = async () => {
+            checkPhysical();
+            const writable = await capability(grant);
+            checkPhysical();
+            if (!writable.writable) throw new DocumentFailure("READ_ONLY");
+            const bytes = await stableBytes({ ...grant, file }, checkLogical);
+            if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
+              throw new DocumentFailure("CONFLICT");
+            checkPhysical();
+          };
+          await verifySaved();
+          const current = () => {
+            if (!active) return false;
+            try { checkPhysical(); return true; }
+            catch { active = false; return false; }
+          };
+          const revalidate = async () => {
+            if (!current()) return false;
+            try { await verifySaved(); return current(); }
+            catch { active = false; return false; }
+          };
+          actionStarted = true;
+          outcome = { ok: true, value: await action({ current, revalidate }) };
+          if (!active) throw new DocumentFailure("CANCELLED");
+          await verify({ ...grant, file });
+          checkPhysical();
+        } finally {
+          active = false;
+          await file.close();
+        }
+        checkLogical();
+      });
+      return entered && outcome ? outcome : { ok: false, error: "BUSY" };
+    } catch (error) {
+      return { ok: false, error: actionStarted ? "UNKNOWN" : codeOf(error) };
+    }
   }
   async function snapshot(
     grant: Grant, generation: number, task: Task, maxBytes?: number, guard?: () => void
@@ -746,7 +877,7 @@ export function createDocumentService({
     );
   }
   const service: TrustedDocumentService = {
-    async captureReadingSnapshot(source, callerCurrent = () => true) {
+    async captureReadingSnapshot(source, callerCurrent = () => true, options) {
       const { handle, documentId, expectedRevision, expectedHash } = source;
       const reject = (error: DocumentErrorCode) => ({ ok: false as const, error });
       if (
@@ -757,7 +888,7 @@ export function createDocumentService({
       ) return reject("INVALID_REQUEST");
       const grant = grants.get(handle);
       if (!grant) return reject("INVALID_HANDLE");
-      const { identityKey, path, fingerprint, directories, scope } = grant;
+      const { identityKey, path, fingerprint, directories, scope, assetScope, assetEpoch } = grant;
       const identity = identities.get(identityKey);
       const observation = observations.get(handle);
       if (
@@ -769,10 +900,10 @@ export function createDocumentService({
       const authorization = searchAdmissionGeneration;
       const barrier = selectBarrierGeneration;
       const save = saveStartGeneration;
-      const check = () => {
+      const check = (isCurrent = callerCurrent) => {
         let callerIsCurrent: boolean;
         try {
-          callerIsCurrent = callerCurrent();
+          callerIsCurrent = isCurrent();
         } catch {
           callerIsCurrent = false;
         }
@@ -796,8 +927,10 @@ export function createDocumentService({
           path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
         );
         let bytes: Buffer;
+        let stamp: BigIntStats | undefined;
         try {
-          bytes = await stableBytes({ ...grant, file }, check, READER_SNAPSHOT_MAX_BYTES);
+          bytes = await stableBytes({ ...grant, file }, check, READER_SNAPSHOT_MAX_BYTES,
+            options?.includeImage ? (observed) => { stamp = observed; } : undefined);
         } finally {
           await file.close();
         }
@@ -810,6 +943,68 @@ export function createDocumentService({
           return reject("INVALID_UTF8");
         }
         let retired = false;
+        let imageUsed = false;
+        const savedStamp = stamp;
+        const readImage: ReadingSnapshotImageRead = async (reference, childCurrent) => {
+          const unavailable = { ok: false as const, error: "UNAVAILABLE" as const };
+          if (!savedStamp || imageUsed) return unavailable;
+          imageUsed = true;
+          const decoded = typeof reference === "string" ? localImageReference(reference) : null;
+          if (decoded === null || imageJobs >= 9) return unavailable;
+          const assetPath = resolve(dirname(path), decoded);
+          const checkImage = () => {
+            check(childCurrent);
+            if (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch || trashGuard(assetPath))
+              throw new DocumentFailure("CONFLICT");
+          };
+          imageJobs++;
+          try {
+            checkImage();
+            const sourceFile = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+            let image: LocalImageResult;
+            try {
+              const verifySource = async () => {
+                checkImage();
+                await assetScope?.verify();
+                checkImage();
+                const observed = await verify({ ...grant, file: sourceFile });
+                checkImage();
+                if (!sameReadingStamp(savedStamp, observed) ||
+                    !sameReadingStamp(savedStamp, fstatSync(sourceFile.fd, { bigint: true })))
+                  throw new DocumentFailure("FILE_CHANGED");
+              };
+              await verifySource();
+              image = await images.read({
+                authorization: { selectedPath: grant.selectedPath, selectedParent: grant.selectedParent, path, fingerprint, directories },
+                reference,
+                profile: "reader-snapshot",
+                ...(assetScope ? { assetRoot: { path: assetScope.path, directories: assetScope.directories } } : {}),
+              });
+              if (!image.ok) return unavailable;
+              await verifySource();
+            } finally {
+              await sourceFile.close();
+            }
+            checkImage();
+            let imageRetired = false;
+            const current = () => {
+              if (imageRetired) return false;
+              try {
+                checkImage();
+                if (sameReadingStamp(savedStamp, lstatSync(path, { bigint: true }))) return true;
+              } catch { /* A retired result stays unavailable. */ }
+              imageRetired = true;
+              return false;
+            };
+            if (!current()) return unavailable;
+            const { mime, width, height, data } = image;
+            return { ok: true, mime, width, height, data, current };
+          } catch {
+            return unavailable;
+          } finally {
+            imageJobs--;
+          }
+        };
         return {
           ok: true,
           base64: bytes.toString("base64"),
@@ -823,6 +1018,7 @@ export function createDocumentService({
               return false;
             }
           },
+          ...(savedStamp && bytes.includes("![") ? { readImage } : {}),
         };
       } catch (error) {
         return reject(codeOf(error));
@@ -1312,6 +1508,7 @@ export function createDocumentService({
         } finally { await file.close(); }
       });
     },
+    withPastedRasterSource,
     async withCreateBarrier(action) {
       if (disposed || disposing || createAdmissionOwner || writeBarrier || folderMutationLease || running || pending || selecting || revealing) return false;
       const owner = {}; createAdmissionOwner = owner; writeBarrier = true; selectBarrierGeneration++;

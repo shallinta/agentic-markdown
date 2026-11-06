@@ -1,5 +1,13 @@
 # 产品功能手册
 
+## 粘贴单张图片（F-053b）
+
+在当前工作区中打开已保存、可写的文档，在编辑模式的普通单行段落或独立空行按 ⌘V，可粘贴单张不超过 1 MiB 的 PNG 或 JPEG。应用保存到同目录 `assets` 后插入相对链接。撤销会移除链接，图片仍留在磁盘。单独打开文件时，先加入其所在工作区才能写入资产。见[F-053b 迭代](iterations/F-053b-publish-pasted-raster-image.md)。
+
+## 独立阅读窗显示本地图片（F-022d）
+
+打开已保存版本后，阅读窗可显示正文第一处符合条件的本地 PNG 或 JPEG。图片需在现有授权内，且满足 1 MiB 和呈现预算。其他图片、无法读取的首图和远程资源保留占位。见[F-022d 迭代](iterations/F-022d-one-authorized-image-in-independent-reader.md)。
+
 ## 多标签切换与资源观察（F-039a）
 
 普通 WK 已验证五个标签中切回后台文档可继续原来的编辑或源码模式。固定文档的草稿、文末位置、选区和撤销都在。本轮记录资源观察，没有新增用户操作或调整缓存。见[F-039a 迭代](iterations/F-039a-observe-wk-inactive-tab-resources.md)。

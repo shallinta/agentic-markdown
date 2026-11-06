@@ -5,6 +5,7 @@ import {
   PACKAGED_READER_SNAPSHOT_URL,
   PACKAGED_READER_URL,
   READER_CONTENT_SECURITY_POLICY,
+  READER_SNAPSHOT_CONTENT_SECURITY_POLICY,
   readerNavigationRules,
 } from "./reader-policy";
 import {
@@ -63,6 +64,9 @@ test("the reader allows only its own navigation and no bridge or asset requests"
   expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("worker-src blob:");
   expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("connect-src 'none'");
   expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("img-src 'none'");
+  expect(READER_SNAPSHOT_CONTENT_SECURITY_POLICY.split("; ")).toContain("img-src data:");
+  expect(READER_SNAPSHOT_CONTENT_SECURITY_POLICY.replace("img-src data:", "img-src 'none'"))
+    .toBe(READER_CONTENT_SECURITY_POLICY);
   expect(READER_CONTENT_SECURITY_POLICY).not.toMatch(/unsafe|(?:^|\s)(?:https?|wss?):/);
 });
 

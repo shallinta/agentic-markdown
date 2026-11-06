@@ -9,6 +9,7 @@ import type { Command } from "../../shared/commands";
 import type { ContentSearchPrepareResponse, ContentSearchResponse } from "../../shared/content-search";
 import type { DocumentService } from "../../shared/documents";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
+import { rasterPasteRequestId } from "../../shared/raster-paste";
 import type { DesktopRPCType, OpenReadingSnapshotResponse } from "../../shared/rpc";
 import type { SearchLabResponse } from "../../shared/search-lab";
 import { isSourceWrappingRequest } from "../../shared/source-wrapping";
@@ -79,6 +80,8 @@ export function createMainWindowRPC({
   const enabled = process.env.AGENTIC_MARKDOWN_PERF_LAB === "1";
   const autorun = enabled && process.env.AGENTIC_MARKDOWN_PERF_AUTO === "1";
   const rasterPaste = rasterPasteLabEnabled();
+  const allowRasterPaste = () => !enabled && !searchLab &&
+    process.env.AGENTIC_MARKDOWN_READER_LAB !== "1" && getMainWindow().url === PACKAGED_VIEW_URL;
   let lab:
     | Promise<
         ReturnType<(typeof import("../perf-lab"))["createPerfLabService"]>
@@ -204,6 +207,13 @@ export function createMainWindowRPC({
           if (!workspace?.createFolder) throw Error("Workspace unavailable");
           return workspace.createFolder(request);
         },
+        publishRasterPaste: request => workspace?.publishRasterPaste && allowRasterPaste()
+          ? workspace.publishRasterPaste(request)
+          : { ok: false, requestId: rasterPasteRequestId(request), error: "UNAVAILABLE" },
+        getRasterPasteSequence: request => workspace?.getRasterPasteSequence && allowRasterPaste() &&
+          perfRecord(request) && Reflect.ownKeys(request).length === 0
+          ? workspace.getRasterPasteSequence()
+          : { ok: false, error: "UNAVAILABLE" },
         removeStandalone: (request) => {
           if (!workspace) throw Error("Workspace unavailable");
           return workspace.removeStandalone(request);

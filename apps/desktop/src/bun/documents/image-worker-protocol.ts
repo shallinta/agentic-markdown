@@ -3,6 +3,8 @@ import {
   validLocalImageResult,
   type LocalImageResult,
 } from "../../shared/local-images";
+import { READER_IMAGE_SNAPSHOT_MAX_BYTES } from "../../shared/reader-image-snapshot";
+import { isCanonicalBase64 } from "../../shared/reader-snapshot";
 
 import type { ImageJob } from "./local-image-operation";
 
@@ -49,17 +51,15 @@ export function validImageWorkerRequest(
     value.protocolVersion !== 1 ||
     value.kind !== "read-local-image" ||
     !id(value.id) ||
-    !record(value.job) ||
-    !fields(
-      value.job,
-      value.job.assetRoot === undefined
-        ? ["authorization", "reference"]
-        : ["authorization", "reference", "assetRoot"]
-    )
+    !record(value.job)
   )
     return false;
   const job = value.job,
     authorization = job.authorization;
+  const jobFields = ["authorization", "reference"];
+  if (job.assetRoot !== undefined) jobFields.push("assetRoot");
+  if (job.profile === "reader-snapshot") jobFields.push("profile");
+  if ((job.profile !== undefined && job.profile !== "reader-snapshot") || !fields(job, jobFields)) return false;
   if (
     job.assetRoot !== undefined &&
     (!record(job.assetRoot) ||
@@ -144,7 +144,9 @@ export async function handleImageWorkerRequest(
     const result = await read(value.job);
     return {
       ...response,
-      result: validLocalImageResult(result)
+      result: validLocalImageResult(result) &&
+        (value.job.profile !== "reader-snapshot" || !result.ok ||
+          isCanonicalBase64(result.data, READER_IMAGE_SNAPSHOT_MAX_BYTES))
         ? result
         : { ok: false, error: "UNAVAILABLE" },
     };

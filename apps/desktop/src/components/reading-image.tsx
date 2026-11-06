@@ -1,8 +1,27 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { imagePlaceholder, type LocalImages } from "../client/local-images";
+import type { ReaderImageReceiver } from "../client/reader-image-receiver";
 import type { ReadingSearchRegistry } from "../client/reading-search-registry";
 import type { LocalImageResult } from "../shared/local-images";
+
+function ReadingRaster({ result, alt, onError }: {
+  result: Pick<Extract<LocalImageResult, { ok: true }>, "mime" | "data" | "width" | "height">;
+  alt: string;
+  onError: () => void;
+}) {
+  return (
+    <img
+      src={`data:${result.mime};base64,${result.data}`}
+      alt={alt}
+      width={result.width}
+      height={result.height}
+      decoding="async"
+      draggable={false}
+      onError={onError}
+    />
+  );
+}
 
 export function ReadingImagePlaceholder({
   alt,
@@ -105,15 +124,7 @@ export function ReadingImage({
   return (
     <span ref={element} className="reading-image">
       {!blocked && result?.ok && !failed ? (
-        <img
-          src={`data:${result.mime};base64,${result.data}`}
-          alt={alt}
-          width={result.width}
-          height={result.height}
-          decoding="async"
-          draggable={false}
-          onError={() => setFailed(true)}
-        />
+        <ReadingRaster result={result} alt={alt} onError={() => setFailed(true)} />
       ) : (
         <span className="text-muted-foreground">
           [
@@ -130,6 +141,27 @@ export function ReadingImage({
           ]
         </span>
       )}
+    </span>
+  );
+}
+
+export function ReadingSnapshotImage({ node, alt, receiver, current, search }: {
+  node: object;
+  alt: string;
+  receiver: ReaderImageReceiver;
+  current: () => boolean;
+  search?: ReadingSearchRegistry;
+}) {
+  const result = useSyncExternalStore(receiver.subscribe, () => current() ? receiver.getImage(node) : undefined, () => undefined);
+  const [failed, setFailed] = useState(false);
+  const host = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    if (host.current) return search?.mount(host.current, { kind: "image", alt: null });
+  }, [search, result, failed]);
+  if (!result || failed) return <ReadingImagePlaceholder alt={alt} search={search} />;
+  return (
+    <span ref={host} className="reading-image">
+      <ReadingRaster result={result} alt={alt} onError={() => setFailed(true)} />
     </span>
   );
 }

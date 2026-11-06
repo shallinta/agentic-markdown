@@ -2,9 +2,11 @@ import { PACKAGED_READER_SNAPSHOT_URL } from "../../security/reader-policy";
 import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
+import { readerImageSnapshotDeliveryScript } from "../../shared/reader-image-snapshot";
 import { readerSnapshotDeliveryScript } from "../../shared/reader-snapshot";
 import type { OpenReadingSnapshotResponse, ReadingSnapshotSource } from "../../shared/rpc";
 import { hashPattern } from "../../shared/save-content";
+import type { ReadingSnapshotImageRead, TrustedDocumentService } from "../documents";
 
 interface ReaderWindow {
   on(name: "focus" | "blur" | "close", listener: () => void): void;
@@ -24,27 +26,25 @@ interface SnapshotReaderWindow extends ReaderWindow {
   webview: {
     url: string | null;
     isRemoved: boolean;
-    on(name: "dom-ready", listener: (event: unknown) => void): void;
+    on(name: "dom-ready" | "did-commit-navigation", listener: (event: unknown) => void): void;
     executeJavascript(script: string): void;
   };
 }
 
 interface SnapshotDependencies {
-  capture(
-    source: ReadingSnapshotSource,
-    current: () => boolean,
-  ): Promise<
-    | { ok: true; base64: string; current: () => boolean }
-    | Extract<OpenReadingSnapshotResponse, { ok: false }>
-  >;
+  capture(source: ReadingSnapshotSource, current: () => boolean, options?: { includeImage: true }):
+    ReturnType<TrustedDocumentService["captureReadingSnapshot"]>;
+  candidate?(this: void, base64: string, signal: AbortSignal): Promise<string | undefined>;
   open(): SnapshotReaderWindow;
   timeoutMs?: number;
+  imageTimeoutMs?: number;
 }
 
 const SNAPSHOT_TIMEOUT_MS = 5_000;
 interface SnapshotReceipt {
   script: string;
   current(): boolean;
+  image?: { deliveryId: string; base64: string; read: ReadingSnapshotImageRead };
 }
 interface PendingSnapshot {
   settle(response: OpenReadingSnapshotResponse): void;
@@ -72,6 +72,11 @@ function isReadyAt(event: unknown, url: string): boolean {
   return perfRecord(event) && perfRecord(event.data) && event.data.detail === url;
 }
 
+function isSnapshotWindow(child: SnapshotReaderWindow): boolean {
+  return child.url === PACKAGED_READER_SNAPSHOT_URL &&
+    child.webview.url === PACKAGED_READER_SNAPSHOT_URL && !child.webview.isRemoved;
+}
+
 export function createReaderLab(
   open?: () => ReaderWindow,
   snapshot?: SnapshotDependencies,
@@ -80,12 +85,44 @@ export function createReaderLab(
   let reader: ReaderWindow | undefined;
   let pending: PendingSnapshot | undefined;
   let capturing: PendingSnapshot | undefined;
+  let deliveringImage: { child: SnapshotReaderWindow; retire(): void } | undefined;
   let readyMain: MainWindow | undefined;
   let attempted = false;
   let disposed = false;
   let suspensions = 0;
   let owner: "main" | "opening" | "reader" | "unknown" = "main";
   let closeAvailable = false;
+  const retireImage = (child?: ReaderWindow) => {
+    if (deliveringImage && (!child || deliveringImage.child === child)) deliveringImage.retire();
+  };
+  const deliverImage = (child: SnapshotReaderWindow, { deliveryId, base64, read }: NonNullable<SnapshotReceipt["image"]>, ready: () => boolean) => {
+    const candidate = snapshot?.candidate;
+    if (!candidate || !ready() || reader !== child || !isSnapshotWindow(child)) return;
+    const abort = new AbortController();
+    const ticket = {
+      child,
+      retire(this: void) {
+        if (deliveringImage !== ticket) return;
+        deliveringImage = undefined;
+        clearTimeout(timer);
+        abort.abort();
+      },
+    };
+    const timer = setTimeout(ticket.retire, snapshot?.imageTimeoutMs ?? SNAPSHOT_TIMEOUT_MS);
+    deliveringImage = ticket;
+    const current = () => deliveringImage === ticket && ready() && reader === child && isSnapshotWindow(child);
+    void Promise.resolve().then(() => current() ? candidate(base64, abort.signal) : undefined).then(async (reference) => {
+      if (!reference || !current()) return;
+      const result = await read(reference, current);
+      if (!current()) return;
+      const envelope = { protocolVersion: 1, deliveryId, slot: 0 } as const;
+      const script = readerImageSnapshotDeliveryScript(result.ok
+        ? { ...envelope, status: "image", mime: result.mime, width: result.width, height: result.height, data: result.data }
+        : { ...envelope, status: "unavailable" }, deliveryId);
+      if (!script || (result.ok && !result.current()) || !current()) return;
+      child.webview.executeJavascript(script);
+    }).catch(() => { /* A failed image never changes the submitted body. */ }).finally(ticket.retire);
+  };
   const syncCloseAvailability = () => {
     const available = !disposed && owner === "reader" && reader !== undefined;
     if (available === closeAvailable) return;
@@ -97,6 +134,7 @@ export function createReaderLab(
     syncCloseAvailability();
   };
   const requestReaderClose = () => {
+    retireImage(reader);
     try {
       reader?.requestClose();
     } catch {
@@ -107,6 +145,7 @@ export function createReaderLab(
     reader = child;
     child.on("close", () => {
       if (reader !== child) return;
+      retireImage(child);
       reader = undefined;
       setOwner("main");
       onClose?.();
@@ -150,10 +189,12 @@ export function createReaderLab(
       if (readyMain !== main) return;
       readyMain = undefined;
       cancelPending();
+      retireImage();
     },
     suspendSnapshots(): () => void {
       suspensions += 1;
       cancelPending();
+      retireImage();
       return () => { suspensions -= 1; };
     },
     async openReadingSnapshot(input: unknown, main: MainWindow): Promise<OpenReadingSnapshotResponse> {
@@ -185,7 +226,7 @@ export function createReaderLab(
       capturing = token;
       const finishCapture = () => { if (capturing === token) capturing = undefined; };
       void Promise.resolve().then(() =>
-        current() ? snapshot.capture(source, current) : undefined
+        current() ? snapshot.capture(source, current, snapshot.candidate ? { includeImage: true } : undefined) : undefined
       ).then((capture) => {
         finishCapture();
         if (!current()) return;
@@ -197,7 +238,10 @@ export function createReaderLab(
           token.settle(capture);
           return;
         }
-        const script = readerSnapshotDeliveryScript(capture.base64);
+        const image = snapshot.candidate && capture.readImage
+          ? { deliveryId: crypto.randomUUID(), base64: capture.base64, read: capture.readImage }
+          : undefined;
+        const script = readerSnapshotDeliveryScript(capture.base64, image?.deliveryId);
         if (!capture.current()) {
           token.settle({ ok: false, error: "CANCELLED" });
           return;
@@ -206,11 +250,17 @@ export function createReaderLab(
           token.settle({ ok: false, error: "UNAVAILABLE" });
           return;
         }
-        token.receipt = { script, current: capture.current };
+        token.receipt = { script, current: capture.current, image };
         setOwner("opening");
         const child = snapshot.open();
         token.child = child;
         attachReader(child, () => token.settle({ ok: false, error: "CANCELLED" }));
+        let bodySubmitted = false;
+        let childNavigated = false;
+        child.webview.on("did-commit-navigation", () => {
+          if (bodySubmitted) childNavigated = true;
+          retireImage(child);
+        });
         child.webview.on("dom-ready", (event) => {
           if (!current() || reader !== child || !isReadyAt(event, PACKAGED_READER_SNAPSHOT_URL)) return;
           const receipt = token.receipt;
@@ -221,14 +271,15 @@ export function createReaderLab(
               token.settle({ ok: false, error: "CANCELLED" });
               return;
             }
-            if (child.url !== PACKAGED_READER_SNAPSHOT_URL ||
-              child.webview.url !== PACKAGED_READER_SNAPSHOT_URL || child.webview.isRemoved) {
+            if (!isSnapshotWindow(child)) {
               token.settle({ ok: false, error: "UNAVAILABLE" });
               return;
             }
+            bodySubmitted = true;
             child.webview.executeJavascript(receipt.script);
             child.show();
             token.settle({ ok: true, submitted: true });
+            if (receipt.image) deliverImage(child, receipt.image, () => ready() && !childNavigated);
           } catch {
             token.settle({ ok: false, error: "UNAVAILABLE" });
           }
@@ -262,6 +313,7 @@ export function createReaderLab(
       attempted = true;
       readyMain = undefined;
       cancelPending();
+      retireImage();
       reader?.close();
     },
   };

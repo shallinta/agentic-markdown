@@ -56,6 +56,14 @@ const imageWorker = await Bun.build({
 });
 if (!imageWorker.success)
   throw new AggregateError(imageWorker.logs, "Image worker build failed");
+const readerImageCandidateWorker = await Bun.build({
+  entrypoints: [join(root, "src/bun/documents/reader-image-candidate-worker.ts")],
+  outdir: output,
+  target: "bun",
+  naming: "reader-image-candidate-worker.js",
+});
+if (!readerImageCandidateWorker.success)
+  throw new AggregateError(readerImageCandidateWorker.logs, "Reader image candidate worker build failed");
 const perfWorker = await Bun.build({
   entrypoints: [join(root, "src/bun/perf-lab/worker.ts")],
   outdir: output,

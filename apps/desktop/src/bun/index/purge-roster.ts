@@ -66,6 +66,24 @@ export function encodePurgeCompletion(roster: PurgeRoster, rosterBytes: Buffer) 
   if (bytes.length <= INDEX_PURGE_COMPLETE_BYTES) return bytes;
 }
 
+export function encodeFinalizingCatalog(
+  roster: PurgeRoster,
+  rosterBytes: Buffer,
+  rosterStamp: readonly string[],
+  completionBytes: Buffer,
+  completionStamp: readonly string[]
+) {
+  const { scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, files } = roster;
+  const record = (bytes: Buffer, stamp: readonly string[]) => ({
+    sha256: createHash("sha256").update(bytes).digest("hex"), stamp,
+  });
+  return Buffer.from(JSON.stringify({
+    version: 4, profile: "limited-v1", state: "reclaim-finalizing",
+    scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, expectedFiles: files.length,
+    roster: record(rosterBytes, rosterStamp), completion: record(completionBytes, completionStamp),
+  }));
+}
+
 const digest = /^[a-f0-9]{64}$/;
 const unsigned = /^(0|[1-9][0-9]{0,19})$/;
 const signed = /^(0|-?[1-9][0-9]{0,18})$/;

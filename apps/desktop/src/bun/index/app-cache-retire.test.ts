@@ -7,7 +7,7 @@ import { basename, join } from "node:path";
 
 import {
   inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, inspectStagedIndexPurgeProgress, reopenAppIndexCache,
-  prepareEmptyStagedIndexCompletion, prepareRetiredIndexReclaim, prepareStagedIndexPurge,
+  prepareEmptyStagedIndexCompletion, prepareRetiredIndexReclaim, prepareStagedIndexFinalization, prepareStagedIndexPurge,
   removeEmptyStagedIndexDirectory, removeStagedIndexPurgeMember, retireAppIndexCache, searchAppIndexCache,
   stageRetiredIndexReclaim,
 } from "./app-cache";
@@ -36,12 +36,16 @@ function footprintOf(catalog: { size: bigint }, files: readonly { size: bigint }
   };
 }
 
+async function fileStamp(path: string) {
+  const s = await lstat(path, { bigint: true });
+  return [s.birthtimeNs, s.dev, s.ino, s.mode, s.uid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String);
+}
+
 async function inventoryStamps(directory: string) {
   const stat = await lstat(directory, { bigint: true });
-  const files = await Promise.all((await readdir(directory)).sort().map(async name => {
-    const s = await lstat(join(directory, name), { bigint: true });
-    return [name, [s.birthtimeNs, s.dev, s.ino, s.mode, s.uid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String)] as const;
-  }));
+  const files = await Promise.all((await readdir(directory)).sort().map(async name =>
+    [name, await fileStamp(join(directory, name))] as const
+  ));
   return {
     directory: [stat.dev, stat.ino, stat.birthtimeNs, stat.uid, stat.mode].map(String),
     files,
@@ -104,7 +108,7 @@ async function runFixture(
   childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen"
     | "stage" | "stage-reopen" | "purge" | "purge-reopen" | "progress" | "progress-reopen"
     | "remove-member" | "remove-member-reopen" | "empty-completion" | "empty-completion-reopen"
-    | "remove-empty-directory" | "remove-empty-directory-reopen",
+    | "remove-empty-directory" | "remove-empty-directory-reopen" | "finalization" | "finalization-reopen",
   entry = import.meta.path
 ) {
   const child = Bun.spawn([process.execPath, "test", entry], {
@@ -125,7 +129,7 @@ async function runFixture(
 }
 
 async function runFixtureWithoutNative(
-  scratch: string, childMode: "stage-reopen" | "empty-completion-reopen" | "remove-empty-directory-reopen"
+  scratch: string, childMode: "stage-reopen" | "empty-completion-reopen" | "remove-empty-directory-reopen" | "finalization-reopen"
 ) {
   const retry = join(scratch, "retry");
   try {
@@ -239,6 +243,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "empty-completion");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "remove-empty-directory");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "finalization");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -2060,6 +2066,185 @@ test.skipIf(mode !== "remove-empty-directory-reopen")("fresh process confirms th
   try {
     expect(await removeEmptyStagedIndexDirectory(target, current)).toEqual({ ok: true, alreadyAbsent: true });
     expect(await lstat(pending).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
+    expect(await Promise.all(markers.map(f.fingerprint))).toEqual(before);
+    expect(f.workers()).toBe(0);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-complete.json", ".reclaim-purge.json", "catalog.json"]);
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "finalization")("a v4 finalization binds the absent directory and preserves the two fixed sidecars", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  const pending = join(f.profile, ".reclaim-pending");
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const completion = join(f.profile, ".reclaim-complete.json");
+  const sidecars = [roster, completion];
+  const unavailable = failed("UNAVAILABLE");
+  const mismatch = failed("MISMATCH");
+  const unknown = { ok: false, error: "UNKNOWN", accepted: true } as const;
+  f.startRecording();
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toMatchObject({ ok: true, generation: 1, applied: 1 });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const preflight = await inspectRetiredIndexReclaim(retirement, current);
+    if (!preflight.ok) throw Error("Finalization fixture preflight refused: " + preflight.error);
+    const target = { ...retirement, inventoryDigest: preflight.inventoryDigest };
+    const finalize = (guard = current) => prepareStagedIndexFinalization(target, guard);
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: false });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    const stamps = await inventoryStamps(pending);
+    const stagingDigest = digestStamps(target, stamps);
+    const catalogRaw = await readFile(f.catalog);
+    for (let ordinal = 0; ordinal < stamps.files.length; ordinal++)
+      expect(await removeStagedIndexPurgeMember({ ...target, ordinal }, current)).toMatchObject({ ok: true, alreadyMissing: false });
+    expect(await prepareEmptyStagedIndexCompletion(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await finalize()).toEqual(mismatch);
+    expect(await removeEmptyStagedIndexDirectory(target, current)).toEqual({ ok: true, alreadyAbsent: false });
+    const marker = async (path: string) => ({ sha256: sha(await readFile(path)), stamp: await fileStamp(path) });
+    return {
+      target, finalize, workers: f.workers(), v3: await f.fingerprint(f.catalog),
+      expected: async () => JSON.stringify({
+        version: 4, profile: "limited-v1", state: "reclaim-finalizing", ...target,
+        stagingDigest, catalogSha256: sha(catalogRaw), directory: stamps.directory, expectedFiles: stamps.files.length,
+        roster: await marker(roster), completion: await marker(completion),
+      }),
+    };
+  }
+  async function exactNames() {
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-complete.json", ".reclaim-purge.json", "catalog.json"]);
+  }
+  try {
+    const initial = await seed();
+    expect(await prepareStagedIndexFinalization({ ...initial.target, ...wrongScope }, current)).toEqual(failed("SCHEMA"));
+    expect(await prepareStagedIndexFinalization({ ...initial.target, ...wrongGeneration }, current)).toEqual(mismatch);
+    expect(await prepareStagedIndexFinalization({ ...initial.target, inventoryDigest: sha("different v4 target") }, current))
+      .toEqual(mismatch);
+    expect(await prepareStagedIndexFinalization({ ...initial.target, inventoryDigest: "invalid" }, current)).toEqual(failed("INPUT"));
+    expect(await initial.finalize(() => false)).toEqual(failed("CANCELLED"));
+    await mkdir(f.lease, { mode: 0o700 });
+    const occupied = join(f.lease, "keep");
+    await writeFile(occupied, "busy", { mode: 0o600 });
+    expect(await initial.finalize()).toEqual(failed("BUSY"));
+    expect(await readFile(occupied, "utf8")).toBe("busy");
+    await rm(occupied);
+    await rmdir(f.lease);
+
+    const rawCompletion = await readFile(completion);
+    await writeFile(completion, rawCompletion.toString().replace(sha(await readFile(roster)), sha("foreign roster")));
+    const inconsistent = await f.fingerprint(completion);
+    expect(await initial.finalize()).toEqual(mismatch);
+    expect(await f.fingerprint(completion)).toEqual(inconsistent);
+    await writeFile(completion, Buffer.alloc(4_097, 0x61));
+    const oversized = await f.fingerprint(completion);
+    expect(await initial.finalize()).toEqual(unavailable);
+    expect(await f.fingerprint(completion)).toEqual(oversized);
+    await writeFile(completion, rawCompletion);
+    const previous = await Promise.all(sidecars.map(f.fingerprint));
+    expect(await f.fingerprint(f.catalog)).toEqual(initial.v3);
+    await exactNames();
+
+    const stagedCatalog = (name: string) => /^\.agentic-save-[a-f0-9-]+$/.test(name);
+    const cancelled = beforePublish(f.profile, () => false, stagedCatalog);
+    expect(await initial.finalize(cancelled.current)).toEqual(failed("CANCELLED"));
+    expect(cancelled.visited()).toBe(true);
+    await exactNames();
+    const late = join(pending, "preserve-late-file");
+    const returned = beforePublish(f.profile, () => {
+      mkdirSync(pending, { mode: 0o700 });
+      writeFileSync(late, "late", { mode: 0o600 });
+      return true;
+    }, stagedCatalog);
+    expect(await initial.finalize(returned.current)).toEqual(unavailable);
+    expect(returned.visited()).toBe(true);
+    expect(await readFile(late, "utf8")).toBe("late");
+    expect(await f.fingerprint(f.catalog)).toEqual(initial.v3);
+    expect(await Promise.all(sidecars.map(f.fingerprint))).toEqual(previous);
+    await rm(late);
+    await rmdir(pending);
+    await exactNames();
+
+    const expected = await initial.expected();
+    expect(await initial.finalize()).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await readFile(f.catalog, "utf8")).toBe(expected);
+    const final = await f.fingerprint(f.catalog);
+    expect(final.ino).not.toBe(initial.v3.ino);
+    expect(final.mode & 0o777n).toBe(0o600n);
+    expect(final.links).toBe(1n);
+    expect(await Promise.all(sidecars.map(f.fingerprint))).toEqual(previous);
+    await runFixtureWithoutNative(f.scratch, "finalization-reopen");
+    expect(await f.fingerprint(f.catalog)).toEqual(final);
+    expect(await Promise.all(sidecars.map(f.fingerprint))).toEqual(previous);
+    expect(f.workers()).toBe(initial.workers);
+    await exactNames();
+
+    await writeFile(f.catalog, expected + "\n");
+    const noncanonical = await f.fingerprint(f.catalog);
+    expect(await initial.finalize()).toEqual(mismatch);
+    expect(await f.fingerprint(f.catalog)).toEqual(noncanonical);
+    expect(await Promise.all(sidecars.map(f.fingerprint))).toEqual(previous);
+    await rm(f.home, { recursive: true, force: true });
+
+    const second = await seed();
+    const secondSidecars = await Promise.all(sidecars.map(f.fingerprint));
+    const secondExpected = await second.expected();
+    const uncertain = await refuseDirectorySync(f.profile, async () => {
+      const marker: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
+      return record(marker) && marker.version === 4;
+    }, second.finalize);
+    expect(uncertain).toEqual(unknown);
+    expect(await readFile(f.catalog, "utf8")).toBe(secondExpected);
+    const published = await f.fingerprint(f.catalog);
+    expect(await second.finalize()).toEqual({ ok: true, alreadyPrepared: true });
+    expect(await f.fingerprint(f.catalog)).toEqual(published);
+    expect(await Promise.all(sidecars.map(f.fingerprint))).toEqual(secondSidecars);
+    expect(f.workers()).toBe(second.workers);
+
+    const oldRoster = join(f.scratch, "old-roster");
+    const rawRoster = await readFile(roster);
+    await rename(roster, oldRoster);
+    try {
+      expect(await second.finalize()).toEqual(unavailable);
+      await writeFile(roster, rawRoster, { mode: 0o600, flag: "wx" });
+      const replacement = await f.fingerprint(roster);
+      expect(await second.finalize()).toEqual(mismatch);
+      expect(await f.fingerprint(roster)).toEqual(replacement);
+      expect(await f.fingerprint(f.catalog)).toEqual(published);
+      expect(await readFile(oldRoster)).toEqual(rawRoster);
+      await rm(roster);
+    } finally {
+      await rename(oldRoster, roster);
+    }
+    await exactNames();
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "finalization-reopen")("fresh process confirms v4 without rewriting the catalog or sidecars", async () => {
+  const f = await fixture();
+  expect((await readdir(f.scratch)).sort()).toEqual(["home", "retry"]);
+  expect(existsSync(join(f.scratch, "retry", "native", "save-primitives.node"))).toBe(false);
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const completion = join(f.profile, ".reclaim-complete.json");
+  const markers = [f.catalog, roster, completion];
+  const catalog: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
+  if (!record(catalog) || catalog.version !== 4 || typeof catalog.inventoryDigest !== "string")
+    throw Error("Finalization fixture missing catalog");
+  const target = { ...retirement, inventoryDigest: catalog.inventoryDigest };
+  const before = await Promise.all(markers.map(f.fingerprint));
+  f.startRecording();
+  try {
+    expect(catalog.roster).toEqual({ sha256: sha(await readFile(roster)), stamp: await fileStamp(roster) });
+    expect(catalog.completion).toEqual({ sha256: sha(await readFile(completion)), stamp: await fileStamp(completion) });
+    expect(await prepareStagedIndexFinalization(target, current)).toEqual({ ok: true, alreadyPrepared: true });
     expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
     expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
     expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));

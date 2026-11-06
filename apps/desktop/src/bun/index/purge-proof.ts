@@ -1,11 +1,15 @@
+import { createHash } from "node:crypto";
 import type { BigIntStats } from "node:fs";
 
 import {
-  reclaimDirectoryStamp, sameIndexInventoryMetadata, type captureCompletedPlacement, type captureIndexFootprint,
+  reclaimDirectoryStamp, reclaimFileStamp, sameIndexInventoryMetadata, type captureCompletedPlacement, type captureIndexFootprint,
 } from "./cache-footprint";
-import { decodePurgeRoster, encodePurgeCompletion, reclaimStagingDigest } from "./purge-roster";
-import { readPinnedPurgeCompletion, readPinnedPurgeRoster, readPreparedReclaimCatalog } from "./reclaim-layout";
-import type { IndexReclaimIntentTarget } from "./reuse-catalog";
+import { record } from "./protocol";
+import { decodePurgeRoster, encodeFinalizingCatalog, encodePurgeCompletion, reclaimStagingDigest } from "./purge-roster";
+import {
+  readPinnedPurgeCompletion, readPinnedPurgeRoster, readPinnedReclaimCatalog, readPreparedReclaimCatalog,
+} from "./reclaim-layout";
+import { INDEX_REUSE_CATALOG_BYTES, validPreparedCatalog, type IndexReclaimIntentTarget } from "./reuse-catalog";
 
 type Footprint = Awaited<ReturnType<typeof captureIndexFootprint>>;
 const fail = (error: "UNAVAILABLE" | "SCHEMA" | "MISMATCH") => ({ ok: false as const, error, accepted: false });
@@ -100,4 +104,43 @@ export function sameCompletedRecords(before: CompletedProof, after: CompletedPro
     sameIndexInventoryMetadata(before.placement.catalogStat, after.placement.catalogStat) &&
     sameIndexInventoryMetadata(before.placement.purgeStat, after.placement.purgeStat) &&
     sameIndexInventoryMetadata(before.placement.completionStat, after.placement.completionStat);
+}
+
+export async function verifyFinalizationPlacement(
+  profile: string, placement: CompletedPlacement, target: IndexReclaimIntentTarget, owner: bigint
+) {
+  if (placement.pendingStat) return fail("MISMATCH");
+  const { catalogStat, purgeStat, completionStat, recheck } = placement;
+  const catalog = await readPinnedReclaimCatalog(profile, catalogStat, recheck);
+  recheck();
+  if (!catalog) return fail("UNAVAILABLE");
+  const { value } = catalog;
+  const alreadyPrepared = record(value) && value.version === 4 &&
+    value.profile === "limited-v1" && value.state === "reclaim-finalizing";
+  if (!alreadyPrepared && !validPreparedCatalog(value)) return fail("SCHEMA");
+  if (value.scopeKey !== target.scopeKey) return fail("SCHEMA");
+  if (value.generation !== target.generation || value.inventoryDigest !== target.inventoryDigest)
+    return fail("MISMATCH");
+
+  const rosterBytes = await readPinnedPurgeRoster(profile, purgeStat, recheck);
+  recheck();
+  const roster = rosterBytes && decodePurgeRoster(rosterBytes, owner);
+  if (!rosterBytes || !roster) return fail("SCHEMA");
+  if (roster.scopeKey !== target.scopeKey || roster.generation !== target.generation ||
+      roster.inventoryDigest !== target.inventoryDigest || roster.stagingDigest !== value.stagingDigest ||
+      reclaimStagingDigest(roster, roster.directory, roster.files) !== value.stagingDigest ||
+      (!alreadyPrepared && createHash("sha256").update(catalog.bytes).digest("hex") !== roster.catalogSha256))
+    return fail("MISMATCH");
+  const completion = await readPinnedPurgeCompletion(profile, completionStat, recheck);
+  recheck();
+  const expected = encodePurgeCompletion(roster, rosterBytes);
+  if (!completion || !expected) return fail("UNAVAILABLE");
+  if (!completion.equals(expected)) return fail("MISMATCH");
+
+  const contents = encodeFinalizingCatalog(
+    roster, rosterBytes, reclaimFileStamp(purgeStat), completion, reclaimFileStamp(completionStat)
+  );
+  if (contents.length > INDEX_REUSE_CATALOG_BYTES) return fail("UNAVAILABLE");
+  if (alreadyPrepared && !catalog.bytes.equals(contents)) return fail("MISMATCH");
+  return { ok: true as const, alreadyPrepared, contents, rosterBytes, completion };
 }

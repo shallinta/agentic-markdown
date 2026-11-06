@@ -53,11 +53,14 @@ export function loadReclaimStage(): ReclaimStage | undefined {
   };
 }
 
-export function loadReclaimPublisher() {
+export function loadReclaimPublisher(recordName: ReclaimRecord | "catalog") {
   const native = loadSaveNative();
-  if (typeof native?.createTemp !== "function" || typeof native.removeTemp !== "function" ||
-      typeof native.publishExclusive !== "function") return;
-  const { createTemp, removeTemp, publishExclusive } = native;
+  if (typeof native?.createTemp !== "function" || typeof native.removeTemp !== "function") return;
+  const { createTemp, removeTemp } = native;
+  const replacing = recordName === "catalog";
+  const publish = replacing ? native.replace : native.publishExclusive;
+  if (typeof publish !== "function") return;
+  const destination = recordName === "catalog" ? "catalog.json" : INDEX_RECLAIM_RECORD_NAMES[recordName];
   return {
     create(profileFd: number, name: string) {
       const fd: unknown = Reflect.apply(createTemp, native, [profileFd, name]);
@@ -68,13 +71,13 @@ export function loadReclaimPublisher() {
       if (Reflect.apply(removeTemp, native, [profileFd, name]) !== 0)
         throw Error("Purge roster staging cleanup unavailable");
     },
-    publish(profileFd: number, name: string, recordName: ReclaimRecord) {
+    publish(profileFd: number, name: string) {
       try {
-        return Reflect.apply(publishExclusive, native, [profileFd, name, INDEX_RECLAIM_RECORD_NAMES[recordName]]) === 0
+        return Reflect.apply(publish, native, [profileFd, name, destination]) === 0
           ? "published" as const : "UNKNOWN" as const;
       } catch (error) {
-        if (record(error) && error.code === "PUBLISH_EXISTS") return "BUSY" as const;
-        if (record(error) && error.code === "PUBLISH_UNSUPPORTED") return "UNAVAILABLE" as const;
+        if (!replacing && record(error) && error.code === "PUBLISH_EXISTS") return "BUSY" as const;
+        if (!replacing && record(error) && error.code === "PUBLISH_UNSUPPORTED") return "UNAVAILABLE" as const;
         return "UNKNOWN" as const;
       }
     },

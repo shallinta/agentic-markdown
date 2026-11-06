@@ -16,9 +16,9 @@ import {
   type IndexResult,
 } from "./protocol";
 import {
-  sameCompletedRecords, samePurgeRecords, samePurgeStamp, verifyCompletedPlacement, verifyPurgeSubset,
+  sameCompletedRecords, samePurgeRecords, samePurgeStamp, verifyCompletedPlacement, verifyFinalizationPlacement, verifyPurgeSubset,
 } from "./purge-proof";
-import { publishReclaimRecord } from "./purge-publish";
+import { publishReclaimRecord, replaceReclaimCatalog } from "./purge-publish";
 import { unlinkPurgeMember } from "./purge-remove";
 import { encodePurgeCompletion, encodePurgeRoster, purgeMemberOrder } from "./purge-roster";
 import { readPinnedPurgeCompletion, readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
@@ -497,6 +497,49 @@ export function removeEmptyStagedIndexReuseDirectory(
         return { ok: true, alreadyAbsent };
       } catch {
         throw new IndexReuseCleanupError("Empty pending index removal unconfirmed");
+      }
+    });
+  });
+}
+
+export function prepareStagedIndexReuseFinalization(
+  directory: string, target: IndexReclaimIntentTarget, current: () => boolean
+) {
+  return useRetirementLease<{ ok: true; alreadyPrepared: boolean }>(directory, current, async (slot, check) => {
+    check();
+    const { assertInventoryLease } = slot;
+    const profile = assertInventoryLease();
+    const placement = await captureCompletedPlacement(directory, profile, profile.uid, check, assertInventoryLease);
+    const proof = await verifyFinalizationPlacement(directory, placement, target, profile.uid);
+    if (!proof.ok) return proof;
+
+    return slot.withCompletionPlacement(undefined, async (held) => {
+      placement.recheck();
+      held.checkAbsent();
+      let installed = placement.catalogStat;
+      if (!proof.alreadyPrepared) {
+        const result = replaceReclaimCatalog(directory, held, proof.contents, placement.recheckAfterStaging);
+        if (!result.ok) return fail(result.error);
+        installed = result.installed;
+      }
+      try {
+        held.checkAbsent();
+        await held.sync();
+        const final = await captureCompletedPlacement(
+          directory, assertInventoryLease(), profile.uid, held.checkAbsent, assertInventoryLease
+        );
+        const terminal = await verifyFinalizationPlacement(directory, final, target, profile.uid);
+        if (!terminal.ok || !terminal.alreadyPrepared || !terminal.contents.equals(proof.contents) ||
+            !terminal.rosterBytes.equals(proof.rosterBytes) || !terminal.completion.equals(proof.completion) ||
+            !sameIndexInventoryMetadata(installed, final.catalogStat) ||
+            !sameIndexInventoryMetadata(placement.purgeStat, final.purgeStat) ||
+            !sameIndexInventoryMetadata(placement.completionStat, final.completionStat))
+          throw Error("Index finalization record changed");
+        final.recheck();
+        held.checkAbsent();
+        return { ok: true, alreadyPrepared: proof.alreadyPrepared };
+      } catch {
+        throw new IndexReuseCleanupError("Index finalization publication unconfirmed");
       }
     });
   });

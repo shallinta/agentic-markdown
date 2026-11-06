@@ -20,7 +20,7 @@ export function sameIndexInventoryMetadata(before: BigIntStats, after: BigIntSta
     before.birthtimeNs === after.birthtimeNs;
 }
 
-function identityStamp(stat: BigIntStats) {
+export function reclaimFileStamp(stat: BigIntStats) {
   return [
     stat.birthtimeNs, stat.dev, stat.ino, stat.mode, stat.uid, stat.nlink,
     stat.size, stat.mtimeNs, stat.ctimeNs,
@@ -139,7 +139,7 @@ export async function captureIndexFootprint(
   });
   const nativeFiles = () => inventory.slice(nativeStart + 1).map(({ path, stat }) => [basename(path), stat] as const);
   const fileStamps = () => nativeFiles()
-    .map(([name, stat]) => [name, identityStamp(stat)] as const)
+    .map(([name, stat]) => [name, reclaimFileStamp(stat)] as const)
     .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   const directoryStamp = () => reclaimDirectoryStamp(indexStat);
   return {
@@ -159,7 +159,7 @@ export async function captureIndexFootprint(
     inventoryDigest({ scopeKey, generation }: IndexRetirementTarget) {
       return createHash("sha256").update(JSON.stringify([
         2, "agentic-markdown-index-retirement-inventory", "limited-v1",
-        scopeKey, generation, identityStamp(indexStat), fileStamps(),
+        scopeKey, generation, reclaimFileStamp(indexStat), fileStamps(),
       ])).digest("hex");
     },
     stagingDigest({ scopeKey, generation, inventoryDigest }: IndexReclaimIntentTarget) {
@@ -211,15 +211,16 @@ export async function captureCompletedPlacement(
       throw Error("Index completion directory unavailable");
     inventory.push({ path: pendingPath, stat: pendingStat });
   }
-  const recheck = () => {
+  const recheckInventory = (start: number) => {
     guard();
-    for (const { path, stat } of inventory)
+    for (const { path, stat } of inventory.slice(start))
       if (!sameIndexInventoryMetadata(stat, lstatSync(path, { bigint: true })))
         throw Error("Index completion layout changed");
     assertAbsent(join(profile, reclaimDirectoryName("original")));
     if (!pendingStat) assertAbsent(pendingPath);
     checkLease();
   };
+  const recheck = () => recheckInventory(0);
   recheck();
   let empty = true;
   if (pendingStat) {
@@ -233,5 +234,8 @@ export async function captureCompletedPlacement(
     }
   }
   recheck();
-  return { catalogStat, purgeStat, completionStat, pendingStat, empty, recheck };
+  return {
+    catalogStat, purgeStat, completionStat, pendingStat, empty, recheck,
+    recheckAfterStaging: () => recheckInventory(1),
+  };
 }

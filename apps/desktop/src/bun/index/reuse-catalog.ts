@@ -49,11 +49,12 @@ export interface HeldIndexPlacement {
   checkPendingAfterRemoval: () => BigIntStats;
   syncPending: () => Promise<void>;
 }
-interface HeldCompletionPlacement {
+export interface HeldCompletionPlacement {
   profileFd: number;
   pendingFd?: number;
   check: () => void;
   checkAbsent: () => void;
+  checkProfile: () => void;
   sync: () => Promise<void>;
 }
 interface RetiredCatalogBase extends IndexRetirementTarget {
@@ -575,7 +576,8 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
               };
               check();
               return await use({
-                profileFd: profile.fd, pendingFd: pending?.fd, check, checkAbsent, sync: () => profile.sync(),
+                profileFd: profile.fd, pendingFd: pending?.fd, check, checkAbsent,
+                checkProfile: () => assertProfileDescriptor(profile), sync: () => profile.sync(),
               });
             } finally {
               if (pending) await closeCatalogFile(pending);

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bd 持久记录索引槽收尾状态（2026-11-06）
+
+alpha.241 已验证固定 v4 收尾清单及跨进程复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接旁车清理、槽位最终释放、遗留租约、自动配额及最终离线。见[F-064bd 迭代](iterations/F-064bd-index-reclaim-finalizing-catalog.md)。
+
 ## F-064bc 移除已确认的空待回收目录（2026-11-06）
 
 alpha.240 已验证隔离空目录移除及精确缺失重试。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接固定清单收尾状态、控制记录清除、遗留租约、自动配额及最终离线。见[F-064bc 迭代](iterations/F-064bc-remove-confirmed-empty-index-directory.md)。

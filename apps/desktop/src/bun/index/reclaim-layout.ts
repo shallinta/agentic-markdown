@@ -68,6 +68,11 @@ export async function readPreparedReclaimCatalog(profile: string, pinned: BigInt
   return validPreparedCatalog(catalog) ? { catalog, catalogSha256: createHash("sha256").update(bytes).digest("hex") } : undefined;
 }
 
+export async function readPinnedReclaimCatalog(profile: string, pinned: BigIntStats, check: () => void) {
+  const bytes = await readControl(join(profile, "catalog.json"), pinned, INDEX_REUSE_CATALOG_BYTES, check);
+  if (bytes) return { bytes, value: parseControl(bytes) };
+}
+
 export function readPinnedPurgeRoster(profile: string, pinned: BigIntStats, check: () => void) {
   return readControl(join(profile, INDEX_PURGE_ROSTER_NAME), pinned, INDEX_PURGE_ROSTER_BYTES, check);
 }

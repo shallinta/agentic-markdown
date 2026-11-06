@@ -12,7 +12,7 @@ import { lstat, mkdir, open, rmdir, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
-import { INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
+import { INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
 
 export const INDEX_REUSE_CATALOG_BYTES = 4096;
 const digest = /^[a-f0-9]{64}$/;
@@ -30,6 +30,7 @@ export interface IndexReuseCatalog {
 
 export interface IndexRetirementTarget { scopeKey: string; generation: number }
 export interface IndexReclaimIntentTarget extends IndexRetirementTarget { inventoryDigest: string }
+export interface IndexPurgeMemberTarget extends IndexReclaimIntentTarget { ordinal: number }
 export interface PreparedReclaimCatalog extends IndexReclaimIntentTarget {
   version: 3;
   profile: "limited-v1";
@@ -42,9 +43,11 @@ export const reclaimDirectoryName = (placement: ReclaimPlacement) =>
 export interface HeldIndexPlacement {
   profileFd: number;
   indexFd: number;
-  check: (placement: ReclaimPlacement) => void;
+  check: (placement: ReclaimPlacement) => BigIntStats;
   checkProfile: () => void;
   sync: () => Promise<void>;
+  checkPendingAfterRemoval: () => BigIntStats;
+  syncPending: () => Promise<void>;
 }
 interface RetiredCatalogBase extends IndexRetirementTarget {
   profile: "limited-v1";
@@ -144,6 +147,14 @@ export function readIndexReclaimIntentTarget(value: unknown): IndexReclaimIntent
     return { scopeKey, generation, inventoryDigest };
 }
 
+export function readIndexPurgeMemberTarget(value: unknown): IndexPurgeMemberTarget | undefined {
+  if (!record(value) || !keys(value, "generation,inventoryDigest,ordinal,scopeKey")) return;
+  const { scopeKey, generation, inventoryDigest, ordinal } = value;
+  const target = readIndexReclaimIntentTarget({ scopeKey, generation, inventoryDigest });
+  if (target && natural(ordinal) && ordinal < INDEX_PURGE_ROSTER_FILES)
+    return { ...target, ordinal };
+}
+
 export function validPreparedCatalog(value: unknown): value is PreparedReclaimCatalog {
   return record(value) && keys(value, "generation,inventoryDigest,profile,scopeKey,stagingDigest,state,version") &&
     value.version === 3 && value.profile === "limited-v1" && value.state === "reclaim-prepared" &&
@@ -184,9 +195,13 @@ function sameFile(left: BigIntStats, right: BigIntStats) {
     left.ctimeNs === right.ctimeNs;
 }
 
-function sameRenameStableMetadata(before: BigIntStats, after: BigIntStats) {
+function sameStableIdentity(before: BigIntStats, after: BigIntStats) {
   return sameInode(before, after) && before.birthtimeNs === after.birthtimeNs &&
-    before.uid === after.uid && before.mode === after.mode && before.nlink === after.nlink &&
+    before.uid === after.uid && before.mode === after.mode;
+}
+
+function sameRenameStableMetadata(before: BigIntStats, after: BigIntStats) {
+  return sameStableIdentity(before, after) && before.nlink === after.nlink &&
     before.size === after.size && before.mtimeNs === after.mtimeNs;
 }
 
@@ -487,22 +502,26 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
             const indexFd = index?.fd ?? openOriginal?.(profile.fd);
             if (indexFd === undefined) throw Error("Index staging addon unavailable");
             try {
-              const check = (target: ReclaimPlacement) => {
+              const check = (target: ReclaimPlacement, removed = false) => {
                 assertProfileDescriptor(profile);
                 assertCatalogFile(identity.catalog);
                 const held = fstatSync(indexFd, { bigint: true });
                 const named = present(placementPath(target));
                 if (!named || !ownedDirectory(held) || (held.mode & 0o022n) !== 0n ||
-                    !sameRenameStableMetadata(identity.index, held) ||
-                    (target === placement && !sameFile(identity.index, held)) ||
+                    !sameStableIdentity(identity.index, held) ||
+                    (!removed && (!sameRenameStableMetadata(identity.index, held) ||
+                      (target === placement && !sameFile(identity.index, held)))) ||
                     !sameRenameStableMetadata(held, named) || !sameFile(held, named) ||
                     present(target === "original" ? pendingPath : indexPath))
                   throw Error("Index staging placement unavailable");
+                return held;
               };
               check(placement);
               return await use({
                 profileFd: profile.fd, indexFd, check,
                 checkProfile: () => assertProfileDescriptor(profile), sync: () => profile.sync(),
+                checkPendingAfterRemoval: () => check("pending", true),
+                syncPending: () => index ? index.sync() : Promise.reject(Error("Pending directory unavailable")),
               });
             } finally {
               if (index) await closeCatalogFile(index);

@@ -7,7 +7,7 @@ import { basename, join } from "node:path";
 
 import {
   inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, inspectStagedIndexPurgeProgress, reopenAppIndexCache,
-  prepareRetiredIndexReclaim, prepareStagedIndexPurge, retireAppIndexCache, searchAppIndexCache,
+  prepareRetiredIndexReclaim, prepareStagedIndexPurge, removeStagedIndexPurgeMember, retireAppIndexCache, searchAppIndexCache,
   stageRetiredIndexReclaim,
 } from "./app-cache";
 import { record } from "./protocol";
@@ -81,10 +81,17 @@ function progressOf(expectedFiles: number, files: readonly { size: bigint }[]) {
   };
 }
 
+const nativeSegment = (name: string) => /^[a-f0-9]{32}\./.test(name);
+const removalOrder = (names: readonly string[]) => [
+  ...names.filter(nativeSegment).sort(),
+  ...names.filter(name => !nativeSegment(name)).sort(),
+];
+
 async function runFixture(
   scratch: string,
   childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen"
-    | "stage" | "stage-reopen" | "purge" | "purge-reopen" | "progress" | "progress-reopen",
+    | "stage" | "stage-reopen" | "purge" | "purge-reopen" | "progress" | "progress-reopen"
+    | "remove-member" | "remove-member-reopen",
   entry = import.meta.path
 ) {
   const child = Bun.spawn([process.execPath, "test", entry], {
@@ -117,8 +124,8 @@ function beforePublish(profile: string, action: () => boolean, isStaged = isStag
   };
 }
 
-async function refuseProfileSync<T>(profile: string, refuse: () => Promise<boolean>, operation: () => Promise<T>) {
-  const handle = await open(profile, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+async function refuseDirectorySync<T>(directory: string, refuse: () => Promise<boolean>, operation: () => Promise<T>) {
+  const handle = await open(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   const stat = await handle.stat({ bigint: true });
   const prototype = Object.getPrototypeOf(handle) as Pick<typeof handle, "sync">;
   const sync = prototype.sync;
@@ -128,7 +135,7 @@ async function refuseProfileSync<T>(profile: string, refuse: () => Promise<boole
     const current = await this.stat({ bigint: true });
     if (current.dev === stat.dev && current.ino === stat.ino && await refuse()) {
       injected = true;
-      throw Error("Fixture profile sync failure");
+      throw Error("Fixture directory sync failure");
     }
     await sync.call(this);
   };
@@ -197,6 +204,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "purge");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "progress");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "remove-member");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -748,7 +757,7 @@ test.skipIf(mode !== "intent")("preparing a reclaim intent seals the original pl
     const second = { ...retirement, inventoryDigest: secondPreflight.inventoryDigest };
     const secondFiles = await f.nativeFiles();
     const secondWorkers = f.workers();
-    const result = await refuseProfileSync(f.profile, async () => {
+    const result = await refuseDirectorySync(f.profile, async () => {
       const afterPublish: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
       return record(afterPublish) && afterPublish.version === 3;
     }, () => prepared(second));
@@ -984,7 +993,7 @@ test.skipIf(mode !== "stage")("a prepared index moves exclusively and a sync fau
     await rmdir(pending);
     await f.cleanSlot();
 
-    const uncertain = await refuseProfileSync(f.profile, () => Promise.resolve(!existsSync(f.index) && existsSync(pending)),
+    const uncertain = await refuseDirectorySync(f.profile, () => Promise.resolve(!existsSync(f.index) && existsSync(pending)),
       () => stageRetiredIndexReclaim(second, current));
     expect(uncertain).toEqual({ ok: false, error: "UNKNOWN", accepted: true });
     await absent(f.index);
@@ -1193,7 +1202,7 @@ test.skipIf(mode !== "purge")("a purge roster records a staged index without cha
     await rm(roster);
     await emptyRoster();
 
-    const unknown = await refuseProfileSync(f.profile, () => Promise.resolve(existsSync(roster)),
+    const unknown = await refuseDirectorySync(f.profile, () => Promise.resolve(existsSync(roster)),
       () => prepareStagedIndexPurge(second, current));
     expect(unknown).toEqual({ ok: false, error: "UNKNOWN", accepted: true });
     expect(await readFile(roster, "utf8")).toBe(secondExpected);
@@ -1438,6 +1447,233 @@ test.skipIf(mode !== "progress-reopen")("a fresh process reads partial progress 
     expect(await f.fingerprint(roster)).toEqual(marker);
     expect(await f.fingerprint(pending)).toEqual(directory);
     expect(await f.nativeFiles(pending)).toEqual(files);
+    expect(f.workers()).toBe(0);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-pending", ".reclaim-purge.json", "catalog.json"]);
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "remove-member")("one ordinal removes exactly one native member and uncertain sync allows the same ordinal only", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  const pending = join(f.profile, ".reclaim-pending");
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const mismatch = failed("MISMATCH");
+  const unavailable = failed("UNAVAILABLE");
+  const receipt = (alreadyMissing: boolean, remainingFiles: number) =>
+    ({ ok: true as const, alreadyMissing, remainingFiles });
+  const unknown = { ok: false, error: "UNKNOWN", accepted: true } as const;
+  f.startRecording();
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toMatchObject({ ok: true, generation: 1, applied: 1 });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const preflight = await inspectRetiredIndexReclaim(retirement, current);
+    if (!preflight.ok) throw Error("Removal fixture preflight unavailable: " + preflight.error);
+    const target = { ...retirement, inventoryDigest: preflight.inventoryDigest };
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: false });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    const files = await f.nativeFiles(pending);
+    const order = removalOrder(files.map(({ name }) => name));
+    const first = order[0];
+    const next = order[1];
+    if (!first || !next || !nativeSegment(first) || !nativeSegment(next))
+      throw Error("Native fixture does not have two segment components");
+    return {
+      target, files, order, first, next,
+      catalog: await f.fingerprint(f.catalog), marker: await f.fingerprint(roster),
+      directory: await f.fingerprint(pending), workers: f.workers(),
+      remove: (ordinal: number, guard = current) => removeStagedIndexPurgeMember({ ...target, ordinal }, guard),
+    };
+  }
+  async function absent(path: string) {
+    expect(await lstat(path).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+  }
+  async function verifyMarkers(snapshot: Awaited<ReturnType<typeof seed>>) {
+    expect(await f.fingerprint(f.catalog)).toEqual(snapshot.catalog);
+    expect(await f.fingerprint(roster)).toEqual(snapshot.marker);
+    expect(await f.fingerprint(pending)).toMatchObject({
+      dev: snapshot.directory.dev, ino: snapshot.directory.ino, birth: snapshot.directory.birth,
+      uid: snapshot.directory.uid, mode: snapshot.directory.mode,
+    });
+    expect(f.workers()).toBe(snapshot.workers);
+  }
+  try {
+    const initial = await seed();
+    const { target, files, order, first, next, remove } = initial;
+    expect(await remove(-1)).toEqual(failed("INPUT"));
+    expect(await remove(1.5)).toEqual(failed("INPUT"));
+    expect(await remove(files.length)).toEqual(failed("INPUT"));
+    expect(await removeStagedIndexPurgeMember({ ...target, ...wrongGeneration, ordinal: 0 }, current)).toEqual(mismatch);
+    expect(await remove(0, () => false)).toEqual(failed("CANCELLED"));
+    expect(await remove(1)).toEqual(mismatch);
+    const firstControl = order.findIndex(name => !nativeSegment(name));
+    expect(firstControl).toBeGreaterThan(1);
+    expect(await remove(firstControl)).toEqual(mismatch);
+    await mkdir(f.lease, { mode: 0o700 });
+    const busy = join(f.lease, "keep");
+    await writeFile(busy, "busy", { mode: 0o600 });
+    expect(await remove(0)).toEqual(failed("BUSY"));
+    expect(await readFile(busy, "utf8")).toBe("busy");
+    await rm(busy);
+    await rmdir(f.lease);
+    const foreign = join(pending, "unrelated.txt");
+    await writeFile(foreign, "keep foreign", { mode: 0o600 });
+    expect(await remove(0)).toEqual(mismatch);
+    expect(await readFile(foreign, "utf8")).toBe("keep foreign");
+    await rm(foreign);
+    expect(await f.nativeFiles(pending)).toEqual(files);
+    await verifyMarkers(initial);
+
+    const selectedPath = join(pending, first);
+    const selected = await open(selectedPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let beforeUnlink = 0;
+    try {
+      const original = await selected.stat({ bigint: true });
+      expect(await remove(0, () => {
+        if (existsSync(selectedPath)) beforeUnlink++;
+        return true;
+      })).toEqual(receipt(false, files.length - 1));
+      const after = await selected.stat({ bigint: true });
+      expect({ dev: after.dev, ino: after.ino, birth: after.birthtimeNs, links: after.nlink })
+        .toEqual({ dev: original.dev, ino: original.ino, birth: original.birthtimeNs, links: 0n });
+    } finally {
+      await selected.close();
+    }
+    expect(beforeUnlink).toBeGreaterThan(1);
+    await absent(selectedPath);
+    const survivors = files.filter(({ name }) => name !== first);
+    expect(await remove(0)).toEqual(receipt(true, survivors.length));
+    expect(await f.nativeFiles(pending)).toEqual(survivors);
+    expect(await inspectStagedIndexPurgeProgress(target, current)).toEqual(progressOf(files.length, survivors));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(unavailable);
+    await runFixture(f.scratch, "remove-member-reopen");
+    await absent(join(pending, next));
+    expect(await f.nativeFiles(pending)).toEqual(survivors.filter(({ name }) => name !== next));
+    await verifyMarkers(initial);
+
+    // Skip the rest of the segment group only in this disposable fixture.
+    const laterOrdinal = 3;
+    const later = order[laterOrdinal];
+    if (!later || !nativeSegment(later)) throw Error("Native fixture missing later segment component");
+    await rm(join(pending, later));
+    const beforeMissingRetry = await f.nativeFiles(pending);
+    expect(await remove(laterOrdinal)).toEqual(receipt(true, beforeMissingRetry.length));
+    expect(await f.nativeFiles(pending)).toEqual(beforeMissingRetry);
+    for (const name of order.slice(2, firstControl)) {
+      if (name !== later) await rm(join(pending, name));
+    }
+    const controls = files.filter(({ name }) => !nativeSegment(name));
+    expect(await f.nativeFiles(pending)).toEqual(controls);
+    expect(await remove(firstControl + 1)).toEqual(mismatch);
+    expect(await remove(firstControl)).toEqual(receipt(false, controls.length - 1));
+    expect(await f.nativeFiles(pending)).toEqual(controls.filter(({ name }) => name !== order[firstControl]));
+    await verifyMarkers(initial);
+    await absent(f.lease);
+    await rm(f.home, { recursive: true, force: true });
+
+    const second = await seed();
+    const secondPath = join(pending, second.first);
+    let checks = 0;
+    expect(await second.remove(0, () => ++checks < beforeUnlink)).toEqual(failed("CANCELLED"));
+    expect(checks).toBe(beforeUnlink);
+    expect(await f.nativeFiles(pending)).toEqual(second.files);
+    await absent(f.lease);
+
+    const parkedLease = join(f.profile, "parked-lease");
+    const replacementMarker = join(f.lease, "late-lease");
+    checks = 0;
+    expect(await second.remove(0, () => {
+      if (++checks === beforeUnlink) {
+        renameSync(f.lease, parkedLease);
+        mkdirSync(f.lease, { mode: 0o700 });
+        writeFileSync(replacementMarker, "preserve lease", { mode: 0o600 });
+      }
+      return true;
+    })).toEqual(unknown);
+    expect(await readFile(replacementMarker, "utf8")).toBe("preserve lease");
+    expect(await readdir(parkedLease)).toEqual([]);
+    expect(await f.nativeFiles(pending)).toEqual(second.files);
+    await rm(replacementMarker);
+    await rmdir(f.lease);
+    await rmdir(parkedLease);
+
+    const failedSync = await refuseDirectorySync(pending, () => Promise.resolve(!existsSync(secondPath)),
+      () => second.remove(0));
+    expect(failedSync).toEqual(unknown);
+    await absent(secondPath);
+    const secondSurvivors = second.files.filter(({ name }) => name !== second.first);
+    expect(await f.nativeFiles(pending)).toEqual(secondSurvivors);
+    await absent(f.lease);
+    const failedRetrySync = await refuseDirectorySync(pending, () => Promise.resolve(true), () => second.remove(0));
+    expect(failedRetrySync).toEqual(unknown);
+    expect(await f.nativeFiles(pending)).toEqual(secondSurvivors);
+    expect(await second.remove(0)).toEqual(receipt(true, secondSurvivors.length));
+    expect(await f.nativeFiles(pending)).toEqual(secondSurvivors);
+    expect(await inspectStagedIndexPurgeProgress(second.target, current))
+      .toEqual(progressOf(second.files.length, secondSurvivors));
+    await verifyMarkers(second);
+
+    const nextPath = join(pending, second.next);
+    const originalBytes = await readFile(nextPath);
+    const parked = join(f.scratch, "parked-member");
+    await rename(nextPath, parked);
+    try {
+      await writeFile(nextPath, originalBytes, { mode: 0o600, flag: "wx" });
+      const replacement = await f.fingerprint(nextPath);
+      expect(await second.remove(1)).toEqual(mismatch);
+      expect(await f.fingerprint(nextPath)).toEqual(replacement);
+      await rm(nextPath);
+      await symlink(parked, nextPath);
+      expect(await second.remove(1)).toEqual(unavailable);
+      expect(await readlink(nextPath)).toBe(parked);
+      expect(await readFile(parked)).toEqual(originalBytes);
+      await rm(nextPath);
+    } finally {
+      await rename(parked, nextPath);
+    }
+    await verifyMarkers(second);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-pending", ".reclaim-purge.json", "catalog.json"]);
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "remove-member-reopen")("a new process retries the prior ordinal and removes only the next member", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual(["home"]);
+  const pending = join(f.profile, ".reclaim-pending");
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const parsed: unknown = JSON.parse(await readFile(roster, "utf8"));
+  if (!record(parsed) || typeof parsed.inventoryDigest !== "string" || !Array.isArray(parsed.files))
+    throw Error("Removal fixture missing roster");
+  const names = parsed.files.map((pair: unknown) => {
+    if (!Array.isArray(pair) || typeof pair[0] !== "string") throw Error("Removal fixture missing name");
+    return pair[0];
+  });
+  const order = removalOrder(names);
+  const first = order[0], second = order[1];
+  if (!first || !second) throw Error("Removal fixture missing members");
+  const target = { ...retirement, inventoryDigest: parsed.inventoryDigest };
+  const initial = await f.nativeFiles(pending);
+  expect(initial.map(({ name }) => name)).toEqual(names.filter(name => name !== first));
+  const catalog = await f.fingerprint(f.catalog);
+  const marker = await f.fingerprint(roster);
+  f.startRecording();
+  try {
+    expect(await removeStagedIndexPurgeMember({ ...target, ordinal: 0 }, current))
+      .toEqual({ ok: true, alreadyMissing: true, remainingFiles: initial.length });
+    expect(await f.nativeFiles(pending)).toEqual(initial);
+    expect(await removeStagedIndexPurgeMember({ ...target, ordinal: 1 }, current))
+      .toEqual({ ok: true, alreadyMissing: false, remainingFiles: initial.length - 1 });
+    const remaining = initial.filter(({ name }) => name !== second);
+    expect(await f.nativeFiles(pending)).toEqual(remaining);
+    expect(await inspectStagedIndexPurgeProgress(target, current)).toEqual(progressOf(names.length, remaining));
+    expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+    expect(await f.fingerprint(roster)).toEqual(marker);
     expect(f.workers()).toBe(0);
     expect((await readdir(f.profile)).sort()).toEqual([".reclaim-pending", ".reclaim-purge.json", "catalog.json"]);
   } finally {

@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ba 的 alpha.238 已在隔离夹具验证内部显式清理单个待回收成员。同一序号重试只复核原成员，目录和两份控制记录继续保留。见[F-064ba 迭代](iterations/F-064ba-staged-index-remove-one-member.md)。
+
 F-064az 的 alpha.237 已验证内部缺失审计可核对待回收索引的现存成员和字节。审计只读取控制记录和元数据。见[F-064az 迭代](iterations/F-064az-staged-index-purge-progress-audit.md)。
 
 F-064ay 的 alpha.236 已验证待回收索引可生成固定文件名册，并在占用中单列其字节。原清单和索引文件保留。见[F-064ay 迭代](iterations/F-064ay-staged-index-purge-roster.md)。

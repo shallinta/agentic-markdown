@@ -98,3 +98,80 @@ static napi_value stage_retired_index(napi_env env, napi_callback_info info) {
         return unknown;
     return success;
 }
+
+static bool known_reclaim_member(const char *leaf) {
+    static const char *controls[] = {
+        ".managed.json", "bridge.schema", "meta.json", ".tantivy-meta.lock", ".tantivy-writer.lock"
+    };
+    for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); i++)
+        if (strcmp(leaf, controls[i]) == 0) return true;
+    if (strlen(leaf) <= 33 || leaf[32] != '.') return false;
+    for (size_t i = 0; i < 32; i++)
+        if (!((leaf[i] >= 'a' && leaf[i] <= 'f') || (leaf[i] >= '0' && leaf[i] <= '9'))) return false;
+    const char *extension = leaf + 33;
+    static const char *segments[] = { "idx", "pos", "term", "store", "fast", "fieldnorm" };
+    for (size_t i = 0; i < sizeof(segments) / sizeof(segments[0]); i++)
+        if (strcmp(extension, segments[i]) == 0) return true;
+    unsigned long long stamp = 0;
+    size_t digits = 0;
+    while (extension[digits] >= '0' && extension[digits] <= '9') {
+        if (++digits > 16) return false;
+        stamp = 10 * stamp + (unsigned long long)(extension[digits - 1] - '0');
+    }
+    return digits > 0 && (digits == 1 || extension[0] != '0') &&
+        stamp <= 9007199254740991ULL && strcmp(extension + digits, ".del") == 0;
+}
+
+static bool absent_reclaim_member(int directory_fd, const char *leaf) {
+    struct stat found;
+    return fstatat(directory_fd, leaf, &found, AT_SYMLINK_NOFOLLOW) == -1 && errno == ENOENT;
+}
+
+static bool held_pending_directory(
+    int profile_fd, int pending_fd, const struct stat *profile, struct stat *pending
+) {
+    struct stat root, named;
+    return fstat(profile_fd, &root) == 0 && reclaim_same_identity(profile, &root) &&
+        fstat(pending_fd, pending) == 0 &&
+        reclaim_owned_directory(pending, profile->st_uid, S_IWGRP | S_IWOTH) &&
+        pending->st_dev == profile->st_dev && pending->st_ino != profile->st_ino &&
+        fstatat(profile_fd, reclaim_destination_name, &named, AT_SYMLINK_NOFOLLOW) == 0 &&
+        reclaim_same_inventory(pending, &named) && reclaim_source_absent(profile_fd);
+}
+
+/* The caller owns the three descriptors. Only this one proven direct member is removed. */
+static napi_value remove_retired_index_member(napi_env env, napi_callback_info info) {
+    napi_value argv[4];
+    int profile_fd, pending_fd, file_fd;
+    char leaf[256];
+    if (!args(env, info, argv, 4) || !integer(env, argv[0], &profile_fd) ||
+        !integer(env, argv[1], &pending_fd) || !integer(env, argv[2], &file_fd) ||
+        profile_fd == pending_fd || profile_fd == file_fd || pending_fd == file_fd ||
+        !name(env, argv[3], leaf) || !known_reclaim_member(leaf))
+        return reclaim_receipt(env, "INPUT");
+
+    napi_value success = reclaim_receipt(env, NULL);
+    napi_value precondition = reclaim_receipt(env, "PRECONDITION");
+    napi_value unknown = reclaim_receipt(env, "UNKNOWN");
+    if (!success || !precondition || !unknown) return NULL;
+
+    uid_t owner = geteuid();
+    struct stat profile, pending, before, named;
+    if (fstat(profile_fd, &profile) != 0 || !reclaim_owned_directory(&profile, owner, 0) ||
+        (profile.st_mode & 07777) != 0700 ||
+        !held_pending_directory(profile_fd, pending_fd, &profile, &pending) ||
+        fstat(file_fd, &before) != 0 || !S_ISREG(before.st_mode) || before.st_uid != owner ||
+        before.st_dev != pending.st_dev || before.st_nlink != 1 ||
+        fstatat(pending_fd, leaf, &named, AT_SYMLINK_NOFOLLOW) != 0 || !reclaim_same_inventory(&before, &named))
+        return precondition;
+    if (unlinkat(pending_fd, leaf, 0) != 0) return unknown;
+
+    struct stat pending_after, after;
+    if (fstat(file_fd, &after) != 0 || !reclaim_same_identity(&before, &after) ||
+        after.st_nlink != 0 || after.st_size != before.st_size ||
+        !reclaim_same_time(after.st_mtimespec, before.st_mtimespec) ||
+        !held_pending_directory(profile_fd, pending_fd, &profile, &pending_after) ||
+        !reclaim_same_identity(&pending, &pending_after) || !absent_reclaim_member(pending_fd, leaf))
+        return unknown;
+    return success;
+}

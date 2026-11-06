@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ba 显式清理单个待回收索引成员（2026-11-06）
+
+alpha.238 已验证单成员显式清理及同序号复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接空目录持久确认、最终槽收尾、遗留租约、自动配额及最终离线。见[F-064ba 迭代](iterations/F-064ba-staged-index-remove-one-member.md)。
+
 ## F-064az 待回收索引缺失成员审计（2026-11-06）
 
 alpha.237 已验证待回收历史名册与现存子集的只读审计。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接显式删除、最终槽收尾、遗留租约、自动配额及离线。见[F-064az 迭代](iterations/F-064az-staged-index-purge-progress-audit.md)。

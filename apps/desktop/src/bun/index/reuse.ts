@@ -15,14 +15,17 @@ import {
   type IndexHit,
   type IndexResult,
 } from "./protocol";
+import { samePurgeStamp, verifyPurgeSubset } from "./purge-proof";
 import { publishPurgeRoster } from "./purge-publish";
-import { encodePurgeRoster } from "./purge-roster";
+import { unlinkPurgeMember } from "./purge-remove";
+import { encodePurgeRoster, purgeMemberOrder } from "./purge-roster";
 import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import { loadReclaimStage } from "./reclaim-stage";
 import {
   acquireIndexReuseSlot,
   IndexReuseCleanupError,
   reclaimDirectoryName,
+  type IndexPurgeMemberTarget,
   type IndexReclaimIntentTarget,
   type IndexRetirementTarget,
   type IndexReuseCatalog,
@@ -43,7 +46,7 @@ type ExactError = "MISSING" | "MISMATCH";
 type ExactReuseResult = ReuseResult | { ok: false; error: ExactError; accepted: boolean };
 interface RetirementFailure {
   ok: false;
-  error: ExactError | "SCHEMA" | "BUSY" | "CANCELLED" | "UNKNOWN" | "UNAVAILABLE";
+  error: ExactError | "INPUT" | "SCHEMA" | "BUSY" | "CANCELLED" | "UNKNOWN" | "UNAVAILABLE";
   accepted: boolean;
 }
 type RetirementSlot = Extract<Awaited<ReturnType<typeof acquireIndexReuseSlot>>, { ok: true }>["slot"];
@@ -330,6 +333,62 @@ export function prepareStagedIndexReusePurge(directory: string, target: IndexRec
           throw new IndexReuseCleanupError("Purge roster sync or confirmation unconfirmed");
         }
         return { ok: true, alreadyPrepared };
+      });
+    },
+    "stage"
+  );
+}
+
+export function removeStagedIndexReuseMember(directory: string, target: IndexPurgeMemberTarget, current: () => boolean) {
+  return useRetirementSlot<{ ok: true; alreadyMissing: boolean; remainingFiles: number }>(
+    directory, target, current, async (slot, cached, check) => {
+      if (cached.status !== "prepared" || cached.placement !== "pending") return fail("SCHEMA");
+      const owner = cached.identity.catalog.uid;
+      const footprint = await captureRetirementFootprint(directory, slot, cached, check, true);
+      const proof = await verifyPurgeSubset(directory, footprint, target, owner);
+      if (!proof.ok) return proof;
+      const order = purgeMemberOrder(proof.roster.files);
+      const selected = order[target.ordinal];
+      if (!selected) return fail("INPUT");
+      const [name] = selected;
+      const present = new Map(proof.footprint.nativeFiles());
+      const pinned = present.get(name);
+      const alreadyMissing = !pinned;
+      if (pinned && order.find(([member]) => present.has(member))?.[0] !== name) return fail("MISMATCH");
+      const expected = proof.remaining.filter(([member]) => member !== name);
+      const { assertInventoryLease } = slot;
+
+      return slot.withStageDirectories("pending", cached.identity, undefined, async (held) => {
+        proof.footprint.recheck();
+        held.check("pending");
+        if (pinned) {
+          const result = unlinkPurgeMember(held, name, pinned, proof.footprint.recheck);
+          if (result !== "removed") return fail(result);
+        }
+        try {
+          const checkPending = () => pinned ? held.checkPendingAfterRemoval() : held.check("pending");
+          checkPending();
+          await held.syncPending();
+          const index = checkPending();
+          const snapshot = await captureIndexFootprint(
+            directory, assertInventoryLease(), owner, checkPending, assertInventoryLease,
+            { catalog: cached.identity.catalog, index }, "pending", true
+          );
+          const terminal = await verifyPurgeSubset(directory, snapshot, target, owner);
+          if (!terminal.ok || terminal.catalogSha256 !== proof.catalogSha256 ||
+              !terminal.rosterBytes.equals(proof.rosterBytes) ||
+              !sameIndexInventoryMetadata(proof.footprint.catalogStat, terminal.footprint.catalogStat) ||
+              !sameIndexInventoryMetadata(proof.purgeStat, terminal.purgeStat) ||
+              terminal.remaining.length !== expected.length ||
+              terminal.remaining.some(([member, stamp], i) =>
+                member !== expected[i][0] || !samePurgeStamp(expected[i][1], stamp)))
+            throw Error("Purge member receipt does not match the remaining inventory");
+          terminal.footprint.recheck();
+          checkPending();
+          return { ok: true, alreadyMissing, remainingFiles: terminal.remaining.length };
+        } catch {
+          throw new IndexReuseCleanupError("Purge member sync or confirmation unconfirmed");
+        }
       });
     },
     "stage"

@@ -58,6 +58,10 @@ const controls = new Set([...INDEX_UNMANAGED_CONTROLS, "meta.json"]);
 const zeroLocks = new Set([".tantivy-meta.lock", ".tantivy-writer.lock"]);
 const segmentName = /^([a-f0-9]{32})\.(?:([a-z]+)|(0|[1-9][0-9]{0,15})\.del)$/;
 
+export function purgeMemberOrder(files: readonly FileStamp[]) {
+  return [...files.filter(([name]) => !controls.has(name)), ...files.filter(([name]) => controls.has(name))];
+}
+
 function validNumber(value: unknown, time: boolean): value is string {
   if (typeof value !== "string" || !(time ? signed : unsigned).test(value)) return false;
   const number = BigInt(value);

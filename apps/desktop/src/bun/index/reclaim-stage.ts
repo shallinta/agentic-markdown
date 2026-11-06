@@ -80,3 +80,28 @@ export function loadPurgePublisher() {
     },
   };
 }
+
+export function loadPurgeMemberRemover() {
+  const native = loadSaveNative();
+  if (typeof native?.openFileAt !== "function" || typeof native.removeRetiredIndexMember !== "function") return;
+  const { openFileAt, removeRetiredIndexMember } = native;
+  return {
+    open(pendingFd: number, name: string) {
+      const fd: unknown = Reflect.apply(openFileAt, native, [pendingFd, name]);
+      if (!natural(fd) || fd > 0x7fff_ffff) throw Error("Purge member descriptor unavailable");
+      return fd;
+    },
+    remove(profileFd: number, pendingFd: number, fileFd: number, name: string) {
+      try {
+        const result: unknown = Reflect.apply(removeRetiredIndexMember, native, [profileFd, pendingFd, fileFd, name]);
+        if (!record(result)) return "UNKNOWN" as const;
+        if (result.ok === true && keys(result, "ok")) return "removed" as const;
+        if (result.ok === false && keys(result, "error,ok") &&
+            (result.error === "PRECONDITION" || result.error === "INPUT")) return "UNAVAILABLE" as const;
+        return "UNKNOWN" as const;
+      } catch {
+        return "UNKNOWN" as const;
+      }
+    },
+  };
+}

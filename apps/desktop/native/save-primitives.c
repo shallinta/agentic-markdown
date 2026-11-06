@@ -222,6 +222,7 @@ static napi_value init(napi_env env,napi_value exports) {
     {"createPrivateDirectory",NULL,create_private_directory,NULL,NULL,NULL,napi_default,NULL},
     {"publishDirectoryExclusive",NULL,publish_directory_exclusive,NULL,NULL,NULL,napi_default,NULL},
     {"stageRetiredIndex",NULL,stage_retired_index,NULL,NULL,NULL,napi_default,NULL},
+    {"removeRetiredIndexMember",NULL,remove_retired_index_member,NULL,NULL,NULL,napi_default,NULL},
     {"createTemp",NULL,create,NULL,NULL,NULL,napi_default,NULL},
     {"copyMetadata",NULL,metadata,NULL,NULL,NULL,napi_default,NULL},
     {"fullSync",NULL,sync_full,NULL,NULL,NULL,napi_default,NULL},

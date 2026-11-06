@@ -6,15 +6,16 @@ import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
 import { natural, record } from "./protocol";
-import { decodePurgeRoster, encodePurgeRoster, INDEX_PURGE_ROSTER_NAME, reclaimStagingDigest } from "./purge-roster";
+import { verifyPurgeSubset } from "./purge-proof";
+import { encodePurgeRoster, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
 import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
-  prepareStagedIndexReusePurge, stageRetiredIndexReuse, type IndexReuseInput,
+  prepareStagedIndexReusePurge, removeStagedIndexReuseMember, stageRetiredIndexReuse, type IndexReuseInput,
 } from "./reuse";
 import {
-  IndexReuseCleanupError, reclaimDirectoryName, readIndexReclaimIntentTarget, readIndexRetirementTarget,
-  type IndexReclaimIntentTarget, type IndexRetirementTarget,
+  IndexReuseCleanupError, reclaimDirectoryName, readIndexPurgeMemberTarget, readIndexReclaimIntentTarget,
+  readIndexRetirementTarget, type IndexPurgeMemberTarget, type IndexReclaimIntentTarget, type IndexRetirementTarget,
 } from "./reuse-catalog";
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
@@ -129,6 +130,10 @@ export function prepareStagedIndexPurge(input: IndexReclaimIntentTarget, current
   return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, prepareStagedIndexReusePurge);
 }
 
+export function removeStagedIndexPurgeMember(input: IndexPurgeMemberTarget, current: () => boolean) {
+  return useRetiredAppProfile(readIndexPurgeMemberTarget(input), current, removeStagedIndexReuseMember);
+}
+
 async function useRetiredAppProfile<
   Target extends IndexRetirementTarget, Result extends { ok: true } | { ok: false; error: string }
 >(
@@ -216,10 +221,6 @@ function inspectionFailure(boundary: CacheBoundary, error: unknown, pendingProfi
   return boundary.boundaryFailure();
 }
 
-function sameStamp(left: readonly string[], right: readonly string[]) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
 export async function inspectStagedIndexPurgeProgress(input: IndexReclaimIntentTarget, current: () => boolean) {
   const target = readIndexReclaimIntentTarget(input);
   if (!target) return fail("INPUT");
@@ -240,37 +241,15 @@ export async function inspectStagedIndexPurgeProgress(input: IndexReclaimIntentT
     const footprint = await captureIndexFootprint(
       profile, profileStat, boundary.owner, check, checkLease, undefined, "pending", true
     );
-    footprint.recheck();
-    if (footprint.status !== "existing" || !footprint.purgeStat) return fail("UNAVAILABLE");
-    const prepared = await readPreparedReclaimCatalog(profile, footprint.catalogStat, footprint.checkIndex);
-    footprint.recheck();
-    if (prepared?.catalog.scopeKey !== target.scopeKey) return fail("SCHEMA");
-    const { catalog, catalogSha256 } = prepared;
-    if (catalog.generation !== target.generation || catalog.inventoryDigest !== target.inventoryDigest)
-      return fail("MISMATCH");
-    const bytes = await readPinnedPurgeRoster(profile, footprint.purgeStat, footprint.checkIndex);
-    footprint.recheck();
-    const roster = bytes && decodePurgeRoster(bytes, boundary.owner);
-    if (!roster) return fail("SCHEMA");
-    if (roster.scopeKey !== catalog.scopeKey || roster.generation !== catalog.generation ||
-        roster.inventoryDigest !== catalog.inventoryDigest || roster.stagingDigest !== catalog.stagingDigest ||
-        roster.catalogSha256 !== catalogSha256 || !sameStamp(roster.directory, footprint.directoryStamp()) ||
-        reclaimStagingDigest(roster, roster.directory, roster.files) !== catalog.stagingDigest)
-      return fail("MISMATCH");
-    const expected = new Map(roster.files);
-    const remaining = footprint.fileStamps();
-    for (const [name, stamp] of remaining) {
-      const historical = expected.get(name);
-      if (!historical || !sameStamp(historical, stamp)) return fail("MISMATCH");
-    }
-    if (footprint.indexBytes > BigInt(Number.MAX_SAFE_INTEGER)) return fail("UNAVAILABLE");
-    footprint.recheck();
+    const proof = await verifyPurgeSubset(profile, footprint, target, boundary.owner);
+    if (!proof.ok) return proof;
+    proof.footprint.recheck();
     return {
       ok: true as const,
-      expectedFiles: expected.size,
-      remainingFiles: remaining.length,
-      missingFiles: expected.size - remaining.length,
-      remainingIndexBytes: Number(footprint.indexBytes),
+      expectedFiles: proof.roster.files.length,
+      remainingFiles: proof.remaining.length,
+      missingFiles: proof.roster.files.length - proof.remaining.length,
+      remainingIndexBytes: Number(proof.footprint.indexBytes),
     };
   } catch (error) {
     return inspectionFailure(boundary, error, profile);

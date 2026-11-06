@@ -19,7 +19,7 @@ export function readingHighlightRanges(
 
 /** Registry entries are private to this owner; cleanup never clears other users. */
 let sequence = 0;
-export function createReadingHighlights(document: Document) {
+export function createReadingHighlights(document: Document, scope?: "independent") {
   const global = document.defaultView as
     | (Window & {
         Highlight?: new (...ranges: Range[]) => object;
@@ -29,11 +29,14 @@ export function createReadingHighlights(document: Document) {
   const registry = global?.CSS?.highlights,
     Constructor = global?.Highlight;
   if (!registry || !Constructor) throw Error("当前阅读环境不支持查找高亮");
-  const name = `agentic-reading-${++sequence}`,
+  const name = scope === "independent" ? "agentic-reader-find" : `agentic-reading-${++sequence}`,
     currentName = `${name}-current`;
-  const style = document.createElement("style");
-  style.textContent = `::highlight(${name}){background-color:var(--reading-search-match,#efd675);color:var(--reading-search-text,#171717)}::highlight(${currentName}){background-color:var(--reading-search-current,#f4a94e);color:var(--reading-search-text,#171717)}`;
-  document.head.append(style);
+  let style: HTMLStyleElement | undefined;
+  if (scope !== "independent") {
+    style = document.createElement("style");
+    style.textContent = `::highlight(${name}){background-color:var(--reading-search-match,#efd675);color:var(--reading-search-text,#171717)}::highlight(${currentName}){background-color:var(--reading-search-current,#f4a94e);color:var(--reading-search-text,#171717)}`;
+    document.head.append(style);
+  }
   let marks: object | undefined, current: object | undefined;
   const clear = () => {
     if (registry.get(name) === marks) registry.delete(name);
@@ -53,7 +56,7 @@ export function createReadingHighlights(document: Document) {
     clear,
     dispose() {
       clear();
-      style.remove();
+      style?.remove();
     },
   };
 }

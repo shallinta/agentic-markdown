@@ -62,6 +62,30 @@ test("highlight cleanup removes only this owner's entries and stylesheet", () =>
   expect(styles).toHaveLength(2);
 });
 
+test("independent reader uses fixed packaged highlight names without creating a stylesheet", () => {
+  const entries = new Map<string, object>([["unrelated", {}]]);
+  const document = {
+    defaultView: {
+      CSS: { highlights: entries },
+      Highlight: class {},
+    },
+  } as unknown as Document;
+  const first = createReadingHighlights(document, "independent");
+  const replacement = createReadingHighlights(document, "independent");
+  const range = {} as Range;
+  first.paint([range], range);
+  expect([...entries.keys()]).toEqual([
+    "unrelated", "agentic-reader-find", "agentic-reader-find-current",
+  ]);
+  replacement.paint([range], range);
+  const current = entries.get("agentic-reader-find-current");
+  first.dispose();
+  expect(entries.size).toBe(3);
+  expect(entries.get("agentic-reader-find-current")).toBe(current);
+  replacement.dispose();
+  expect([...entries.keys()]).toEqual(["unrelated"]);
+});
+
 test("unavailable public Highlight API fails explicitly", () => {
   expect(() =>
     createReadingHighlights({ defaultView: {} } as unknown as Document)

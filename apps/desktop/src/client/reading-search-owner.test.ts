@@ -160,7 +160,7 @@ test("actual owner refines a 6000-line block before requesting its late visible 
   expect(last(f.states)?.result?.count).toBe(6000);
   f.owner.viewport({
     getBoundingClientRect: () => ({ top: 110000, bottom: 110400 }),
-  } as HTMLElement);
+  });
   expect((w.requests[0] as { from: number }).from).toBeGreaterThan(10000);
   w.reply();
   const result = last(f.states)?.result;
@@ -174,7 +174,7 @@ test("actual owner refines a 6000-line block before requesting its late visible 
   calls = 0;
   f.owner.viewport({
     getBoundingClientRect: () => ({ top: 119500, bottom: 120200 }),
-  } as HTMLElement);
+  });
   w.reply();
   const bottom = last(f.states)?.result;
   expect(bottom?.ranges[0]).toBeGreaterThan(11000);
@@ -212,7 +212,7 @@ test("coarse geometry fallback only reports highlight limitation when worker act
     // Clipped sides, deliberately absent Range API => conservative full block.
     f.owner.viewport({
       getBoundingClientRect: () => ({ top: 0, bottom: 500 }),
-    } as HTMLElement);
+    });
     w.reply();
     expect(last(f.states)?.result?.count).toBe(count);
     expect(last(f.states)?.result?.limited).toBe(count > 2048);

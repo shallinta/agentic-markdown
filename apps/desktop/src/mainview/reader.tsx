@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createCurrentCanonical } from "../client/current-canonical";
 import ReaderWorker from "../client/current-canonical.worker?worker&inline";
 import { firstReadingBlock } from "../client/reading-position";
+import { createReadingSearchRegistry, type ReadingSearchRegistry } from "../client/reading-search-registry";
 import { READING_THEMES, type ReadingThemeId } from "../client/reading-theme";
 import "../reading-themes/content.css";
 import "../reading-themes/ink/theme.css";
@@ -14,6 +15,8 @@ import {
   isControlledReadingElement,
 } from "../security/commonmark-content";
 import { decodeReaderSnapshot, READER_SNAPSHOT_EVENT } from "../shared/reader-snapshot";
+
+import { ReaderFind } from "./reader-find";
 
 import "./reader.css";
 
@@ -66,11 +69,13 @@ function checkBridge(name: string, handlerName: string) {
   }
 }
 
-function Reader({ content, label, experimental, retainVerifiedArticle }: {
+function Reader({ content, label, experimental, retainVerifiedArticle, searchRegistry, current }: {
   content: ReactNode;
   label: string;
   experimental: boolean;
   retainVerifiedArticle?: (element: HTMLElement | null) => void;
+  searchRegistry?: ReadingSearchRegistry;
+  current?: () => boolean;
 }) {
   const [auditResult, setAuditResult] = useState<{ safe: boolean; details: string }>();
   const [theme, setTheme] = useState<ReadingThemeId>("paper");
@@ -139,26 +144,32 @@ function Reader({ content, label, experimental, retainVerifiedArticle }: {
       </p>
       {auditResult && !auditResult.safe && <p>{auditResult.details}</p>}
       {!experimental && auditResult?.safe && (
-        <div ref={themeControls} className="reader-theme-controls" role="group" aria-label="阅读主题">
-          {READING_THEMES.map(({ id, name }) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={id === theme}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => selectTheme(id)}
-            >
-              {name}
-            </button>
-          ))}
+        <div ref={themeControls} className="reader-theme-controls">
+          <div className="reader-theme-buttons" role="group" aria-label="阅读主题">
+            {READING_THEMES.map(({ id, name }) => (
+              <button
+                key={id}
+                type="button"
+                aria-pressed={id === theme}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectTheme(id)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+          {searchRegistry && current && (
+            <ReaderFind article={article} toolbar={themeControls} registry={searchRegistry} current={current} theme={theme} />
+          )}
         </div>
       )}
-      <article ref={audit} hidden={!experimental && !auditResult?.safe}>{content}</article>
+      <article ref={audit} tabIndex={experimental ? undefined : -1} hidden={!experimental && !auditResult?.safe}>{content}</article>
     </main>
   );
 }
 
 function renderReadingContent(root: Root, source: typeof fixture, label: string, experimental: boolean) {
+  const searchRegistry = experimental ? undefined : createReadingSearchRegistry();
   const canonical = createCurrentCanonical(
     () => source,
     () => new ReaderWorker(),
@@ -168,6 +179,7 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
   window.addEventListener("pagehide", () => {
     closed = true;
     canonical.dispose();
+    searchRegistry?.dispose();
   }, { once: true });
   root.render(<p role="status">正在解析{label}…</p>);
   void canonical.request().then((result) => {
@@ -180,14 +192,16 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
     const retainVerifiedArticle = experimental ? undefined : (element: HTMLElement | null) => {
       verifiedArticle = element;
     };
-    const codeCurrent = experimental ? undefined : () =>
+    const current = experimental ? undefined : () =>
       !closed && verifiedArticle?.isConnected === true && canonical.isCurrent(result);
     root.render(
       <Reader
-        content={commonmarkContent(result.tree, source.text, undefined, codeCurrent)}
+        content={commonmarkContent(result.tree, source.text, undefined, current, searchRegistry)}
         label={label}
         experimental={experimental}
         retainVerifiedArticle={retainVerifiedArticle}
+        searchRegistry={searchRegistry}
+        current={current}
       />
     );
   });

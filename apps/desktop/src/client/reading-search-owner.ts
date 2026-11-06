@@ -353,7 +353,7 @@ export function createReadingSearchOwner(
         "epoch" | "id"
       >);
     },
-    viewport(scroller: HTMLElement) {
+    viewport(scroller: { getBoundingClientRect(): Pick<DOMRectReadOnly, "top" | "bottom"> }) {
       if (!valid() || !projection || !dom) return;
       const bounds = scroller.getBoundingClientRect();
       // Ordered block geometry: binary search avoids scanning the whole DOM on scroll.

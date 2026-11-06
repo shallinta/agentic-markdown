@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 独立阅读窗查找（F-041e）
+
+在独立阅读窗按 ⌘F 打开右上角查找栏。可选区分大小写与全词，Enter 到下一项，Shift+Enter 到上一项，Esc 关闭。只查当前快照的可见正文，主窗查询保持独立。见[F-041e 迭代](iterations/F-041e-independent-reading-find.md)。
+
 ## 独立阅读窗复制代码（F-048d）
 
 在独立阅读窗的代码块上使用「复制代码正文」。剪贴板只包含显示的代码正文，不包含 Markdown 围栏或语言标签。按钮可用键盘聚焦并激活。见[F-048d 迭代](iterations/F-048d-independent-reading-code-copy.md)。

@@ -3,10 +3,18 @@
   top: 0;
   z-index: 1;
   display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding-block: 0.5rem;
   background: var(--reading-background);
   font: 14px/1.4 system-ui, sans-serif;
+}
+
+.reader-theme-buttons,
+.reader-find {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .reader-theme-controls button {
@@ -28,4 +36,47 @@
 .reader-theme-controls button:focus-visible {
   outline: 2px solid var(--reading-foreground);
   outline-offset: 2px;
+}
+
+.reader-find {
+  align-items: center;
+  flex-wrap: wrap;
+  margin-inline-start: auto;
+  max-width: 100%;
+  padding: 0.25rem;
+  border: 1px solid var(--reading-border);
+  border-radius: 0.25rem;
+  background: var(--reading-background);
+}
+
+.reader-find textarea {
+  box-sizing: border-box;
+  width: 9rem;
+  max-width: 100%;
+  resize: none;
+  padding: 0.25rem;
+  border: 1px solid var(--reading-border);
+  border-radius: 0.25rem;
+  color: inherit;
+  background: inherit;
+  font: inherit;
+}
+
+.reader-find button {
+  min-width: 1.75rem;
+  padding-inline: 0.25rem;
+}
+
+.reader-find button:disabled {
+  opacity: 0.5;
+}
+
+::highlight(agentic-reader-find) {
+  background-color: var(--reading-search-match);
+  color: var(--reading-search-text);
+}
+
+::highlight(agentic-reader-find-current) {
+  background-color: var(--reading-search-current);
+  color: var(--reading-search-text);
 }

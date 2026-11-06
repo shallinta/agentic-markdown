@@ -9,7 +9,7 @@ import {
   verifySingleFileAuthorization,
   type SingleFileAuthorization,
 } from "../documents/path-authorization";
-import { encodeChanges, INDEX_LIMITS, scalar } from "../index/protocol";
+import { encodeChanges, INDEX_LIMITS, record, scalar } from "../index/protocol";
 import type { IndexChange, IndexResult } from "../index/protocol";
 import { createIndexSession } from "../index/session";
 
@@ -23,6 +23,11 @@ export interface SearchSnapshotRoot {
   authorization: RootAuthorization;
   files: ReadonlyMap<string, ScanFile>;
   showHidden: boolean;
+}
+export interface SearchSnapshotStandalone {
+  entry: string;
+  path: string;
+  read(this: void, maxBytes: number, check: () => void): Promise<Buffer>;
 }
 
 type Failure = Extract<IndexResult, { ok: false }>;
@@ -97,13 +102,14 @@ export async function searchSnapshotEvidenceAcrossRoots(
   roots: readonly SearchSnapshotRoot[],
   query: string,
   current: () => boolean,
-  strategy: SearchSnapshotStrategy = "native"
+  strategy: SearchSnapshotStrategy = "native",
+  standalone?: readonly SearchSnapshotStandalone[]
 ): Promise<EvidenceResult> {
   if (!scalar(query, INDEX_LIMITS.query)) return fail("INPUT");
   const direct = strategy === "direct";
   if (!direct && quarantined) return fail("UNAVAILABLE");
   if (busy) return fail("BUSY");
-  if (!roots.length) return fail("INPUT");
+  if ((!roots.length && !standalone) || (standalone && !direct)) return fail("INPUT");
   if (roots.length > SEARCH_SNAPSHOT_ROOT_LIMIT) return fail("LIMIT");
   let candidates = 0;
   const entries = new Set<string>();
@@ -115,6 +121,14 @@ export async function searchSnapshotEvidenceAcrossRoots(
       if (entries.has(entry) || paths.has(file.path)) return fail("INPUT");
       entries.add(entry);
       paths.add(file.path);
+    }
+  }
+  if (standalone) {
+    if (candidates + standalone.length > INDEX_LIMITS.documents) return fail("LIMIT");
+    for (const { entry, path } of standalone) {
+      if (entries.has(entry) || paths.has(path)) return fail("INPUT");
+      entries.add(entry);
+      paths.add(path);
     }
   }
   busy = true;
@@ -166,6 +180,25 @@ export async function searchSnapshotEvidenceAcrossRoots(
     const changes: IndexChange[] = [];
     const indexed = new Map<string, { evidence: SearchCoverage; length: number }>();
     let remaining: number = INDEX_LIMITS.bytes;
+    function recordContents(entry: string, contents: Buffer) {
+      const raw = new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(contents);
+      const evidence: SearchCoverage = {
+        entry, bytes: contents.length, hash: createHash("sha256").update(contents).digest("hex"),
+      };
+      if (direct) {
+        const from = query ? raw.indexOf(query) : -1;
+        if (from >= 0) evidence.hit = { from, to: from + query.length };
+      } else {
+        const id = randomUUID().replaceAll("-", "");
+        indexed.set(id, { evidence, length: raw.length });
+        changes.push({ kind: "put", id, path: id, raw });
+      }
+      coverage.push(evidence);
+      remaining -= contents.length;
+    }
     for (const { authorization, files, showHidden } of roots) {
       for (const [entry, file] of files) {
         check();
@@ -180,27 +213,27 @@ export async function searchSnapshotEvidenceAcrossRoots(
         try {
           const contents = await readStableSearchBytes(grant, remaining, check);
           if (!contents) return fail("LIMIT");
-          const raw = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(contents);
-          const evidence: SearchCoverage = {
-            entry, bytes: contents.length, hash: createHash("sha256").update(contents).digest("hex"),
-          };
-          if (direct) {
-            const from = query ? raw.indexOf(query) : -1;
-            if (from >= 0) evidence.hit = { from, to: from + query.length };
-          } else {
-            const id = randomUUID().replaceAll("-", "");
-            indexed.set(id, { evidence, length: raw.length });
-            changes.push({ kind: "put", id, path: id, raw });
-          }
-          coverage.push(evidence);
-          remaining -= contents.length;
+          recordContents(entry, contents);
         } finally {
           await grant.file.close();
         }
       }
+    }
+    for (const item of standalone ?? []) {
+      check();
+      let contents: Buffer;
+      try {
+        contents = await item.read(remaining, check);
+      } catch (error) {
+        const code = record(error) ? error.code : undefined;
+        if (!current() || code === "CANCELLED") return fail("CANCELLED");
+        if (code === "TOO_LARGE") return fail("LIMIT");
+        if (code === "BUSY") return fail("BUSY");
+        throw error;
+      }
+      check();
+      if (contents.length > remaining) return fail("LIMIT");
+      recordContents(item.entry, contents);
     }
     check();
     if (direct || !changes.length) return { ok: true, coverage };

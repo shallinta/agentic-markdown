@@ -2,6 +2,8 @@
 
 ## 文件夹正文搜索与索引（F-064）
 
+F-064t 的 alpha.206 验证了目录与保留授权的独立文件可共用一次内部有界查询。可见父目录已有同一文件时只搜索一次。普通窗口仍使用现有的文件夹搜索，独立文件入口和定位由后续接入。见[F-064t 迭代](iterations/F-064t-bounded-mixed-workspace-search.md)。
+
 F-064s 的 alpha.205 验证了独立文件关闭标签后可用原授权读取稳定正文。读取限 64 KiB，保持原文档版本和正文基线。独立文件仍可从文件树重开，普通窗口搜索继续覆盖文件夹。见[F-064s 迭代](iterations/F-064s-retained-standalone-search-snapshot.md)。
 
 F-064r 的 alpha.204 在普通窗口有界查询中直接查找已授权读取的正文，省去每次临时建索引。单根、多根、筛选、未保存覆盖和定位使用相同入口。现有范围仍是 16 个根、筛选前 16 篇、正文合计 64 KiB。见[F-064r 迭代](iterations/F-064r-direct-bounded-window-search.md)。

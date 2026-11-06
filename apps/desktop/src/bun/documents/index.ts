@@ -94,7 +94,8 @@ interface ContentSearchBinding {
   revision: number;
   hash: string;
   verify(check: () => void): Promise<void>;
-  readStandalone?(maxBytes: number, check: () => void): Promise<Buffer>;
+  readStandalone?(this: void, maxBytes: number, check: () => void): Promise<Buffer>;
+  verifyStandalone?(this: void, check: () => void): Promise<void>;
 }
 export interface TrustedDocumentService extends DocumentService {
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
@@ -771,9 +772,10 @@ export function createDocumentService({
           };
           if (grant.explicitStandalone === true && !scope) {
             const directories = grant.directories;
-            binding.readStandalone = async (maxBytes, callerCheck) => {
-              if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.bytes)
-                throw new DocumentFailure("INVALID_REQUEST");
+            const withStandalone = async <T>(
+              callerCheck: () => void,
+              action: (opened: Grant, check: () => void) => Promise<T>
+            ) => {
               const check = () => {
                 try {
                   callerCheck();
@@ -789,19 +791,27 @@ export function createDocumentService({
                 check();
                 const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
                   .catch(() => { throw new DocumentFailure("FILE_CHANGED"); });
-                let bytes: Buffer;
+                let result: T;
                 try {
-                  bytes = await stableBytes({ ...grant, file }, check, maxBytes);
+                  check();
+                  result = await action({ ...grant, file }, check);
                   check();
                 } finally {
                   await file.close();
                 }
                 check();
-                return bytes;
+                return result;
               } catch (error) {
                 throw new DocumentFailure(codeOf(error));
               }
             };
+            binding.readStandalone = async (maxBytes, check) => {
+              if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.bytes)
+                throw new DocumentFailure("INVALID_REQUEST");
+              return withStandalone(check, (opened, current) => stableBytes(opened, current, maxBytes));
+            };
+            binding.verifyStandalone = (check) =>
+              withStandalone(check, async (opened) => { await verify(opened); });
           }
         }
         return { binding, current };

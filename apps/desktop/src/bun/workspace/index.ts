@@ -27,6 +27,7 @@ import {
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
+import { perfUuid } from "../../shared/perf-lab";
 import {
   WORKSPACE_CACHE_BYTES,
   WORKSPACE_MAX_ROOTS,
@@ -51,7 +52,7 @@ import type {
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 import { DocumentPathError, authorizeSingleFile } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
-import { INDEX_LIMITS, scalar } from "../index/protocol";
+import { INDEX_LIMITS, record, scalar } from "../index/protocol";
 
 import {
   authorizeRoot,
@@ -81,6 +82,7 @@ import {
   readStableSearchBytes,
   searchSnapshot,
   searchSnapshotEvidenceAcrossRoots,
+  type SearchSnapshotStandalone,
   type SearchSnapshotStrategy,
 } from "./search-snapshot";
 import { createTrashService } from "./trash-document";
@@ -118,6 +120,10 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   ): Promise<ContentSearchCandidates>;
   searchContentCandidatesForRoots(
     input: ContentSearchRootSetInput,
+    signal?: AbortSignal
+  ): Promise<ContentSearchCandidates>;
+  searchContentCandidatesForWorkspace(
+    input: ContentSearchRootSetInput & { standaloneHandles: readonly string[] },
     signal?: AbortSignal
   ): Promise<ContentSearchCandidates>;
   prepareContentSearchDocument(
@@ -213,6 +219,7 @@ export function createWorkspaceService({
     }
   }
   let selecting = false,
+    searchSelectionGeneration = 0,
     workerStopped = false,
     disposed = false,
     epoch = 0,
@@ -1159,12 +1166,27 @@ export function createWorkspaceService({
   });
   async function searchContentCandidatesForRoots(
     input: ContentSearchRootSetInput,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    mixed?: { standaloneHandles: readonly string[] }
   ): Promise<ContentSearchCandidates> {
     if (signal?.aborted) return { ok: false, error: "CANCELLED" };
     if (indexTask) return { ok: false, error: "BUSY" };
     const { fileFilters, pathFilters } = input;
     const requestedRoots: unknown = input.roots;
+    const openHandles: unknown = input.handles;
+    const standaloneInput: unknown = mixed?.standaloneHandles;
+    const validHandles = (value: unknown): value is readonly string[] =>
+      Array.isArray(value) && Object.keys(value).length === value.length &&
+      Array.from(value).every(perfUuid) && new Set(value).size === value.length;
+    let retainedHandles: readonly string[] = [];
+    if (mixed) {
+      if ((Array.isArray(standaloneInput) && standaloneInput.length > INDEX_LIMITS.documents) ||
+          (Array.isArray(openHandles) && openHandles.length > INDEX_LIMITS.documents))
+        return { ok: false, error: "LIMIT" };
+      if (!validHandles(standaloneInput) || !validHandles(openHandles))
+        return { ok: false, error: "INVALID" };
+      retainedHandles = standaloneInput;
+    }
     if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
         new Set(input.handles).size !== input.handles.length ||
         (fileFilters !== undefined && !validContentSearchFileFilters(fileFilters)) ||
@@ -1174,15 +1196,35 @@ export function createWorkspaceService({
     if (input.handles.length > INDEX_LIMITS.documents ||
         (Array.isArray(requestedRoots) && requestedRoots.length > CONTENT_SEARCH_LIMITS.roots))
       return { ok: false, error: "LIMIT" };
-    if (!validContentSearchScopeRoots(requestedRoots))
+    const rootless = mixed && retainedHandles.length > 0 && Array.isArray(requestedRoots) &&
+      requestedRoots.length === 0 && Object.keys(requestedRoots).length === 0;
+    if (!rootless && !validContentSearchScopeRoots(requestedRoots))
       return { ok: false, error: "INVALID" };
+    const requested = rootless ? [] : input.roots;
+    const roster = mixed ? [...roots] : undefined;
+    const workspaceEpoch = epoch;
+    const selectionGeneration = searchSelectionGeneration;
+    const workspaceReady = () => !disposed && !indexDisposing && !workerStopped &&
+      !selecting && !removalAdmission && !scanParked && !preferencePending &&
+      !removeStandalone.busy() && !folderRemoval.busy() && !signal?.aborted;
+    if (roster) {
+      if (disposed || indexDisposing || workerStopped)
+        return { ok: false, error: "UNAVAILABLE" };
+      if (!workspaceReady()) return { ok: false, error: "BUSY" };
+      if (requested.length !== roster.length || requested.some(({ handle, generation }, index) =>
+        roster[index]?.meta.handle !== handle || roster[index]?.meta.generation !== generation))
+        return { ok: false, error: "STALE" };
+    }
+    const workspaceCurrent = () => !roster ||
+      (workspaceReady() && workspaceEpoch === epoch && selectionGeneration === searchSelectionGeneration &&
+        roots.length === roster.length && roster.every((root, index) => roots[index] === root));
 
     const captures: (Extract<ReturnType<typeof captureIndexRoot>, { ok: true }> & {
       searched: ReadonlyMap<string, ScanFile>;
     })[] = [];
     const entryHandles = new Set<string>();
-    const filePaths = new Set<string>();
-    for (const { handle, generation } of requestedRoots) {
+    const filesByPath = new Map<string, { file: ScanFile; root: Root; showHidden: boolean }>();
+    for (const { handle, generation } of requested) {
       const snapshot = captureIndexRoot(handle, generation, signal);
       if (!snapshot.ok) return snapshot;
       const { root, entries } = snapshot;
@@ -1195,10 +1237,10 @@ export function createWorkspaceService({
         return { ok: false, error: "LIMIT" };
       const filtered = fileFilters || pathFilters ? new Map<string, ScanFile>() : undefined;
       for (const [entry, file] of entries) {
-        if (entryHandles.has(entry) || filePaths.has(file.path))
+        if (entryHandles.has(entry) || filesByPath.has(file.path))
           return { ok: false, error: "INVALID" };
         entryHandles.add(entry);
-        filePaths.add(file.path);
+        filesByPath.set(file.path, { file, root, showHidden: snapshot.showHidden });
         if (pathFilters) {
           const path = relativeContentSearchPath(rootPath, file.path);
           if (path === undefined) return { ok: false, error: "UNAVAILABLE" };
@@ -1211,20 +1253,80 @@ export function createWorkspaceService({
       captures.push({ ...snapshot, searched: filtered ?? entries });
     }
     const handles = [...input.handles];
-    const admission = documents.captureContentSearchBindings(handles);
+    const admittedHandles = [...new Set([...handles, ...retainedHandles])];
+    const admission = documents.captureContentSearchBindings(admittedHandles);
     if (!admission) return { ok: false, error: "UNAVAILABLE" };
-    const current = () => admission.current() && captures.every((capture) => capture.current());
+    const current = () => workspaceCurrent() && admission.current() &&
+      captures.every((capture) => capture.current());
     const check = () => {
       if (!current()) throw Error("Content search invalidated");
     };
+    const initialRetainedChecks: (() => Promise<void>)[] = [];
+    const retainedChecks: (() => Promise<void>)[] = [];
+    const standalone: SearchSnapshotStandalone[] | undefined = mixed ? [] : undefined;
+    const standaloneByPath = new Map<string, { entry: string; fingerprint: string; included: boolean }>();
+    if (standalone) {
+      const bindings = new Map(admittedHandles.map((handle, index) => [handle, admission.bindings[index]]));
+      const seenPaths = new Set<string>();
+      for (const entry of retainedHandles) {
+        const binding = bindings.get(entry);
+        if (!binding?.readStandalone || !binding.verifyStandalone)
+          return { ok: false, error: "STALE" };
+        if (entryHandles.has(entry) || seenPaths.has(binding.path))
+          return { ok: false, error: "INVALID" };
+        seenPaths.add(binding.path);
+        const { path, fingerprint, readStandalone, verifyStandalone } = binding;
+        const covered = filesByPath.get(path);
+        if (covered && covered.file.fingerprint !== fingerprint)
+          return { ok: false, error: "STALE" };
+        const verify = async () => {
+          await verifyStandalone(check);
+          if (covered) {
+            const { file, root, showHidden } = covered;
+            const authorized = await authorizeEntry(
+              root.authorization, file.path, file.fingerprint, file.chain, showHidden, check
+            );
+            await authorized.file.close();
+            check();
+          }
+        };
+        retainedChecks.push(verify);
+        if (covered) {
+          initialRetainedChecks.push(verify);
+          continue;
+        }
+        if (entryHandles.size + standaloneByPath.size >= INDEX_LIMITS.documents)
+          return { ok: false, error: "LIMIT" };
+        const name = basename(path);
+        const included = (!fileFilters || matchesContentSearchFileFilters(name, fileFilters)) &&
+          (!pathFilters || matchesContentSearchPathFilters(name, pathFilters));
+        standaloneByPath.set(path, { entry, fingerprint, included });
+        if (included) standalone.push({ entry, path, read: readStandalone });
+        else initialRetainedChecks.push(verify);
+      }
+    }
     const task = (async (): Promise<ContentSearchCandidates> => {
+      const authorityFailure = (error: unknown): ContentSearchCandidates => {
+        const code = mixed && record(error) ? error.code : undefined;
+        return {
+          ok: false,
+          error: !current() || code === "CANCELLED" ? "CANCELLED"
+            : code === "BUSY" ? "BUSY" : "UNAVAILABLE",
+        };
+      };
+      try {
+        for (const verify of initialRetainedChecks) await verify();
+      } catch (error) {
+        return authorityFailure(error);
+      }
       const result = await searchSnapshotEvidenceAcrossRoots(
         captures.map(({ root, searched, showHidden }) => ({
           authorization: root.authorization, files: searched, showHidden,
         })),
         input.query,
         current,
-        contentSearchStrategy
+        mixed ? "direct" : contentSearchStrategy,
+        standalone
       );
       if (!result.ok) {
         const error = result.error;
@@ -1253,6 +1355,22 @@ export function createWorkspaceService({
             continue;
           }
           check();
+          const independent = standaloneByPath.get(binding.path);
+          if (independent) {
+            if (independent.entry !== handle || independent.fingerprint !== binding.fingerprint)
+              mappings.push({ handle, kind: "unresolved" });
+            else if (!independent.included)
+              mappings.push({ handle, kind: "outside" });
+            else {
+              const { entry } = independent;
+              matchedCounts.set(entry, (matchedCounts.get(entry) ?? 0) + 1);
+              mappings.push({
+                handle, kind: "matched", entry,
+                documentId: binding.documentId, revision: binding.revision, hash: binding.hash,
+              });
+            }
+            continue;
+          }
           const capture = captures.find(({ root }) => containsPath(root.authorization.path, binding.path));
           if (!capture) {
             mappings.push({ handle, kind: "outside" });
@@ -1289,9 +1407,10 @@ export function createWorkspaceService({
           });
         }
         for (const { root } of captures) await verifyRoot(root.authorization, check);
+        for (const verify of retainedChecks) await verify();
         check();
-      } catch {
-        return { ok: false, error: current() ? "UNAVAILABLE" : "CANCELLED" };
+      } catch (error) {
+        return authorityFailure(error);
       }
       return {
         ok: true,
@@ -1367,6 +1486,9 @@ export function createWorkspaceService({
       return searchContentCandidatesForRoots({ ...input, roots: [{ handle: root, generation }] }, signal);
     },
     searchContentCandidatesForRoots,
+    searchContentCandidatesForWorkspace({ standaloneHandles, ...input }, signal) {
+      return searchContentCandidatesForRoots(input, signal, { standaloneHandles });
+    },
     async prepareContentSearchDocument(input, requestId, signal) {
       if (signal?.aborted) return { ok: false, error: "CANCELLED" };
       if (!validContentSearchPrepareRequest({ ...input, protocolVersion: 1, requestId }))
@@ -1560,6 +1682,7 @@ export function createWorkspaceService({
       if (value.op === "select") {
         if (selecting) return failure(value.requestId, "BUSY");
         selecting = true;
+        searchSelectionGeneration++;
         const generation = epoch;
         try {
           const selected = await pickDirectory();

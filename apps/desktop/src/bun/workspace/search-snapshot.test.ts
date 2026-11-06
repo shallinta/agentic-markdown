@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -18,6 +19,7 @@ import { dirname, join } from "node:path";
 
 import { validContentSearchResponse, type ContentSearchInput } from "../../shared/content-search";
 import { createDocumentService } from "../documents";
+import { verifySingleFileAuthorization } from "../documents/path-authorization";
 import { validRequest, type IndexRequest, type IndexResult } from "../index/protocol";
 import { createContentSearchRPC } from "../rpc/content-search";
 
@@ -820,7 +822,229 @@ test.skipIf(childScenario !== "direct")(
   15_000
 );
 
-for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters", "multi-root", "direct"] as const)
+test.skipIf(childScenario !== "mixed")(
+  "searches exact workspace roots and retained standalone grants in one direct budget",
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "workspace-mixed-"));
+    const firstPath = join(fixture, "first");
+    const secondPath = join(fixture, "second");
+    const thirdPath = join(fixture, "third");
+    const standalonePath = join(fixture, "explicit.md");
+    const aliasPath = join(fixture, "hard-alias.md");
+    const hiddenPath = join(firstPath, ".hidden.md");
+    const visiblePath = join(firstPath, "项目 甲", "visible.md");
+    const peerPath = join(secondPath, "项目 乙", "peer.md");
+    const oversizedPath = join(fixture, "oversized.md");
+    const sharedBudgetPath = join(fixture, "standalone-budget.md");
+    const original = "\uFEFF😀\r\n中文target";
+    const revised = "\uFEFF改写😀target";
+    const hiddenRaw = "hidden target";
+    const visibleRaw = "visible target";
+    const peerRaw = "peer target";
+    const query = "target";
+    let selectedFile = standalonePath;
+    let selectedFolder = firstPath;
+    function readGate() {
+      return { checked: 0, entered: Promise.withResolvers<void>(), resume: Promise.withResolvers<void>() };
+    }
+    let gate: ReturnType<typeof readGate> | undefined;
+    const documents = createDocumentService({
+      pickFile: () => Promise.resolve(selectedFile),
+      async verify(grant, check) {
+        const state = gate;
+        const stat = await verifySingleFileAuthorization(grant, check);
+        if (state && grant.path.endsWith("/explicit.md") && ++state.checked === 2) {
+          state.entered.resolve();
+          await state.resume.promise;
+        }
+        return stat;
+      },
+    });
+    const workspace = createWorkspaceService({
+      documents, pickDirectory: () => Promise.resolve(selectedFolder),
+    });
+    type Input = Parameters<typeof workspace.searchContentCandidatesForWorkspace>[0];
+    const rootless = { roots: [], standaloneHandles: [], query, handles: [] };
+    const search = (input: Input, signal?: AbortSignal) =>
+      workspace.searchContentCandidatesForWorkspace(input, signal);
+    const sha = (raw: string) => createHash("sha256").update(raw).digest("hex");
+    const evidence = (entry: string, raw: string) => {
+      const from = raw.indexOf(query);
+      return {
+        entry, hash: sha(raw), bytes: Buffer.byteLength(raw),
+        ...(from < 0 ? {} : { hit: { from, to: from + query.length } }),
+      };
+    };
+    async function select(path: string) {
+      selectedFile = path;
+      const opened = await documents.select(env());
+      if (!opened.ok || !opened.snapshot) throw Error("Fixture picker grant missing");
+      return opened.snapshot;
+    }
+    async function joinRoot(path: string) {
+      selectedFolder = path;
+      const canonical = await realpath(path);
+      if (!(await workspace.request({ ...env(), op: "select" })).ok) throw Error("Fixture root not joined");
+      for (let i = 0; i < 1000; i++) {
+        const state = await workspace.request({ ...env(), op: "state" });
+        const root = state.ok && state.roots.find((item) => item.displayPath === canonical);
+        if (root && root.status === "complete") return { handle: root.handle, generation: root.generation };
+        await Bun.sleep(2);
+      }
+      throw Error("Fixture scan did not complete");
+    }
+    async function entryFor(root: { handle: string; generation: number }, name: string) {
+      const page = await workspace.request({ ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0 });
+      const entry = page.ok && page.nodes?.find((node) => node.name === name);
+      if (!entry) throw Error("Fixture scan entry missing");
+      return entry.handle;
+    }
+
+    try {
+      await mkdir(dirname(visiblePath), { recursive: true });
+      await mkdir(dirname(peerPath), { recursive: true });
+      await mkdir(thirdPath);
+      await writeFile(join(thirdPath, "added.md"), query);
+      await writeFile(standalonePath, original);
+      await link(standalonePath, aliasPath);
+      await writeFile(hiddenPath, hiddenRaw);
+      await writeFile(visiblePath, visibleRaw);
+      await writeFile(peerPath, peerRaw);
+      await writeFile(oversizedPath, "x".repeat(65_537));
+      await writeFile(sharedBudgetPath, "x".repeat(27_000));
+      for (const rootPath of [firstPath, secondPath]) await writeFile(join(rootPath, "budget.md"), "x".repeat(20_000));
+      for (let i = 0; i < 8; i++) await writeFile(join(firstPath, `pad-${i}.md`), "");
+
+      const standalone = await select(standalonePath);
+      const hardAlias = await select(aliasPath);
+      const hidden = await select(hiddenPath);
+      const visible = await select(visiblePath);
+      const oversized = await select(oversizedPath);
+      const sharedBudget = await select(sharedBudgetPath);
+      const { handle, documentId, revision, hash } = standalone;
+      expect(await documents.observe({
+        ...env(), handle, documentId, revision, hash,
+        active: false, watchToken: crypto.randomUUID(), watchEpoch: 1,
+      })).toMatchObject({ ok: true });
+      expect(await search(rootless)).toEqual({ ok: false, error: "INVALID" });
+      const independent = { ...rootless, standaloneHandles: [handle] };
+      expect(await search({ ...independent, standaloneHandles: [handle, handle] }))
+        .toEqual({ ok: false, error: "INVALID" });
+      expect(await search(independent)).toEqual({
+        ok: true,
+        coverage: [{
+          entry: handle, hash: sha(original), bytes: Buffer.byteLength(original), hit: { from: 7, to: 13 },
+        }],
+        mappings: [],
+      });
+      expect(hardAlias.documentId).not.toBe(documentId);
+      await writeFile(standalonePath, revised);
+      expect(await search({ ...independent, standaloneHandles: [handle, hardAlias.handle], handles: [handle] }))
+        .toEqual({
+          ok: true,
+          coverage: [evidence(handle, revised), evidence(hardAlias.handle, revised)],
+          mappings: [{ handle, kind: "matched", entry: handle, documentId, revision, hash }],
+        });
+      expect(sha(revised)).not.toBe(hash);
+      const excluded = { ...independent, standaloneHandles: [handle, oversized.handle], handles: [oversized.handle] };
+      expect(await search(excluded)).toEqual({ ok: false, error: "LIMIT" });
+      expect(await search({ ...excluded, pathFilters: [{ kind: "path", value: "explicit.md" }] }))
+        .toEqual({
+          ok: true, coverage: [evidence(handle, revised)],
+          mappings: [{ handle: oversized.handle, kind: "outside" }],
+        });
+      expect(await search({ ...independent, standaloneHandles: [sharedBudget.handle] }))
+        .toMatchObject({ ok: true, coverage: [{ entry: sharedBudget.handle, bytes: 27_000 }] });
+
+      const first = await joinRoot(firstPath);
+      const second = await joinRoot(secondPath);
+      const firstEntry = await entryFor(first, "visible.md");
+      const secondEntry = await entryFor(second, "peer.md");
+      const mixed = { ...rootless, roots: [first, second] };
+      expect(await search({ ...mixed, roots: [first] })).toEqual({ ok: false, error: "STALE" });
+      expect(await search({ ...mixed, roots: [second, first] })).toEqual({ ok: false, error: "STALE" });
+      const all = { ...mixed, standaloneHandles: [visible.handle, hidden.handle, handle] };
+      const selected = await search({
+        ...all,
+        pathFilters: [{ kind: "-path", value: "budget" }, { kind: "-path", value: "pad-" }],
+        handles: [visible.handle, hidden.handle, handle],
+      });
+      if (!selected.ok) throw Error("Missing mixed coverage: " + selected.error);
+      expect(selected.coverage).toHaveLength(4);
+      expect(selected.coverage).toContainEqual(evidence(firstEntry, visibleRaw));
+      expect(selected.coverage).toContainEqual(evidence(secondEntry, peerRaw));
+      expect(selected.coverage).toContainEqual(evidence(hidden.handle, hiddenRaw));
+      expect(selected.coverage).toContainEqual(evidence(handle, revised));
+      expect(selected.mappings).toEqual([
+        { handle: visible.handle, kind: "matched", entry: firstEntry, documentId: visible.documentId, revision: visible.revision, hash: visible.hash },
+        { handle: hidden.handle, kind: "matched", entry: hidden.handle, documentId: hidden.documentId, revision: hidden.revision, hash: hidden.hash },
+        { handle, kind: "matched", entry: handle, documentId, revision, hash },
+      ]);
+      expect(await search(mixed)).toMatchObject({ ok: true });
+      expect(await search({ ...mixed, standaloneHandles: [sharedBudget.handle] }))
+        .toEqual({ ok: false, error: "LIMIT" });
+      const sixteen = {
+        ...mixed,
+        standaloneHandles: [visible.handle, hidden.handle, handle, hardAlias.handle, oversized.handle],
+        fileFilters: ["visible.md"],
+      };
+      expect(await search(sixteen)).toEqual({ ok: true, coverage: [evidence(firstEntry, visibleRaw)], mappings: [] });
+      expect(await search({ ...sixteen, standaloneHandles: [...sixteen.standaloneHandles, sharedBudget.handle] }))
+        .toEqual({ ok: false, error: "LIMIT" });
+      const scoped = await workspace.open({ ...env(), root: second.handle, entry: secondEntry });
+      if (!scoped.ok || !scoped.snapshot) throw Error("Missing directory-derived grant");
+      expect(await search({ ...mixed, standaloneHandles: [scoped.snapshot.handle] }))
+        .toEqual({ ok: false, error: "STALE" });
+
+      async function interrupt(input: Input, invalidate: () => Promise<void> | void, signal?: AbortSignal) {
+        const state = readGate();
+        gate = state;
+        const pending = search(input, signal);
+        try {
+          await Promise.race([state.entered.promise, pending.then((result) => {
+            throw Error("Expected held standalone read: " + JSON.stringify(result));
+          })]);
+          await invalidate();
+        } finally {
+          gate = undefined;
+          state.resume.resolve();
+        }
+        expect(await pending).toEqual({ ok: false, error: "CANCELLED" });
+      }
+      const externalOnly = { ...mixed, standaloneHandles: [handle], fileFilters: ["explicit.md"] };
+      const abort = new AbortController();
+      await interrupt(externalOnly, async () => {
+        expect(await workspace.searchContentCandidatesForRoots({ roots: mixed.roots, handles: [], query }))
+          .toEqual({ ok: false, error: "BUSY" });
+        abort.abort();
+      }, abort.signal);
+      await interrupt(externalOnly, async () => { await joinRoot(thirdPath); });
+      const current = await workspace.request({ ...env(), op: "state" });
+      if (!current.ok) throw Error("Root roster unavailable");
+      const complete = { ...externalOnly, roots: current.roots.map(({ handle, generation }) => ({ handle, generation })) };
+      expect(await search(complete)).toMatchObject({ ok: true, coverage: [evidence(handle, revised)] });
+      const blockedPath = await realpath(standalonePath);
+      documents.setTrashGuard((path) => path === blockedPath);
+      expect(await search(complete)).toEqual({ ok: false, error: "BUSY" });
+      expect(await search({ ...complete, fileFilters: ["no-match"] })).toEqual({ ok: false, error: "BUSY" });
+      documents.setTrashGuard(() => false);
+      await rename(standalonePath, join(fixture, "old.md"));
+      await writeFile(standalonePath, "replacement target");
+      expect(await search(complete)).toEqual({ ok: false, error: "UNAVAILABLE" });
+      expect(await documents.release({ ...env(), handle })).toMatchObject({ ok: true });
+      expect(await search(complete)).toEqual({ ok: false, error: "STALE" });
+      expect(await lstat(slot).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+    } finally {
+      gate?.resume.resolve();
+      await workspace.dispose();
+      await documents.dispose();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+  15_000
+);
+
+for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters", "multi-root", "direct", "mixed"] as const)
   test.skipIf(!!childScenario)(
     `isolated workspace index ${scenario} checks`,
     async () => {

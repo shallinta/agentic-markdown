@@ -247,6 +247,20 @@ test("streaming is opt-in only on bounded fragment queries and does not change t
   }
   expect(validContentSearchRequest({ ...queryRoots(), stream: true, fragments: true })).toBe(false);
   expect(validContentSearchRequest({ ...mixed, standaloneHandles: [], fragments: true, stream: true })).toBe(false);
+  const stream = { ...single, fragments: true as const, stream: true as const };
+  const raw = "\uFEFF😀\r\naaaaaa";
+  const coverage = Array.from({ length: 32 }, () => ({
+    entry: crypto.randomUUID(), hash: "c".repeat(64), bytes: Buffer.byteLength(raw),
+    fragments: contentSearchFragments(raw, stream.query),
+  }));
+  const response = {
+    protocolVersion: 1, requestId: stream.requestId, op: stream.op,
+    root: stream.root, generation: stream.generation, ok: true, coverage, mappings: [],
+  };
+  expect(validContentSearchResponse(response, stream)).toBe(true);
+  expect(validContentSearchResponse({
+    ...response, coverage: [...coverage, { ...coverage[0], entry: crypto.randomUUID() }],
+  }, stream)).toBe(false);
 });
 
 test("progress wire accepts only bounded same-request redaction or exact fragments", () => {

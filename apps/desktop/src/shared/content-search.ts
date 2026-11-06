@@ -16,7 +16,7 @@ import { perfRecord, perfUuid } from "./perf-lab";
 
 export const CONTENT_SEARCH_LIMITS = {
   roots: 16,
-  coverageDocuments: 16,
+  coverageDocuments: 32,
   openHandles: 16,
   standaloneHandles: 16,
   aggregateBytes: 65_536,

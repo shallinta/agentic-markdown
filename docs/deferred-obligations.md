@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064am 直接正文搜索覆盖扩展（2026-11-06）
+
+alpha.224 已通过 32/33 篇真实 WK 代验。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。字节扩展、持久接入、配额、撤权及最终离线继续承接。见[F-064am 迭代](iterations/F-064am-direct-search-32-documents.md)。
+
 ## F-064al 搜索容量分离（2026-11-06）
 
 alpha.223 已验证原有上限及预算分离。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。直接覆盖扩展、持久索引接入及最终离线继续承接。见[F-064al 迭代](iterations/F-064al-separate-content-search-budgets.md)。

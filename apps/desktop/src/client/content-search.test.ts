@@ -27,6 +27,28 @@ const mapping: SearchMapping = {
   hash,
 };
 
+test("32 covered files can contribute the last hit while open bindings remain limited to 16", () => {
+  const lastMatch = { from: 0, to: 1, before: "", after: "" };
+  const emptyFragments = { matches: [], more: false };
+  const coverage = Array.from({ length: 32 }, (_, index) => ({
+    entry: `file-${index}`, hash, bytes: 1,
+    fragments: index === 31 ? { matches: [lastMatch], more: false } : emptyFragments,
+  }));
+  const opened = Array.from({ length: 16 }, (_, index): ContentSearchDocument => ({
+    ...document, handle: `open-${index}`, documentId: `open-doc-${index}`, status: "clean",
+  }));
+  const mappings = opened.map(({ handle }): SearchMapping => ({ handle, kind: "outside" }));
+  expect(mergeContentSearch("x", opened, { coverage, mappings }, true)).toEqual({
+    ok: true, covered: 32, groups: [{ entry: "file-31", source: "disk", matches: [lastMatch], more: false }],
+  });
+  expect(mergeContentSearch("x", opened, {
+    coverage: [...coverage, { entry: "extra-file", hash, bytes: 0, fragments: emptyFragments }], mappings,
+  }, true)).toEqual({ ok: false, reason: "limit" });
+  expect(mergeContentSearch("x", [...opened, { ...document, status: "clean" }], {
+    coverage, mappings: [...mappings, { handle: document.handle, kind: "outside" }],
+  }, true)).toEqual({ ok: false, reason: "limit" });
+});
+
 test("dirty raw text replaces disk hits and can match a disk-zero entry", () => {
   const query = "😀中文";
   const dirty = (raw: string): ContentSearchDocument => ({

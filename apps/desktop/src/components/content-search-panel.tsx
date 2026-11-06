@@ -752,7 +752,7 @@ export function ContentSearchPanel({
           </p>
           {effectiveRoots?.length && !ready ? <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p> : null}
           <p className="text-muted-foreground text-xs">
-            区分大小写，每篇最多显示前三处命中。最多 16 个文件夹，筛选前合计 16 篇，查询正文合计 64 KiB。
+            区分大小写，每篇最多显示前三处命中。最多 {CONTENT_SEARCH_LIMITS.roots} 个文件夹，筛选前合计 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇，查询正文合计 {CONTENT_SEARCH_LIMITS.aggregateBytes / 1024} KiB。
           </p>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void search(); }}>
             <div className="flex items-center gap-2">

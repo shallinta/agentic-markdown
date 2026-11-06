@@ -828,6 +828,115 @@ test.skipIf(childScenario !== "direct")(
   15_000
 );
 
+test.skipIf(childScenario !== "coverage")(
+  "direct search streams and locates the 32nd entry while native still caps coverage at 16",
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "workspace-coverage-"));
+    let selected: string | null = null;
+    const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
+    const workspace = createWorkspaceService({
+      documents, pickDirectory: () => Promise.resolve(selected), contentSearchStrategy: "direct",
+    });
+    const progress: ContentSearchProgress[] = [];
+    const rpc = createContentSearchRPC(
+      workspace,
+      async (handle) => (await documents.release({ ...env(), handle })).ok,
+      (event) => progress.push(event)
+    );
+    rpc.setReady(true);
+
+    async function joinFixture(count: number) {
+      const path = join(fixture, String(count));
+      const files = new Map(Array.from({ length: count }, (_, index) => {
+        const name = `note-${String(index + 1).padStart(2, "0")}.md`;
+        return [name, `\uFEFF😀target\r\n${name}`];
+      }));
+      await mkdir(path);
+      for (const [name, raw] of files) await writeFile(join(path, name), raw);
+      selected = path;
+      const canonical = await realpath(path);
+      if (!(await workspace.request({ ...env(), op: "select" })).ok)
+        throw Error("Fixture root not joined");
+      for (let i = 0; i < 1000; i++) {
+        const state = await workspace.request({ ...env(), op: "state" });
+        const root = state.ok && state.roots.find(({ displayPath }) => displayPath === canonical);
+        if (root && root.status === "complete") return { root, files };
+        await Bun.sleep(2);
+      }
+      throw Error("Fixture scan did not complete");
+    }
+
+    try {
+      const { root, files } = await joinFixture(32);
+      const request = {
+        ...env(), op: "query" as const, root: root.handle, generation: root.generation,
+        query: "target", handles: [], fragments: true as const, stream: true as const,
+      };
+      const receipt = await rpc.run(request);
+      expect(validContentSearchResponse(receipt, request)).toBe(true);
+      if (!receipt.ok || receipt.op !== "query") throw Error("Missing direct coverage");
+      expect(receipt.coverage).toHaveLength(32);
+      expect(progress.map(({ sequence }) => sequence)).toEqual(Array.from({ length: 32 }, (_, index) => index + 1));
+      expect(progress.map(({ entry }) => entry)).toEqual(receipt.coverage.map(({ entry }) => entry));
+      expect(progress.every((event) => validContentSearchProgress(event, request))).toBe(true);
+      const last = receipt.coverage[31];
+      expect(progress[31]).toMatchObject({
+        entry: last.entry, sequence: 32, kind: "fragments",
+        fragments: { matches: [{ from: 3, to: 9 }], more: false },
+      });
+      const page = await workspace.request({
+        ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0,
+      });
+      const node = page.ok && page.nodes?.find(({ handle }) => handle === last.entry);
+      if (!node || node.kind !== "file") throw Error("Missing last scan entry");
+      const raw = files.get(node.name);
+      if (raw === undefined) throw Error("Missing last fixture file");
+      expect(last.hash).toBe(createHash("sha256").update(raw).digest("hex"));
+      const prepare = {
+        ...env(), root: root.handle, generation: root.generation, entry: last.entry, expectedHash: last.hash,
+      };
+      const opened = await rpc.prepare(prepare);
+      expect(validContentSearchPrepareResponse(opened, prepare)).toBe(true);
+      if (!opened.ok) throw Error("Missing last-entry fresh snapshot: " + opened.error);
+      if (opened.target.kind !== "open") throw Error("Unexpected last-entry fresh target");
+      const snapshot = opened.target.snapshot;
+      expect(snapshot.text).toBe(raw);
+      const retained = {
+        ...env(), op: "prepare-retained" as const, roots: [{ handle: root.handle, generation: root.generation }],
+        rootEntry: last.entry, entry: snapshot.handle, expectedHash: last.hash,
+      };
+      const reopened = await rpc.prepare(retained);
+      expect(validContentSearchPrepareResponse(reopened, retained)).toBe(true);
+      expect(reopened).toMatchObject({
+        ok: true, target: { kind: "retained", snapshot: {
+          handle: snapshot.handle, documentId: snapshot.documentId, text: raw, explicitStandalone: false,
+        } },
+      });
+
+      const over = await joinFixture(33);
+      const filtered = {
+        ...request, ...env(), root: over.root.handle, generation: over.root.generation,
+        fileFilters: ["note-01.md"],
+      };
+      expect(await rpc.run(filtered)).toEqual({
+        protocolVersion: 1, requestId: filtered.requestId, ok: false, error: "LIMIT",
+      });
+      expect(progress).toHaveLength(32);
+      expect(await documents.release({ ...env(), handle: snapshot.handle })).toMatchObject({ ok: true });
+      const native = await joinFixture(17);
+      expect(await workspace.searchSnapshot(native.root.handle, native.root.generation, "target"))
+        .toEqual({ ok: false, error: "LIMIT", accepted: false });
+    } finally {
+      rpc.setReady(false);
+      await rpc.drain();
+      await workspace.dispose();
+      await documents.dispose();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+  15_000
+);
+
 test.skipIf(childScenario !== "mixed")(
   "searches exact workspace roots and retained standalone grants in one direct budget",
   async () => {
@@ -920,6 +1029,7 @@ test.skipIf(childScenario !== "mixed")(
       await writeFile(sharedBudgetPath, "x".repeat(27_000));
       for (const rootPath of [firstPath, secondPath]) await writeFile(join(rootPath, "budget.md"), "x".repeat(20_000));
       for (let i = 0; i < 8; i++) await writeFile(join(firstPath, `pad-${i}.md`), "");
+      for (let i = 0; i < 16; i++) await writeFile(join(firstPath, `pad-7-extra-${i}.md`), "");
 
       const standalone = await select(standalonePath);
       const hardAlias = await select(aliasPath);
@@ -1047,13 +1157,13 @@ test.skipIf(childScenario !== "mixed")(
       expect(await search(mixed)).toMatchObject({ ok: true });
       expect(await search({ ...mixed, standaloneHandles: [sharedBudget.handle] }))
         .toEqual({ ok: false, error: "LIMIT" });
-      const sixteen = {
+      const atCoverageLimit = {
         ...mixed,
         standaloneHandles: [visible.handle, hidden.handle, handle, hardAlias.handle, oversized.handle],
         fileFilters: ["visible.md"],
       };
-      expect(await search(sixteen)).toEqual({ ok: true, coverage: [evidence(firstEntry, visibleRaw)], mappings: [] });
-      expect(await search({ ...sixteen, standaloneHandles: [...sixteen.standaloneHandles, sharedBudget.handle] }))
+      expect(await search(atCoverageLimit)).toEqual({ ok: true, coverage: [evidence(firstEntry, visibleRaw)], mappings: [] });
+      expect(await search({ ...atCoverageLimit, standaloneHandles: [...atCoverageLimit.standaloneHandles, sharedBudget.handle] }))
         .toEqual({ ok: false, error: "LIMIT" });
       const scoped = await workspace.open({ ...env(), root: second.handle, entry: secondEntry });
       if (!scoped.ok || !scoped.snapshot) throw Error("Missing directory-derived grant");
@@ -1238,7 +1348,7 @@ test.skipIf(childScenario !== "mixed")(
   15_000
 );
 
-for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters", "multi-root", "direct", "mixed"] as const)
+for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters", "multi-root", "direct", "coverage", "mixed"] as const)
   test.skipIf(!!childScenario)(
     `isolated workspace index ${scenario} checks`,
     async () => {

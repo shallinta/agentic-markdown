@@ -33,6 +33,10 @@ function file(owner: WorkspaceRoot, handle: string, relative: string): Workspace
   };
 }
 
+const filesFor = (owner: WorkspaceRoot) => Array.from({ length: owner.entries }, (_, index) =>
+  file(owner, `${owner.handle}-file-${index}`, `note-${index}.md`)
+);
+
 function workspace(roots: WorkspaceRoot[], nodes: FolderState["nodes"]): FolderState {
   return { roots, nodes, coveredHandles: [], busy: false, error: null };
 }
@@ -136,18 +140,18 @@ test("scope enforces total root and file limits before filters can exclude them"
   const manyRoots = Array.from({ length: 17 }, (_, index) => root(String(index), "/" + index, 0));
   expect(captureContentSearchScope(workspace(manyRoots, {}), "all", undefined, selection, [], []))
     .toEqual({ ok: false, error: "limit" });
-  const a = root("a", "/a", 9);
-  const b = root("b", "/b", 8);
-  const nodes = (owner: WorkspaceRoot) => Array.from({ length: owner.entries }, (_, index) =>
-    file(owner, owner.handle + index, "note-" + index + ".md")
-  );
+  const a = root("a", "/a", 17);
+  const b = root("b", "/b", 16);
   expect(captureContentSearchScope(
-    workspace([a, b], { a: nodes(a), b: nodes(b) }), "all", undefined, selection, ["note-1"], []
+    workspace([a, b], { a: filesFor(a), b: filesFor(b) }), "all", undefined, selection, ["note-1"], []
   )).toEqual({ ok: false, error: "limit" });
-  const exact = { ...a, entries: 8 };
-  expect(captureContentSearchScope(
-    workspace([exact, b], { a: nodes(exact), b: nodes(b) }), "all", undefined, selection, [], []
-  )).toMatchObject({ ok: true });
+  const exact = { ...a, entries: 16 };
+  const captured = captureContentSearchScope(
+    workspace([exact, b], { a: filesFor(exact), b: filesFor(b) }), "all", undefined, selection, [], []
+  );
+  if (!captured.ok) throw Error("Missing exact two-root scope");
+  expect(captured.entries.size).toBe(32);
+  expect(captured.entries.get("b-file-15")).toMatchObject({ root: b, name: "note-15.md" });
 });
 
 test("scope stays current only for the same ordered roots, metadata, and exact page refs", () => {
@@ -235,9 +239,24 @@ test("mixed coverage shares prefilter count and filters retained files by logica
   expect(captureContentSearchScope(
     state, "all", undefined, selection, [], [], [leaf("duplicate", first.displayPath)]
   )).toEqual({ ok: false, error: "incomplete" });
+});
+
+test("the independent retained-handle cap still applies within the larger mixed coverage", () => {
+  const selection = { handle: null, revision: 1 };
+  const leaves = Array.from({ length: 16 }, (_, index) => leaf(`leaf-${index}`, `/leaf-${index}.md`));
+  const wide = root("wide", "/wide", 17);
   expect(captureContentSearchScope(
-    state, "all", undefined, selection, ["nothing"], [],
-    Array.from({ length: 15 }, (_, index) => leaf(`leaf-${index}`, `/leaf-${index}.md`))
+    workspace([wide], { wide: filesFor(wide) }), "all", undefined, selection, ["nothing"], [], leaves
+  )).toEqual({ ok: false, error: "limit" });
+  const exact = { ...wide, entries: 16 };
+  const scoped = captureContentSearchScope(
+    workspace([exact], { wide: filesFor(exact) }), "all", undefined, selection, [], [], leaves
+  );
+  if (!scoped.ok) throw Error("Missing exact mixed scope");
+  expect(scoped.entries.size).toBe(32);
+  expect(scoped.standaloneHandles).toEqual(leaves.map(({ handle }) => handle));
+  expect(captureContentSearchScope(
+    workspace([], {}), "all", undefined, selection, [], [], [...leaves, leaf("extra", "/extra.md")]
   )).toEqual({ ok: false, error: "limit" });
 });
 

@@ -163,21 +163,22 @@ function cancel(requestId: string) {
 function pickableFilters(
   roots: readonly WorkspaceRoot[] | undefined,
   nodes: FolderState["nodes"],
-  leaves: readonly DocumentEntry[],
-  single: boolean
+  leaves: readonly DocumentEntry[]
 ) {
   if (!roots || roots.length > CONTENT_SEARCH_LIMITS.roots) return [];
   let count = leaves.length;
   if (count > CONTENT_SEARCH_LIMITS.standaloneHandles ||
       count > CONTENT_SEARCH_LIMITS.coverageDocuments) return [];
+  const pages = roots.map(({ handle }) => nodes[handle] ?? []);
+  if (roots.some((root, index) => root.status !== "complete" || pages[index].length !== root.entries))
+    return [];
+  const published = pages.reduce((total, entries) => total + entries.length, leaves.length);
+  const limit = published <= CONTENT_SEARCH_LIMITS.filteredEntries
+    ? CONTENT_SEARCH_LIMITS.filteredEntries : CONTENT_SEARCH_LIMITS.coverageDocuments;
   const names = new Set(leaves.map(({ fileName }) => fileName));
   const paths = new Set(names);
-  for (const root of roots) {
-    const entries = nodes[root.handle] ?? [];
-    if (entries.length !== root.entries || root.status !== "complete") return [];
-    const limit = single && roots.length === 1 && entries.length <= CONTENT_SEARCH_LIMITS.filteredEntries
-      ? CONTENT_SEARCH_LIMITS.filteredEntries : CONTENT_SEARCH_LIMITS.coverageDocuments;
-    for (const node of entries) {
+  for (const [index, root] of roots.entries()) {
+    for (const node of pages[index]) {
       if (node.kind !== "file") continue;
       if (++count > limit) return [];
       names.add(node.name);
@@ -272,7 +273,7 @@ export function ContentSearchPanel({
   }, [filterText, filters, rootChoices]);
   const pickerGroups = useMemo(
     () => open && ready
-      ? pickableFilters(effectiveRoots, nodes, effectiveKind === "all" ? standalone : [], effectiveKind === "single")
+      ? pickableFilters(effectiveRoots, nodes, effectiveKind === "all" ? standalone : [])
       : [],
     [open, ready, effectiveRoots, nodes, effectiveKind, standalone]
   );
@@ -756,7 +757,7 @@ export function ContentSearchPanel({
           {effectiveRoots?.length && !ready ? <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p> : null}
           <p className="text-muted-foreground text-xs">
             区分大小写，每篇最多显示前三处命中。普通范围最多 {CONTENT_SEARCH_LIMITS.roots} 个文件夹，筛选前合计 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇。
-            可用 file:、path: 或 -path: 缩小范围。超过 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇时，筛选最多检查 {CONTENT_SEARCH_LIMITS.filteredEntries} 个文件、目录和独立文档条目。若选的是当前窗口，请直接输入筛选条件。
+            可选择或输入 file:、path: 或 -path: 缩小范围。超过 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇时，筛选最多检查 {CONTENT_SEARCH_LIMITS.filteredEntries} 个文件、目录和独立文档条目。
             每次最多查询 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇正文，合计 {CONTENT_SEARCH_LIMITS.aggregateBytes / 1024} KiB。
           </p>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void search(); }}>

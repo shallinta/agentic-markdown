@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bs 当前窗口筛选选项（2026-11-06）
+
+alpha.257 已验混合范围的筛选选项及命中定位，部分承接 OBL-006。OBL-006、OBL-018、OBL-026、OBL-035 继续开放，后台索引、自动配额和最终离线留后续。见[F-064bs 迭代](iterations/F-064bs-pick-filters-in-larger-windows.md)。
+
 ## F-064br 缩小当前窗口的正文搜索范围（2026-11-06）
 
 alpha.256 已验混合范围的有界筛选、去重和定位，部分承接 OBL-006。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。混合筛选下拉框、索引调度、自动配额及最终离线继续登记。见[F-064br 迭代](iterations/F-064br-filter-larger-window-search.md)。

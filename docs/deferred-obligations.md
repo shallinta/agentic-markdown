@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-039a 普通 WK 多标签观察（2026-11-07）
+
+1、5 标签实测及现有解析诊断已记录。OBL-024 的 WebKit 资源归因、分类配额、总上限和回收仍待承接。F-072 和副区的可见文档保护保持开放。见[F-039a 迭代](iterations/F-039a-observe-wk-inactive-tab-resources.md)。
+
 ## F-056a / F-053a 剪贴板（2026-11-07）
 
 独立阅读选区已验，编辑与源码模式复制边界继续跟踪。位图已验隔离入站，正式授权、排他写入、编辑事务和拖入保持开放。见[F-056a 迭代](iterations/F-056a-copy-independent-reading-selection.md)和[F-053a 迭代](iterations/F-053a-paste-single-raster-image.md)。

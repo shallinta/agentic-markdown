@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { BigIntStats } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +52,8 @@ let quarantined = false;
 export async function readStableSearchBytes(
   grant: SingleFileAuthorization,
   limit: number,
-  check: () => void
+  check: () => void,
+  observed?: (stat: BigIntStats) => void
 ): Promise<Buffer | null> {
   const before = await verifySingleFileAuthorization(grant, check);
   if (before.size > BigInt(limit)) return null;
@@ -71,6 +73,7 @@ export async function readStableSearchBytes(
     before.mtimeNs !== after.mtimeNs ||
     before.ctimeNs !== after.ctimeNs
   ) throw new DocumentPathError("FILE_CHANGED");
+  observed?.(after);
   return bytes.subarray(0, length);
 }
 

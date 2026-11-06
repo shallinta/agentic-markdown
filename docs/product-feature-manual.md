@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064af 的 alpha.219 已验证已授权单根的内存正文快照。逐篇核对原始字节，文件变更、授权失效或超限时整批拒绝。普通窗口仍使用直接搜索。见[F-064af 迭代](iterations/F-064af-single-root-index-rows.md)。
+
 F-064ae 的 alpha.218 已验证单个授权目录的索引范围身份。同一目录重扫可沿用范围键，旧扫描凭据会失效。普通窗口暂无新增入口。见[F-064ae 迭代](iterations/F-064ae-single-root-index-scope.md)。
 
 F-064ad 的 alpha.217 已验证私有索引槽的只读占用统计。统计按逻辑字节计，目录变化、租约或异常布局会阻止发布计数。普通窗口无新增入口。见[F-064ad 迭代](iterations/F-064ad-private-index-cache-footprint.md)。

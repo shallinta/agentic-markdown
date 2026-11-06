@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync } from "node:fs";
+import { closeSync, type BigIntStats } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 
@@ -58,7 +58,10 @@ import type {
   FolderGrantChange,
 } from "../documents";
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
-import { DocumentPathError, authorizeSingleFile } from "../documents/path-authorization";
+import {
+  DocumentPathError, authorizeSingleFile, verifySingleFileAuthorization,
+  type SingleFileAuthorization,
+} from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
 import { INDEX_LIMITS, keys, record, scalar } from "../index/protocol";
 
@@ -119,12 +122,21 @@ export type { ContentSearchFileProgress } from "../../shared/content-search";
 type ContentSearchFileObserver = (update: ContentSearchFileProgress) => void;
 
 type IndexScopeError = "CANCELLED" | "BUSY" | "STALE" | "NOT_READY" | "UNAVAILABLE" | "LIMIT";
-type IndexScopeCapture =
-  | { ok: false; error: IndexScopeError }
-  | { ok: true; scopeKey: string; current: () => boolean; verify: () => Promise<boolean> };
+interface IndexScopeFailure { ok: false; error: IndexScopeError }
+interface IndexScopeProof { ok: true; scopeKey: string; current: () => boolean; verify: () => Promise<boolean> }
+type IndexScopeCapture = IndexScopeFailure | IndexScopeProof;
+interface IndexRow {
+  readonly entry: string;
+  readonly id: string;
+  readonly raw: string;
+  readonly bytes: number;
+  readonly hash: string;
+}
+type IndexRowsCapture = IndexScopeFailure | (IndexScopeProof & { rows: readonly IndexRow[] });
 
 export interface TrustedWorkspaceService extends WorkspaceService {
   captureIndexScope(handle: string, generation: number, signal?: AbortSignal): Promise<IndexScopeCapture>;
+  captureIndexRows(handle: string, generation: number, signal?: AbortSignal): Promise<IndexRowsCapture>;
   searchSnapshot(
     root: string,
     generation: number,
@@ -318,6 +330,57 @@ export function createWorkspaceService({
       return true;
     };
     return { ok: true as const, root, entries, showHidden, current };
+  }
+  function captureIndexProof(handle: string, generation: number, signal?: AbortSignal) {
+    if (signal?.aborted) return { ok: false, error: "CANCELLED" } as const;
+    if (indexTask) return { ok: false, error: "BUSY" } as const;
+    const captured = captureIndexRoot(handle, generation, signal);
+    if (!captured.ok) return captured;
+    const { authorization } = captured.root;
+    const { directories } = authorization;
+    const directory = directories[directories.length - 1];
+    if (directory?.path !== authorization.path) return { ok: false, error: "UNAVAILABLE" } as const;
+
+    let invalid: IndexScopeError | undefined;
+    const current = () => {
+      if (!invalid && !captured.current())
+        invalid = signal?.aborted ? "CANCELLED" : "STALE";
+      return invalid === undefined;
+    };
+    const check = () => {
+      if (!current()) throw new DocumentPathError("FILE_CHANGED");
+    };
+    const invalidate = (error: unknown) => {
+      const code = record(error) ? error.code : undefined;
+      invalid ??= signal?.aborted || code === "CANCELLED" ? "CANCELLED"
+        : code === "BUSY" ? "BUSY" : code === "TOO_LARGE" ? "LIMIT"
+        : code === "FILE_CHANGED" || code === "INVALID_HANDLE" || code === "ENOENT" || code === "ENOTDIR"
+          ? "STALE" : "UNAVAILABLE";
+    };
+    const verify = async (guard = check) => {
+      if (!current()) return false;
+      try {
+        guard();
+        await verifyRoot(authorization, guard);
+        guard();
+        return current();
+      } catch (error) {
+        invalidate(error);
+        return false;
+      }
+    };
+    const failure = (): IndexScopeFailure => ({
+      ok: false, error: signal?.aborted ? "CANCELLED" : invalid ?? "UNAVAILABLE",
+    });
+    // The key groups snapshots; callers still need live root and file proofs.
+    const scopeKey = createHash("sha256").update(JSON.stringify([
+      1, "agentic-markdown-index-scope", "limited-v1",
+      authorization.path, directory.fingerprint, captured.showHidden,
+    ])).digest("hex");
+    return {
+      ok: true as const, authorization, captured, directory, scopeKey,
+      current, check, invalidate, verify, failure,
+    };
   }
   async function openWorkspaceFile(
     root: Root,
@@ -1509,46 +1572,148 @@ export function createWorkspaceService({
       const current=()=>{check();for(const validate of validations)validate();};current();return {items,incomplete:incomplete||roots.some(root=>root.meta.status!=="complete"),current};
     },
     async captureIndexScope(handle, generation, signal) {
-      if (signal?.aborted) return { ok: false, error: "CANCELLED" };
-      if (indexTask) return { ok: false, error: "BUSY" };
-      const captured = captureIndexRoot(handle, generation, signal);
-      if (!captured.ok) return captured;
-      const { authorization } = captured.root;
-      const { directories } = authorization;
-      const directory = directories[directories.length - 1];
-      if (directory?.path !== authorization.path) return { ok: false, error: "UNAVAILABLE" };
-
-      let invalid: IndexScopeError | undefined;
-      const current = () => {
-        if (!invalid && !captured.current())
-          invalid = signal?.aborted ? "CANCELLED" : "STALE";
-        return invalid === undefined;
-      };
-      const verify = async () => {
-        if (!current()) return false;
-        try {
-          await verifyRoot(authorization, () => {
-            if (!current()) throw new DocumentPathError("FILE_CHANGED");
-          });
-          return current();
-        } catch (error) {
-          const changed = error instanceof DocumentPathError ||
-            (record(error) && (error.code === "ENOENT" || error.code === "ENOTDIR"));
-          invalid ??= signal?.aborted ? "CANCELLED" : changed ? "STALE" : "UNAVAILABLE";
-          return false;
-        }
-      };
+      const scope = captureIndexProof(handle, generation, signal);
+      if (!scope.ok) return scope;
+      const { scopeKey, current, verify, failure } = scope;
       const task = verify();
       indexTask = task;
       try {
-        if (!await task || !current())
-          return { ok: false, error: signal?.aborted ? "CANCELLED" : invalid ?? "UNAVAILABLE" };
-        // The key groups snapshots; callers still need live root and file proofs.
-        const scopeKey = createHash("sha256").update(JSON.stringify([
-          1, "agentic-markdown-index-scope", "limited-v1",
-          authorization.path, directory.fingerprint, captured.showHidden,
-        ])).digest("hex");
-        return { ok: true, scopeKey, current, verify };
+        return (await task) && current()
+          ? { ok: true, scopeKey, current, verify: () => verify() }
+          : failure();
+      } finally {
+        indexTask = undefined;
+      }
+    },
+    async captureIndexRows(handle, generation, signal) {
+      const scope = captureIndexProof(handle, generation, signal);
+      if (!scope.ok) return scope;
+      const { scopeKey, authorization, captured, directory, failure } = scope;
+      const paths = new Set<string>();
+      const ids = new Set<string>();
+      const candidates: { entry: string; id: string; file: ScanFile; directories: RootAuthorization["directories"] }[] = [];
+      for (const [entry, file] of captured.entries) {
+        const path = relativeContentSearchPath(authorization.path, file.path);
+        if (!path || paths.has(path)) return { ok: false, error: "UNAVAILABLE" };
+        const id = createHash("sha256").update(JSON.stringify([
+          1, "agentic-markdown-index-row", scopeKey, path,
+        ])).digest("hex").slice(0, 32);
+        if (ids.has(id)) return { ok: false, error: "UNAVAILABLE" };
+        paths.add(path);
+        ids.add(id);
+        candidates.push({ entry, id, file, directories: [...authorization.directories, ...file.chain] });
+      }
+      type Candidate = (typeof candidates)[number];
+      const checkTrash = (path: string, fingerprint: string, directories: RootAuthorization["directories"]) => {
+        if (!documents.trashBlocked(path, fingerprint, directories)) return;
+        const error = new DocumentPathError("BUSY");
+        scope.invalidate(error);
+        throw error;
+      };
+      const checkRoot = () => {
+        scope.check();
+        checkTrash(authorization.path, directory.fingerprint, authorization.directories);
+      };
+      const checkCandidate = ({ file, directories }: Candidate) =>
+        checkTrash(file.path, file.fingerprint, directories);
+      const current = () => {
+        try {
+          checkRoot();
+          for (const candidate of candidates) checkCandidate(candidate);
+          return true;
+        } catch (error) {
+          scope.invalidate(error);
+          return false;
+        }
+      };
+      async function withFile<T>(
+        candidate: Candidate,
+        use: (grant: SingleFileAuthorization, check: () => void) => Promise<T>
+      ): Promise<T> {
+        const { file } = candidate;
+        const check = () => {
+          checkRoot();
+          checkCandidate(candidate);
+        };
+        check();
+        const grant = await authorizeEntry(
+          authorization, file.path, file.fingerprint, file.chain, captured.showHidden, check
+        );
+        const checkGrant = () => {
+          check();
+          checkTrash(grant.path, grant.fingerprint, grant.directories);
+        };
+        let result: T;
+        try {
+          checkGrant();
+          result = await use(grant, checkGrant);
+          checkGrant();
+        } finally {
+          await grant.file.close();
+        }
+        checkGrant();
+        return result;
+      }
+      const observed: { candidate: Candidate; stat: BigIntStats }[] = [];
+      const verifyRows = async () => {
+        if (!current()) return false;
+        try {
+          for (const { candidate, stat } of observed) {
+            await withFile(candidate, async (grant, check) => {
+              const latest = await verifySingleFileAuthorization(grant, check);
+              if (latest.size !== stat.size || latest.mtimeNs !== stat.mtimeNs || latest.ctimeNs !== stat.ctimeNs)
+                throw new DocumentPathError("FILE_CHANGED");
+            });
+          }
+          return (await scope.verify(checkRoot)) && current();
+        } catch (error) {
+          scope.invalidate(error);
+          return false;
+        }
+      };
+      const verify = async () => {
+        if (indexTask) return false;
+        const task = verifyRows();
+        indexTask = task;
+        try {
+          return (await task) && current();
+        } finally {
+          indexTask = undefined;
+        }
+      };
+      const task = (async (): Promise<IndexRowsCapture> => {
+        try {
+          if (!await scope.verify(checkRoot)) return failure();
+          let remaining: number = INDEX_LIMITS.bytes;
+          const rows: IndexRow[] = [];
+          const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+          for (const candidate of candidates) {
+            const { contents, stat } = await withFile(candidate, async (grant, check) => {
+              let stat: BigIntStats | undefined;
+              const contents = await readStableSearchBytes(grant, remaining, check, (after) => { stat = after; });
+              if (!contents) throw new DocumentPathError("TOO_LARGE");
+              if (!stat) throw Error("Index row version unavailable");
+              return { contents, stat };
+            });
+            const raw = decoder.decode(contents);
+            remaining -= contents.length;
+            observed.push({ candidate, stat });
+            rows.push(Object.freeze({
+              entry: candidate.entry, id: candidate.id, raw, bytes: contents.length,
+              hash: createHash("sha256").update(contents).digest("hex"),
+            }));
+          }
+          if (!await verifyRows()) return failure();
+          return { ok: true, scopeKey, rows: Object.freeze(rows), current, verify };
+        } catch (error) {
+          scope.invalidate(error);
+          return failure();
+        }
+      })();
+      indexTask = task;
+      try {
+        const result = await task;
+        return result.ok && !current() ? failure() : result;
       } finally {
         indexTask = undefined;
       }

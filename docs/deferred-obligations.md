@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064af 单根索引正文快照（2026-11-06）
+
+alpha.219 已验证有界正文快照与文件身份，未写入缓存。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。缓存接入、撤权处置、配额与最终离线继续承接。见[F-064af 迭代](iterations/F-064af-single-root-index-rows.md)。
+
 ## F-064ae 单根索引范围身份（2026-11-06）
 
 alpha.218 已验证单根范围键与当次授权复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。正文快照、撤权后的缓存处置、配额及正式接入和最终离线继续承接。见[F-064ae 迭代](iterations/F-064ae-single-root-index-scope.md)。

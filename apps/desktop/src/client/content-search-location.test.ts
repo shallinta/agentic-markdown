@@ -273,3 +273,105 @@ test("a fresh read-only grant opens as a persistent tab and allows only selectio
     documents.dispose();
   }
 });
+
+const retainedLocation: ContentSearchLocation = {
+  query: "😀中文", from: 4, to: 8, source: "disk", diskHash: hash,
+};
+function retainedFixture(): DocumentSnapshot {
+  return {
+    ...fixture("\uFEFFa\r\n😀中文\r\n"),
+    displayPath: "/fixtures/retained.md",
+    explicitStandalone: true,
+  };
+}
+
+test("closed standalone search hit reuses the retained entry and selects once without taking focus", async () => {
+  const initial = retainedFixture();
+  const reopened = { ...initial, revision: 2 };
+  const { documents, released } = setup([initial]);
+  try {
+    await documents.select();
+    await documents.closeTab(initial.documentId);
+    const entry = documents.getSnapshot().entries[0];
+    const selections: { from: number; to: number }[] = [];
+    documents.registerContentSearchTarget({
+      documentId: initial.documentId,
+      ready: () => true,
+      select: (range) => { selections.push(range); return true; },
+    });
+    expect(await documents.openRetainedContentSearchLocation(
+      entry, (request) => Promise.resolve(respond(request, reopened)), retainedLocation, () => true
+    )).toBe(true);
+    documents.notifyContentSearchTargetReady();
+    await Promise.resolve();
+    expect(selections).toEqual([{ from: 3, to: 7 }]);
+    expect(documents.shouldAutoFocusEditor(initial.documentId)).toBe(false);
+    expect(documents.getSnapshot().tabs).toEqual([reopened]);
+    expect(documents.getSnapshot().entries).toEqual([entry]);
+    expect(released).toEqual([]);
+  } finally {
+    documents.dispose();
+  }
+});
+
+test("late standalone receipts cannot replace a reopened dirty tab or release its grant", async () => {
+  const initial = retainedFixture();
+  const { documents, released } = setup([initial, initial]);
+  try {
+    await documents.select();
+    await documents.closeTab(initial.documentId);
+    const entry = documents.getSnapshot().entries[0];
+    const receipt = Promise.withResolvers<unknown>();
+    let pendingRequest: DocumentRequest | undefined;
+    const locating = documents.openRetainedContentSearchLocation(entry, (request) => {
+      pendingRequest = request;
+      return receipt.promise;
+    }, retainedLocation, () => true);
+    expect(documents.getSnapshot().busy).toBe(false);
+    await documents.select();
+    const opened = documents.getEditor(initial.documentId)!.state;
+    const edit = opened.update({ changes: { from: opened.doc.length, insert: " unsaved" } });
+    expect(documents.updateEditor(initial.documentId, edit)).toBe(true);
+    if (!pendingRequest) throw Error("Expected retained preparation");
+    receipt.resolve(respond(pendingRequest, { ...initial, revision: 2 }));
+    expect(await locating).toBe(false);
+    expect(documents.getSnapshot().tabs).toEqual([initial]);
+    expect(documents.getEditor(initial.documentId)!.state.field(rawText)).toEndWith(" unsaved");
+    expect(released).toEqual([]);
+  } finally {
+    documents.dispose();
+  }
+});
+
+test("cancelled or invalid standalone receipts do not adopt a snapshot or release any grant", async () => {
+  const initial = retainedFixture();
+  const { documents, released } = setup([initial]);
+  try {
+    await documents.select();
+    await documents.closeTab(initial.documentId);
+    const entry = documents.getSnapshot().entries[0];
+    for (const rejected of [
+      { ...initial, handle: crypto.randomUUID() },
+      { ...initial, documentId: crypto.randomUUID() },
+      { ...initial, locationId: crypto.randomUUID() },
+      { ...initial, fileName: "changed.md" },
+      { ...initial, displayPath: "/fixtures/changed.md" },
+      { ...initial, explicitStandalone: false },
+      { ...initial, hash: "c".repeat(64) },
+    ]) {
+      expect(await documents.openRetainedContentSearchLocation(
+        entry, (request) => Promise.resolve(respond(request, rejected)), retainedLocation, () => true
+      )).toBe(false);
+    }
+    let current = true;
+    expect(await documents.openRetainedContentSearchLocation(entry, (request) => {
+      current = false;
+      return Promise.resolve(respond(request, initial));
+    }, retainedLocation, () => current)).toBe(false);
+    expect(documents.getSnapshot().tabs).toEqual([]);
+    expect(documents.getSnapshot().entries).toEqual([entry]);
+    expect(released).toEqual([]);
+  } finally {
+    documents.dispose();
+  }
+});

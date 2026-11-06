@@ -8,7 +8,9 @@ import {
 import type { WorkspaceRoot } from "../shared/workspace";
 
 import { resolveContentSearchRoot } from "./content-search-root";
+import type { DocumentEntry } from "./documents";
 import type { FolderState } from "./workspace";
+import { projectWorkspaceTree } from "./workspace-tree-model";
 
 export type ContentSearchScopeMode = "selected" | "all";
 
@@ -22,23 +24,67 @@ interface ScopeSelection {
   handle: string | null;
   revision: number;
 }
-interface ScopeEntry {
-  root: WorkspaceRoot;
+type ScopeEntry = {
   name: string;
   relativePath?: string;
+  displayPath: string;
+} & (
+  | { root: WorkspaceRoot; standalone?: never }
+  | { root: null; standalone: DocumentEntry }
+);
+
+export function createContentSearchStandaloneProjection() {
+  let previous: { workspace: FolderState; entries: readonly DocumentEntry[] } | undefined;
+  let standalone: readonly DocumentEntry[] = [];
+  return (workspace: FolderState, entries: readonly DocumentEntry[]) => {
+    if (previous?.workspace.roots === workspace.roots &&
+        previous.workspace.nodes === workspace.nodes &&
+        previous.workspace.coveredHandles === workspace.coveredHandles &&
+        previous.entries === entries)
+      return standalone;
+    previous = { workspace, entries };
+    standalone = projectContentSearchStandalone(workspace.roots, workspace.nodes, workspace.coveredHandles, entries);
+    return standalone;
+  };
+}
+
+export function projectContentSearchStandalone(
+  roots: FolderState["roots"],
+  nodes: FolderState["nodes"],
+  coveredHandles: FolderState["coveredHandles"],
+  entries: readonly DocumentEntry[]
+): readonly DocumentEntry[] {
+  const explicit = entries.filter((entry) => entry.explicitStandalone === true);
+  if (!roots.length || !coveredHandles.length || !explicit.length) return explicit;
+  // Only entries with possible coverage need a full visible-tree projection.
+  const covered = new Set(coveredHandles);
+  if (!explicit.some(({ handle }) => covered.has(handle))) return explicit;
+  const tree = projectWorkspaceTree(roots, nodes, coveredHandles, explicit);
+  return (tree.children.get(null) ?? []).flatMap((key) => {
+    const item = tree.items.get(key);
+    return item?.kind === "standalone" ? [item.entry] : [];
+  });
+}
+
+export function sameContentSearchStandalone(left: DocumentEntry, right?: DocumentEntry) {
+  return right?.explicitStandalone === true && left.explicitStandalone === true &&
+    left.handle === right.handle && left.documentId === right.documentId &&
+    left.locationId === right.locationId && left.fileName === right.fileName &&
+    left.displayPath === right.displayPath;
 }
 
 export function resolveContentSearchScope(
   roots: readonly WorkspaceRoot[],
   mode: ContentSearchScopeMode,
   alias: string | undefined,
-  selectedHandle: string | null
+  selectedHandle: string | null,
+  hasStandalone = false
 ): SearchScope | RootFailure {
   if (alias !== undefined || mode === "selected") {
     const resolved = resolveContentSearchRoot(roots, alias, selectedHandle);
     return resolved.ok ? { ok: true, kind: "single", roots: [resolved.root] } : resolved;
   }
-  return roots.length
+  return roots.length || hasStandalone
     ? { ok: true, kind: "all", roots }
     : { ok: false, error: "selection" };
 }
@@ -61,7 +107,8 @@ function sameRoot(left: WorkspaceRoot, right: WorkspaceRoot) {
 type Capture =
   | (SearchScope & {
       entries: ReadonlyMap<string, ScopeEntry>;
-      current(latest: FolderState, selection: ScopeSelection): boolean;
+      standaloneHandles: readonly string[];
+      current(latest: FolderState, selection: ScopeSelection, standalone?: readonly DocumentEntry[]): boolean;
     })
   | RootFailure
   | { ok: false; error: "not-ready" | "limit" | "incomplete" };
@@ -72,9 +119,10 @@ export function captureContentSearchScope(
   alias: string | undefined,
   selection: ScopeSelection,
   fileFilters: readonly string[],
-  pathFilters: readonly ContentSearchPathFilter[]
+  pathFilters: readonly ContentSearchPathFilter[],
+  standalone: readonly DocumentEntry[] = []
 ): Capture {
-  const resolved = resolveContentSearchScope(workspace.roots, mode, alias, selection.handle);
+  const resolved = resolveContentSearchScope(workspace.roots, mode, alias, selection.handle, standalone.length > 0);
   if (!resolved.ok) return resolved;
   if (resolved.roots.length > CONTENT_SEARCH_LIMITS.roots)
     return { ok: false, error: "limit" };
@@ -82,6 +130,9 @@ export function captureContentSearchScope(
     return { ok: false, error: "not-ready" };
 
   const { kind } = resolved;
+  const leaves = kind === "all" ? standalone : [];
+  if (leaves.length > CONTENT_SEARCH_LIMITS.documents)
+    return { ok: false, error: "limit" };
   const roots = resolved.roots.map((root) => ({ ...root }));
   const pages = roots.map(({ handle }) => workspace.nodes[handle]);
   if (roots.some((root, index) =>
@@ -103,7 +154,7 @@ export function captureContentSearchScope(
 
   const entries = new Map<string, ScopeEntry>();
   const needsPath = kind === "all" || pathFilters.length > 0;
-  let fileCount = 0;
+  let fileCount = leaves.length;
   for (const [index, root] of roots.entries()) {
     for (const node of pages[index] ?? []) {
       if (node.kind !== "file") continue;
@@ -120,8 +171,27 @@ export function captureContentSearchScope(
         matchesContentSearchFileFilters(node.name, fileFilters) &&
         (path === undefined || matchesContentSearchPathFilters(path, pathFilters))
       )
-        entries.set(node.handle, { root, name: node.name, relativePath: path });
+        entries.set(node.handle, { root, name: node.name, relativePath: path, displayPath: node.displayPath });
     }
+  }
+
+  const locations = new Set<string>();
+  const documents = new Set<string>();
+  for (const leaf of leaves) {
+    const { handle, locationId, documentId, displayPath, fileName } = leaf;
+    const path = displayPath && relativeContentSearchPath("/", displayPath);
+    if (leaf.explicitStandalone !== true || !path || !handle || !documentId || !locationId ||
+        fileName !== path.slice(path.lastIndexOf("/") + 1) ||
+        handles.has(handle) || paths.has(displayPath) ||
+        locations.has(locationId) || documents.has(documentId))
+      return { ok: false, error: "incomplete" };
+    handles.add(handle);
+    paths.add(displayPath);
+    locations.add(locationId);
+    documents.add(documentId);
+    if (matchesContentSearchFileFilters(fileName, fileFilters) &&
+        matchesContentSearchPathFilters(fileName, pathFilters))
+      entries.set(handle, { root: null, standalone: leaf, name: fileName, displayPath });
   }
 
   const selectionRevision = selection.revision;
@@ -130,15 +200,19 @@ export function captureContentSearchScope(
     kind,
     roots,
     entries,
-    current(latest, selection) {
+    standaloneHandles: leaves.map(({ handle }) => handle),
+    current(latest, selection, currentLeaves = []) {
       if (latest.busy || latest.error ||
           (mode === "selected" && alias === undefined && selection.revision !== selectionRevision))
         return false;
-      const current = resolveContentSearchScope(latest.roots, mode, alias, selection.handle);
+      const current = resolveContentSearchScope(latest.roots, mode, alias, selection.handle, currentLeaves.length > 0);
       return current.ok && current.kind === kind && current.roots.length === roots.length &&
         roots.every((root, index) =>
           sameRoot(root, current.roots[index]) && latest.nodes[root.handle] === pages[index]
-        );
+        ) && (kind === "single" || (
+          currentLeaves.length === leaves.length &&
+          leaves.every((leaf, index) => sameContentSearchStandalone(leaf, currentLeaves[index]))
+        ));
     },
   };
 }

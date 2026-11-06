@@ -1175,7 +1175,7 @@ export function createWorkspaceService({
       return lease;
     }
   });
-  function captureSearchRoster(requested: readonly ContentSearchScopeRoot[], signal?: AbortSignal) {
+  function captureSearchRoster(requested: readonly ContentSearchScopeRoot[], signal?: AbortSignal, exact = true) {
     const roster = [...roots];
     const workspaceEpoch = epoch;
     const selectionGeneration = searchSelectionGeneration;
@@ -1185,8 +1185,8 @@ export function createWorkspaceService({
     if (disposed || indexDisposing || workerStopped)
       return { ok: false, error: "UNAVAILABLE" } as const;
     if (!ready()) return { ok: false, error: "BUSY" } as const;
-    if (requested.length !== roster.length || requested.some(({ handle, generation }, index) =>
-      roster[index]?.meta.handle !== handle || roster[index]?.meta.generation !== generation))
+    if (exact && (requested.length !== roster.length || requested.some(({ handle, generation }, index) =>
+      roster[index]?.meta.handle !== handle || roster[index]?.meta.generation !== generation)))
       return { ok: false, error: "STALE" } as const;
     return {
       ok: true as const,
@@ -1597,21 +1597,23 @@ export function createWorkspaceService({
       if (signal?.aborted) return { ok: false, error: "CANCELLED" };
       if (indexTask) return { ok: false, error: "BUSY" };
       if (!record(input)) return { ok: false, error: "INVALID" };
-      const { entry, expectedHash } = input;
+      const { entry, expectedHash, rootEntry } = input;
+      const anchored = "rootEntry" in input;
       const hasBinding = Object.prototype.hasOwnProperty.call(input, "binding");
       const binding = hasBinding ? input.binding : undefined;
-      if (!keys(input, hasBinding ? "binding,entry,expectedHash,roots" : "entry,expectedHash,roots") ||
+      const expectedKeys = anchored ? "entry,expectedHash,rootEntry,roots"
+        : hasBinding ? "binding,entry,expectedHash,roots" : "entry,expectedHash,roots";
+      if (!keys(input, expectedKeys) ||
           !perfUuid(requestId) || !perfUuid(entry) ||
           typeof expectedHash !== "string" || !hashPattern.test(expectedHash) ||
+          (anchored && (!perfUuid(rootEntry) || "binding" in input)) ||
           (hasBinding && (!validContentSearchDocumentBinding(binding) ||
             binding.handle !== entry || binding.hash !== expectedHash)))
         return { ok: false, error: "INVALID" };
-      const requestedRoots: unknown = input.roots;
-      const requested = validContentSearchScopeRoots(requestedRoots) ? requestedRoots : [];
-      if (!requested.length && (!Array.isArray(requestedRoots) || requestedRoots.length ||
-          Object.keys(requestedRoots).length))
+      const requested: unknown = input.roots;
+      if (!validContentSearchScopeRoots(requested, !anchored) || (anchored && requested.length !== 1))
         return { ok: false, error: "INVALID" };
-      const roster = captureSearchRoster(requested, signal);
+      const roster = captureSearchRoster(requested, signal, !anchored);
       if (!roster.ok) return roster;
       const captures: Extract<ReturnType<typeof captureIndexRoot>, { ok: true }>[] = [];
       for (const { handle, generation } of requested) {
@@ -1625,22 +1627,38 @@ export function createWorkspaceService({
       if (!retained?.readStandalone || !retained.prepareStandaloneSnapshot)
         return { ok: false, error: "STALE" };
       const { path, fingerprint, documentId, revision, hash, readStandalone, prepareStandaloneSnapshot } = retained;
+      const anchor = rootEntry ? captures[0] : undefined;
+      const anchorFile = rootEntry ? anchor?.entries.get(rootEntry) : undefined;
+      if (anchored && (anchorFile?.path !== path ||
+          anchorFile.fingerprint !== fingerprint || anchor?.root.byPath.get(path)?.handle !== rootEntry))
+        return { ok: false, error: "STALE" };
       const visible = () => captures.some(({ root, entries }) => {
         const node = root.byPath.get(path);
         return node !== undefined && entries.has(node.handle);
       });
       const peers = documents.locations().filter((item) => item.path === path);
-      if (visible() || peers.length !== 1 || peers[0].handle !== entry ||
+      if ((!anchored && visible()) || peers.length !== 1 || peers[0].handle !== entry ||
           (binding && (binding.documentId !== documentId || binding.revision !== revision || binding.hash !== hash)))
         return { ok: false, error: "STALE" };
       const check = () => {
         if (signal?.aborted) throw new DocumentPathError("CANCELLED");
-        if (!roster.current() || captures.some((captured) => !captured.current()) || visible())
+        if (!roster.current() || captures.some((captured) => !captured.current()) ||
+            (anchored ? anchor?.root.byPath.get(path)?.handle !== rootEntry : visible()))
           throw new DocumentPathError("FILE_CHANGED");
       };
       const verifyScope = async (current: () => void) => {
         try {
-          for (const { root } of captures) await verifyRoot(root.authorization, current);
+          if (anchor && anchorFile) {
+            const proof = await authorizeEntry(
+              anchor.root.authorization, path, fingerprint, anchorFile.chain, anchor.showHidden, current
+            );
+            await proof.file.close();
+            current();
+            if (documents.trashBlocked(proof.path, proof.fingerprint, proof.directories))
+              throw new DocumentPathError("BUSY");
+          } else {
+            for (const { root } of captures) await verifyRoot(root.authorization, current);
+          }
           current();
         } catch (error) {
           if (record(error) && (error.code === "ENOENT" || error.code === "ENOTDIR"))

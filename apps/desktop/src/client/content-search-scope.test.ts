@@ -4,8 +4,10 @@ import type { WorkspaceNode, WorkspaceRoot } from "../shared/workspace";
 
 import {
   captureContentSearchScope,
+  createContentSearchStandaloneProjection,
   resolveContentSearchScope,
 } from "./content-search-scope";
+import type { DocumentEntry } from "./documents";
 import type { FolderState } from "./workspace";
 
 function root(handle: string, displayPath: string, entries = 1): WorkspaceRoot {
@@ -33,6 +35,18 @@ function file(owner: WorkspaceRoot, handle: string, relative: string): Workspace
 
 function workspace(roots: WorkspaceRoot[], nodes: FolderState["nodes"]): FolderState {
   return { roots, nodes, coveredHandles: [], busy: false, error: null };
+}
+
+function leaf(handle: string, displayPath: string): DocumentEntry {
+  return {
+    handle,
+    documentId: `document-${handle}`,
+    locationId: `location-${handle}`,
+    displayPath,
+    fileName: displayPath.slice(displayPath.lastIndexOf("/") + 1),
+    explicitStandalone: true,
+    writeCapability: { writable: true, reason: "writable" },
+  };
 }
 
 function fixture() {
@@ -72,8 +86,8 @@ test("all scope captures actual owner and relative path before preparing expecte
   const all = captureContentSearchScope(state, "all", undefined, selection, [], []);
   if (!all.ok) throw Error("Missing complete scope");
   expect([...all.entries]).toEqual([
-    ["first", { root: a, name: "纪要.md", relativePath: "项目/纪要.md" }],
-    ["second", { root: b, name: "纪要.md", relativePath: "草稿/纪要.md" }],
+    ["first", { root: a, name: "纪要.md", relativePath: "项目/纪要.md", displayPath: "/group-a/笔记/项目/纪要.md" }],
+    ["second", { root: b, name: "纪要.md", relativePath: "草稿/纪要.md", displayPath: "/group-b/笔记/草稿/纪要.md" }],
   ]);
   const filtered = captureContentSearchScope(
     state, "all", undefined, selection, ["纪要"], [{ kind: "-path", value: "草稿/" }]
@@ -174,4 +188,73 @@ test("single scope watches implicit selection and re-resolves explicit aliases",
   expect(explicit.current({ ...state, roots: [b, { ...a, handle: "readded" }] }, moved))
     .toBe(false);
   expect(exactName.current(state, moved)).toBe(false);
+});
+
+test("current-window scope accepts rootless retained entries and fences their exact ordered roster", () => {
+  const { a, selection } = fixture();
+  const state = workspace([], {});
+  const first = leaf("leaf-a", "/甲/独立.md");
+  const second = leaf("leaf-b", "/乙/独立.md");
+  const scoped = captureContentSearchScope(state, "all", undefined, selection, [], [], [first, second]);
+  if (!scoped.ok) throw Error("Missing rootless scope");
+  expect(scoped.standaloneHandles).toEqual([first.handle, second.handle]);
+  expect(scoped.entries.get(first.handle)).toMatchObject({ root: null, standalone: first });
+  expect(scoped.current(state, selection, [{ ...first }, second])).toBe(true);
+  expect(scoped.current(state, selection, [second, first])).toBe(false);
+  expect(scoped.current(state, selection, [{ ...first, locationId: "changed" }, second])).toBe(false);
+  expect(scoped.current({ ...state, roots: [a] }, selection, [first, second])).toBe(false);
+  expect(captureContentSearchScope(state, "all", "笔记", selection, [], [], [first]))
+    .toEqual({ ok: false, error: "unknown" });
+  for (const malformed of [
+    [first, first],
+    [first, { ...second, documentId: first.documentId }],
+    [first, { ...second, locationId: first.locationId }],
+    [first, { ...second, displayPath: first.displayPath }],
+    [{ ...first, explicitStandalone: false }],
+    [{ ...first, displayPath: "/甲/../独立.md" }],
+    [{ ...first, fileName: "错名.md" }],
+  ]) expect(captureContentSearchScope(state, "all", undefined, selection, [], [], malformed))
+    .toEqual({ ok: false, error: "incomplete" });
+});
+
+test("mixed coverage shares prefilter count and filters retained files by logical basename", () => {
+  const { state, selection, first } = fixture();
+  const retained = leaf("independent", "/甲/单篇.md");
+  const scoped = captureContentSearchScope(
+    state, "all", undefined, selection, ["单篇"], [{ kind: "path", value: "单篇.md" }], [retained]
+  );
+  if (!scoped.ok) throw Error("Missing mixed scope");
+  expect(scoped.standaloneHandles).toEqual([retained.handle]);
+  expect([...scoped.entries.keys()]).toEqual([retained.handle]);
+  const excluded = captureContentSearchScope(
+    state, "all", undefined, selection, [], [{ kind: "path", value: "甲/" }], [retained]
+  );
+  if (!excluded.ok) throw Error("Missing filtered scope");
+  expect(excluded.standaloneHandles).toEqual([retained.handle]);
+  expect(excluded.entries.size).toBe(0);
+  expect(captureContentSearchScope(
+    state, "all", undefined, selection, [], [], [leaf("duplicate", first.displayPath)]
+  )).toEqual({ ok: false, error: "incomplete" });
+  expect(captureContentSearchScope(
+    state, "all", undefined, selection, ["nothing"], [],
+    Array.from({ length: 15 }, (_, index) => leaf(`leaf-${index}`, `/leaf-${index}.md`))
+  )).toEqual({ ok: false, error: "limit" });
+});
+
+test("retained projection follows visible tree absorption and does not discard hidden entries", () => {
+  const { state, selection, first } = fixture();
+  const absorbed = leaf("independent-first", first.displayPath);
+  const hidden = leaf("independent-hidden", "/group-a/笔记/.hidden.md");
+  const derived = { ...leaf("derived", "/other.md"), explicitStandalone: false };
+  const entries = [absorbed, hidden, derived];
+  const project = createContentSearchStandaloneProjection();
+  const before = project(state, entries);
+  expect(before).toEqual([absorbed, hidden]);
+  expect(project({ ...state, busy: true }, entries)).toBe(before);
+  const covered = { ...state, coveredHandles: [absorbed.handle, hidden.handle] };
+  expect(project(covered, entries)).toEqual([hidden]);
+  const scoped = captureContentSearchScope(covered, "all", undefined, selection, [], [], project(covered, entries));
+  if (!scoped.ok) throw Error("Missing projected scope");
+  expect([...scoped.entries.keys()]).toEqual(["first", "second", hidden.handle]);
+  expect(scoped.current(state, selection, project(state, entries))).toBe(false);
 });

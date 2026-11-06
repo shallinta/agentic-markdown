@@ -226,6 +226,13 @@ test("retained prepare wire distinguishes original handles from directory open r
   expect(validContentSearchPrepareResponse({ ...reuse, target: { ...reuse.target, revision: 2 } }, { ...request, binding }))
     .toBe(false);
   expect(validContentSearchPrepareResponse(response, { ...request, binding })).toBe(false);
+  const anchored = { ...request, roots: [queryRoots().roots[0]], rootEntry: crypto.randomUUID() };
+  expect(validContentSearchPrepareRequest(anchored)).toBe(true);
+  expect(validContentSearchPrepareResponse(response, anchored)).toBe(true);
+  expect(validContentSearchPrepareRequest({ ...anchored, roots: [] })).toBe(false);
+  expect(validContentSearchPrepareRequest({ ...anchored, roots: queryRoots().roots })).toBe(false);
+  expect(validContentSearchPrepareRequest({ ...anchored, rootEntry: "/tmp/file.md" })).toBe(false);
+  expect(validContentSearchPrepareRequest({ ...anchored, binding })).toBe(false);
 
   const old = {
     protocolVersion: 1 as const, requestId: request.requestId, root: crypto.randomUUID(),

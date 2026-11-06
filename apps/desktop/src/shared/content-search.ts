@@ -54,6 +54,8 @@ export interface ContentSearchPrepareInput {
 
 export interface ContentSearchRetainedPrepareInput extends Omit<ContentSearchPrepareInput, "root" | "generation"> {
   roots: readonly ContentSearchScopeRoot[];
+  /** The visible root entry for a closed standalone grant already covered by that root. */
+  rootEntry?: string;
 }
 
 type SearchPreparation<Kind extends "open" | "retained"> =
@@ -227,15 +229,18 @@ export function validContentSearchPrepareRequest(
     return false;
   const retained = "op" in value;
   if (retained && value.op !== "prepare-retained") return false;
+  const anchored = retained && "rootEntry" in value;
   const keys = [
     "protocolVersion",
     "requestId",
     ...(retained ? ["op", "roots"] : ["root", "generation"]),
+    ...(anchored ? ["rootEntry"] : []),
     "entry",
     "expectedHash",
   ];
   return (
-    (retained ? validContentSearchScopeRoots(value.roots, true)
+    (retained ? validContentSearchScopeRoots(value.roots, !anchored) &&
+      (!anchored || (value.roots.length === 1 && perfUuid(value.rootEntry) && !("binding" in value)))
       : perfUuid(value.root) && natural(value.generation)) &&
     perfUuid(value.entry) &&
     digest(value.expectedHash) &&

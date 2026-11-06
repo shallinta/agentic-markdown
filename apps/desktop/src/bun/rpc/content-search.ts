@@ -91,6 +91,7 @@ export function createContentSearchRPC(
           ? await workspace.prepareRetainedContentSearchDocument?.({
               roots: prepare.roots, entry: prepare.entry, expectedHash: prepare.expectedHash,
               ...(prepare.binding ? { binding: prepare.binding } : {}),
+              ...(prepare.rootEntry ? { rootEntry: prepare.rootEntry } : {}),
             }, prepare.requestId, request.signal)
           : await workspace.prepareContentSearchDocument?.(prepare, prepare.requestId, request.signal);
         if (!result) return fail("UNAVAILABLE");

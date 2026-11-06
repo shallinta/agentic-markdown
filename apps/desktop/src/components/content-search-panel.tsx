@@ -4,10 +4,13 @@ import { mergeContentSearch } from "@/client/content-search";
 import type { ContentSearchLocation } from "@/client/content-search-location";
 import {
   captureContentSearchScope,
+  createContentSearchStandaloneProjection,
+  projectContentSearchStandalone,
   resolveContentSearchScope,
+  sameContentSearchStandalone,
   type ContentSearchScopeMode,
 } from "@/client/content-search-scope";
-import type { createDocumentController } from "@/client/documents";
+import type { DocumentEntry, createDocumentController } from "@/client/documents";
 import type { FolderState, createFolderWorkspace } from "@/client/workspace";
 import { electrobun } from "@/lib/electrobun";
 import {
@@ -45,6 +48,7 @@ const errors: Record<ContentSearchError, string> = {
 const incomplete = "查询范围不完整，部分文档的内容版本无法确认。";
 const changed = "文件夹或文档状态已变更，请重新查询。";
 const initialStatus = "输入字面量后开始查询。";
+const emptyStandalone: readonly DocumentEntry[] = [];
 const filterErrors = {
   invalid: "筛选条件无效。请检查空值、引号、重复项和路径写法。",
   unsupported: "此处支持 root:、file:、path: 和 -path:。",
@@ -71,11 +75,12 @@ const buttonClass =
 const fieldClass =
   "bg-background focus-visible:outline-ring w-full min-w-0 rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50";
 
-type Query = Extract<ContentSearchRequest, { op: "query" | "query-roots" }>;
+type Query = Extract<ContentSearchRequest, { op: "query" | "query-workspace" }>;
 type Merged = Extract<ReturnType<typeof mergeContentSearch>, { ok: true }>;
 type PresentedHit = Merged["hits"][number] & {
   name: string;
-  root: WorkspaceRoot;
+  root: WorkspaceRoot | null;
+  retained?: DocumentEntry;
   rootLabel: string;
   relativePath?: string;
   location: ContentSearchLocation;
@@ -113,12 +118,14 @@ function cancel(requestId: string) {
 
 function pickableFilters(
   roots: readonly WorkspaceRoot[] | undefined,
-  nodes: FolderState["nodes"]
+  nodes: FolderState["nodes"],
+  leaves: readonly DocumentEntry[]
 ) {
   if (!roots || roots.length > CONTENT_SEARCH_LIMITS.roots) return [];
-  let count = 0;
-  const names = new Set<string>();
-  const paths = new Set<string>();
+  let count = leaves.length;
+  if (count > CONTENT_SEARCH_LIMITS.documents) return [];
+  const names = new Set(leaves.map(({ fileName }) => fileName));
+  const paths = new Set(names);
   for (const root of roots) {
     const entries = nodes[root.handle] ?? [];
     if (entries.length !== root.entries || root.status !== "complete") return [];
@@ -174,17 +181,22 @@ export function ContentSearchPanel({
   const [focusedHit, setFocusedHit] = useState<Pick<PresentedHit, "entry" | "name"> | null>(null);
   const filters = useMemo(() => parseContentSearchFilters(filterText), [filterText]);
   const workspace = folders.getSnapshot();
-  const { roots, nodes } = workspace;
+  const { roots, nodes, coveredHandles } = workspace;
+  const mode = roots.length ? scopeMode : "all";
   const selectedHandle = selectedRoot?.handle ?? null;
   const canResolve = filters.ok;
   const rootAlias = filters.ok ? filters.root?.alias : undefined;
+  const entries = controller.getSnapshot().entries;
+  const standalone = useMemo(() => mode === "all" && rootAlias === undefined
+    ? projectContentSearchStandalone(roots, nodes, coveredHandles, entries)
+    : emptyStandalone, [mode, rootAlias, roots, nodes, coveredHandles, entries]);
   const resolution = useMemo(() => canResolve
-    ? resolveContentSearchScope(roots, scopeMode, rootAlias, selectedHandle)
-    : undefined, [canResolve, roots, scopeMode, rootAlias, selectedHandle]);
+    ? resolveContentSearchScope(roots, mode, rootAlias, selectedHandle, standalone.length > 0)
+    : undefined, [canResolve, roots, mode, rootAlias, selectedHandle, standalone.length]);
   const effectiveRoots = resolution?.ok ? resolution.roots : undefined;
   const effectiveKind = resolution?.ok ? resolution.kind : undefined;
   const searchRoot = effectiveKind === "single" ? effectiveRoots?.[0] : undefined;
-  const ready = !!effectiveRoots?.length && !workspace.busy && !workspace.error &&
+  const ready = !!effectiveRoots && !workspace.busy && !workspace.error &&
     effectiveRoots.every((root) => root.status === "complete" &&
       (nodes[root.handle]?.length ?? 0) === root.entries);
   const filterError = filters.ok
@@ -210,8 +222,10 @@ export function ContentSearchPanel({
     }));
   }, [filterText, filters, rootChoices]);
   const pickerGroups = useMemo(
-    () => open && ready ? pickableFilters(effectiveRoots, nodes) : [],
-    [open, ready, effectiveRoots, nodes]
+    () => open && ready
+      ? pickableFilters(effectiveRoots, nodes, effectiveKind === "all" ? standalone : [])
+      : [],
+    [open, ready, effectiveRoots, nodes, effectiveKind, standalone]
   );
   const pickerOptions = useMemo(() => {
     const previous = filterText.trimEnd();
@@ -330,15 +344,23 @@ export function ContentSearchPanel({
     if (!filters.ok) return;
     const selection = getSelection();
     const workspace = folders.getSnapshot();
+    const mixed = mode === "all" && rootAlias === undefined;
+    const renderRosterCurrent = (latest: FolderState, latestEntries: readonly DocumentEntry[]) =>
+      latest.roots === roots && latest.nodes === nodes &&
+      latest.coveredHandles === coveredHandles && latestEntries === entries;
+    if (mixed && !renderRosterCurrent(workspace, controller.getSnapshot().entries)) {
+      setStatus(changed);
+      return;
+    }
     const scope = captureContentSearchScope(
-      workspace, scopeMode, filters.root?.alias, selection, filters.fileFilters, filters.pathFilters
+      workspace, mode, rootAlias, selection, filters.fileFilters, filters.pathFilters, standalone
     );
     if (!scope.ok) {
       setStatus(scopeErrors[scope.error]);
       return;
     }
     const root = scope.roots[0];
-    if (!root || scope.kind !== effectiveKind ||
+    if ((!root && scope.kind === "single") || scope.kind !== effectiveKind ||
       scope.roots.length !== effectiveRoots?.length ||
       !scope.roots.every(({ handle, generation }, index) =>
         handle === effectiveRoots[index].handle && generation === effectiveRoots[index].generation)
@@ -360,17 +382,27 @@ export function ContentSearchPanel({
       ...(filters.pathFilters.length ? { pathFilters: filters.pathFilters } : {}),
     };
     const request: Query = scope.kind === "all"
-      ? { ...params, op: "query-roots", roots: scope.roots.map(({ handle, generation }) => ({ handle, generation })) }
+      ? { ...params, op: "query-workspace", roots: scope.roots.map(({ handle, generation }) => ({ handle, generation })), standaloneHandles: scope.standaloneHandles }
       : { ...params, op: "query", root: root.handle, generation: root.generation };
     if (!validContentSearchRequest(request)) {
       setStatus(errors.INVALID);
       return;
     }
+    const projectStandalone = createContentSearchStandaloneProjection();
     const search: SearchLifetime = {
       request,
       pending: true,
       scopeCurrent() {
-        return scope.current(folders.getSnapshot(), getSelection());
+        const workspace = folders.getSnapshot();
+        const latestEntries = controller.getSnapshot().entries;
+        const latestStandalone = scope.kind === "single" ? emptyStandalone
+          : renderRosterCurrent(workspace, latestEntries) ? standalone
+            : projectStandalone(workspace, latestEntries);
+        return scope.current(
+          workspace,
+          getSelection(),
+          latestStandalone
+        );
       },
       current() {
         return this.scopeCurrent() && capture.current();
@@ -422,25 +454,40 @@ export function ContentSearchPanel({
       }
       const hits: PresentedHit[] = [];
       const rootNameCounts = new Map<string, number>();
+      const fileNameCounts = new Map<string, number>();
       for (const item of scope.roots)
         rootNameCounts.set(item.name, (rootNameCounts.get(item.name) ?? 0) + 1);
+      for (const { name } of files.values())
+        fileNameCounts.set(name, (fileNameCounts.get(name) ?? 0) + 1);
+      const retainedByPath = new Map<string, DocumentEntry | null>();
+      for (const entry of controller.getSnapshot().entries) {
+        if (entry.explicitStandalone !== true || !entry.displayPath) continue;
+        retainedByPath.set(entry.displayPath, retainedByPath.has(entry.displayPath) ? null : entry);
+      }
       for (const hit of merged.hits) {
         const file = files.get(hit.entry);
         const diskHash = coverage.get(hit.entry)?.hash;
         const binding = bindings.get(hit.entry);
         const version = binding && versions.get(binding.handle);
-        if (!file?.name || !diskHash || ((binding || hit.source === "memory") && !version)) {
+        if (!file?.name || !diskHash || ((binding || hit.source === "memory") && !version) ||
+            (!file.root && binding && binding.handle !== file.standalone.handle) ||
+            (file.root && !binding && retainedByPath.get(file.displayPath) === null)) {
           reset(incomplete);
           return;
         }
         const { from, to, source } = hit;
+        const retained = file.standalone ?? (!binding ? retainedByPath.get(file.displayPath) ?? undefined : undefined);
+        const rootLabel = file.root
+          ? (rootNameCounts.get(file.root.name) ?? 0) > 1
+            ? `${file.root.name} · ${file.root.displayPath}`
+            : file.root.name
+          : (fileNameCounts.get(file.name) ?? 0) > 1 ? `独立文件 · ${file.displayPath}` : "独立文件";
         hits.push({
           ...hit,
           name: file.name,
           root: file.root,
-          rootLabel: (rootNameCounts.get(file.root.name) ?? 0) > 1
-            ? `${file.root.name} · ${file.root.displayPath}`
-            : file.root.name,
+          retained,
+          rootLabel,
           relativePath: file.relativePath,
           binding,
           location: { query, from, to, source, diskHash, version },
@@ -462,12 +509,21 @@ export function ContentSearchPanel({
     }
     retireLocation();
     const activation = controller.getContentSearchActivation();
+    const { retained, root } = hit;
+    const retainedCurrent = () => {
+      if (!retained) return true;
+      const peers = controller.getSnapshot().entries.filter((entry) =>
+        entry.explicitStandalone === true && entry.displayPath === retained.displayPath
+      );
+      return peers.length === 1 && sameContentSearchStandalone(retained, peers[0]);
+    };
     let awaitingPrepare = true;
     const intent: LocationIntent = {
       pendingId: null,
       current: () =>
         location.current === intent &&
         search.scopeCurrent() &&
+        retainedCurrent() &&
         (!awaitingPrepare ||
           (active.current === search &&
             controller.getContentSearchActivation() === activation &&
@@ -481,15 +537,24 @@ export function ContentSearchPanel({
     async function prepare(params: DocumentRequest) {
       if (!intent.current()) return null;
       const { protocolVersion, requestId } = params;
-      const request: ContentSearchPrepareRequest = {
+      const common = {
         protocolVersion,
         requestId,
-        root: hit.root.handle,
-        generation: hit.root.generation,
-        entry: hit.entry,
         expectedHash: hit.location.diskHash,
         ...(hit.binding ? { binding: hit.binding } : {}),
       };
+      const request: ContentSearchPrepareRequest | null = retained
+        ? {
+          ...common,
+          op: "prepare-retained",
+          entry: retained.handle,
+          roots: root
+            ? [{ handle: root.handle, generation: root.generation }]
+            : search.request.op === "query-workspace" ? search.request.roots : [],
+          ...(root ? { rootEntry: hit.entry } : {}),
+        }
+        : root ? { ...common, entry: hit.entry, root: root.handle, generation: root.generation } : null;
+      if (!request) return null;
       intent.pendingId = requestId;
       try {
         const response: unknown =
@@ -520,6 +585,14 @@ export function ContentSearchPanel({
           awaitingPrepare = false;
           positioned = await controller.activateContentSearchLocation(hit.location, intent.current);
         }
+      } else if (retained) {
+        positioned = await controller.openRetainedContentSearchLocation(retained, async (params) => {
+          const target = await prepare(params);
+          if (target?.kind === "retained" && intent.current()) awaitingPrepare = false;
+          return target?.kind === "retained"
+            ? { ...params, ok: true, snapshot: target.snapshot }
+            : { ...params, ok: false, error: intent.current() ? "INVALID_HANDLE" : "CANCELLED" };
+        }, hit.location, intent.current);
       } else {
         positioned = await controller.openContentSearchLocation(async (params) => {
           const target = await prepare(params);
@@ -543,6 +616,7 @@ export function ContentSearchPanel({
 
   const hits: (PresentedHit | (NonNullable<typeof focusedHit> & { location?: undefined }))[] =
     result?.hits ?? (focusedHit ? [focusedHit] : []);
+  const hasWorkspaceFiles = roots.length > 0 || entries.some(({ explicitStandalone }) => explicitStandalone === true);
 
   return (
     <div className="min-w-0 shrink-0">
@@ -550,8 +624,8 @@ export function ContentSearchPanel({
         type="button"
         ref={trigger}
         className={buttonClass}
-        disabled={!workspace.roots.length && !open}
-        title={workspace.roots.length ? undefined : "请先加入文件夹。"}
+        disabled={!hasWorkspaceFiles && !open}
+        title={hasWorkspaceFiles ? undefined : "请先加入文件夹或打开独立文件。"}
         aria-expanded={open}
         aria-controls={open ? resultId : undefined}
         onClick={() => {
@@ -563,18 +637,18 @@ export function ContentSearchPanel({
           setOpen(!open);
         }}
       >
-        搜索文件夹正文
+        搜索正文
       </button>
       {effectiveRoots?.length && !ready && !open ? (
         <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p>
       ) : null}
       {open && (
-        <section id={resultId} aria-label="文件夹正文搜索" className="mt-2 max-h-[40vh] space-y-2 overflow-auto rounded border p-2">
+        <section id={resultId} aria-label="正文搜索" className="mt-2 max-h-[40vh] space-y-2 overflow-auto rounded border p-2">
           <p className="text-muted-foreground break-words text-xs">
             {searchRoot
               ? `搜索范围：${searchRoot.name} · ${searchRoot.displayPath}`
               : effectiveKind === "all"
-                ? `搜索范围：所有已加入的文件夹（${effectiveRoots?.length ?? 0} 个）`
+                ? `搜索范围：当前窗口（${effectiveRoots?.length ?? 0} 个文件夹，${standalone.length} 个独立文件）`
                 : resolution?.ok === false && resolution.error === "selection" ? rootErrors.selection : "请确认搜索范围。"}
           </p>
           {effectiveRoots?.length && !ready ? <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p> : null}
@@ -587,11 +661,11 @@ export function ContentSearchPanel({
               <select
                 id={scopeId}
                 className={fieldClass}
-                value={scopeMode}
+                value={mode}
                 onChange={(event) => changeScope(event.target.value === "all" ? "all" : "selected")}
               >
-                <option value="selected">选中的文件夹</option>
-                <option value="all">所有已加入的文件夹</option>
+                <option value="selected" disabled={!roots.length}>选中的文件夹</option>
+                <option value="all">当前窗口</option>
               </select>
             </div>
             <label className="block text-xs" htmlFor={inputId}>字面量查询</label>

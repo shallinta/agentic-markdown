@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064w 当前窗口正文搜索（2026-11-06）
+
+alpha.209 已验证窗口混合查询、未保存覆盖和独立文件定位。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。普通目录派生标签关闭后的定位由 F-064x 承接，持久增量、流式结果与最终离线继续登记。见[F-064w 迭代](iterations/F-064w-window-content-search-with-standalone.md)。
+
 ## F-064v 混合查询与独立文件定位传输（2026-11-06）
 
 alpha.208 已验证混合查询和独立文件定位 RPC。OBL-006、OBL-018、OBL-026、OBL-035 继续开放，普通窗口入口由下一片接入。见[F-064v 迭代](iterations/F-064v-mixed-content-search-transport.md)。

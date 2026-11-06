@@ -718,10 +718,14 @@ test("retained search preparation reopens the same closed grant and reuses the e
   expect(await readFile(file, "utf8")).toBe(revised);
 });
 
-test("retained preparation rejects duplicate grants and files absorbed by a visible root", async () => {
-  const originalPath = join(directory, "original.md");
-  const aliasPath = join(directory, "alias.md");
-  const hiddenPath = join(directory, ".hidden.md");
+test("retained preparation rejects duplicates and requires a verified anchor for an absorbed file", async () => {
+  const owner = join(directory, "owner");
+  const unrelated = join(directory, "unrelated");
+  await mkdir(owner);
+  await mkdir(unrelated);
+  const originalPath = join(owner, "original.md");
+  const aliasPath = join(owner, "alias.md");
+  const hiddenPath = join(owner, ".hidden.md");
   await writeFile(originalPath, "target");
   await symlink(originalPath, aliasPath);
   await writeFile(hiddenPath, "hidden target");
@@ -741,13 +745,33 @@ test("retained preparation rejects duplicate grants and files absorbed by a visi
   expect(await documents.release({ ...documentEnvelope(), handle: alternate.handle })).toMatchObject({ ok: true });
   expect(await prepare()).toMatchObject({ ok: true, target: { kind: "retained", snapshot: { handle: original.handle } } });
 
-  selected = directory;
+  selected = owner;
   await workspace.request(request("select"));
   const root = (await settle()).roots[0];
   const roots = [{ handle: root.handle, generation: root.generation }];
   expect(await prepare()).toEqual({ ok: false, error: "STALE" });
   expect(await prepare({ ...input, roots })).toEqual({ ok: false, error: "STALE" });
-  expect(await prepare({ roots, entry: hidden.handle, expectedHash: hidden.hash }))
+  const coverage = await workspace.searchContentCandidatesForWorkspace({
+    roots, standaloneHandles: [original.handle], handles: [], query: "target",
+  });
+  const rootEntry = coverage.ok && coverage.coverage[0]?.entry;
+  if (!rootEntry || rootEntry === original.handle) throw Error("Expected absorbed root entry");
+  const anchored = { ...input, roots, rootEntry };
+  expect(await prepare({ ...anchored, roots: [] })).toEqual({ ok: false, error: "INVALID" });
+  expect(await prepare({ ...anchored, rootEntry: crypto.randomUUID() })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare({ ...anchored, entry: hidden.handle, expectedHash: hidden.hash }))
+    .toEqual({ ok: false, error: "STALE" });
+  selected = unrelated;
+  await workspace.request(request("select"));
+  const workspaceRoots = (await settle()).roots.map(({ handle, generation }) => ({ handle, generation }));
+  expect(workspaceRoots).toHaveLength(2);
+  expect(await prepare({ ...anchored, roots: workspaceRoots })).toEqual({ ok: false, error: "INVALID" });
+  expect(await prepare(anchored)).toMatchObject({
+    ok: true, target: { kind: "retained", snapshot: {
+      handle: original.handle, documentId: original.documentId, locationId: original.locationId, text: "target",
+    } },
+  });
+  expect(await prepare({ roots: workspaceRoots, entry: hidden.handle, expectedHash: hidden.hash }))
     .toMatchObject({ ok: true, target: { kind: "retained", snapshot: { handle: hidden.handle, text: "hidden target" } } });
   expect(documents.locations().map(({ handle }) => handle)).toEqual([original.handle, hidden.handle]);
 });

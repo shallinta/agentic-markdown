@@ -99,6 +99,18 @@ export interface SaveViewStatus {
 }
 const locationKey = (snapshot: DocumentEntry) =>
   snapshot.locationId ?? snapshot.documentId;
+const sameRetainedIdentity = (entry: DocumentEntry, peer: DocumentEntry) =>
+  peer.explicitStandalone === true &&
+  peer.handle === entry.handle &&
+  peer.documentId === entry.documentId &&
+  peer.locationId === entry.locationId &&
+  peer.fileName === entry.fileName &&
+  peer.displayPath === entry.displayPath;
+const sharesDocumentLocation = (entry: DocumentEntry, peer: DocumentEntry) =>
+  peer.handle === entry.handle ||
+  peer.documentId === entry.documentId ||
+  locationKey(peer) === locationKey(entry) ||
+  (!!entry.displayPath && peer.displayPath === entry.displayPath);
 
 const ERROR_TEXT: Record<DocumentErrorCode, string> = {
   CANCELLED: "文档请求已取消。",
@@ -681,6 +693,14 @@ export function createDocumentController(
       /* Process shutdown is the final fallback for a failed release request. */
     }
   }
+  function retainedContentSearchEntryCurrent(entry: DocumentEntry) {
+    if (entry.explicitStandalone !== true || !entry.locationId || !entry.displayPath)
+      return false;
+    const peers = state.entries.filter((peer) => sharesDocumentLocation(entry, peer));
+    return peers.length === 1 &&
+      sameRetainedIdentity(entry, peers[0]) &&
+      !state.tabs.some((peer) => sharesDocumentLocation(entry, peer));
+  }
   async function load(
     select: boolean,
     entry?: DocumentEntry,
@@ -690,6 +710,7 @@ export function createDocumentController(
     searchOpen?: {
       current(): boolean;
       hash: string;
+      retained?: DocumentEntry;
       adopt(snapshot: DocumentSnapshot, generation: number): void;
     }
   ) {
@@ -759,12 +780,15 @@ export function createDocumentController(
           editorInputBlocked ||
           !canLeaveEditor() ||
           snapshot.hash !== searchOpen.hash ||
-          state.entries.some(
-            (value) =>
-              value.handle === snapshot.handle ||
-              value.documentId === snapshot.documentId ||
-              locationKey(value) === locationKey(snapshot)
-          ))
+          (searchOpen.retained
+            ? !sameRetainedIdentity(searchOpen.retained, snapshot) ||
+              !retainedContentSearchEntryCurrent(searchOpen.retained)
+            : state.entries.some(
+                (value) =>
+                  value.handle === snapshot.handle ||
+                  value.documentId === snapshot.documentId ||
+                  locationKey(value) === locationKey(snapshot)
+              )))
       ) {
         if (current === generation) publish({ ...state, busy: false });
         return;
@@ -918,7 +942,7 @@ export function createDocumentController(
       searchOpen?.adopt(active, current);
       if (purpose === "user" && current === generation && state.snapshot?.handle === active.handle)
         recordActivation(active);
-      if (previousEntry && previousEntry.handle !== snapshot.handle)
+      if (!searchOpen?.retained && previousEntry && previousEntry.handle !== snapshot.handle)
         void release(previousEntry.handle);
     } catch {
       if (pending === params) cancelPending();
@@ -1118,6 +1142,71 @@ export function createDocumentController(
       canWrite(documentId)
     );
   };
+  async function openSearchLocation(
+    open: (request: DocumentRequest) => Promise<unknown>,
+    location: ContentSearchLocation,
+    current: () => boolean,
+    entry?: DocumentEntry
+  ) {
+    const retained = entry && { ...entry };
+    const preparation = ++contentSearchPreparation;
+    cancelContentSearchLocation?.();
+    if (
+      location.source !== "disk" ||
+      location.version ||
+      !current() ||
+      metadataDisposed ||
+      editorInputBlocked ||
+      !controller.canSelectFolder() ||
+      (retained && !retainedContentSearchEntryCurrent(retained))
+    )
+      return false;
+    const expectedActivation = generation;
+    const intentCurrent = () =>
+      preparation === contentSearchPreparation && current() && !metadataDisposed;
+    const params = request();
+    let prepared: DocumentSnapshot | null = null;
+    let adopted: { snapshot: DocumentSnapshot; generation: number } | undefined;
+    try {
+      // Preparing a hit reads through Bun without making the current editor busy.
+      const response = await open(params);
+      if (!isDocumentResponse(response, params.requestId) || !response.ok) return false;
+      prepared = response.snapshot;
+      if (
+        !prepared ||
+        !intentCurrent() ||
+        expectedActivation !== generation ||
+        editorInputBlocked ||
+        !controller.canSelectFolder() ||
+        (retained && (!sameRetainedIdentity(retained, prepared) ||
+          !retainedContentSearchEntryCurrent(retained)))
+      )
+        return false;
+      const snapshot = prepared;
+      await protect([], () => {
+        if (!intentCurrent() || expectedActivation !== generation || state.busy ||
+            editorInputBlocked || !canLeaveEditor()) return;
+        return load(true, undefined, (params) => Promise.resolve({
+          ...params, ok: true, snapshot,
+        }), undefined, "user", {
+          current: intentCurrent,
+          hash: location.diskHash,
+          retained,
+          adopt: (snapshot, generation) => {
+            adopted = { snapshot, generation };
+          },
+        });
+      });
+    } catch {
+      return false;
+    } finally {
+      if (!retained && prepared && !adopted && !state.entries.some((entry) => entry.handle === prepared?.handle))
+        await release(prepared.handle);
+    }
+    return adopted && intentCurrent()
+      ? locateContentSearch(adopted.snapshot, location, intentCurrent, adopted.generation)
+      : false;
+  }
   const controller = {
     captureContentSearch,
     getContentSearchActivation: () => generation,
@@ -1154,65 +1243,17 @@ export function createDocumentController(
         ? false
         : locateContentSearch(target, location, current, activation);
     },
-    async openContentSearchLocation(
+    openContentSearchLocation: (
       open: (request: DocumentRequest) => Promise<unknown>,
       location: ContentSearchLocation,
       current: () => boolean
-    ) {
-      const preparation = ++contentSearchPreparation;
-      cancelContentSearchLocation?.();
-      if (
-        location.source !== "disk" ||
-        location.version ||
-        !current() ||
-        metadataDisposed ||
-        editorInputBlocked ||
-        !controller.canSelectFolder()
-      )
-        return false;
-      const expectedActivation = generation;
-      const intentCurrent = () =>
-        preparation === contentSearchPreparation && current() && !metadataDisposed;
-      const params = request();
-      let prepared: DocumentSnapshot | null = null;
-      let adopted: { snapshot: DocumentSnapshot; generation: number } | undefined;
-      try {
-        // Preparing a hit reads through Bun without making the current editor busy.
-        const response = await open(params);
-        if (!isDocumentResponse(response, params.requestId) || !response.ok) return false;
-        prepared = response.snapshot;
-        if (
-          !prepared ||
-          !intentCurrent() ||
-          expectedActivation !== generation ||
-          editorInputBlocked ||
-          !controller.canSelectFolder()
-        )
-          return false;
-        const snapshot = prepared;
-        await protect([], () => {
-          if (!intentCurrent() || expectedActivation !== generation || state.busy ||
-              editorInputBlocked || !canLeaveEditor()) return;
-          return load(true, undefined, (params) => Promise.resolve({
-            ...params, ok: true, snapshot,
-          }), undefined, "user", {
-            current: intentCurrent,
-            hash: location.diskHash,
-            adopt: (snapshot, generation) => {
-              adopted = { snapshot, generation };
-            },
-          });
-        });
-      } catch {
-        return false;
-      } finally {
-        if (prepared && !adopted && !state.entries.some((entry) => entry.handle === prepared?.handle))
-          await release(prepared.handle);
-      }
-      return adopted && intentCurrent()
-        ? locateContentSearch(adopted.snapshot, location, intentCurrent, adopted.generation)
-        : false;
-    },
+    ) => openSearchLocation(open, location, current),
+    openRetainedContentSearchLocation: (
+      entry: DocumentEntry,
+      open: (request: DocumentRequest) => Promise<unknown>,
+      location: ContentSearchLocation,
+      current: () => boolean
+    ) => openSearchLocation(open, location, current, entry),
     acquireCreationGate: (): string | null => {
       if (metadataDisposed || editorInputBlocked || !controller.canSelectFolder()) return null;
       const token = crypto.randomUUID();

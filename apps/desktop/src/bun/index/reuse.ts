@@ -173,6 +173,12 @@ async function runIndexReuse(
     if (!opened.ok) return opened;
     let generation = opened.generation;
     if (generation !== (prior?.generation ?? 0)) return fail("SCHEMA");
+    if (exact) {
+      const verified = await session.verifyRoster([...rows].map(([id, { raw }]) => ({ id, raw })));
+      if (!verified.ok && verified.error === "UNKNOWN") return verified;
+      check();
+      if (!verified.ok) return verified;
+    }
     if (changes.length) {
       const applied = await session.applyAndCommit(changes);
       if (applied.ok) nativeGeneration = applied.generation;

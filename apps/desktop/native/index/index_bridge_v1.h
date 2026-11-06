@@ -7,7 +7,8 @@ typedef struct IndexSession IndexSession;
 enum IndexOpenMode { IDX_CREATE_NEW=0, IDX_READER_ONLY=1, IDX_WRITER_EXISTING=2 };
 enum IndexStatus { IDX_OK=0, IDX_INPUT=1, IDX_LIMIT=2, IDX_IO=3,
   IDX_SCHEMA=4, IDX_CLOSED=5, IDX_POISON=6, IDX_READONLY=7, IDX_PANIC=8 };
-enum IndexOp { IDX_APPLY_COMMIT=1, IDX_QUERY=3
+/* VERIFY_ROSTER takes put-only rows with path=id, including an empty count. */
+enum IndexOp { IDX_APPLY_COMMIT=1, IDX_QUERY=3, IDX_VERIFY_ROSTER=5
 #ifdef INDEX_BRIDGE_TEST
   , IDX_LIVE=4, IDX_PRE_PANIC=90, IDX_POST_COMMIT_PANIC=91
 #endif

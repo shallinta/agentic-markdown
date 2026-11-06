@@ -154,6 +154,48 @@ impl IndexSession {
     }rows.sort_by(|a,b|a.0.cmp(&b.0));if rows.windows(2).any(|w|w[0].0==w[1].0){return Err(SCHEMA);}
     Ok(rows.into_iter().map(|(_,s)|s).collect())
  }
+ fn verify_roster(&self, data: &[u8]) -> R<String> {
+    if self.writer.is_some() || self.pending {
+        return Err(INPUT);
+    }
+    let mut cursor = Cursor { data, at: 0 };
+    let count = cursor.u32()?;
+    if count > 16 {
+        return Err(LIMIT);
+    }
+    let mut matches = count == self.live.len();
+    let mut ids = BTreeSet::new();
+    let mut remaining = LIVE_BYTES;
+    for _ in 0..count {
+        let kind = cursor.u32()?;
+        let id_len = cursor.u32()?;
+        let path_len = cursor.u32()?;
+        let raw_len = cursor.u32()?;
+        if kind != 1 {
+            return Err(INPUT);
+        }
+        if id_len > 32 || path_len > 32 || raw_len > remaining {
+            return Err(LIMIT);
+        }
+        let id = text(cursor.bytes(id_len)?, 32)?;
+        let path = text(cursor.bytes(path_len)?, 32)?;
+        let raw = text(cursor.bytes(raw_len)?, remaining)?;
+        if !identity(id) || path != id || !ids.insert(id) {
+            return Err(INPUT);
+        }
+        remaining -= raw_len;
+        matches &= self.live.get(id)
+            .is_some_and(|doc| doc.path.as_str() == id && doc.raw.as_str() == raw);
+    }
+    // Check the entire frame even after finding a divergent live row.
+    if cursor.at != data.len() {
+        return Err(INPUT);
+    }
+    if !matches {
+        return Err(SCHEMA);
+    }
+    Ok(String::new())
+ }
  #[cfg(feature="bridge-test")]
  fn live_rows(&self)->R<String>{if self.pending{return Err(INPUT);}let live=read_live(&self.index,&self.reader,[self.id,self.path,self.raw,self.gram])?;
     let mut out=String::new();for(id,d)in live{writeln!(&mut out,"D\t{id}\t{}\t{}",hex(&d.path),hex(&d.raw)).unwrap();}Ok(out)}
@@ -174,6 +216,7 @@ impl IndexSession {
     let before=session.mutations;
     let result=catch_unwind(AssertUnwindSafe(||match op{
         1=>{session.batch(bytes)?;session.commit()},3=>session.query(text(bytes,16384)?),
+        5=>session.verify_roster(bytes),
         #[cfg(feature="bridge-test")]
         4 if len==0=>session.live_rows(),
         #[cfg(feature="bridge-test")]

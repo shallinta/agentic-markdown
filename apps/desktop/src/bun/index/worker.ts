@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import {
   encodeChanges,
+  encodeIndexRoster,
   INDEX_LIMITS,
   keys,
   natural,
@@ -42,6 +43,7 @@ if (!isNative(loaded) || loaded.version() !== 1)
 const native = loaded;
 let handle: object | undefined;
 let generation = 0;
+let mutations = 0;
 let serial = 0;
 let epoch: number | undefined;
 let faulted = false;
@@ -56,7 +58,7 @@ const unknown = (): IndexResult => ({
 function invoke(
   op: number,
   input: Buffer
-): { code: number; text: string; mutation: number; poisoned: boolean } {
+): { code: number; text: string; outputBytes: number; poisoned: boolean } {
   const output = Buffer.alloc(INDEX_LIMITS.output),
     metadata = Buffer.alloc(32);
   const code = native.call(handle!, op, input, output, metadata);
@@ -72,6 +74,7 @@ function invoke(
   )
     throw Error("INDEX_RESPONSE");
   generation = facts[0]!;
+  mutations = facts[2]!;
   return {
     code,
     text:
@@ -80,7 +83,7 @@ function invoke(
             output.subarray(0, facts[1])
           )
         : "",
-    mutation: facts[2],
+    outputBytes: facts[1],
     poisoned: facts[3] === 1,
   };
 }
@@ -148,6 +151,20 @@ function operate(op: string, payload: unknown): IndexResult {
     return result.code === 0
       ? { ok: true, generation }
       : failure(result.code, result.poisoned);
+  }
+  if (op === "verify-roster") {
+    let bytes: Buffer;
+    try {
+      bytes = encodeIndexRoster(payload);
+    } catch (cause) {
+      return rejected(cause instanceof Error && cause.message === "LIMIT" ? "LIMIT" : "INPUT");
+    }
+    const before = generation;
+    const beforeMutations = mutations;
+    const result = invoke(5, bytes);
+    if (generation !== before || mutations !== beforeMutations || result.outputBytes !== 0 || result.poisoned)
+      throw Error("INDEX_ROSTER_RESPONSE");
+    return result.code === 0 ? { ok: true, generation } : failure(result.code, false);
   }
   if (op === "query") {
     if (!scalar(payload, INDEX_LIMITS.query)) return rejected("INPUT");

@@ -9,7 +9,11 @@ export const INDEX_LIMITS = {
 export type IndexChange =
   | { kind: "put"; id: string; path: string; raw: string }
   | { kind: "delete"; id: string };
-export type IndexOperation = "open" | "apply" | "query" | "close";
+export interface IndexRosterRow {
+  id: string;
+  raw: string;
+}
+export type IndexOperation = "open" | "apply" | "verify-roster" | "query" | "close";
 export interface IndexHit {
   id: string;
   from: number;
@@ -74,7 +78,7 @@ export function validRequest(value: unknown): value is IndexRequest {
     value.epoch > 0 &&
     natural(value.id) &&
     value.id > 0 &&
-    ["open", "apply", "query", "close"].includes(String(value.op)) &&
+    ["open", "apply", "verify-roster", "query", "close"].includes(String(value.op)) &&
     typeof value.op === "string"
   );
 }
@@ -183,4 +187,36 @@ export function encodeChanges(value: unknown): Buffer {
     for (const s of row) at += out.write(s, at, "utf8");
   });
   return out;
+}
+
+export function parseIndexRoster(value: unknown): IndexRosterRow[] {
+  if (!Array.isArray(value)) throw Error("INPUT");
+  if (value.length > INDEX_LIMITS.documents) throw Error("LIMIT");
+  if (Object.keys(value).length !== value.length) throw Error("INPUT");
+  let remaining: number = INDEX_LIMITS.bytes;
+  const rows: IndexRosterRow[] = [];
+  const ids = new Set<string>();
+  for (let index = 0; index < value.length; index++) {
+    if (!Object.prototype.hasOwnProperty.call(value, index)) throw Error("INPUT");
+    const row: unknown = value[index];
+    if (!record(row) || !keys(row, "id,raw") || typeof row.id !== "string" ||
+        !/^[A-Za-z0-9-]{1,32}$/.test(row.id) || ids.has(row.id) || typeof row.raw !== "string")
+      throw Error("INPUT");
+    const { id, raw } = row;
+    if (raw.length > remaining) throw Error("LIMIT");
+    if (!scalar(raw, INDEX_LIMITS.bytes)) throw Error("INPUT");
+    remaining -= Buffer.byteLength(raw);
+    if (remaining < 0) throw Error("LIMIT");
+    ids.add(id);
+    rows.push({ id, raw });
+  }
+  return rows;
+}
+
+/** Same bounded put frame as apply, with opaque IDs also serving as paths. */
+export function encodeIndexRoster(value: unknown): Buffer {
+  const rows = parseIndexRoster(value);
+  return rows.length
+    ? encodeChanges(rows.map(({ id, raw }) => ({ kind: "put", id, path: id, raw })))
+    : Buffer.alloc(4);
 }

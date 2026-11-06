@@ -5,8 +5,9 @@ import {
   validResult,
   scalar,
   encodeChanges,
+  parseIndexRoster,
 } from "./protocol";
-import type { IndexChange, IndexOperation, IndexResult } from "./protocol";
+import type { IndexChange, IndexOperation, IndexResult, IndexRosterRow } from "./protocol";
 import { resolveIndexResources } from "./resources";
 
 interface Waiter {
@@ -16,7 +17,7 @@ interface Waiter {
 }
 type Active = Waiter & { id: number };
 const error = (
-  code: "UNKNOWN" | "CLOSED" | "CANCELLED" | "BUSY" | "UNAVAILABLE" | "INPUT",
+  code: "UNKNOWN" | "CLOSED" | "CANCELLED" | "BUSY" | "UNAVAILABLE" | "INPUT" | "LIMIT",
   accepted = false
 ): IndexResult => ({ ok: false, error: code, accepted });
 /** No window consumers yet. The supplied directory must have the real source/package layout. */
@@ -181,6 +182,13 @@ export function createIndexSession(moduleDirectory = import.meta.dir) {
         return Promise.resolve(error("INPUT"));
       }
       return send("apply", changes);
+    },
+    verifyRoster(rows: readonly IndexRosterRow[]) {
+      try {
+        return send("verify-roster", parseIndexRoster(rows));
+      } catch (cause) {
+        return Promise.resolve(error(cause instanceof Error && cause.message === "LIMIT" ? "LIMIT" : "INPUT"));
+      }
     },
     query: (text: string) =>
       scalar(text, 4096)

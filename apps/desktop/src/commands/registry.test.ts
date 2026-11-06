@@ -67,7 +67,7 @@ test("source mode is a guarded internal command, never a visible product action"
   );
 });
 
-test("the saved reading window is a document-scoped webview command with no shortcut or supplied source", () => {
+test("the independent reading window is a document-scoped webview command with no shortcut or supplied source", () => {
   const forward = mock(() => undefined);
   const open = mock(() => undefined);
   const registry = createCommandRegistry(forward, () => undefined);
@@ -75,7 +75,7 @@ test("the saved reading window is a document-scoped webview command with no shor
   expect(isCommand(command)).toBe(true);
   expect(isCommand({ ...command, args: { handle: crypto.randomUUID() } })).toBe(false);
   expect(COMMAND_META.openReadingSnapshot).toEqual({ target: "webview", palette: false });
-  expect(PRODUCT_COMMANDS.openReadingSnapshot).toEqual({ label: "在阅读窗口打开已保存版本" });
+  expect(PRODUCT_COMMANDS.openReadingSnapshot).toEqual({ label: "在阅读窗口打开当前版本" });
   expect(registry.isCommandEnabled(command.type)).toBe(false);
   let current = false;
   const unregister = registry.registerCommandHandlers({ openReadingSnapshot: open }, { openReadingSnapshot: () => current });

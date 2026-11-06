@@ -16,9 +16,9 @@
 
 ## 最新产品决定：阅读独立子窗口（2026-10-15）
 
-阅读能力保留在 MVP，但承载方式改为独立子窗口；主窗口的主区与副区文档仅在编辑、源码两模式间切换。此为产品规划变更，尚未实现；alpha158 已验阅读仍采用旧主窗形态。本次先记录，继续按依赖顺序推进不受影响的未完成项。
+阅读能力保留在 MVP，承载方式改为独立子窗口。目标是主窗口的主区与副区文档仅在编辑、源码两模式间切换。alpha.275 已支持一个独立阅读窗，打开时展示已保存或当前未保存正文的一次性快照。主窗口旧阅读入口尚待 F-030 迁移。
 
-F-021 承接独立阅读子窗口，F-030 承接主窗双模式及后续跨窗口生命周期；F-032/F-055 的临时预览落点、F-068 的旧编辑/阅读按钮须重评，不能从“独立子窗口”推定单击文件树自动开窗。子窗口数量、一文档或多文档、内容来源及未保存同步、关闭/退出、查找衔接和会话恢复进入对应轮最小设计处理，尚无默认结论，不新增专项禁推进。
+F-021 承接独立阅读子窗口，F-030 承接主窗双模式及后续跨窗口生命周期；F-032/F-055 的临时预览落点、F-068 的旧编辑/阅读按钮须重评，不能从“独立子窗口”推定单击文件树自动开窗。当前仅打开一个独立阅读窗，关闭及退出保护已实测。多窗口、实时同步、跨窗查找衔接和会话恢复按各自轮次处理。
 
 F-041d 已验同模式查找保留；未提交跨模式 nearest 候选冻结保留、不自动回滚，暂停按旧模式发布，跨窗口需要后续重评。窗口派生资源、解析复用与内存生命周期需在实施轮测量，不预设性能数值或声称独立窗口更快。所有完整父项和义务仍开放，历史三模式验收不等于新窗口验收。
 
@@ -413,7 +413,7 @@ MVP 的核心价值是：
 - 首发平台为 macOS，界面语言为简体中文；
 - 支持 `.md` 与 `.markdown`，不支持 `.mdx`；
 - 支持独立文件、多目录工作区、文件树、多标签和左右主副区域；
-- 主窗口含主/副区仅编辑、源码两种文档级模式，阅读改为独立子窗口（尚未实现，细节按顶部最新决定）；
+- 主窗口含主/副区仅编辑、源码两种文档级模式，阅读改为独立子窗口（已具备一次性阅读快照，主窗双模式迁移待完成）；
 - 支持 CommonMark、GFM 和已经确认的内建扩展；
 - 支持手动保存、可选自动保存、外部变化处理、冲突处理和崩溃恢复；
 - 支持文内查找、Quick Open 和当前窗口全文搜索；
@@ -527,7 +527,7 @@ L3 包含两条可以独立推进的主干：阅读与规范 Markdown、目录�
 |---|---:|---|---|---|---|---|
 | F-019 | 1 | Canonical Markdown 与内建扩展基线 | S-01、S-01a、S-07a、Q-16、Q-17、Q-18、G-33 | 硬前置：F-003a、F-005a、F-010 读取/调度/保真；共享约定：F-012 编辑解析的方言、版本与测试语料；F-040 轻量结构（不共享可变 AST）；后续接入：F-021 DOM 更新；F-045～F-051 扩展；F-074 完整一致性 | 部分完成 | [F-019a](iterations/F-019a-canonical-commonmark-foundation.md)alpha.55获用户总体验收；[F-019b](iterations/F-019b-current-document-canonical-parsing.md)alpha.58当前文档解析管线于2026-10-03获授权Agent代验通过，非用户亲验。完整阅读管线、多消费者调度与缓存等余项保留，与编辑解析共享方言而不共享可变 AST。 |
 | F-020 | 2 | 安全渲染与导航协议 | G-15、G-16、G-17 | 硬前置：F-008a 安全基线；实际消费者提供待渲染内容，不等待完整 F-019；共享约定：协议白名单、净化及当前框架新窗/下载约束；后续接入：所有编辑/阅读富内容消费者首次暴露时验收；F-073 汇合 | 部分完成 | [F-020a](iterations/F-020a-rich-content-security-foundation.md)alpha.56固定语料净化及入口保护本片用户总体验收通过；[F-020b](iterations/F-020b-safe-commonmark-reading.md)alpha.62于2026-10-03获授权Agent代验通过；完整消费者与原生风险责任保留。 |
-| F-021 | 3 | 独立阅读模式与内置阅读主题 | R-01、U-02、U-18 | 硬前置：F-019 对应语法解析、F-020 安全、F-007a 外观；共享约定：F-030 模式、F-040 结构位置；后续接入：块级 DOM 更新与阅读主题由本项落实；F-074 一致性 | 部分完成 | [F-021a](iterations/F-021a-basic-reading-mode.md)主区基础阅读alpha.62于2026-10-03获授权Agent代验通过，非用户亲验；[F-021b](iterations/F-021b-window-reading-themes.md)alpha.66非离线本片于2026-10-04受托Agent代验通过、双轴无阻断，非用户亲验；离线子项F-021b-offline-final留最终人工，仍未验收。窗口恢复/副区与完整OBL-029及父功能仍开放。 [F-021c](iterations/F-021c-isolated-reading-window-probe.md)已验独立窗口的合成内容与关闭保护。 [F-021d](iterations/F-021d-saved-reading-snapshot-probe.md)已验已保存正文的有限投递。[F-021e](iterations/F-021e-full-size-reading-snapshot.md)已实测该入口可覆盖现有 1 MiB 文档上限。[F-021f](iterations/F-021f-open-saved-reading-window.md)已验普通包独立阅读入口与关闭保护。[F-021g](iterations/F-021g-independent-reading-themes.md)已验独立阅读窗纸页和墨夜切换。 |
+| F-021 | 3 | 独立阅读模式与内置阅读主题 | R-01、U-02、U-18 | 硬前置：F-019 对应语法解析、F-020 安全、F-007a 外观；共享约定：F-030 模式、F-040 结构位置；后续接入：块级 DOM 更新与阅读主题由本项落实；F-074 一致性 | 部分完成 | [F-021a](iterations/F-021a-basic-reading-mode.md)主区基础阅读alpha.62于2026-10-03获授权Agent代验通过，非用户亲验；[F-021b](iterations/F-021b-window-reading-themes.md)alpha.66非离线本片于2026-10-04受托Agent代验通过、双轴无阻断，非用户亲验；离线子项F-021b-offline-final留最终人工，仍未验收。窗口恢复/副区与完整OBL-029及父功能仍开放。 [F-021c](iterations/F-021c-isolated-reading-window-probe.md)已验独立窗口的合成内容与关闭保护。 [F-021d](iterations/F-021d-saved-reading-snapshot-probe.md)已验已保存正文的有限投递。[F-021e](iterations/F-021e-full-size-reading-snapshot.md)已实测该入口可覆盖现有 1 MiB 文档上限。[F-021f](iterations/F-021f-open-saved-reading-window.md)已验普通包独立阅读入口与关闭保护。[F-021g](iterations/F-021g-independent-reading-themes.md)已验独立阅读窗纸页和墨夜切换。 [F-021h](iterations/F-021h-open-current-buffer-in-independent-reader.md)已验当前未保存正文的一次性快照及真实 1 MiB 往返。 |
 | F-022 | 4 | 图片与本地/远程资源边界 | S-28、G-18、G-19 | 硬前置：F-004a 授权基础、F-020 对应安全；实际资源消费者；共享约定：路径/资源授权、远程资源显式加载；后续接入：F-012 编辑和 F-021 阅读分别接入，不互等完整模式 | 实施中 | [F-022c](iterations/F-022c-local-editing-images.md) alpha142编辑PNG/JPEG非离线有限片已获主线受托代验通过（非用户亲验），最终双轴0必要阻断；Git待执行，完整父/极端canonical/自然IME/offline仍开放。 [F-022b](iterations/F-022b-directory-reading-images.md) alpha.74 目录阅读图片非离线本片已受托代验；父功能仍实施中。[F-022a](iterations/F-022a-local-reading-images.md)alpha.69 非离线本片受托Agent代验通过，非用户亲验，独立双轴0阻断；OBL-010/031局部承接，离线最终人工及其他资源/消费者保持开放，不改变完整本地/远程需求。 [F-022d](iterations/F-022d-one-authorized-image-in-independent-reader.md)已验独立阅读窗的首张授权 PNG/JPEG，多图和大图继续跟踪。 |
 | F-023 | 5 | 原始 HTML 与未知 fenced block 保真 | S-19、S-27 | 硬前置：F-019 对应语法、F-020 安全；共享约定：原文保真与局部降级；后续接入：编辑/阅读呈现分别验收；F-074 汇合 | 部分完成 | [F-023a](iterations/F-023a-safe-reading-html.md)alpha.70独立完整阅读HTML零属性非离线本片于2026-10-04受托Agent代验通过，非用户亲验，两路独立最终0阻断；OBL-032局部承接，行内/资源属性/编辑/未知围栏及离线最终人工保持开放，任何情况不改原文。 |
 | F-024 | 6 | 重型内容按需加载 | Q-13、R-20 | 硬前置：F-005a 调度与实际重型内容消费者；共享约定：模块加载、视口需求、取消与局部降级；后续接入：F-021 阅读及编辑消费者；F-048～F-050 重模块 | 未讨论 | 重型内容接近视口才加载和渲染，失败只影响对应内容块。 |

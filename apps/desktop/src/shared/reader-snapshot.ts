@@ -6,6 +6,10 @@ export const READER_SNAPSHOT_EVENT = "agentic-markdown:reader-snapshot";
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const uuidV4 = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
+type SnapshotDelivery =
+  | { text: string; deliveryId?: string; kind?: never }
+  | { text: string; kind: "buffer"; deliveryId?: never };
+
 export function isReaderSnapshotDeliveryId(value: unknown): value is string {
   return typeof value === "string" && value.length === 36 && uuidV4.test(value);
 }
@@ -35,6 +39,17 @@ export function readerSnapshotDeliveryScript(base64: string, deliveryId?: string
   if (!isCanonicalBase64(base64, READER_SNAPSHOT_MAX_BYTES)) return undefined;
   if (deliveryId !== undefined && !isReaderSnapshotDeliveryId(deliveryId)) return undefined;
   const detail = deliveryId === undefined ? base64 : { protocolVersion: 1, deliveryId, data: base64 };
+  return snapshotEventScript(detail);
+}
+
+export function readerBufferSnapshotDeliveryScript(base64: string): string | undefined {
+  if (decodeReaderSnapshot(base64) === undefined) return undefined;
+  return snapshotEventScript({ protocolVersion: 1, kind: "buffer", data: base64 });
+}
+
+function snapshotEventScript(detail: string | {
+  protocolVersion: number; deliveryId: string; data: string;
+} | { protocolVersion: number; kind: "buffer"; data: string }): string {
   return `window.dispatchEvent(new CustomEvent(${JSON.stringify(READER_SNAPSHOT_EVENT)}, {detail: ${JSON.stringify(detail)}}));`;
 }
 
@@ -50,7 +65,7 @@ export function decodeReaderSnapshot(value: unknown): string | undefined {
 }
 
 /** Only the body delivery can bind the expected image ID for this reader. */
-export function decodeReaderSnapshotDelivery(value: unknown): { text: string; deliveryId?: string } | undefined {
+export function decodeReaderSnapshotDelivery(value: unknown): SnapshotDelivery | undefined {
   if (typeof value === "string") {
     const text = decodeReaderSnapshot(value);
     return text === undefined ? undefined : { text };
@@ -59,6 +74,10 @@ export function decodeReaderSnapshotDelivery(value: unknown): { text: string; de
   try {
     if (Array.isArray(value) || Reflect.ownKeys(value).length !== 3 ||
         readerSnapshotOwnValue(value, "protocolVersion") !== 1) return undefined;
+    if (readerSnapshotOwnValue(value, "kind") === "buffer") {
+      const text = decodeReaderSnapshot(readerSnapshotOwnValue(value, "data"));
+      return text === undefined ? undefined : { text, kind: "buffer" };
+    }
     const deliveryId = readerSnapshotOwnValue(value, "deliveryId");
     if (!isReaderSnapshotDeliveryId(deliveryId)) return undefined;
     const text = decodeReaderSnapshot(readerSnapshotOwnValue(value, "data"));

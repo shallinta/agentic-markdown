@@ -5,7 +5,7 @@ import { PACKAGED_READER_SNAPSHOT_URL } from "../../security/reader-policy";
 import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
 import { parseReaderImageSnapshot, READER_IMAGE_SNAPSHOT_EVENT } from "../../shared/reader-image-snapshot";
-import { decodeReaderSnapshotDelivery, readerSnapshotDeliveryScript, READER_SNAPSHOT_EVENT } from "../../shared/reader-snapshot";
+import { decodeReaderSnapshotDelivery, readerSnapshotDeliveryScript, READER_SNAPSHOT_EVENT, READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import type { ReadingSnapshotImageRead } from "../documents";
 
 import { createReaderLab } from "./reader-lab";
@@ -454,6 +454,78 @@ test("held candidate aborts on deadline, quit suspension, or committed child or 
       expect(f.child.scripts).toHaveLength(1);
     } finally {
       finished.resolve("raster.png");
+      f.lab.dispose();
+    }
+  }
+});
+
+test("unsaved 1 MiB snapshot shares the existing single child without touching file or asset capture", async () => {
+  let candidates = 0;
+  let reads = 0;
+  const f = snapshotFixture(undefined, () => {
+    candidates++;
+    return Promise.resolve("raster.png");
+  });
+  const start = '\uFEFF# 未保存 📖\r\n![资产](raster.png)\r\n`</script>`\r\n';
+  const end = "\r\n末尾\r\n";
+  const text = start + "x".repeat(READER_SNAPSHOT_MAX_BYTES - Buffer.byteLength(start + end)) + end;
+  const data = Buffer.from(text).toString("base64");
+  const oversized = Buffer.from(text + "x").toString("base64");
+  expect(data.length).toBe(oversized.length);
+  const request = { kind: "buffer", data };
+  const open = (input: unknown) => f.lab.openReadingSnapshot(input, f.main);
+  try {
+    f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: () => {
+      reads++;
+      return Promise.resolve(imageResult);
+    } });
+    expect(await open(request)).toEqual({ ok: false, error: "UNAVAILABLE" });
+    f.ready();
+    let accessed = false;
+    for (const invalid of [
+      { ...request, handle: source.handle }, { ...request, deliveryId: crypto.randomUUID() },
+      { ...source, kind: "buffer" }, { ...source, [Symbol("extra")]: true },
+      { ...request, data: 0 }, { ...request, data: "AB==" }, { ...request, data: "/w==" },
+      { ...request, data: oversized }, { ...request, get data() { accessed = true; return data; } },
+    ]) expect(await open(invalid)).toEqual({ ok: false, error: "INVALID_REQUEST" });
+    expect(accessed).toBe(false);
+    expect(f.calls).toEqual([]);
+    const result = open(request);
+    expect(await f.open()).toEqual({ ok: false, error: "BUSY" });
+    await f.registered.promise;
+    f.dom("about:blank");
+    expect(f.child.scripts).toHaveLength(0);
+    f.dom();
+    f.dom();
+    expect(await result).toEqual({ ok: true, submitted: true });
+    const [body] = readDeliveryEvents(f.child.scripts);
+    expect(f.child.scripts).toHaveLength(1);
+    expect(body?.type).toBe(READER_SNAPSHOT_EVENT);
+    expect(decodeReaderSnapshotDelivery(body?.detail)).toEqual({ kind: "buffer", text });
+    expect(f.sources).toEqual([]);
+    expect(candidates).toBe(0);
+    expect(reads).toBe(0);
+    expect(await open(request)).toEqual({ ok: false, error: "BUSY" });
+  } finally {
+    f.lab.dispose();
+  }
+});
+
+test("unsaved pending body retires before exact DOM readiness on navigation, close or timeout", async () => {
+  for (const cause of ["navigate", "close", "suspend", "timeout"] as const) {
+    const f = snapshotFixture(cause === "timeout" ? 10 : undefined);
+    try {
+      f.ready();
+      const pending = f.lab.openReadingSnapshot({ kind: "buffer", data: "5Lit" }, f.main);
+      await f.registered.promise;
+      if (cause === "navigate") { f.lab.retireMainReady(f.main); f.ready(); }
+      if (cause === "close") f.emit("close");
+      if (cause === "suspend") f.lab.suspendSnapshots()();
+      expect(await pending).toEqual({ ok: false, error: cause === "timeout" ? "UNAVAILABLE" : "CANCELLED" });
+      f.dom();
+      expect(f.child.scripts).toHaveLength(0);
+      expect(f.sources).toEqual([]);
+    } finally {
       f.lab.dispose();
     }
   }

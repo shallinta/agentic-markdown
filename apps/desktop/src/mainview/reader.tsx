@@ -154,7 +154,7 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
     scroller.scrollTo(scroller.scrollLeft, nextTop);
   };
   if (auditResult?.safe === false && !experimental) {
-    return <main><p role="alert">无法安全显示已保存版本。</p></main>;
+    return <main><p role="alert">无法安全显示{label}。</p></main>;
   }
   return (
     <main>
@@ -247,19 +247,21 @@ function waitForSnapshot(root: Root) {
     removeReceiver();
     const snapshot = decodeReaderSnapshotDelivery(event instanceof CustomEvent ? event.detail : undefined);
     if (!snapshot) {
-      root.render(<p role="alert">已保存版本无效。</p>);
+      root.render(<p role="alert">阅读快照无效。</p>);
       return;
     }
-    const imageReceiver = snapshot.deliveryId ? createReaderImageReceiver(window, snapshot.deliveryId) : undefined;
-    renderReadingContent(root, { documentId: "reader-snapshot", revision: 1, identity: {}, text: snapshot.text }, "已保存版本", false, imageReceiver);
+    const imageReceiver = snapshot.kind !== "buffer" && snapshot.deliveryId
+      ? createReaderImageReceiver(window, snapshot.deliveryId) : undefined;
+    const label = snapshot.kind === "buffer" ? "未保存快照" : "已保存版本";
+    renderReadingContent(root, { documentId: "reader-snapshot", revision: 1, identity: {}, text: snapshot.text }, label, false, imageReceiver);
   };
   const timer = window.setTimeout(() => {
     removeReceiver();
-    root.render(<p role="alert">未收到已保存版本。</p>);
+    root.render(<p role="alert">未收到阅读快照。</p>);
   }, 5000);
   window.addEventListener(READER_SNAPSHOT_EVENT, receive, { once: true });
   window.addEventListener("pagehide", removeReceiver, { once: true });
-  root.render(<p role="status">等待已保存版本…</p>);
+  root.render(<p role="status">等待阅读快照…</p>);
 }
 
 const container = document.getElementById("root");

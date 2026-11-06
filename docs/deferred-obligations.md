@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-021h 独立阅读窗未保存快照（2026-11-07）
+
+普通窗口已验一次性未保存正文及 1 MiB 实际往返。OBL-029 的恢复、外观组合与最终离线继续跟踪。未保存图片授权、主窗双模式迁移、实时同步和预览保持开放。见[F-021h 迭代](iterations/F-021h-open-current-buffer-in-independent-reader.md)。
+
 ## F-053b / F-022d 图片接入（2026-11-07）
 
 工作区编辑模式已接单张位图写入和一次撤销。拖入、独立文件的资产写权限及目录模板继续跟踪。独立阅读窗已接首张授权图片，多图及更大图片保持开放。OBL-010、OBL-031 与最终离线继续跟踪。见[F-053b 迭代](iterations/F-053b-publish-pasted-raster-image.md)和[F-022d 迭代](iterations/F-022d-one-authorized-image-in-independent-reader.md)。

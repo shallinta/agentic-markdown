@@ -3,8 +3,8 @@ import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
 import { readerImageSnapshotDeliveryScript } from "../../shared/reader-image-snapshot";
-import { readerSnapshotDeliveryScript } from "../../shared/reader-snapshot";
-import type { OpenReadingSnapshotResponse, ReadingSnapshotSource } from "../../shared/rpc";
+import { readerBufferSnapshotDeliveryScript, readerSnapshotDeliveryScript, readerSnapshotOwnValue } from "../../shared/reader-snapshot";
+import type { BufferReadingSnapshotSource, OpenReadingSnapshotResponse, ReadingSnapshotSource } from "../../shared/rpc";
 import { hashPattern } from "../../shared/save-content";
 import type { ReadingSnapshotImageRead, TrustedDocumentService } from "../documents";
 
@@ -52,20 +52,38 @@ interface PendingSnapshot {
   child?: SnapshotReaderWindow;
 }
 
+type SnapshotPreparation = { ok: true; receipt: Omit<SnapshotReceipt, "script"> & { script: string | undefined } } |
+  Extract<OpenReadingSnapshotResponse, { ok: false }>;
+
 function snapshotSource(input: unknown): ReadingSnapshotSource | undefined {
-  if (!perfRecord(input)) return undefined;
-  const keys = Object.keys(input);
-  if (keys.length !== 4 || keys.sort().join(",") !== "documentId,expectedHash,expectedRevision,handle")
+  try {
+    if (!perfRecord(input) || Reflect.ownKeys(input).length !== 4) return undefined;
+    const handle = readerSnapshotOwnValue(input, "handle");
+    const documentId = readerSnapshotOwnValue(input, "documentId");
+    const expectedRevision = readerSnapshotOwnValue(input, "expectedRevision");
+    const expectedHash = readerSnapshotOwnValue(input, "expectedHash");
+    if (
+      !perfUuid(handle) || handle.length !== 36 ||
+      !perfUuid(documentId) || documentId.length !== 36 ||
+      typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) ||
+      expectedRevision < 1 || typeof expectedHash !== "string" ||
+      expectedHash.length !== 64 || !hashPattern.test(expectedHash)
+    ) return undefined;
+    return { handle, documentId, expectedRevision, expectedHash };
+  } catch {
     return undefined;
-  const { handle, documentId, expectedRevision, expectedHash } = input;
-  if (
-    !perfUuid(handle) || handle.length !== 36 ||
-    !perfUuid(documentId) || documentId.length !== 36 ||
-    typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) ||
-    expectedRevision < 1 || typeof expectedHash !== "string" ||
-    expectedHash.length !== 64 || !hashPattern.test(expectedHash)
-  ) return undefined;
-  return { handle, documentId, expectedRevision, expectedHash };
+  }
+}
+
+function bufferSnapshotSource(input: unknown): BufferReadingSnapshotSource | undefined {
+  try {
+    if (!perfRecord(input) || Reflect.ownKeys(input).length !== 2 ||
+        readerSnapshotOwnValue(input, "kind") !== "buffer") return undefined;
+    const data = readerSnapshotOwnValue(input, "data");
+    return typeof data === "string" ? { kind: "buffer", data } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function isReadyAt(event: unknown, url: string): boolean {
@@ -201,7 +219,7 @@ export function createReaderLab(
       const ready = () => !disposed && suspensions === 0 &&
         readyMain === main && main.url === PACKAGED_VIEW_URL;
       if (!snapshot || !ready()) return { ok: false, error: "UNAVAILABLE" };
-      const source = snapshotSource(input);
+      const source = bufferSnapshotSource(input) ?? snapshotSource(input);
       if (!source) return { ok: false, error: "INVALID_REQUEST" };
       if (pending || capturing || reader) return { ok: false, error: "BUSY" };
 
@@ -225,32 +243,39 @@ export function createReaderLab(
       // Keep the capture seat until that work has settled.
       capturing = token;
       const finishCapture = () => { if (capturing === token) capturing = undefined; };
-      void Promise.resolve().then(() =>
-        current() ? snapshot.capture(source, current, snapshot.candidate ? { includeImage: true } : undefined) : undefined
-      ).then((capture) => {
-        finishCapture();
+      void Promise.resolve().then(async (): Promise<SnapshotPreparation | undefined> => {
         if (!current()) return;
-        if (!capture) {
-          token.settle({ ok: false, error: "CANCELLED" });
-          return;
+        if ("kind" in source) {
+          const script = readerBufferSnapshotDeliveryScript(source.data);
+          return script === undefined
+            ? { ok: false, error: "INVALID_REQUEST" }
+            : { ok: true, receipt: { script, current } };
         }
-        if (!capture.ok) {
-          token.settle(capture);
-          return;
-        }
+        const capture = await snapshot.capture(source, current, snapshot.candidate ? { includeImage: true } : undefined);
+        if (!current()) return;
+        if (!capture.ok) return capture;
         const image = snapshot.candidate && capture.readImage
           ? { deliveryId: crypto.randomUUID(), base64: capture.base64, read: capture.readImage }
           : undefined;
         const script = readerSnapshotDeliveryScript(capture.base64, image?.deliveryId);
-        if (!capture.current()) {
+        return { ok: true, receipt: { script, current: capture.current, image } };
+      }).then((prepared) => {
+        finishCapture();
+        if (!current()) return;
+        if (!prepared?.ok) {
+          token.settle(prepared ?? { ok: false, error: "CANCELLED" });
+          return;
+        }
+        const receipt = prepared.receipt;
+        if (!receipt.current()) {
           token.settle({ ok: false, error: "CANCELLED" });
           return;
         }
-        if (script === undefined) {
+        if (receipt.script === undefined) {
           token.settle({ ok: false, error: "UNAVAILABLE" });
           return;
         }
-        token.receipt = { script, current: capture.current, image };
+        token.receipt = { ...receipt, script: receipt.script };
         setOwner("opening");
         const child = snapshot.open();
         token.child = child;

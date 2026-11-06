@@ -22,7 +22,7 @@ import {
 } from "../shared/documents";
 import type { FolderRemovalPublication, FolderRemovalDocument } from "../shared/folder-removal";
 import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
-import type { ReadingSnapshotSource } from "../shared/rpc";
+import type { BufferReadingSnapshotSource, ReadingSnapshotSource } from "../shared/rpc";
 import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
 import type { TrashAffected, TrashPublication } from "../shared/trash-document";
 import type { WorkspaceOpenRequest } from "../shared/workspace";
@@ -139,6 +139,24 @@ const ERROR_TEXT: Record<DocumentErrorCode, string> = {
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
+
+function encodeReadingBuffer(raw: string): BufferReadingSnapshotSource | undefined {
+  const bytes = new TextEncoder().encode(raw);
+  if (bytes.length > READER_SNAPSHOT_MAX_BYTES ||
+      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) !== raw)
+    return undefined;
+  let binary = "";
+  for (let start = 0; start < bytes.length; start += 8192)
+    binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
+  return { kind: "buffer", data: btoa(binary) };
+}
+
+const savedReadingSource = (snapshot: DocumentSnapshot): ReadingSnapshotSource => ({
+  handle: snapshot.handle,
+  documentId: snapshot.documentId,
+  expectedRevision: snapshot.revision,
+  expectedHash: snapshot.hash,
+});
 
 /** Validate the trust boundary in both directions, not just TS call sites. */
 export function isDocumentResponse(
@@ -460,6 +478,22 @@ export function createDocumentController(
     )
       return "risky";
     return editor.state.field(rawText) === tab.text ? "clean" : "dirty";
+  }
+  function independentReadingCandidate() {
+    const snapshot = state.snapshot;
+    if (!snapshot || metadataDisposed || state.frozen || state.busy || state.stale ||
+        editorInputBlocked || !canLeaveEditor()) return undefined;
+    const editor = editors.get(snapshot.documentId);
+    if (!editor) return undefined;
+    const status = searchDocumentStatus(snapshot, editor);
+    if (status === "clean" && snapshot.byteLength <= READER_SNAPSHOT_MAX_BYTES)
+      return { kind: "saved", snapshot, editor } as const;
+    if (status === "dirty" && !reading.has(snapshot.documentId) && !isSafeSource(editor.state)) {
+      const raw = editor.state.field(rawText);
+      if (raw.length <= READER_SNAPSHOT_MAX_BYTES)
+        return { kind: "buffer", snapshot, editor, raw } as const;
+    }
+    return undefined;
   }
   function captureContentSearch(): ContentSearchCapture {
     checkContentSearch = undefined;
@@ -1316,11 +1350,19 @@ export function createDocumentController(
           editorInputBlocked || !canLeaveEditor() || snapshot.byteLength > READER_SNAPSHOT_MAX_BYTES ||
           searchDocumentStatus(snapshot, editors.get(snapshot.documentId)) !== "clean")
         return null;
+      return savedReadingSource(snapshot);
+    },
+    getIndependentReadingSnapshotKind: () => independentReadingCandidate()?.kind,
+    captureIndependentReadingSnapshot() {
+      const candidate = independentReadingCandidate();
+      if (!candidate) return undefined;
+      const { handle, documentId, revision } = candidate.snapshot;
       return {
-        handle: snapshot.handle,
-        documentId: snapshot.documentId,
-        expectedRevision: snapshot.revision,
-        expectedHash: snapshot.hash,
+        kind: candidate.kind,
+        origin: { handle, documentId, revision, bufferRevision: candidate.editor.revision, activation: generation },
+        request: candidate.kind === "saved"
+          ? savedReadingSource(candidate.snapshot)
+          : encodeReadingBuffer(candidate.raw),
       };
     },
     getContentSearchActivation: () => generation,

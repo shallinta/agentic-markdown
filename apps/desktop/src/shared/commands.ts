@@ -324,7 +324,7 @@ export const PRODUCT_COMMANDS: Partial<
   dedentSource: { label: "代码内容反缩进", shortcut: "⇧Tab / ⌘[" },
   readingThemePaper: { label: "阅读主题：纸页" },
   readingThemeInk: { label: "阅读主题：墨夜" },
-  openReadingSnapshot: { label: "在阅读窗口打开已保存版本" },
+  openReadingSnapshot: { label: "在阅读窗口打开当前版本" },
   toggleReadingMode: { label: "切换编辑 / 阅读模式" },
   undoDocument: {
     label: "撤销",

@@ -28,6 +28,11 @@ export interface ReadingSnapshotSource {
   expectedHash: string;
 }
 
+export interface BufferReadingSnapshotSource {
+  kind: "buffer";
+  data: string;
+}
+
 export type OpenReadingSnapshotResponse =
   | { ok: true; submitted: true }
   | { ok: false; error: DocumentErrorCode | "UNAVAILABLE" };
@@ -44,7 +49,7 @@ export interface DesktopRPCType {
       revealDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       openDefaultDocument: { params: DocumentHandleRequest; response: DocumentResponse };
       openReadingSnapshot: {
-        params: ReadingSnapshotSource;
+        params: ReadingSnapshotSource | BufferReadingSnapshotSource;
         response: OpenReadingSnapshotResponse;
       };
       recentFiles: {

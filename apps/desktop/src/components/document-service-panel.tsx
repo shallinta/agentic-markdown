@@ -678,26 +678,31 @@ export function StandaloneFileList({ workspace, visible }: { workspace: Workspac
   );
 }
 
-function SavedReadingWindowAction({ controller, snapshot, buttonClass }: {
+function ReadingWindowAction({ controller, snapshot, buttonClass }: {
   controller: Workspace["controller"];
   snapshot: Workspace["state"]["snapshot"];
   buttonClass: string;
 }) {
   const pending = useRef(false);
-  const [feedback, setFeedback] = useState<{ handle: string; revision: number; text: string }>();
+  type Origin = NonNullable<ReturnType<typeof controller.captureIndependentReadingSnapshot>>["origin"];
+  const [feedback, setFeedback] = useState<{ origin: Origin; text: string }>();
   const { executeCommand, isCommandEnabled } = useCommands();
-  const canOpen = () => !pending.current && !!electrobun.rpc && !!controller.captureReadingSnapshotSource();
+  const canOpen = () => !pending.current && !!electrobun.rpc && !!controller.getIndependentReadingSnapshotKind();
   const open = async () => {
     if (pending.current) return;
-    const source = controller.captureReadingSnapshotSource();
+    const capture = controller.captureIndependentReadingSnapshot();
     const rpc = electrobun.rpc;
-    if (!source || !rpc) return;
-    const report = (text: string) => setFeedback({ handle: source.handle, revision: source.expectedRevision, text });
+    if (!capture || !rpc) return;
+    const report = (text: string) => setFeedback({ origin: capture.origin, text });
+    if (!capture.request) {
+      report("当前正文无法完整编码为未保存快照。");
+      return;
+    }
     pending.current = true;
-    report("正在提交已保存版本…");
+    report(capture.kind === "buffer" ? "正在提交未保存快照…" : "正在提交已保存版本…");
     notify();
     try {
-      const result = await rpc.request.openReadingSnapshot(source, { maxRequestTime: 12000 });
+      const result = await rpc.request.openReadingSnapshot(capture.request, { maxRequestTime: 12000 });
       if (result?.ok === true && result.submitted === true)
         report("已提交打开请求，请在阅读窗口核对。");
       else if (result?.ok === false && result.error === "BUSY")
@@ -712,11 +717,14 @@ function SavedReadingWindowAction({ controller, snapshot, buttonClass }: {
   };
   const notify = useRegisterCommands({ openReadingSnapshot: open }, true, { openReadingSnapshot: canOpen });
   if (!snapshot) return null;
-  const message = controller.isDirty(snapshot.documentId)
-    ? "请先手动保存当前文档。"
-    : feedback?.handle === snapshot.handle && feedback.revision === snapshot.revision
-      ? feedback.text
-      : undefined;
+  const kind = controller.getIndependentReadingSnapshotKind();
+  const dirty = controller.isDirty(snapshot.documentId);
+  const origin = feedback?.origin;
+  const message = origin?.handle === snapshot.handle && origin.documentId === snapshot.documentId &&
+      origin.revision === snapshot.revision && origin.activation === controller.getContentSearchActivation() &&
+      origin.bufferRevision === controller.getEditor(snapshot.documentId)?.revision
+    ? feedback?.text
+    : dirty && !kind ? "当前状态无法打开未保存快照。" : undefined;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button
@@ -724,7 +732,9 @@ function SavedReadingWindowAction({ controller, snapshot, buttonClass }: {
         disabled={!isCommandEnabled("openReadingSnapshot")}
         onClick={() => executeCommand({ type: "openReadingSnapshot", args: {} })}
       >
-        {PRODUCT_COMMANDS.openReadingSnapshot?.label}
+        {kind === "buffer" || dirty
+          ? "在阅读窗口打开当前未保存内容"
+          : "在阅读窗口打开已保存版本"}
       </button>
       <span className="text-muted-foreground text-sm" role="status">{message}</span>
     </div>
@@ -841,7 +851,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           __AGENTIC_MARKDOWN_READER_SNAPSHOT_ENABLED__?: boolean;
         }
       ).__AGENTIC_MARKDOWN_READER_SNAPSHOT_ENABLED__ === true && (
-        <SavedReadingWindowAction controller={controller} snapshot={snapshot} buttonClass={buttonClass} />
+        <ReadingWindowAction controller={controller} snapshot={snapshot} buttonClass={buttonClass} />
       )}
       {!snapshot &&
         !workspace.folderState.roots.length &&

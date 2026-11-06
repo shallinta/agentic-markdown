@@ -16,6 +16,7 @@ import type {
   DocumentResponse,
   DocumentSnapshot,
 } from "../shared/documents";
+import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
 import { documentCapabilitySuffix } from "./document-status-label";
@@ -253,6 +254,94 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
     controller: createDocumentController(transport, confirmDiscard),
   };
 }
+
+test("independent reading captures clean authority or only the current editing and source buffer bytes", async () => {
+  for (const mode of ["editing", "source"] as const) {
+    const { controller, transport, value } = setup();
+    const original = "\uFEFF# 已保存\r\n第二行\r末行";
+    value.text = original;
+    value.byteLength = Buffer.byteLength(original);
+    value.fidelity = analyzeTextFidelity(original);
+    let saves = 0;
+    transport.saveDocument = () => { saves++; return Promise.reject(Error("unexpected save")); };
+    await controller.select();
+    const clean = controller.captureIndependentReadingSnapshot();
+    expect(clean?.kind).toBe("saved");
+    expect(clean?.request).toEqual({
+      handle: value.handle, documentId: value.documentId,
+      expectedRevision: value.revision, expectedHash: value.hash,
+    });
+    expect(clean?.request).toEqual(controller.captureReadingSnapshotSource() ?? undefined);
+    if (mode === "source") expect(controller.toggleSourceMode()).toBe(true);
+    const editor = controller.getEditor(value.documentId)!;
+    const appended = " 中文📖 <script>样本</script>";
+    const edit = editor.state.update({
+      changes: { from: editor.state.doc.length, insert: appended },
+      selection: { anchor: 2 },
+    });
+    expect(controller.updateEditor(value.documentId, edit)).toBe(true);
+    const active = controller.getEditor(value.documentId);
+    const before = controller.getSnapshot();
+    const history = undoDepth(active!.state);
+    expect(controller.getIndependentReadingSnapshotKind()).toBe("buffer");
+    const capture = controller.captureIndependentReadingSnapshot();
+    expect(capture?.kind).toBe("buffer");
+    expect(capture?.request).toEqual({
+      kind: "buffer", data: Buffer.from(original + appended).toString("base64"),
+    });
+    expect(capture?.origin.bufferRevision).toBe(active!.revision);
+    expect(controller.captureReadingSnapshotSource()).toBeNull();
+    expect(controller.getSnapshot()).toBe(before);
+    expect(controller.getEditor(value.documentId)).toBe(active);
+    expect(undoDepth(active!.state)).toBe(history);
+    expect(controller.getMode(value.documentId)).toBe(mode);
+    expect(controller.isDirty(value.documentId)).toBe(true);
+    expect(saves).toBe(0);
+    controller.dispose();
+  }
+});
+
+test("independent dirty snapshot respects input and lifecycle gates and rejects invalid Unicode", async () => {
+  const { controller, value } = setup();
+  expect(controller.captureIndependentReadingSnapshot()).toBeUndefined();
+  await controller.select();
+  const first = controller.getEditor(value.documentId)!.state;
+  expect(controller.updateEditor(value.documentId, first.update({ changes: { from: first.doc.length, insert: "未保存" } }))).toBe(true);
+  const releaseInteraction = controller.setInteractionCheck(() => false);
+  expect(controller.getIndependentReadingSnapshotKind()).toBeUndefined();
+  expect(controller.captureIndependentReadingSnapshot()).toBeUndefined();
+  releaseInteraction();
+  controller.setEditorInputBlocked(true);
+  expect(controller.captureIndependentReadingSnapshot()).toBeUndefined();
+  controller.setEditorInputBlocked(false);
+  expect(controller.beginDiscard()).toBe(true);
+  expect(controller.captureIndependentReadingSnapshot()).toBeUndefined();
+  controller.endDiscard();
+  expect(controller.toggleReadingMode()).toBe(true);
+  expect(controller.captureIndependentReadingSnapshot()).toBeUndefined();
+  expect(controller.toggleReadingMode()).toBe(true);
+  const dirty = controller.getEditor(value.documentId)!.state;
+  expect(controller.updateEditor(value.documentId, dirty.update({ changes: { from: dirty.doc.length, insert: "\uD800" } }))).toBe(true);
+  expect(controller.captureIndependentReadingSnapshot()).toMatchObject({ kind: "buffer", request: undefined });
+  expect(controller.isDirty(value.documentId)).toBe(true);
+  reportEditorFault(controller.getEditorFault(value.documentId)!, "presentation");
+  expect(controller.captureIndependentReadingSnapshot()).toBeUndefined();
+  controller.dispose();
+});
+
+test("independent buffer encodes the exact one MiB raw boundary without changing the editor", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const editor = controller.getEditor(value.documentId)!;
+  const appended = "x".repeat(READER_SNAPSHOT_MAX_BYTES - value.byteLength);
+  const changed = editor.state.update({ changes: { from: editor.state.doc.length, insert: appended } });
+  expect(controller.updateEditor(value.documentId, changed)).toBe(true);
+  const before = controller.getEditor(value.documentId);
+  const capture = controller.captureIndependentReadingSnapshot();
+  expect(capture?.request).toEqual({ kind: "buffer", data: Buffer.from(value.text + appended).toString("base64") });
+  expect(controller.getEditor(value.documentId)).toBe(before);
+  controller.dispose();
+});
 
 test("pinned tabs keep original order and editor state, and explicit close follows the visual order", async () => {
   let discard = false;

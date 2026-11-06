@@ -354,16 +354,61 @@ export function createWorkspaceService({
       (root.meta.showHidden ?? false) === showHidden && root.registry.version() === scanVersion;
     return { ok: true as const, root, files, showHidden, current };
   }
+  function captureFilteredRootMetadata(root: Root) {
+    const { nodes, byPath, files, directories, registry } = root;
+    const count = nodes.length;
+    const limit = CONTENT_SEARCH_LIMITS.filteredRootEntries;
+    if (count > limit || byPath.size > limit || files.size + directories.size > limit)
+      return { ok: false, error: "LIMIT" } as const;
+    if (root.meta.entries !== count || byPath.size !== count)
+      return { ok: false, error: "UNAVAILABLE" } as const;
+    const handles = new Set<string>();
+    const directoryProofs: [string, ScanDirectory][] = [];
+    let fileCount = 0;
+    for (const node of nodes) {
+      const { handle, displayPath, kind, name } = node;
+      if (handles.has(handle) || byPath.get(displayPath) !== node || basename(displayPath) !== name ||
+          relativeContentSearchPath(root.authorization.path, displayPath) === undefined)
+        return { ok: false, error: "UNAVAILABLE" } as const;
+      handles.add(handle);
+      const file = files.get(handle);
+      const directory = directories.get(handle);
+      if (kind === "file") {
+        if (file?.path !== displayPath || directory) return { ok: false, error: "UNAVAILABLE" } as const;
+        fileCount++;
+      } else {
+        if (file) return { ok: false, error: "UNAVAILABLE" } as const;
+        const registered = registry.get(displayPath);
+        if (directory || registered) {
+          if (directory?.path !== displayPath || registered?.proof.fingerprint !== directory.fingerprint)
+            return { ok: false, error: "UNAVAILABLE" } as const;
+          directoryProofs.push([handle, directory]);
+        }
+      }
+    }
+    if (fileCount !== files.size || directoryProofs.length !== directories.size)
+      return { ok: false, error: "UNAVAILABLE" } as const;
+    const published = [...nodes];
+    const current = () => root.nodes === nodes && root.byPath === byPath && root.directories === directories &&
+      root.meta.entries === count && nodes.length === count && byPath.size === count &&
+      directories.size === directoryProofs.length &&
+      published.every((node, index) => nodes[index] === node && byPath.get(node.displayPath) === node) &&
+      directoryProofs.every(([handle, proof]) => directories.get(handle) === proof);
+    return { ok: true as const, current };
+  }
   function captureIndexRoot(
-    handle: string, generation: number, signal?: AbortSignal, coverageLimit: number = INDEX_LIMITS.documents
+    handle: string, generation: number, signal?: AbortSignal, coverageLimit: number = INDEX_LIMITS.documents,
+    filtered = false
   ) {
     const scope = captureIndexRootState(handle, generation, signal);
     if (!scope.ok) return scope;
     const { root, files, showHidden } = scope;
-    if (files.size > coverageLimit) return { ok: false, error: "LIMIT" } as const;
+    const metadata = filtered && files.size > coverageLimit ? captureFilteredRootMetadata(root) : undefined;
+    if (metadata?.ok === false) return metadata;
+    if (!filtered && files.size > coverageLimit) return { ok: false, error: "LIMIT" } as const;
     const entries = new Map(files);
     const current = () => {
-      if (!scope.current()) return false;
+      if (!scope.current() || metadata?.current() === false) return false;
       for (const [entry, file] of entries)
         if (files.get(entry) !== file) return false;
       return true;
@@ -1517,6 +1562,8 @@ export function createWorkspaceService({
     if (!rootless && !validContentSearchScopeRoots(requestedRoots))
       return { ok: false, error: "INVALID" };
     const requested = rootless ? [] : input.roots;
+    const expanded = !mixed && fragments === true && requested.length === 1 &&
+      ((fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > 0);
     const roster = mixed ? captureSearchRoster(requested, signal) : undefined;
     if (roster?.ok === false) return roster;
 
@@ -1526,7 +1573,7 @@ export function createWorkspaceService({
     const entryHandles = new Set<string>();
     const filesByPath = new Map<string, { file: ScanFile; root: Root; showHidden: boolean }>();
     for (const { handle, generation } of requested) {
-      const snapshot = captureIndexRoot(handle, generation, signal, coverageLimit);
+      const snapshot = captureIndexRoot(handle, generation, signal, coverageLimit, expanded);
       if (!snapshot.ok) return snapshot;
       const { root, entries } = snapshot;
       const rootPath = root.authorization.path;
@@ -1534,7 +1581,7 @@ export function createWorkspaceService({
         containsPath(root.authorization.path, rootPath) ||
         containsPath(rootPath, root.authorization.path)
       )) return { ok: false, error: "INVALID" };
-      if (entryHandles.size + entries.size > coverageLimit)
+      if (!expanded && entryHandles.size + entries.size > coverageLimit)
         return { ok: false, error: "LIMIT" };
       const filtered = fileFilters || pathFilters ? new Map<string, ScanFile>() : undefined;
       for (const [entry, file] of entries) {
@@ -1551,7 +1598,9 @@ export function createWorkspaceService({
             (!fileFilters || matchesContentSearchFileFilters(basename(file.path), fileFilters)))
           filtered.set(entry, file);
       }
-      captures.push({ ...snapshot, searched: filtered ?? entries });
+      const searched = filtered ?? entries;
+      if (expanded && searched.size > coverageLimit) return { ok: false, error: "LIMIT" };
+      captures.push({ ...snapshot, searched });
     }
     const handles = [...input.handles];
     const admittedHandles = [...new Set([...handles, ...retainedHandles])];

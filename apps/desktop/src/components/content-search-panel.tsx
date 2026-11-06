@@ -41,7 +41,7 @@ const errors: Record<ContentSearchError, string> = {
   INVALID: "查询无效，请检查搜索词。",
   STALE: "文件夹或文档状态已变更，请重新查询。",
   NOT_READY: "搜索范围尚未准备好，请等待文件夹扫描完成。",
-  LIMIT: "查询超出文件夹数量、文档数量或正文大小上限。",
+  LIMIT: "查询超出文件夹数量、目录条目数、文档数量或正文大小上限。",
   BUSY: "上一项查询仍在收尾，请稍后重试。",
   CANCELLED: "查询已取消。",
   UNKNOWN: "索引状态尚未确认。",
@@ -752,7 +752,9 @@ export function ContentSearchPanel({
           </p>
           {effectiveRoots?.length && !ready ? <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p> : null}
           <p className="text-muted-foreground text-xs">
-            区分大小写，每篇最多显示前三处命中。最多 {CONTENT_SEARCH_LIMITS.roots} 个文件夹，筛选前合计 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇，查询正文合计 {CONTENT_SEARCH_LIMITS.aggregateBytes / 1024} KiB。
+            区分大小写，每篇最多显示前三处命中。普通范围最多 {CONTENT_SEARCH_LIMITS.roots} 个文件夹，筛选前合计 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇。
+            单个文件夹超过 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇时，可手动输入 file:、path: 或 -path: 缩小范围。此时最多检查 {CONTENT_SEARCH_LIMITS.filteredRootEntries} 个文件与目录条目。
+            每次最多查询 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇正文，合计 {CONTENT_SEARCH_LIMITS.aggregateBytes / 1024} KiB。
           </p>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void search(); }}>
             <div className="flex items-center gap-2">

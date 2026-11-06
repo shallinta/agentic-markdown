@@ -154,6 +154,72 @@ test("scope enforces total root and file limits before filters can exclude them"
   expect(captured.entries.get("b-file-15")).toMatchObject({ root: b, name: "note-15.md" });
 });
 
+test("single filtered scope admits up to 32 matches beyond the ordinary root coverage limit", () => {
+  const wide = root("wide", "/wide", 33);
+  const state = workspace([wide], { wide: filesFor(wide) });
+  const selection = { handle: wide.handle, revision: 1 };
+  const single = captureContentSearchScope(state, "selected", undefined, selection, ["note-32.md"], []);
+  if (!single.ok) throw Error("Missing narrowed single scope");
+  expect([...single.entries.keys()]).toEqual(["wide-file-32"]);
+  expect(single.current(state, selection)).toBe(true);
+  expect(single.current({ ...state, roots: [{ ...wide, generation: wide.generation + 1 }] }, selection)).toBe(false);
+  const explicit = captureContentSearchScope(state, "all", wide.displayPath, selection, [], [
+    { kind: "path", value: ".md" }, { kind: "-path", value: "note-32.md" },
+  ]);
+  if (!explicit.ok) throw Error("Missing narrowed explicit scope");
+  expect(explicit.kind).toBe("single");
+  expect(explicit.entries.size).toBe(32);
+  expect(explicit.entries.has("wide-file-32")).toBe(false);
+  expect(captureContentSearchScope(state, "selected", undefined, selection, [], []))
+    .toEqual({ ok: false, error: "limit" });
+  expect(captureContentSearchScope(state, "selected", undefined, selection, [".md"], []))
+    .toEqual({ ok: false, error: "limit" });
+  expect(captureContentSearchScope(state, "all", undefined, selection, ["note-32.md"], []))
+    .toEqual({ ok: false, error: "limit" });
+});
+
+test("single filtered scope counts directories in the metadata limit", () => {
+  const wide = root("wide", "/wide", 256);
+  const nodes: WorkspaceNode[] = Array.from({ length: 128 }, (_, index) => {
+    const folder = { ...file(wide, `folder-${index}`, `folder-${index}`), kind: "directory" as const };
+    const node = file(wide, `note-${index}`, `folder-${index}/note.md`);
+    return [folder, { ...node, parent: folder.handle }];
+  }).flat();
+  const selection = { handle: wide.handle, revision: 1 };
+  const narrow = (owner: WorkspaceRoot, page: WorkspaceNode[]) =>
+    captureContentSearchScope(workspace([owner], { wide: page }), "selected", undefined, selection, [], [
+      { kind: "path", value: "folder-0/" },
+    ]);
+  const accepted = narrow(wide, nodes);
+  if (!accepted.ok) throw Error("Missing exact-limit filtered scope");
+  expect([...accepted.entries.keys()]).toEqual(["note-0"]);
+  expect(narrow({ ...wide, entries: 257 }, [...nodes, file(wide, "new", "new.md")]))
+    .toEqual({ ok: false, error: "limit" });
+});
+
+test("legacy single filtered scope remains available with many directories and few files", () => {
+  const deep = root("deep", "/deep", 288);
+  const nodes: WorkspaceNode[] = [];
+  for (let branch = 0; branch < 16; branch++) {
+    let parent = deep.handle;
+    let relative = `branch-${branch}`;
+    for (let depth = 0; depth < 17; depth++) {
+      const folder = file(deep, `dir-${branch}-${depth}`, relative);
+      nodes.push({ ...folder, parent, kind: "directory" });
+      parent = folder.handle;
+      relative += "/nested";
+    }
+    nodes.push({ ...file(deep, `note-${branch}`, relative + ".md"), parent });
+  }
+  expect(nodes).toHaveLength(deep.entries);
+  const captured = captureContentSearchScope(
+    workspace([deep], { deep: nodes }), "selected", undefined, { handle: deep.handle, revision: 1 }, [],
+    [{ kind: "path", value: "branch-0/" }],
+  );
+  if (!captured.ok) throw Error("Missing legacy filtered scope");
+  expect([...captured.entries.keys()]).toEqual(["note-0"]);
+});
+
 test("scope stays current only for the same ordered roots, metadata, and exact page refs", () => {
   const { state, selection, a, b } = fixture();
   const empty = root("empty", "/empty", 0);

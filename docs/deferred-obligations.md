@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bo 缩小单个大目录的正文搜索范围（2026-11-06）
+
+alpha.253 已验证有界单根筛选、范围失效和定位，部分承接 OBL-006。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。筛选下拉框、混合范围、索引调度、自动配额和最终离线继续登记。见[F-064bo 迭代](iterations/F-064bo-filter-larger-single-root-search.md)。
+
 ## F-064bn 按目标条目核验正文命中（2026-11-06）
 
 alpha.251 已验证按目标定位的授权边界，部分承接 OBL-006。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。大目录筛选、索引调度、自动配额和最终离线继续登记。见[F-064bn 迭代](iterations/F-064bn-locate-one-search-entry.md)。

@@ -930,14 +930,33 @@ test.skipIf(childScenario !== "coverage")(
       });
 
       const over = await joinNumberedFixture(33);
-      const filtered = {
+      const unfiltered = {
         ...request, ...env(), root: over.root.handle, generation: over.root.generation,
-        fileFilters: ["note-01.md"],
       };
-      expect(await rpc.run(filtered)).toEqual({
-        protocolVersion: 1, requestId: filtered.requestId, ok: false, error: "LIMIT",
+      expect(await rpc.run(unfiltered)).toEqual({
+        protocolVersion: 1, requestId: unfiltered.requestId, ok: false, error: "LIMIT",
       });
       expect(progress).toHaveLength(32);
+      const filtered = { ...unfiltered, ...env(), fileFilters: ["note-01.md"] };
+      const narrowed = await rpc.run(filtered);
+      expect(validContentSearchResponse(narrowed, filtered)).toBe(true);
+      if (!narrowed.ok || narrowed.op !== "query") throw Error("Missing narrowed direct coverage");
+      expect(narrowed.coverage).toHaveLength(1);
+      const first = narrowed.coverage[0];
+      if (!first.fragments) throw Error("Missing narrowed direct fragments");
+      const firstRaw = await entryRaw(over.root, over.files, first.entry);
+      expect(firstRaw).toBe("\uFEFF😀target\r\nnote-01.md");
+      expect(first).toMatchObject({
+        bytes: Buffer.byteLength(firstRaw),
+        hash: createHash("sha256").update(firstRaw).digest("hex"),
+        fragments: { matches: [{ from: 3, to: 9 }], more: false },
+      });
+      expect(progress.slice(32)).toEqual([{
+        protocolVersion: 1, requestId: filtered.requestId, sequence: 1, entry: first.entry,
+        kind: "fragments", fragments: first.fragments,
+      }]);
+      expect(validContentSearchProgress(progress[32], filtered)).toBe(true);
+      const afterFiltered = progress.length;
       expect(await documents.release({ ...env(), handle: snapshot.handle })).toMatchObject({ ok: true });
       const native = await joinNumberedFixture(17);
       expect(await workspace.searchSnapshot(native.root.handle, native.root.generation, "target"))
@@ -968,16 +987,17 @@ test.skipIf(childScenario !== "coverage")(
       expect(validContentSearchPrepareResponse(exactOpened, locateSecond)).toBe(true);
       if (!exactOpened.ok || exactOpened.target.kind !== "open") throw Error("Missing exact-budget second snapshot");
       expect(exactOpened.target.snapshot.text).toBe(secondRaw);
-      expect(progress.slice(32).map(({ requestId, sequence }) => ({ requestId, sequence }))).toEqual([
+      expect(progress.slice(afterFiltered).map(({ requestId, sequence }) => ({ requestId, sequence }))).toEqual([
         { requestId: exact.requestId, sequence: 1 }, { requestId: exact.requestId, sequence: 2 },
       ]);
+      const afterExact = progress.length;
 
       const overflow = await joinFixture("overflow-by-one", new Map([...budgetFiles, ["extra.md", "x"]]));
       const excess = { ...request, ...env(), root: overflow.root.handle, generation: overflow.root.generation };
       expect(await rpc.run(excess)).toEqual({
         protocolVersion: 1, requestId: excess.requestId, ok: false, error: "LIMIT",
       });
-      expect(progress.slice(34).map(({ requestId, sequence }) => ({ requestId, sequence }))).toEqual([
+      expect(progress.slice(afterExact).map(({ requestId, sequence }) => ({ requestId, sequence }))).toEqual([
         { requestId: excess.requestId, sequence: 1 }, { requestId: excess.requestId, sequence: 2 },
       ]);
 
@@ -986,7 +1006,7 @@ test.skipIf(childScenario !== "coverage")(
       expect(await rpc.run(tooLarge)).toEqual({
         protocolVersion: 1, requestId: tooLarge.requestId, ok: false, error: "LIMIT",
       });
-      expect(progress).toHaveLength(36);
+      expect(progress).toHaveLength(afterExact + 2);
     } finally {
       rpc.setReady(false);
       await rpc.drain();

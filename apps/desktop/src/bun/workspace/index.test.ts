@@ -681,11 +681,35 @@ test("exact search location stays available above the root query coverage limit"
   const roots = [{ handle: root.handle, generation: root.generation }];
   const limited = { root: root.handle, generation: root.generation, query: "target", handles: [], fragments: true as const };
   expect(await workspace.searchContentCandidates(limited)).toEqual({ ok: false, error: "LIMIT" });
-  expect(await workspace.searchContentCandidates({ ...limited, fileFilters: ["target.md"] }))
-    .toEqual({ ok: false, error: "LIMIT" });
 
   const oversizedPath = await realpath(oversized);
   documents.setTrashGuard((path) => path === oversizedPath);
+  const narrowed = { ...limited, fileFilters: ["target.md"] };
+  const from = text.indexOf("target");
+  const to = from + "target".length;
+  expect(await workspace.searchContentCandidates(narrowed)).toEqual({
+    ok: true, mappings: [], coverage: [{
+      entry: target.handle, hash: expectedHash, bytes: Buffer.byteLength(text),
+      fragments: { matches: [{ from, to, before: text.slice(0, from), after: text.slice(to) }], more: false },
+    }],
+  });
+  expect(await workspace.searchContentCandidates({
+    ...limited, pathFilters: [{ kind: "path", value: "target.md" }, { kind: "-path", value: "large.md" }],
+  })).toMatchObject({ ok: true, coverage: [{ entry: target.handle }] });
+  const exactly32 = await workspace.searchContentCandidates({
+    ...limited, pathFilters: [{ kind: "-path", value: "large.md" }],
+  });
+  if (!exactly32.ok) throw Error(JSON.stringify(exactly32));
+  expect(exactly32.coverage).toHaveLength(32);
+  expect(exactly32.coverage.some(({ entry }) => entry === large.handle)).toBe(false);
+  expect(await workspace.searchContentCandidates({ ...limited, fileFilters: [".md"] }))
+    .toEqual({ ok: false, error: "LIMIT" });
+  expect(await workspace.searchContentCandidates({
+    root: root.handle, generation: root.generation, query: "target", handles: [], fileFilters: ["target.md"],
+  })).toEqual({ ok: false, error: "LIMIT" });
+  expect(await workspace.searchContentCandidatesForWorkspace({
+    roots, standaloneHandles: [], query: "target", handles: [], fragments: true, fileFilters: ["target.md"],
+  })).toEqual({ ok: false, error: "LIMIT" });
   const prepare = (change: Partial<typeof input> = {}) =>
     workspace.prepareContentSearchDocument({ ...input, ...change }, crypto.randomUUID());
   expect(await prepare({ generation: root.generation + 1 })).toEqual({ ok: false, error: "STALE" });
@@ -712,8 +736,16 @@ test("exact search location stays available above the root query coverage limit"
   expect(documents.locations()).toMatchObject([{ handle, documentId }]);
 
   documents.setTrashGuard(() => false);
+  expect(await workspace.searchContentCandidates({ ...limited, fileFilters: ["large.md"] }))
+    .toEqual({ ok: false, error: "LIMIT" });
   expect(await prepare({ entry: large.handle, expectedHash: searchHash(largeText) }))
     .toEqual({ ok: false, error: "LIMIT" });
+  const outside = await pickSearchFile(oversized);
+  expect(await workspace.searchContentCandidates({ ...narrowed, handles: [outside.handle] }))
+    .toMatchObject({
+      ok: true, coverage: [{ entry: target.handle }], mappings: [{ handle: outside.handle, kind: "outside" }],
+    });
+  expect(await documents.release({ ...documentEnvelope(), handle: outside.handle })).toMatchObject({ ok: true });
   const standalonePath = join(directory, "standalone.md");
   await writeFile(standalonePath, "independent");
   const standalone = await pickSearchFile(standalonePath);
@@ -727,6 +759,67 @@ test("exact search location stays available above the root query coverage limit"
   expect(await workspace.prepareContentSearchDocument({ ...input, binding }, crypto.randomUUID()))
     .toEqual({ ok: false, error: "STALE" });
   expect(documents.locations()).toMatchObject([{ handle, documentId }]);
+});
+
+test("single filtered direct search counts published folders and files against its metadata bound", async () => {
+  for (let index = 0; index < 128; index++) {
+    const folder = join(directory, `folder-${index}`);
+    await mkdir(folder);
+    if (index >= 1 && index <= 3)
+      await writeFile(join(folder, `budget-${index}.md`), index === 3 ? "x" : "x".repeat(65_536));
+    else await writeFile(join(folder, "doc.md"), index === 0 ? "🎯 target" : "unrelated");
+  }
+  good(await workspace.request(request("select")));
+  const root = (await settle()).roots[0];
+  expect(root.status).toBe("complete");
+  expect(root.entries).toBe(256);
+  const target = (await nodes(root)).find(({ displayPath }) => displayPath.endsWith("/folder-0/doc.md"));
+  if (!target) throw Error("Missing target in bounded metadata fixture");
+  const narrowed = (generation: number) => workspace.searchContentCandidates({
+    root: root.handle, generation, query: "target", handles: [],
+    fragments: true, pathFilters: [{ kind: "path", value: "folder-0/" }],
+  });
+  expect(await narrowed(root.generation)).toMatchObject({
+    ok: true, coverage: [{ entry: target.handle, fragments: { matches: [{ from: 3, to: 9 }] } }],
+  });
+  const byteBudget = {
+    root: root.handle, generation: root.generation, query: "target", handles: [],
+    fragments: true as const, fileFilters: ["budget-"],
+  };
+  const exactBytes = await workspace.searchContentCandidates({
+    ...byteBudget, pathFilters: [{ kind: "-path", value: "folder-3/" }],
+  });
+  if (!exactBytes.ok) throw Error(JSON.stringify(exactBytes));
+  expect(exactBytes.coverage.map(({ bytes }) => bytes)).toEqual([65_536, 65_536]);
+  expect(await workspace.searchContentCandidates(byteBudget)).toEqual({ ok: false, error: "LIMIT" });
+  await writeFile(join(directory, "new.md"), "unrelated");
+  good(await workspace.request(request("rescan", { root: root.handle })));
+  const next = (await settle()).roots[0];
+  expect(next.entries).toBe(257);
+  expect(await narrowed(root.generation)).toEqual({ ok: false, error: "STALE" });
+  expect(await narrowed(next.generation)).toEqual({ ok: false, error: "LIMIT" });
+});
+
+test("single filtered direct search preserves narrow legacy scope in deeply nested trees", async () => {
+  for (let branch = 0; branch < 16; branch++) {
+    const folder = join(directory, `branch-${branch}`, ...Array<string>(16).fill("nested"));
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "doc.md"), branch === 0 ? "🎯 target" : "unrelated");
+  }
+  good(await workspace.request(request("select")));
+  const root = (await settle()).roots[0];
+  expect(root.status).toBe("complete");
+  expect(root.entries).toBe(288);
+  const entries = (await nodes(root)).filter(({ kind }) => kind === "file");
+  expect(entries).toHaveLength(16);
+  const target = entries.find(({ displayPath }) => displayPath.includes("/branch-0/"));
+  if (!target) throw Error("Missing target in deep legacy fixture");
+  expect(await workspace.searchContentCandidates({
+    root: root.handle, generation: root.generation, query: "target", handles: [], fragments: true,
+    pathFilters: [{ kind: "path", value: "branch-0/" }],
+  })).toMatchObject({
+    ok: true, coverage: [{ entry: target.handle, fragments: { matches: [{ from: 3, to: 9 }] } }],
+  });
 });
 
 async function pickSearchFile(file: string) {

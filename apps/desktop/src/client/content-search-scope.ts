@@ -130,6 +130,8 @@ export function captureContentSearchScope(
     return { ok: false, error: "not-ready" };
 
   const { kind } = resolved;
+  const expanded = kind === "single" && fileFilters.length + pathFilters.length > 0 &&
+    resolved.roots[0].entries <= CONTENT_SEARCH_LIMITS.filteredRootEntries;
   const leaves = kind === "all" ? standalone : [];
   if (leaves.length > CONTENT_SEARCH_LIMITS.standaloneHandles ||
       leaves.length > CONTENT_SEARCH_LIMITS.coverageDocuments)
@@ -140,7 +142,6 @@ export function captureContentSearchScope(
     root.status !== "complete" || (pages[index]?.length ?? 0) !== root.entries
   ))
     return { ok: false, error: "not-ready" };
-
   const handles = new Set(roots.map(({ handle }) => handle));
   const paths = new Set(roots.map(({ displayPath }) => displayPath));
   if (handles.size !== roots.length || paths.size !== roots.length)
@@ -154,12 +155,12 @@ export function captureContentSearchScope(
   }
 
   const entries = new Map<string, ScopeEntry>();
-  const needsPath = kind === "all" || pathFilters.length > 0;
+  const needsPath = kind === "all" || pathFilters.length > 0 || expanded;
   let fileCount = leaves.length;
   for (const [index, root] of roots.entries()) {
     for (const node of pages[index] ?? []) {
-      if (node.kind !== "file") continue;
-      if (++fileCount > CONTENT_SEARCH_LIMITS.coverageDocuments)
+      if (!expanded && node.kind !== "file") continue;
+      if (!expanded && ++fileCount > CONTENT_SEARCH_LIMITS.coverageDocuments)
         return { ok: false, error: "limit" };
       if (handles.has(node.handle) || paths.has(node.displayPath))
         return { ok: false, error: "incomplete" };
@@ -168,11 +169,17 @@ export function captureContentSearchScope(
       const path = relativeContentSearchPath(root.displayPath, node.displayPath);
       if (needsPath && path === undefined)
         return { ok: false, error: "incomplete" };
+      if (expanded && path !== undefined && node.name !== path.slice(path.lastIndexOf("/") + 1))
+        return { ok: false, error: "incomplete" };
+      if (node.kind !== "file") continue;
       if (
         matchesContentSearchFileFilters(node.name, fileFilters) &&
         (path === undefined || matchesContentSearchPathFilters(path, pathFilters))
-      )
+      ) {
+        if (expanded && entries.size >= CONTENT_SEARCH_LIMITS.coverageDocuments)
+          return { ok: false, error: "limit" };
         entries.set(node.handle, { root, name: node.name, relativePath: path, displayPath: node.displayPath });
+      }
     }
   }
 

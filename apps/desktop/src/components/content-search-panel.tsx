@@ -163,7 +163,8 @@ function cancel(requestId: string) {
 function pickableFilters(
   roots: readonly WorkspaceRoot[] | undefined,
   nodes: FolderState["nodes"],
-  leaves: readonly DocumentEntry[]
+  leaves: readonly DocumentEntry[],
+  single: boolean
 ) {
   if (!roots || roots.length > CONTENT_SEARCH_LIMITS.roots) return [];
   let count = leaves.length;
@@ -174,9 +175,11 @@ function pickableFilters(
   for (const root of roots) {
     const entries = nodes[root.handle] ?? [];
     if (entries.length !== root.entries || root.status !== "complete") return [];
+    const limit = single && roots.length === 1 && entries.length <= CONTENT_SEARCH_LIMITS.filteredRootEntries
+      ? CONTENT_SEARCH_LIMITS.filteredRootEntries : CONTENT_SEARCH_LIMITS.coverageDocuments;
     for (const node of entries) {
       if (node.kind !== "file") continue;
-      if (++count > CONTENT_SEARCH_LIMITS.coverageDocuments) return [];
+      if (++count > limit) return [];
       names.add(node.name);
       const path = relativeContentSearchPath(root.displayPath, node.displayPath);
       if (path) paths.add(path);
@@ -269,7 +272,7 @@ export function ContentSearchPanel({
   }, [filterText, filters, rootChoices]);
   const pickerGroups = useMemo(
     () => open && ready
-      ? pickableFilters(effectiveRoots, nodes, effectiveKind === "all" ? standalone : [])
+      ? pickableFilters(effectiveRoots, nodes, effectiveKind === "all" ? standalone : [], effectiveKind === "single")
       : [],
     [open, ready, effectiveRoots, nodes, effectiveKind, standalone]
   );
@@ -753,7 +756,7 @@ export function ContentSearchPanel({
           {effectiveRoots?.length && !ready ? <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p> : null}
           <p className="text-muted-foreground text-xs">
             区分大小写，每篇最多显示前三处命中。普通范围最多 {CONTENT_SEARCH_LIMITS.roots} 个文件夹，筛选前合计 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇。
-            单个文件夹超过 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇时，可手动输入 file:、path: 或 -path: 缩小范围。此时最多检查 {CONTENT_SEARCH_LIMITS.filteredRootEntries} 个文件与目录条目。
+            单个文件夹超过 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇时，可选择或输入 file:、path: 或 -path: 缩小范围。此时最多检查 {CONTENT_SEARCH_LIMITS.filteredRootEntries} 个文件与目录条目。
             每次最多查询 {CONTENT_SEARCH_LIMITS.coverageDocuments} 篇正文，合计 {CONTENT_SEARCH_LIMITS.aggregateBytes / 1024} KiB。
           </p>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void search(); }}>

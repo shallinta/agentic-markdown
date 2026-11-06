@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bp 的 alpha.254 已验证单个大目录的筛选下拉框。可从已扫描条目选择文件名、包含或排除路径，选项会填入现有筛选语法。见[F-064bp 迭代](iterations/F-064bp-pick-filters-in-larger-folders.md)。
+
 F-064bo 的 alpha.253 已验证单个超过 32 篇的文件夹可手动输入 file:、path: 或 -path: 缩小范围。最多检查 256 个已扫描条目，正文仍最多 32 篇、合计 128 KiB。见[F-064bo 迭代](iterations/F-064bo-filter-larger-single-root-search.md)。
 
 F-064bn 的 alpha.251 已验证正文命中按目标文件核验。定位可以打开或复用目录中的指定文档，查询覆盖上限沿用现有设置。见[F-064bn 迭代](iterations/F-064bn-locate-one-search-entry.md)。

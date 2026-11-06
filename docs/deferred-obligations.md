@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064p 隔离持久索引复用有限通过（2026-11-06）
+
+alpha.203 包内已验证私有槽、清单代数和有界复用。OBL-006、OBL-018、OBL-026、OBL-035 保持开放。默认缓存归属、授权撤销、容量和 schema 生命周期仍由 F-064 承接。见[F-064p 迭代](iterations/F-064p-bounded-index-reuse.md)。
+
 ## F-064o 窗口多文件夹搜索有限通过（2026-11-06）
 
 alpha.202 已验证多文件夹覆盖、根归属、未保存正文与定位。OBL-006、OBL-018、OBL-026、OBL-035 继续由 F-064 承接，顶层独立文件、完整调度、持久缓存与 schema 仍开放。见[F-064o 迭代](iterations/F-064o-window-folder-content-search.md)。

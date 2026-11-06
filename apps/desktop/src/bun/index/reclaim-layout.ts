@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { sameIndexInventoryMetadata } from "./cache-footprint";
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
+import { INDEX_PURGE_ROSTER_BYTES, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
 import { INDEX_REUSE_CATALOG_BYTES, IndexReuseCleanupError, validPreparedCatalog } from "./reuse-catalog";
 
 const bridgeConfig = Buffer.from("bridge=1\nschema=1\ntantivy=0.27.0\nprofile=literal-gram-v1\n");
@@ -59,8 +61,13 @@ function parseControl(bytes: Buffer | undefined): unknown {
 
 export async function readPreparedReclaimCatalog(profile: string, pinned: BigIntStats, check: () => void) {
   const bytes = await readControl(join(profile, "catalog.json"), pinned, INDEX_REUSE_CATALOG_BYTES, check);
+  if (!bytes) return;
   const catalog = parseControl(bytes);
-  return validPreparedCatalog(catalog) ? catalog : undefined;
+  return validPreparedCatalog(catalog) ? { catalog, catalogSha256: createHash("sha256").update(bytes).digest("hex") } : undefined;
+}
+
+export function readPinnedPurgeRoster(profile: string, pinned: BigIntStats, check: () => void) {
+  return readControl(join(profile, INDEX_PURGE_ROSTER_NAME), pinned, INDEX_PURGE_ROSTER_BYTES, check);
 }
 
 function validSchema(value: unknown) {

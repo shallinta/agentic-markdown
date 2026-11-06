@@ -6,10 +6,11 @@ import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
 import { natural, record } from "./protocol";
-import { readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
+import { encodePurgeRoster, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
+import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
-  stageRetiredIndexReuse, type IndexReuseInput,
+  prepareStagedIndexReusePurge, stageRetiredIndexReuse, type IndexReuseInput,
 } from "./reuse";
 import {
   IndexReuseCleanupError, reclaimDirectoryName, readIndexReclaimIntentTarget, readIndexRetirementTarget,
@@ -124,6 +125,10 @@ export function stageRetiredIndexReclaim(input: IndexReclaimIntentTarget, curren
   return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, stageRetiredIndexReuse);
 }
 
+export function prepareStagedIndexPurge(input: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, prepareStagedIndexReusePurge);
+}
+
 async function useRetiredAppProfile<
   Target extends IndexRetirementTarget, Result extends { ok: true } | { ok: false; error: string }
 >(
@@ -224,21 +229,29 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
     pin(profile, true, profileStat);
     checkLease();
     pending = present(pendingPath) !== undefined;
+    const hasPurge = pending && present(join(profile, INDEX_PURGE_ROSTER_NAME)) !== undefined;
     const footprint = await captureIndexFootprint(
-      profile, profileStat, owner, check, checkLease, undefined, pending ? "pending" : "original"
+      profile, profileStat, owner, check, checkLease, undefined, pending ? "pending" : "original", hasPurge
     );
     footprint.recheck();
     if (footprint.status === "empty") return { ...absent };
     if (pending) {
-      const catalog = await readPreparedReclaimCatalog(profile, footprint.catalogStat, footprint.checkIndex);
+      const prepared = await readPreparedReclaimCatalog(profile, footprint.catalogStat, footprint.checkIndex);
       footprint.recheck();
-      if (!catalog) return fail("UNAVAILABLE");
+      if (!prepared) return fail("UNAVAILABLE");
+      const { catalog, catalogSha256 } = prepared;
       if (footprint.stagingDigest(catalog) !== catalog.stagingDigest) return fail("UNAVAILABLE");
       const valid = await validReclaimLayout(
         pendingPath, new Map(footprint.nativeFiles()), catalog.generation, footprint.checkIndex
       );
       footprint.recheck();
       if (!valid) return fail("UNAVAILABLE");
+      if (footprint.purgeStat) {
+        const expected = encodePurgeRoster(catalog, catalogSha256, footprint.directoryStamp(), footprint.fileStamps());
+        const actual = await readPinnedPurgeRoster(profile, footprint.purgeStat, footprint.checkIndex);
+        footprint.recheck();
+        if (!expected || !actual?.equals(expected)) return fail("UNAVAILABLE");
+      }
     }
     const { files, catalogBytes, indexBytes, totalBytes } = footprint;
     if (totalBytes > BigInt(Number.MAX_SAFE_INTEGER)) return fail("UNAVAILABLE");
@@ -246,6 +259,7 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
       ok: true as const, present: true as const, files,
       catalogBytes: Number(catalogBytes), indexBytes: Number(indexBytes), totalBytes: Number(totalBytes),
       ...(pending ? { placement: "pending" as const } : {}),
+      ...(footprint.purgeStat ? { purgeBytes: Number(footprint.purgeStat.size) } : {}),
     };
   } catch (error) {
     if (error instanceof CacheBusy) return fail("BUSY");

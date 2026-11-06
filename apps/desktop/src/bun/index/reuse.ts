@@ -3,7 +3,7 @@ import type { Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { captureIndexFootprint } from "./cache-footprint";
+import { captureIndexFootprint, sameIndexInventoryMetadata } from "./cache-footprint";
 import {
   INDEX_LIMITS,
   encodeChanges,
@@ -15,7 +15,9 @@ import {
   type IndexHit,
   type IndexResult,
 } from "./protocol";
-import { validReclaimLayout } from "./reclaim-layout";
+import { publishPurgeRoster } from "./purge-publish";
+import { encodePurgeRoster } from "./purge-roster";
+import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import { loadReclaimStage } from "./reclaim-stage";
 import {
   acquireIndexReuseSlot,
@@ -130,20 +132,21 @@ async function useRetirementSlot<Result extends { ok: true }>(
 }
 
 function captureRetirementFootprint(
-  directory: string, { assertInventoryLease }: RetirementSlot, cached: ProvenCatalog, check: () => void
+  directory: string, { assertInventoryLease }: RetirementSlot, cached: ProvenCatalog, check: () => void,
+  includePurge = false
 ) {
   const { identity } = cached;
   const placement = cached.status === "prepared" ? cached.placement : "original";
   return captureIndexFootprint(
-    directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity, placement
+    directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity, placement, includePurge
   );
 }
 
 async function verifyRetiredFootprint(
   directory: string, slot: RetirementSlot, cached: ProvenCatalog, check: () => void,
-  target: IndexRetirementTarget, expectedDigest: string
+  target: IndexRetirementTarget, expectedDigest: string, includePurge = false
 ) {
-  const footprint = await captureRetirementFootprint(directory, slot, cached, check);
+  const footprint = await captureRetirementFootprint(directory, slot, cached, check, includePurge);
   footprint.recheck();
   if (footprint.status !== "existing") return fail("UNAVAILABLE");
   const inventoryDigest = footprint.inventoryDigest(target);
@@ -265,6 +268,68 @@ export function stageRetiredIndexReuse(directory: string, target: IndexReclaimIn
           throw new IndexReuseCleanupError("Index staging sync or confirmation unconfirmed");
         }
         return { ok: true, alreadyStaged };
+      });
+    },
+    "stage"
+  );
+}
+
+export function prepareStagedIndexReusePurge(directory: string, target: IndexReclaimIntentTarget, current: () => boolean) {
+  return useRetirementSlot<{ ok: true; alreadyPrepared: boolean }>(
+    directory, target, current, async (slot, cached, check) => {
+      if (cached.status !== "prepared" || cached.placement !== "pending") return fail("SCHEMA");
+      const { catalog } = cached;
+      if (catalog.inventoryDigest !== target.inventoryDigest) return fail("MISMATCH");
+      const alreadyPrepared = slot.hasPurgeRoster();
+      const verified = await verifyRetiredFootprint(
+        directory, slot, cached, check, target, target.inventoryDigest, alreadyPrepared
+      );
+      if (!verified.ok) return verified;
+      const { footprint } = verified;
+      if (footprint.stagingDigest(target) !== catalog.stagingDigest) return fail("MISMATCH");
+      const prepared = await readPreparedReclaimCatalog(directory, footprint.catalogStat, footprint.checkIndex);
+      footprint.recheck();
+      if (!prepared) return fail("MISMATCH");
+      if (prepared.catalog.scopeKey !== target.scopeKey || prepared.catalog.generation !== target.generation ||
+          prepared.catalog.inventoryDigest !== target.inventoryDigest || prepared.catalog.stagingDigest !== catalog.stagingDigest)
+        return fail("MISMATCH");
+      const contents = encodePurgeRoster(catalog, prepared.catalogSha256, footprint.directoryStamp(), footprint.fileStamps());
+      if (!contents) return fail("UNAVAILABLE");
+      if (footprint.purgeStat) {
+        const prior = await readPinnedPurgeRoster(directory, footprint.purgeStat, footprint.checkIndex);
+        footprint.recheck();
+        if (!prior) return fail("UNAVAILABLE");
+        if (!prior.equals(contents)) return fail("MISMATCH");
+      }
+
+      return slot.withStageDirectories("pending", cached.identity, undefined, async (held) => {
+        footprint.recheck();
+        held.check("pending");
+        let installed = footprint.purgeStat;
+        if (!installed) {
+          const result = publishPurgeRoster(directory, held, contents, footprint.recheckAfterStaging);
+          if (!result.ok) return fail(result.error);
+          installed = result.installed;
+        }
+        try {
+          const checkPending = () => held.check("pending");
+          checkPending();
+          await held.sync();
+          const terminal = await captureRetirementFootprint(directory, slot, cached, checkPending, true);
+          terminal.recheck();
+          if (terminal.status !== "existing" || !terminal.purgeStat ||
+              !sameIndexInventoryMetadata(installed, terminal.purgeStat) ||
+              terminal.stagingDigest(target) !== catalog.stagingDigest)
+            throw Error("Purge roster or native index changed");
+          const savedCatalog = await readPreparedReclaimCatalog(directory, terminal.catalogStat, terminal.checkIndex);
+          const savedRoster = await readPinnedPurgeRoster(directory, terminal.purgeStat, terminal.checkIndex);
+          terminal.recheck();
+          if (savedCatalog?.catalogSha256 !== prepared.catalogSha256 || !savedRoster?.equals(contents))
+            throw Error("Purge roster confirmation changed");
+        } catch {
+          throw new IndexReuseCleanupError("Purge roster sync or confirmation unconfirmed");
+        }
+        return { ok: true, alreadyPrepared };
       });
     },
     "stage"
@@ -402,6 +467,7 @@ async function runIndexReuse(
       if (footprint.status !== "existing") return fail("UNAVAILABLE");
       if (footprint.totalBytes > BigInt(maxLogicalBytes)) return fail("LIMIT");
     } else check();
+    if (slot.hasPurgeRoster()) return fail("SCHEMA");
     session = createIndexSession();
     const opened = await session.open(slot.indexPath, exact ? "reader-only" : prior ? "writer-existing" : "create-new");
     if (opened.ok) nativeGeneration = opened.generation;

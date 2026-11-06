@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ay 的 alpha.236 已验证待回收索引可生成固定文件名册，并在占用中单列其字节。原清单和索引文件保留。见[F-064ay 迭代](iterations/F-064ay-staged-index-purge-roster.md)。
+
 F-064ax 的 alpha.234 已验证有效待回收索引仍计入内部逻辑占用。统计会在位置、清单或文件失配时拒绝给出数值。见[F-064ax 迭代](iterations/F-064ax-staged-index-cache-footprint.md)。
 
 F-064aw 的 alpha.233 已验证内部显式移动可把准备后的私有索引移入待回收位置。保留清单和文件，未释放磁盘空间。见[F-064aw 迭代](iterations/F-064aw-retired-index-stage.md)。

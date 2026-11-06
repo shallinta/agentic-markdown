@@ -1,13 +1,14 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { constants, existsSync, mkdirSync, readdirSync, renameSync, utimesSync, writeFileSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink, utimes, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, readlink, realpath, rename, rm, rmdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import {
   inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, reopenAppIndexCache,
-  prepareRetiredIndexReclaim, retireAppIndexCache, searchAppIndexCache, stageRetiredIndexReclaim,
+  prepareRetiredIndexReclaim, prepareStagedIndexPurge, retireAppIndexCache, searchAppIndexCache,
+  stageRetiredIndexReclaim,
 } from "./app-cache";
 import { record } from "./protocol";
 
@@ -34,23 +35,46 @@ function footprintOf(catalog: { size: bigint }, files: readonly { size: bigint }
   };
 }
 
-async function preparedDigest(directory: string, target: typeof retirement & { inventoryDigest: string }) {
+async function inventoryStamps(directory: string) {
   const stat = await lstat(directory, { bigint: true });
-  const childStamps = await Promise.all((await readdir(directory)).sort().map(async name => {
+  const files = await Promise.all((await readdir(directory)).sort().map(async name => {
     const s = await lstat(join(directory, name), { bigint: true });
     return [name, [s.birthtimeNs, s.dev, s.ino, s.mode, s.uid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String)];
   }));
+  return {
+    directory: [stat.dev, stat.ino, stat.birthtimeNs, stat.uid, stat.mode].map(String),
+    files,
+  };
+}
+
+async function preparedDigest(directory: string, target: typeof retirement & { inventoryDigest: string }) {
+  const stamps = await inventoryStamps(directory);
   return sha(JSON.stringify([
     3, "agentic-markdown-index-reclaim-intent", "limited-v1", target.scopeKey, target.generation,
-    target.inventoryDigest,
-    [stat.dev, stat.ino, stat.birthtimeNs, stat.uid, stat.mode].map(String),
-    childStamps,
+    target.inventoryDigest, stamps.directory, stamps.files,
   ]));
+}
+
+async function purgeRoster(directory: string, target: typeof retirement & { inventoryDigest: string }, catalog: Buffer) {
+  return JSON.stringify({
+    version: 1, profile: "limited-v1", state: "purge-prepared", ...target,
+    stagingDigest: await preparedDigest(directory, target),
+    catalogSha256: sha(catalog), ...await inventoryStamps(directory),
+  });
+}
+
+function purgeFootprint(catalog: { size: bigint }, files: readonly { size: bigint }[], purge: { size: bigint }) {
+  const regular = footprintOf(catalog, files);
+  return {
+    ...regular, placement: "pending" as const, files: regular.files + 1,
+    purgeBytes: Number(purge.size), totalBytes: regular.totalBytes + Number(purge.size),
+  };
 }
 
 async function runFixture(
   scratch: string,
-  childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen" | "stage" | "stage-reopen",
+  childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen"
+    | "stage" | "stage-reopen" | "purge" | "purge-reopen",
   entry = import.meta.path
 ) {
   const child = Bun.spawn([process.execPath, "test", entry], {
@@ -71,11 +95,11 @@ async function runFixture(
 }
 
 const isStagedCatalog = (name: string) => /^\.catalog-[a-f0-9-]+\.tmp$/.test(name);
-function beforePublish(profile: string, action: () => boolean) {
+function beforePublish(profile: string, action: () => boolean, isStaged = isStagedCatalog) {
   let visited = false;
   return {
     current: () => {
-      if (visited || !readdirSync(profile).some(isStagedCatalog)) return true;
+      if (visited || !readdirSync(profile).some(isStaged)) return true;
       visited = true;
       return action();
     },
@@ -159,6 +183,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "intent");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "stage");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "purge");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -1027,6 +1053,212 @@ test.skipIf(mode !== "stage-reopen")("fresh process validates a staged directory
     expect(await f.fingerprint(pending)).toEqual(directory);
     expect(await f.nativeFiles(pending)).toEqual(files);
     expect((await readdir(f.profile)).sort()).toEqual([".reclaim-pending", "catalog.json"]);
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "purge")("a purge roster records a staged index without changing any existing file", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  const pending = join(f.profile, ".reclaim-pending");
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const unavailable = failed("UNAVAILABLE");
+  const mismatch = failed("MISMATCH");
+  f.startRecording();
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toMatchObject({ ok: true, generation: 1, applied: 1 });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const proof = await inspectRetiredIndexReclaim(retirement, current);
+    if (!proof.ok) throw Error("Purge preflight fixture unavailable: " + proof.error);
+    const target = { ...retirement, inventoryDigest: proof.inventoryDigest };
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual(failed("SCHEMA"));
+    expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: false });
+    return target;
+  }
+  async function emptyRoster() {
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-pending", "catalog.json"]);
+  }
+  try {
+    const target = await seed();
+    const catalog = await f.fingerprint(f.catalog);
+    const catalogRaw = await readFile(f.catalog);
+    const files = await f.nativeFiles(pending);
+    const workers = f.workers();
+    expect(await prepareStagedIndexPurge({ ...target, ...wrongScope }, current)).toEqual(failed("SCHEMA"));
+    expect(await prepareStagedIndexPurge({ ...target, ...wrongGeneration }, current)).toEqual(mismatch);
+    expect(await prepareStagedIndexPurge({ ...target, inventoryDigest: sha("wrong purge digest") }, current)).toEqual(mismatch);
+    expect(await prepareStagedIndexPurge({ ...target, inventoryDigest: "wrong" }, current)).toEqual(failed("INPUT"));
+    expect(await prepareStagedIndexPurge(target, () => false)).toEqual(failed("CANCELLED"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual({ ...footprintOf(catalog, files), placement: "pending" });
+
+    await mkdir(f.lease, { mode: 0o700 });
+    const busy = join(f.lease, "keep");
+    await writeFile(busy, "busy", { mode: 0o600 });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual(failed("BUSY"));
+    expect(await readFile(busy, "utf8")).toBe("busy");
+    await rm(busy);
+    await rmdir(f.lease);
+
+    const outside = join(f.scratch, "unrelated-roster");
+    try {
+      await writeFile(outside, "do not follow", { mode: 0o600 });
+      await symlink(outside, roster);
+      expect(await prepareStagedIndexPurge(target, current)).toEqual(unavailable);
+      expect(await inspectAppIndexCacheFootprint(current)).toEqual(unavailable);
+      expect(await readlink(roster)).toBe(outside);
+      expect(await readFile(outside, "utf8")).toBe("do not follow");
+      await rm(roster);
+      await link(outside, roster);
+      expect(await prepareStagedIndexPurge(target, current)).toEqual(unavailable);
+      expect(await inspectAppIndexCacheFootprint(current)).toEqual(unavailable);
+      expect((await lstat(outside)).nlink).toBe(2);
+      expect(await readFile(outside, "utf8")).toBe("do not follow");
+      await rm(roster);
+    } finally {
+      await rm(outside, { force: true });
+    }
+    const foreign = join(pending, "foreign.txt");
+    await writeFile(foreign, "keep foreign", { mode: 0o600 });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual(failed("SCHEMA"));
+    expect(await readFile(foreign, "utf8")).toBe("keep foreign");
+    await rm(foreign);
+    await emptyRoster();
+    expect(await f.nativeFiles(pending)).toEqual(files);
+    expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+
+    const expected = await purgeRoster(pending, target, catalogRaw);
+    const directory = await f.fingerprint(pending);
+    expect(await prepareStagedIndexPurge(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await readFile(roster, "utf8")).toBe(expected);
+    const marker = await f.fingerprint(roster);
+    expect(marker.mode & 0o777n).toBe(0o600n);
+    expect(marker.links).toBe(1n);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(purgeFootprint(catalog, files, marker));
+    await runFixture(f.scratch, "purge-reopen");
+    expect(await f.fingerprint(roster)).toEqual(marker);
+    expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+    expect(await f.fingerprint(pending)).toEqual(directory);
+    expect(await f.nativeFiles(pending)).toEqual(files);
+    expect(f.workers()).toBe(workers);
+
+    await writeFile(roster, expected.replace(sha(catalogRaw), sha("wrong catalog bytes")));
+    const wrong = await f.fingerprint(roster);
+    expect(await prepareStagedIndexPurge(target, current)).toEqual(mismatch);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(unavailable);
+    expect(await f.fingerprint(roster)).toEqual(wrong);
+    await writeFile(roster, Buffer.alloc(65_537, 0x61));
+    const oversized = await f.fingerprint(roster);
+    expect(await prepareStagedIndexPurge(target, current)).toEqual(unavailable);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(unavailable);
+    expect(await f.fingerprint(roster)).toEqual(oversized);
+    expect(await f.nativeFiles(pending)).toEqual(files);
+    expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+    await rm(f.home, { recursive: true, force: true });
+
+    const second = await seed();
+    const secondCatalog = await f.fingerprint(f.catalog);
+    const secondExpected = await purgeRoster(pending, second, await readFile(f.catalog));
+    const secondFiles = await f.nativeFiles(pending);
+    const secondDirectory = await f.fingerprint(pending);
+    const secondWorkers = f.workers();
+    const stagedRoster = (name: string) => /^\.agentic-save-[a-f0-9-]+$/.test(name);
+    const cancelled = beforePublish(f.profile, () => false, stagedRoster);
+    expect(await prepareStagedIndexPurge(second, cancelled.current)).toEqual(failed("CANCELLED"));
+    expect(cancelled.visited()).toBe(true);
+    await emptyRoster();
+    expect(await f.fingerprint(f.catalog)).toEqual(secondCatalog);
+
+    const collided = beforePublish(f.profile, () => {
+      writeFileSync(roster, "late name", { flag: "wx", mode: 0o600 });
+      return true;
+    }, stagedRoster);
+    expect(await prepareStagedIndexPurge(second, collided.current)).toEqual(unavailable);
+    expect(collided.visited()).toBe(true);
+    expect(await readFile(roster, "utf8")).toBe("late name");
+    await rm(roster);
+    await emptyRoster();
+
+    const unknown = await refuseProfileSync(f.profile, () => Promise.resolve(existsSync(roster)),
+      () => prepareStagedIndexPurge(second, current));
+    expect(unknown).toEqual({ ok: false, error: "UNKNOWN", accepted: true });
+    expect(await readFile(roster, "utf8")).toBe(secondExpected);
+    const uncertain = await f.fingerprint(roster);
+    expect(await prepareStagedIndexPurge(second, current)).toEqual({ ok: true, alreadyPrepared: true });
+    expect(await f.fingerprint(roster)).toEqual(uncertain);
+    expect(await f.fingerprint(f.catalog)).toEqual(secondCatalog);
+    expect(await f.fingerprint(pending)).toEqual(secondDirectory);
+    expect(await f.nativeFiles(pending)).toEqual(secondFiles);
+    expect(f.workers()).toBe(secondWorkers);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-pending", ".reclaim-purge.json", "catalog.json"]);
+    const member = secondFiles[0];
+    if (!member) throw Error("Purge fixture missing native file");
+    const changed = join(pending, member.name);
+    const original = await lstat(changed);
+    await utimes(changed, original.atime, new Date(original.mtimeMs + 10_000));
+    expect(await prepareStagedIndexPurge(second, current)).toEqual(mismatch);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(unavailable);
+    expect(await f.fingerprint(roster)).toEqual(uncertain);
+    expect(await f.fingerprint(f.catalog)).toEqual(secondCatalog);
+
+    const parkedPending = join(f.scratch, "parked-pending");
+    const parkedCatalog = join(f.scratch, "parked-catalog");
+    await rename(pending, parkedPending);
+    try {
+      await rename(f.catalog, parkedCatalog);
+      try {
+        const parkedFiles = await f.nativeFiles(parkedPending);
+        expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+        expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+        expect(await inspectAppIndexCacheFootprint(current)).toEqual(unavailable);
+        expect(await f.fingerprint(roster)).toEqual(uncertain);
+        expect(await f.nativeFiles(parkedPending)).toEqual(parkedFiles);
+        expect(await readdir(f.profile)).toEqual([".reclaim-purge.json"]);
+        expect(f.workers()).toBe(secondWorkers);
+      } finally {
+        await rename(parkedCatalog, f.catalog);
+      }
+    } finally {
+      await rename(parkedPending, pending);
+    }
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "purge-reopen")("a fresh process confirms an existing purge roster without rewriting it", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual(["home"]);
+  const pending = join(f.profile, ".reclaim-pending");
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const catalogRaw = await readFile(f.catalog);
+  const parsed: unknown = JSON.parse(catalogRaw.toString());
+  if (!record(parsed) || parsed.version !== 3 || typeof parsed.inventoryDigest !== "string")
+    throw Error("Staged fixture missing");
+  const target = { ...retirement, inventoryDigest: parsed.inventoryDigest };
+  const catalog = await f.fingerprint(f.catalog);
+  const files = await f.nativeFiles(pending);
+  const directory = await f.fingerprint(pending);
+  const marker = await f.fingerprint(roster);
+  f.startRecording();
+  try {
+    expect(await readFile(roster, "utf8")).toBe(await purgeRoster(pending, target, catalogRaw));
+    expect(await prepareStagedIndexPurge(target, current)).toEqual({ ok: true, alreadyPrepared: true });
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(purgeFootprint(catalog, files, marker));
+    expect(await stageRetiredIndexReclaim(target, current)).toEqual(failed("UNAVAILABLE"));
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual(failed("SCHEMA"));
+    expect(await inspectRetiredIndexReclaim(retirement, current)).toEqual(failed("SCHEMA"));
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(f.workers()).toBe(0);
+    expect(await f.fingerprint(roster)).toEqual(marker);
+    expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+    expect(await f.fingerprint(pending)).toEqual(directory);
+    expect(await f.nativeFiles(pending)).toEqual(files);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-pending", ".reclaim-purge.json", "catalog.json"]);
   } finally {
     f.stopRecording();
   }

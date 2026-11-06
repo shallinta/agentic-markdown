@@ -3,12 +3,12 @@ import { lstatSync, type BigIntStats, type Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
 import {
   IndexReuseCleanupError, reclaimDirectoryName, type IndexReclaimIntentTarget,
   type IndexRetirementTarget, type IndexReuseInventoryIdentity, type ReclaimPlacement,
 } from "./reuse-catalog";
 
-const maxIndexFiles = 128;
 
 export function sameIndexInventoryMetadata(before: BigIntStats, after: BigIntStats) {
   return before.dev === after.dev && before.ino === after.ino &&
@@ -64,7 +64,8 @@ export async function captureIndexFootprint(
   check: () => void,
   checkLease: () => void,
   expected?: IndexReuseInventoryIdentity,
-  placement: ReclaimPlacement = "original"
+  placement: ReclaimPlacement = "original",
+  includePurge = false
 ) {
   const checkInspection = () => {
     check();
@@ -93,18 +94,20 @@ export async function captureIndexFootprint(
     return stat;
   };
 
-  const memberLimit = expected ? 3 : 2;
+  const memberLimit = (expected ? 3 : 2) + Number(includePurge);
   const indexName = reclaimDirectoryName(placement);
   const members = await readMembers(profile, memberLimit, checkInspection);
   checkInspection();
   if (!members.size && !expected && placement === "original") return { status: "empty" as const, recheck };
   if (members.size !== memberLimit || !members.has("catalog.json") || !members.has(indexName) ||
-      (expected && !members.has(".lease")))
+      (expected && !members.has(".lease")) ||
+      (includePurge && (placement !== "pending" || !members.has(INDEX_PURGE_ROSTER_NAME))))
     throw Error("Index cache layout unavailable");
 
   const catalogStat = readFileMetadata(join(profile, "catalog.json"), expected?.catalog, true);
   const catalogBytes = catalogStat.size;
   if (catalogBytes === 0n) throw Error("Index cache catalog unavailable");
+  const purgeStat = includePurge ? readFileMetadata(join(profile, INDEX_PURGE_ROSTER_NAME), undefined, true) : undefined;
   const index = join(profile, indexName);
   const indexStat = lstatSync(index, { bigint: true });
   if (!indexStat.isDirectory() || indexStat.uid !== owner || (indexStat.mode & 0o022n) !== 0n ||
@@ -118,16 +121,20 @@ export async function captureIndexFootprint(
       throw Error("Index cache directory changed");
   };
   let indexBytes = 0n;
-  const names = await readMembers(index, maxIndexFiles, checkIndex, (name) => {
+  const names = await readMembers(index, INDEX_PURGE_ROSTER_FILES, checkIndex, (name) => {
     indexBytes += readFileMetadata(join(index, name)).size;
   });
   const nativeFiles = () => inventory.slice(nativeStart + 1).map(({ path, stat }) => [basename(path), stat] as const);
   const fileStamps = () => nativeFiles()
     .map(([name, stat]) => [name, identityStamp(stat)] as const)
     .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const directoryStamp = () => {
+    const { dev, ino, birthtimeNs, uid, mode } = indexStat;
+    return [dev, ino, birthtimeNs, uid, mode].map(String);
+  };
   return {
-    status: "existing" as const, recheck, files: names.size + 1,
-    catalogStat, catalogBytes, indexBytes, totalBytes: catalogBytes + indexBytes,
+    status: "existing" as const, recheck, files: names.size + 1 + Number(includePurge),
+    catalogStat, purgeStat, catalogBytes, indexBytes, totalBytes: catalogBytes + indexBytes + (purgeStat?.size ?? 0n),
     recheckAfterStaging: () => recheckInventory(1),
     recheckNative: () => {
       checkLease();
@@ -136,6 +143,8 @@ export async function captureIndexFootprint(
     },
     checkIndex,
     nativeFiles,
+    fileStamps,
+    directoryStamp,
     inventoryDigest({ scopeKey, generation }: IndexRetirementTarget) {
       return createHash("sha256").update(JSON.stringify([
         2, "agentic-markdown-index-retirement-inventory", "limited-v1",
@@ -143,10 +152,9 @@ export async function captureIndexFootprint(
       ])).digest("hex");
     },
     stagingDigest({ scopeKey, generation, inventoryDigest }: IndexReclaimIntentTarget) {
-      const { dev, ino, birthtimeNs, uid, mode } = indexStat;
       return createHash("sha256").update(JSON.stringify([
         3, "agentic-markdown-index-reclaim-intent", "limited-v1", scopeKey, generation, inventoryDigest,
-        [dev, ino, birthtimeNs, uid, mode].map(String), fileStamps(),
+        directoryStamp(), fileStamps(),
       ])).digest("hex");
     },
   };

@@ -6,7 +6,8 @@ import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
 import { natural, record } from "./protocol";
-import { reopenWithIndexReuse, searchWithIndexReuse, type IndexReuseInput } from "./reuse";
+import { reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse, type IndexReuseInput } from "./reuse";
+import { readIndexRetirementTarget, type IndexRetirementTarget } from "./reuse-catalog";
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
 
@@ -81,6 +82,39 @@ export function reopenAppIndexCache(input: IndexReuseInput, current: () => boole
   return queryAppIndexCache(input, current, true, maxLogicalBytes);
 }
 
+type CacheBoundary = Extract<ReturnType<typeof appCacheBoundary>, { ok: true }>;
+function existingProfile({ home, pin, cacheCurrent, boundaryFailure }: CacheBoundary) {
+  let directory = home;
+  for (const name of [cacheName, profileName]) {
+    if (!cacheCurrent()) return boundaryFailure();
+    directory = join(directory, name);
+    const stat = present(directory);
+    if (!stat) {
+      if (!cacheCurrent()) return boundaryFailure();
+      return fail(present(directory) ? "UNAVAILABLE" : "MISSING");
+    }
+    pin(directory, true, stat);
+  }
+  return { ok: true as const, directory };
+}
+
+export async function retireAppIndexCache(input: IndexRetirementTarget, current: () => boolean) {
+  const target = readIndexRetirementTarget(input);
+  if (!target) return fail("INPUT");
+  const boundary = appCacheBoundary(current);
+  if (!boundary.ok) return boundary;
+  const { cacheCurrent, callerCurrent, boundaryFailure } = boundary;
+  try {
+    const profile = existingProfile(boundary);
+    if (!profile.ok) return profile;
+    const result = await retireIndexReuse(profile.directory, target, cacheCurrent);
+    return !result.ok && result.error === "CANCELLED" ? boundaryFailure() : result;
+  } catch {
+    callerCurrent();
+    return boundaryFailure();
+  }
+}
+
 function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: false): ReturnType<typeof searchWithIndexReuse>;
 function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: true, maxLogicalBytes?: number): ReturnType<typeof reopenWithIndexReuse>;
 async function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: boolean, maxLogicalBytes?: number) {
@@ -89,25 +123,22 @@ async function queryAppIndexCache(input: IndexReuseInput, current: () => boolean
   const { home, pin, cacheCurrent, callerCurrent, boundaryFailure } = boundary;
   try {
     let directory = home;
-    for (const name of [cacheName, profileName]) {
-      if (!cacheCurrent()) return boundaryFailure();
-      directory = join(directory, name);
-      if (exact) {
-        const stat = present(directory);
-        if (!stat) {
-          if (!cacheCurrent()) return boundaryFailure();
-          return fail(present(directory) ? "UNAVAILABLE" : "MISSING");
+    if (exact) {
+      const profile = existingProfile(boundary);
+      if (!profile.ok) return profile;
+      directory = profile.directory;
+    } else {
+      for (const name of [cacheName, profileName]) {
+        if (!cacheCurrent()) return boundaryFailure();
+        directory = join(directory, name);
+        try {
+          await mkdir(directory, { mode: 0o700 });
+        } catch (error) {
+          if (!record(error) || error.code !== "EEXIST") throw error;
         }
-        pin(directory, true, stat);
-        continue;
+        if (!cacheCurrent()) return boundaryFailure();
+        pin(directory, true);
       }
-      try {
-        await mkdir(directory, { mode: 0o700 });
-      } catch (error) {
-        if (!record(error) || error.code !== "EEXIST") throw error;
-      }
-      if (!cacheCurrent()) return boundaryFailure();
-      pin(directory, true);
     }
     if (!cacheCurrent()) return boundaryFailure();
     const result = exact

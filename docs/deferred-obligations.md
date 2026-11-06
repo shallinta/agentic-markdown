@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ar 私有索引逻辑退役（2026-11-06）
+
+alpha.229 已验证逻辑退役和跨进程拒绝。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。撤权接线、文件身份、回收、写入与最终离线继续承接。见[F-064ar 迭代](iterations/F-064ar-retire-private-index-cache.md)。
+
 ## F-064aq 观察与预算只读查询（2026-11-06）
 
 alpha.228 已验证内部观察和预算消费。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。显式退役、正式接入、持久写入、配额和最终离线继续承接。见[F-064aq 迭代](iterations/F-064aq-observed-budgeted-index-search.md)。

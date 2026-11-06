@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ar 的 alpha.229 已验证内部私有索引逻辑退役。退役槽不会再被读取或更新，保留文件仍计入缓存占用。见[F-064ar 迭代](iterations/F-064ar-retire-private-index-cache.md)。
+
 F-064aq 的 alpha.228 已验证内部只读索引可同时要求观察凭据和显式预算。普通窗口继续使用直接搜索。见[F-064aq 迭代](iterations/F-064aq-observed-budgeted-index-search.md)。
 
 F-064ap 的 alpha.227 已验证内部工作区的观察失效凭据。普通窗口自动观察与直接搜索继续沿用现有行为。见[F-064ap 迭代](iterations/F-064ap-workspace-watch-invalidation-hint.md)。

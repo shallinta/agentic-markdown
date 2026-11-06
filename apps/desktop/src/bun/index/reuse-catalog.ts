@@ -25,6 +25,13 @@ export interface IndexReuseCatalog {
   entries: readonly { id: string; hash: string }[];
 }
 
+export interface IndexRetirementTarget { scopeKey: string; generation: number }
+interface RetiredCatalog extends IndexRetirementTarget {
+  version: 1;
+  profile: "limited-v1";
+  state: "retired";
+}
+
 export interface IndexReuseInventoryIdentity {
   catalog: BigIntStats;
   index: BigIntStats;
@@ -33,13 +40,16 @@ export interface IndexReuseInventoryIdentity {
 type CatalogRead =
   | { status: "cold" }
   | { status: "existing"; catalog: IndexReuseCatalog; identity: IndexReuseInventoryIdentity }
+  | { status: "retired"; catalog: RetiredCatalog; identity: IndexReuseInventoryIdentity }
   | { status: "invalid" };
 
 interface IndexReuseSlot {
   indexPath: string;
   assertInventoryLease(this: void): BigIntStats;
+  assertCatalogIdentity(identity: IndexReuseInventoryIdentity): void;
   readCatalog(): Promise<CatalogRead>;
   writeCatalog(catalog: IndexReuseCatalog, beforeCommit?: () => void): Promise<void>;
+  retireCatalog(target: IndexRetirementTarget, identity: IndexReuseInventoryIdentity, beforeCommit: () => void): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -79,6 +89,19 @@ function validCatalog(value: unknown): value is IndexReuseCatalog {
     seen.add(item.id);
   }
   return true;
+}
+
+export function readIndexRetirementTarget(value: unknown): IndexRetirementTarget | undefined {
+  if (!record(value) || !keys(value, "generation,scopeKey")) return;
+  const { scopeKey, generation } = value;
+  if (typeof scopeKey === "string" && digest.test(scopeKey) && natural(generation))
+    return { scopeKey, generation };
+}
+
+function validRetiredCatalog(value: unknown): value is RetiredCatalog {
+  return record(value) && keys(value, "generation,profile,scopeKey,state,version") &&
+    value.version === 1 && value.profile === "limited-v1" && value.state === "retired" &&
+    typeof value.scopeKey === "string" && digest.test(value.scopeKey) && natural(value.generation);
 }
 
 function hasCode(error: unknown, code: string) {
@@ -152,12 +175,90 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
       return root;
     };
     assertLease();
+    const assertCatalogIdentity = (identity: IndexReuseInventoryIdentity) => {
+      assertLease(true);
+      const catalog = present(catalogPath);
+      const index = present(indexPath);
+      if (!catalog || !privateFile(catalog) || !sameFile(identity.catalog, catalog) ||
+          catalog.mode !== identity.catalog.mode ||
+          !index || !ownedDirectory(index) || !sameFile(identity.index, index) ||
+          index.mode !== identity.index.mode || index.nlink !== identity.index.nlink)
+        throw Error("Index reuse catalog or index identity changed");
+    };
+
+    async function publishCatalog(
+      value: IndexReuseCatalog | RetiredCatalog,
+      beforeCommit?: () => void,
+      identity?: IndexReuseInventoryIdentity
+    ) {
+      assertLease();
+      const contents = JSON.stringify(value);
+      if (Buffer.byteLength(contents) > maxCatalogBytes)
+        throw Error("Index reuse catalog exceeds limit");
+      const tempPath = join(directory, `.catalog-${randomUUID()}.tmp`);
+      let created = false;
+      let staged: BigIntStats | undefined;
+      let written: BigIntStats | undefined;
+      const cleanStaging = () => {
+        try {
+          const root = present(directory);
+          if (!staged || !root || !sameInode(directoryStat, root))
+            throw Error("Index reuse staging identity changed");
+          const temp = present(tempPath);
+          if (temp) {
+            if (!sameInode(staged, temp))
+              throw Error("Index reuse staging identity changed");
+            unlinkSync(tempPath);
+          }
+        } catch {
+          throw new IndexReuseCleanupError("Index reuse staging cleanup unconfirmed");
+        }
+      };
+      try {
+        const file = await open(
+          tempPath,
+          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+          0o600
+        );
+        created = true;
+        try {
+          staged = await file.stat({ bigint: true });
+          if (!privateFile(staged)) throw Error("Index reuse catalog staging unavailable");
+          await file.writeFile(contents);
+          await file.sync();
+          if (identity) written = await file.stat({ bigint: true });
+        } finally {
+          await closeCatalogFile(file);
+        }
+        assertLease();
+        const temp = present(tempPath);
+        const target = present(catalogPath);
+        const index = present(indexPath);
+        if (!temp || !privateFile(temp) || !sameInode(staged, temp) ||
+            (target && !privateFile(target)) || !index || !ownedDirectory(index))
+          throw Error("Index reuse catalog publication unavailable");
+        beforeCommit?.();
+        if (identity) {
+          assertCatalogIdentity(identity);
+          const latest = present(tempPath);
+          if (!written || !latest || !privateFile(written) || !privateFile(latest) ||
+              !sameInode(staged, written) || !sameFile(written, latest) ||
+              latest.size !== BigInt(Buffer.byteLength(contents)))
+            throw Error("Index retirement staging changed");
+        }
+        renameSync(tempPath, catalogPath);
+      } catch (error) {
+        if (created) cleanStaging();
+        throw error;
+      }
+    }
 
     return {
       ok: true,
       slot: {
         indexPath,
         assertInventoryLease: () => assertLease(true),
+        assertCatalogIdentity,
         async readCatalog() {
           try {
             assertLease();
@@ -194,67 +295,27 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
             const latestCatalog = present(catalogPath);
             const latestIndex = present(indexPath);
             if (!latestCatalog || !privateFile(latestCatalog) || !sameFile(catalog, latestCatalog) ||
-                !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex) ||
-                !validCatalog(value))
+                !latestIndex || !ownedDirectory(latestIndex) || !sameInode(index, latestIndex))
               return { status: "invalid" };
-            return { status: "existing", catalog: value, identity: { catalog, index } };
+            const identity = { catalog, index };
+            if (validCatalog(value)) return { status: "existing", catalog: value, identity };
+            if (validRetiredCatalog(value)) return { status: "retired", catalog: value, identity };
+            return { status: "invalid" };
           } catch (error) {
             if (error instanceof IndexReuseCleanupError) throw error;
             return { status: "invalid" };
           }
         },
         async writeCatalog(catalog, beforeCommit) {
-          assertLease();
           if (!validCatalog(catalog)) throw Error("Invalid index reuse catalog");
-          const contents = JSON.stringify(catalog);
-          if (Buffer.byteLength(contents) > maxCatalogBytes)
-            throw Error("Index reuse catalog exceeds limit");
-          const tempPath = join(directory, `.catalog-${randomUUID()}.tmp`);
-          let created = false;
-          let staged: BigIntStats | undefined;
-          const cleanStaging = () => {
-            try {
-              const root = present(directory);
-              if (!staged || !root || !sameInode(directoryStat, root))
-                throw Error("Index reuse staging identity changed");
-              const temp = present(tempPath);
-              if (temp) {
-                if (!sameInode(staged, temp))
-                  throw Error("Index reuse staging identity changed");
-                unlinkSync(tempPath);
-              }
-            } catch {
-              throw new IndexReuseCleanupError("Index reuse staging cleanup unconfirmed");
-            }
-          };
-          try {
-            const file = await open(
-              tempPath,
-              constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-              0o600
-            );
-            created = true;
-            try {
-              staged = await file.stat({ bigint: true });
-              if (!privateFile(staged)) throw Error("Index reuse catalog staging unavailable");
-              await file.writeFile(contents);
-              await file.sync();
-            } finally {
-              await closeCatalogFile(file);
-            }
-            assertLease();
-            const temp = present(tempPath);
-            const target = present(catalogPath);
-            const index = present(indexPath);
-            if (!temp || !privateFile(temp) || !sameInode(staged, temp) ||
-                (target && !privateFile(target)) || !index || !ownedDirectory(index))
-              throw Error("Index reuse catalog publication unavailable");
-            beforeCommit?.();
-            renameSync(tempPath, catalogPath);
-          } catch (error) {
-            if (created) cleanStaging();
-            throw error;
-          }
+          await publishCatalog(catalog, beforeCommit);
+        },
+        async retireCatalog(target, identity, beforeCommit) {
+          const { scopeKey, generation } = target;
+          const marker = { version: 1, profile: "limited-v1", state: "retired", scopeKey, generation } as const;
+          if (!validRetiredCatalog(marker)) throw Error("Invalid index retirement marker");
+          assertCatalogIdentity(identity);
+          await publishCatalog(marker, beforeCommit, identity);
         },
         async release() {
           if (released) return;
@@ -268,6 +329,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         },
       },
     };
+
   } catch {
     return { ok: false, error: leaseCreated ? "UNKNOWN" : "UNAVAILABLE" };
   }

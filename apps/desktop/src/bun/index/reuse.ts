@@ -17,6 +17,7 @@ import {
 import {
   acquireIndexReuseSlot,
   IndexReuseCleanupError,
+  type IndexRetirementTarget,
   type IndexReuseCatalog,
 } from "./reuse-catalog";
 import { createIndexSession } from "./session";
@@ -33,6 +34,9 @@ type ReuseResult =
   | { ok: true; generation: number; hits: IndexHit[]; applied: number };
 type ExactError = "MISSING" | "MISMATCH";
 type ExactReuseResult = ReuseResult | { ok: false; error: ExactError; accepted: boolean };
+type RetirementResult =
+  | { ok: true; alreadyRetired: boolean }
+  | { ok: false; error: ExactError | "SCHEMA" | "BUSY" | "CANCELLED" | "UNKNOWN" | "UNAVAILABLE"; accepted: boolean };
 
 const fail = <Error extends Failure["error"] | ExactError>(error: Error) => ({
   ok: false as const,
@@ -45,6 +49,74 @@ async function closeProfileInspection(directory: Dir) {
     await directory.close();
   } catch {
     throw new IndexReuseCleanupError("Index reuse profile inspection close unconfirmed");
+  }
+}
+
+async function profileContainsOnlyLease(directory: string, check: () => void) {
+  const directoryHandle = await opendir(directory, { bufferSize: 2 });
+  try {
+    check();
+    const first = await directoryHandle.read();
+    check();
+    if (first?.name !== ".lease") return false;
+    const second = await directoryHandle.read();
+    check();
+    return second === null;
+  } finally {
+    await closeProfileInspection(directoryHandle);
+  }
+}
+
+export async function retireIndexReuse(
+  directory: string, target: IndexRetirementTarget, current: () => boolean
+): Promise<RetirementResult> {
+  if (!current()) return fail("CANCELLED");
+  const acquired = await acquireIndexReuseSlot(directory);
+  if (!acquired.ok)
+    return fail(acquired.error === "UNKNOWN" || current() ? acquired.error : "CANCELLED");
+  const { slot } = acquired;
+  const check = () => {
+    if (!current()) throw Error("Index retirement cancelled");
+  };
+  let result: RetirementResult;
+  try {
+    result = await run();
+  } catch (error) {
+    result = fail(error instanceof IndexReuseCleanupError
+      ? "UNKNOWN" : current() ? "UNAVAILABLE" : "CANCELLED");
+  } finally {
+    try {
+      await slot.release();
+    } catch {
+      result = fail("UNKNOWN");
+    }
+  }
+  return result;
+
+  async function run(): Promise<RetirementResult> {
+    check();
+    const cached = await slot.readCatalog();
+    check();
+    if (cached.status === "invalid") return fail("SCHEMA");
+    if (cached.status === "cold") {
+      const checkCold = () => {
+        check();
+        slot.assertInventoryLease();
+      };
+      checkCold();
+      const empty = await profileContainsOnlyLease(directory, checkCold);
+      checkCold();
+      return fail(empty ? "MISSING" : "SCHEMA");
+    }
+    const { catalog, identity } = cached;
+    if (catalog.scopeKey !== target.scopeKey) return fail("SCHEMA");
+    if (catalog.generation !== target.generation) return fail("MISMATCH");
+    if (cached.status === "retired") {
+      slot.assertCatalogIdentity(identity);
+      return { ok: true, alreadyRetired: true };
+    }
+    await slot.retireCatalog(target, identity, check);
+    return { ok: true, alreadyRetired: false };
   }
 }
 
@@ -145,11 +217,11 @@ async function runIndexReuse(
     check();
     const cached = await slot.readCatalog();
     check();
-    if (cached.status === "invalid") return fail("SCHEMA");
+    if (cached.status === "invalid" || cached.status === "retired") return fail("SCHEMA");
     const prior = cached.status === "existing" ? cached.catalog : undefined;
     if (prior && prior.scopeKey !== scopeKey) return fail("SCHEMA");
     if (exact && !prior) {
-      const empty = await profileContainsOnlyLease();
+      const empty = await profileContainsOnlyLease(directory, check);
       check();
       return fail(empty ? "MISSING" : "SCHEMA");
     }
@@ -223,20 +295,5 @@ async function runIndexReuse(
       };
     }
     return { ok: true, generation, hits, applied: changes.length };
-  }
-
-  async function profileContainsOnlyLease() {
-    const directoryHandle = await opendir(directory, { bufferSize: 2 });
-    try {
-      check();
-      const first = await directoryHandle.read();
-      check();
-      if (first?.name !== ".lease") return false;
-      const second = await directoryHandle.read();
-      check();
-      return second === null;
-    } finally {
-      await closeProfileInspection(directoryHandle);
-    }
   }
 }

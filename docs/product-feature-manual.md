@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064aq 的 alpha.228 已验证内部只读索引可同时要求观察凭据和显式预算。普通窗口继续使用直接搜索。见[F-064aq 迭代](iterations/F-064aq-observed-budgeted-index-search.md)。
+
 F-064ap 的 alpha.227 已验证内部工作区的观察失效凭据。普通窗口自动观察与直接搜索继续沿用现有行为。见[F-064ap 迭代](iterations/F-064ap-workspace-watch-invalidation-hint.md)。
 
 F-064ao 的 alpha.226 已验证内部只读索引的显式逻辑字节预算。缓存超预算时不会打开原生会话。窗口仍使用直接搜索。见[F-064ao 迭代](iterations/F-064ao-index-read-byte-admission.md)。

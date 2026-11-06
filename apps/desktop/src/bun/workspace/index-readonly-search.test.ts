@@ -9,11 +9,14 @@ import { createDocumentService } from "../documents";
 import { searchAppIndexCache } from "../index/app-cache";
 import { record } from "../index/protocol";
 
+import { createScanWorker } from "./worker";
+
 import { createWorkspaceService } from ".";
 
 const prefix = "f064aj-index-readonly-search-";
 const isolated = process.env.AGENTIC_MARKDOWN_INDEX_READONLY_SEARCH_TEST === "1";
 const fail = <E extends string>(error: E) => ({ ok: false as const, error });
+type SearchOptions = Parameters<ReturnType<typeof createWorkspaceService>["searchExistingIndex"]>[4];
 
 test.skipIf(isolated)("isolated workspace index query leaves no fixture data", async () => {
   const scratch = await realpath(await mkdtemp(join(tmpdir(), prefix)));
@@ -62,13 +65,30 @@ test.skipIf(!isolated)("fresh workspace proofs fence existing-index query from p
   const operations: unknown[] = [];
   let nativeWorkers = 0;
   let holdQuery: ((resume: () => void) => void) | undefined;
+  let holdResult: ((resume: () => void) => void) | undefined;
 
   class RecordingWorker extends OriginalWorker {
     readonly indexWorker: boolean;
+    private queryId: number | undefined;
     constructor(...args: ConstructorParameters<typeof Worker>) {
       super(...args);
       this.indexWorker = basename(String(args[0])) === "index-worker.js";
-      if (this.indexWorker) nativeWorkers++;
+      if (this.indexWorker) {
+        nativeWorkers++;
+        Object.defineProperty(this, "onmessage", {
+          set: (listener: (event: MessageEvent<unknown>) => void) => {
+            super.onmessage = (event: MessageEvent<unknown>) => {
+              if (holdResult && this.queryId !== undefined && record(event.data) &&
+                  event.data.id === this.queryId && record(event.data.result) &&
+                  event.data.result.ok === true) {
+                const held = holdResult;
+                holdResult = undefined;
+                held(() => listener(event));
+              } else listener(event);
+            };
+          },
+        });
+      }
     }
     override postMessage(message: unknown) {
       if (this.indexWorker && record(message)) {
@@ -80,16 +100,40 @@ test.skipIf(!isolated)("fresh workspace proofs fence existing-index query from p
           held(() => super.postMessage(message));
           return;
         }
+        if (op === "query" && typeof message.id === "number") this.queryId = message.id;
       }
       super.postMessage(message);
     }
   }
   const readonlyOperations = [["open", "reader-only"], "verify-roster", "query", "close"];
 
-  function workspaceFor(path: string) {
+  function workspaceFor(path: string, fakeWatch = false) {
     const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
+    const scanner = createScanWorker();
+    const watchKeys = new Set<string>();
+    let watchStatus: "establishing" | "watching" = "establishing";
+    let watchDirty = false;
     const workspace = createWorkspaceService({
       documents, pickDirectory: () => Promise.resolve(path), contentSearchStrategy: "direct",
+      worker: {
+        call: (message) => {
+          if (fakeWatch && message.op === "watchStart" && typeof message.key === "string") {
+            watchKeys.add(message.key);
+            return Promise.resolve({ bytes: 0 });
+          }
+          if (fakeWatch && message.op === "watchClose" && typeof message.key === "string") {
+            watchKeys.delete(message.key);
+            return Promise.resolve({ bytes: 0 });
+          }
+          if (fakeWatch && message.op === "watchTick")
+            return Promise.resolve({
+              bytes: 0, queueBytes: 0,
+              roots: [...watchKeys].map(key => ({ key, status: watchStatus, dirty: watchDirty })),
+            });
+          return scanner.call(message);
+        },
+        dispose: () => scanner.dispose(),
+      },
     });
     let closed = false;
     async function close() {
@@ -113,10 +157,15 @@ test.skipIf(!isolated)("fresh workspace proofs fence existing-index query from p
       }
       throw Error("Fixture scan did not finish");
     }
-    const search = (root: WorkspaceRoot, text = query, signal?: AbortSignal) =>
-      workspace.searchExistingIndex(root.handle, root.generation, text, signal);
+    const search = (root: WorkspaceRoot, text = query, signal?: AbortSignal, options?: SearchOptions) =>
+      workspace.searchExistingIndex(root.handle, root.generation, text, signal, options);
+    const watchHint = (root: WorkspaceRoot) => workspace.captureIndexWatchHint(root.handle, root.generation);
     return {
-      documents, close, search,
+      documents, close, search, watchHint,
+      watchReport(status: "establishing" | "watching", dirty = false) {
+        watchStatus = status;
+        watchDirty = dirty;
+      },
       rows: (root: WorkspaceRoot) => workspace.captureIndexRows(root.handle, root.generation),
       async join(this: void) { await request({ op: "select" }); return settle(); },
       async rescan(this: void, root: WorkspaceRoot) {
@@ -129,14 +178,20 @@ test.skipIf(!isolated)("fresh workspace proofs fence existing-index query from p
         if (!item) throw Error("Missing fixture file");
         return item.handle;
       },
-      async heldSearch(this: void, root: WorkspaceRoot, signal?: AbortSignal) {
+      async heldSearch(this: void, root: WorkspaceRoot, signal?: AbortSignal, options?: SearchOptions) {
         const entered = Promise.withResolvers<() => void>();
-        holdQuery = entered.resolve;
-        const pending = search(root, query, signal);
-        const resume = await Promise.race([
-          entered.promise, pending.then((result) => { throw Error("Expected native query: " + JSON.stringify(result)); }),
-        ]);
-        return { pending, resume };
+        if (options) holdResult = entered.resolve;
+        else holdQuery = entered.resolve;
+        try {
+          const pending = search(root, query, signal, options);
+          const resume = await Promise.race([
+            entered.promise, pending.then((result) => { throw Error("Expected native query: " + JSON.stringify(result)); }),
+          ]);
+          return { pending, resume };
+        } finally {
+          holdResult = undefined;
+          holdQuery = undefined;
+        }
       },
     };
   }
@@ -155,6 +210,24 @@ test.skipIf(!isolated)("fresh workspace proofs fence existing-index query from p
     const closed = await Promise.allSettled(closeAll.map((close) => close()));
     if (closed.some((result) => result.status === "rejected"))
       throw Error("Fixture workspace cleanup failed");
+  }
+  async function awaitWatch<T>(ready: () => T | undefined) {
+    for (let attempt = 0; attempt < 1000; attempt++) {
+      const value = ready();
+      if (value !== undefined) return value;
+      await Bun.sleep(2);
+    }
+    throw Error("Fixture watch report did not settle");
+  }
+  async function rewriteFirstPreservingIdentity() {
+    const before = await lstat(firstPath, { bigint: true });
+    await writeFile(firstPath, changed);
+    await utimes(firstPath, before.atime, new Date(Number(before.mtimeMs) + 10_000));
+    const after = await lstat(firstPath, { bigint: true });
+    expect({ dev: after.dev, ino: after.ino, size: after.size }).toEqual({
+      dev: before.dev, ino: before.ino, size: before.size,
+    });
+    expect(after.mtimeNs > before.mtimeNs).toBe(true);
   }
 
   try {
@@ -240,14 +313,7 @@ test.skipIf(!isolated)("fresh workspace proofs fence existing-index query from p
 
     const late = await live.heldSearch(restored);
     try {
-      const before = await lstat(firstPath, { bigint: true });
-      await writeFile(firstPath, changed);
-      await utimes(firstPath, before.atime, new Date(Number(before.mtimeMs) + 10_000));
-      const after = await lstat(firstPath, { bigint: true });
-      expect({ dev: after.dev, ino: after.ino, size: after.size }).toEqual({
-        dev: before.dev, ino: before.ino, size: before.size,
-      });
-      expect(after.mtimeNs > before.mtimeNs).toBe(true);
+      await rewriteFirstPreservingIdentity();
     } finally {
       late.resume();
     }
@@ -282,6 +348,84 @@ test.skipIf(!isolated)("fresh workspace proofs fence existing-index query from p
     await rm(marker);
     await rmdir(lease);
     expect(await snapshotStorage()).toEqual(storage);
+
+    const observed = workspaceFor(rootPath, true);
+    const observedRoot = await observed.join();
+    const observedFirst = await observed.file(observedRoot, "first.md");
+    const observedSecond = await observed.file(observedRoot, "second.md");
+    const observedHits = [
+      { entry: observedFirst, from: 9, to: 15 },
+      { entry: observedSecond, from: 5, to: 11 },
+    ].sort(sortHits);
+    const logicalBytes = Number(storage.reduce((sum, file) => sum + file.size, 0n));
+    const options = { requireObserved: true, maxLogicalBytes: logicalBytes } as const;
+    const useObserved = () => observed.search(observedRoot, query, undefined, options);
+    operations.length = 0;
+    nativeWorkers = 0;
+    for (const maxLogicalBytes of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(await observed.search(observedRoot, query, undefined, { ...options, maxLogicalBytes }))
+        .toEqual(fail("INPUT"));
+    }
+    const extra = { ...options, extra: true };
+    expect(await observed.search(observedRoot, query, undefined, extra)).toEqual(fail("INPUT"));
+    expect(await useObserved()).toEqual(fail("UNAVAILABLE"));
+    expect(nativeWorkers).toBe(0);
+    expect(operations).toEqual([]);
+    expect(await snapshotStorage()).toEqual(storage);
+    expect(await observed.search(observedRoot)).toMatchObject({ ok: true });
+    expect(operations.splice(0)).toEqual(readonlyOperations);
+
+    function readyWatch() {
+      const hint = observed.watchHint(observedRoot);
+      return hint.ok ? hint : undefined;
+    }
+    observed.watchReport("watching");
+    const clean = await awaitWatch(readyWatch);
+    nativeWorkers = 0;
+    expect(await observed.search(observedRoot, query, undefined, { ...options, maxLogicalBytes: logicalBytes - 1 }))
+      .toEqual(fail("LIMIT"));
+    expect(nativeWorkers).toBe(0);
+    expect(operations).toEqual([]);
+    const exact = await useObserved();
+    if (!exact.ok) throw Error("Observed exact-budget query failed: " + exact.error);
+    expect({ ...exact, hits: [...exact.hits].sort(sortHits) }).toEqual({ ok: true, hits: observedHits });
+    expect(nativeWorkers).toBe(1);
+    expect(operations.splice(0)).toEqual(readonlyOperations);
+
+    const staleObservation = await observed.heldSearch(observedRoot, undefined, options);
+    try {
+      expect(await readdir(profile)).toContain(".lease");
+      expect(await useObserved()).toEqual(fail("BUSY"));
+      expect(await observed.rows(observedRoot)).toEqual(fail("BUSY"));
+      observed.watchReport("watching", true);
+      await awaitWatch(() => clean.current() ? undefined : true);
+      observed.watchReport("watching");
+      expect(await readFile(firstPath, "utf8")).toBe(first);
+      expect(await readFile(secondPath, "utf8")).toBe(second);
+      expect(await useObserved()).toEqual(fail("BUSY"));
+    } finally {
+      staleObservation.resume();
+    }
+    expect(await staleObservation.pending).toEqual(fail("STALE"));
+    expect(operations.splice(0)).toEqual(readonlyOperations);
+    expect(await snapshotStorage()).toEqual(storage);
+    const newWatch = await awaitWatch(readyWatch);
+    expect(clean.current()).toBe(false);
+    expect(newWatch.current()).toBe(true);
+
+    const stalePhysical = await observed.heldSearch(observedRoot, undefined, options);
+    try {
+      await rewriteFirstPreservingIdentity();
+      expect(newWatch.current()).toBe(true);
+    } finally {
+      stalePhysical.resume();
+    }
+    expect(await stalePhysical.pending).toEqual(fail("STALE"));
+    expect(operations.splice(0)).toEqual(readonlyOperations);
+    expect(await snapshotStorage()).toEqual(storage);
+    expect(await readFile(firstPath, "utf8")).toBe(changed);
+    expect(await readFile(secondPath, "utf8")).toBe(second);
+    expect(observed.documents.locations()).toEqual([]);
   } finally {
     Object.defineProperty(globalThis, "Worker", { value: OriginalWorker, configurable: true });
     try {

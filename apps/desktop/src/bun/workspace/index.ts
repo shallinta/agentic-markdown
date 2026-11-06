@@ -64,7 +64,7 @@ import {
 } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
 import { reopenAppIndexCache } from "../index/app-cache";
-import { INDEX_LIMITS, keys, record, scalar } from "../index/protocol";
+import { INDEX_LIMITS, keys, natural, record, scalar } from "../index/protocol";
 
 import {
   authorizeRoot,
@@ -137,12 +137,15 @@ interface IndexRow {
 type IndexRowsCapture = IndexScopeFailure | (IndexScopeProof & { rows: readonly IndexRow[] });
 
 interface ExistingIndexHit { entry: string; from: number; to: number }
+interface ObservedIndexOptions { requireObserved: true; maxLogicalBytes: number }
 type ExistingIndexSearch =
   | { ok: true; hits: ExistingIndexHit[] }
   | { ok: false; error: IndexScopeError | "INPUT" | "MISSING" | "MISMATCH" | "SCHEMA" | "UNKNOWN" };
 
 export interface TrustedWorkspaceService extends WorkspaceService {
-  searchExistingIndex(handle: string, generation: number, query: string, signal?: AbortSignal): Promise<ExistingIndexSearch>;
+  searchExistingIndex(
+    handle: string, generation: number, query: string, signal?: AbortSignal, options?: ObservedIndexOptions
+  ): Promise<ExistingIndexSearch>;
   captureIndexWatchHint(handle: string, generation: number): IndexWatchHint;
   captureIndexScope(handle: string, generation: number, signal?: AbortSignal): Promise<IndexScopeCapture>;
   captureIndexRows(handle: string, generation: number, signal?: AbortSignal): Promise<IndexRowsCapture>;
@@ -345,11 +348,13 @@ export function createWorkspaceService({
     };
     return { ok: true as const, root, entries, showHidden, current };
   }
-  function captureIndexProof(handle: string, generation: number, signal?: AbortSignal) {
+  function captureIndexProof(handle: string, generation: number, signal?: AbortSignal, requireObserved = false) {
     if (signal?.aborted) return { ok: false, error: "CANCELLED" } as const;
     if (indexTask) return { ok: false, error: "BUSY" } as const;
     const captured = captureIndexRoot(handle, generation, signal);
     if (!captured.ok) return captured;
+    const observed = requireObserved ? observation.captureIndexHint(handle) : undefined;
+    if (requireObserved && !observed) return { ok: false, error: "UNAVAILABLE" } as const;
     const { authorization } = captured.root;
     const { directories } = authorization;
     const directory = directories[directories.length - 1];
@@ -357,7 +362,7 @@ export function createWorkspaceService({
 
     let invalid: IndexScopeError | undefined;
     const current = () => {
-      if (!invalid && !captured.current())
+      if (!invalid && (!captured.current() || (observed && !observed())))
         invalid = signal?.aborted ? "CANCELLED" : "STALE";
       return invalid === undefined;
     };
@@ -1754,9 +1759,17 @@ export function createWorkspaceService({
         indexTask = undefined;
       }
     },
-    async searchExistingIndex(handle, generation, query, signal) {
+    async searchExistingIndex(handle, generation, query, signal, options) {
       if (!scalar(query, INDEX_LIMITS.query) || !query.trim()) return { ok: false, error: "INPUT" };
-      const scope = captureIndexProof(handle, generation, signal);
+      let maxLogicalBytes: number | undefined;
+      if (options !== undefined) {
+        if (!record(options) || !keys(options, "maxLogicalBytes,requireObserved"))
+          return { ok: false, error: "INPUT" };
+        const { requireObserved, maxLogicalBytes: cap } = options;
+        if (requireObserved !== true || !natural(cap)) return { ok: false, error: "INPUT" };
+        maxLogicalBytes = cap;
+      }
+      const scope = captureIndexProof(handle, generation, signal, maxLogicalBytes !== undefined);
       if (!scope.ok) return scope;
       let current = scope.current;
       const task = Promise.resolve().then(async (): Promise<ExistingIndexSearch> => {
@@ -1768,7 +1781,7 @@ export function createWorkspaceService({
             scopeKey: ticket.scopeKey,
             rows: ticket.rows.map(({ id, raw }) => ({ id, raw })),
             query,
-          }, current);
+          }, current, maxLogicalBytes);
           if (!result.ok && result.error === "UNKNOWN") return { ok: false, error: "UNKNOWN" };
           if (!current()) return scope.failure();
           if (!result.ok) {

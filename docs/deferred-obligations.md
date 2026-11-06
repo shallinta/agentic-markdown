@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064aq 观察与预算只读查询（2026-11-06）
+
+alpha.228 已验证内部观察和预算消费。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。显式退役、正式接入、持久写入、配额和最终离线继续承接。见[F-064aq 迭代](iterations/F-064aq-observed-budgeted-index-search.md)。
+
 ## F-064ap 工作区观察失效信号（2026-11-06）
 
 alpha.227 已验证当前观察回执对旧凭据的失效。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。内部消费、正式接入、持久写入、撤权及最终离线继续承接。见[F-064ap 迭代](iterations/F-064ap-workspace-watch-invalidation-hint.md)。

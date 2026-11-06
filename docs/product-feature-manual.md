@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064at 的 alpha.231 已验证内部回收预检，可核对退役摘要、原生格式和实际文件名册。预检保留文件，普通窗口继续使用直接搜索。见[F-064at 迭代](iterations/F-064at-retired-index-reclaim-preflight.md)。
+
 F-064as 的 alpha.230 已验证私有索引可在内部退役时记录文件身份摘要。摘要用于后续核对，索引文件仍保留。见[F-064as 迭代](iterations/F-064as-retired-index-inventory-seal.md)。
 
 F-064ar 的 alpha.229 已验证内部私有索引逻辑退役。退役槽不会再被读取或更新，保留文件仍计入缓存占用。见[F-064ar 迭代](iterations/F-064ar-retire-private-index-cache.md)。

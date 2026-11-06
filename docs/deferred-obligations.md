@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064at 退役索引回收预检（2026-11-06）
+
+alpha.231 已验证只读核对原生格式与名册。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接实际回收、中断恢复、持久接入、配额及最终离线。见[F-064at 迭代](iterations/F-064at-retired-index-reclaim-preflight.md)。
+
 ## F-064as 退役索引文件身份摘要（2026-11-06）
 
 alpha.230 已验证有界元数据摘要。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。回收前检查、持久接入、实际回收、配额及最终离线继续承接。见[F-064as 迭代](iterations/F-064as-retired-index-inventory-seal.md)。

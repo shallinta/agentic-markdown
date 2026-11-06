@@ -14,6 +14,7 @@ import {
   type IndexHit,
   type IndexResult,
 } from "./protocol";
+import { validReclaimLayout } from "./reclaim-layout";
 import {
   acquireIndexReuseSlot,
   IndexReuseCleanupError,
@@ -34,9 +35,13 @@ type ReuseResult =
   | { ok: true; generation: number; hits: IndexHit[]; applied: number };
 type ExactError = "MISSING" | "MISMATCH";
 type ExactReuseResult = ReuseResult | { ok: false; error: ExactError; accepted: boolean };
-type RetirementResult =
-  | { ok: true; alreadyRetired: boolean }
-  | { ok: false; error: ExactError | "SCHEMA" | "BUSY" | "CANCELLED" | "UNKNOWN" | "UNAVAILABLE"; accepted: boolean };
+interface RetirementFailure {
+  ok: false;
+  error: ExactError | "SCHEMA" | "BUSY" | "CANCELLED" | "UNKNOWN" | "UNAVAILABLE";
+  accepted: boolean;
+}
+type RetirementSlot = Extract<Awaited<ReturnType<typeof acquireIndexReuseSlot>>, { ok: true }>["slot"];
+type ProvenCatalog = Extract<Awaited<ReturnType<RetirementSlot["readCatalog"]>>, { status: "existing" | "retired" }>;
 
 const fail = <Error extends Failure["error"] | ExactError>(error: Error) => ({
   ok: false as const,
@@ -67,9 +72,10 @@ async function profileContainsOnlyLease(directory: string, check: () => void) {
   }
 }
 
-export async function retireIndexReuse(
-  directory: string, target: IndexRetirementTarget, current: () => boolean, seal?: true
-): Promise<RetirementResult> {
+async function useRetirementSlot<Result extends { ok: true }>(
+  directory: string, target: IndexRetirementTarget, current: () => boolean,
+  use: (slot: RetirementSlot, cached: ProvenCatalog, check: () => void) => Promise<Result | RetirementFailure>
+): Promise<Result | RetirementFailure> {
   if (!current()) return fail("CANCELLED");
   const acquired = await acquireIndexReuseSlot(directory);
   if (!acquired.ok)
@@ -78,7 +84,7 @@ export async function retireIndexReuse(
   const check = () => {
     if (!current()) throw Error("Index retirement cancelled");
   };
-  let result: RetirementResult;
+  let result: Result | RetirementFailure;
   try {
     result = await run();
   } catch (error) {
@@ -93,7 +99,7 @@ export async function retireIndexReuse(
   }
   return result;
 
-  async function run(): Promise<RetirementResult> {
+  async function run(): Promise<Result | RetirementFailure> {
     check();
     const cached = await slot.readCatalog();
     check();
@@ -108,15 +114,29 @@ export async function retireIndexReuse(
       checkCold();
       return fail(empty ? "MISSING" : "SCHEMA");
     }
-    const { catalog, identity } = cached;
+    const { catalog } = cached;
     if (catalog.scopeKey !== target.scopeKey) return fail("SCHEMA");
     if (catalog.generation !== target.generation) return fail("MISMATCH");
+    return use(slot, cached, check);
+  }
+}
+
+function captureRetirementFootprint(
+  directory: string, { assertInventoryLease }: RetirementSlot, { identity }: ProvenCatalog, check: () => void
+) {
+  return captureIndexFootprint(
+    directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity
+  );
+}
+
+export function retireIndexReuse(
+  directory: string, target: IndexRetirementTarget, current: () => boolean, seal?: true
+) {
+  return useRetirementSlot<{ ok: true; alreadyRetired: boolean }>(directory, target, current, async (slot, cached, check) => {
+    const { identity } = cached;
     if (seal) {
       if (cached.status === "retired" && cached.catalog.version !== 2) return fail("SCHEMA");
-      const { assertInventoryLease } = slot;
-      const footprint = await captureIndexFootprint(
-        directory, assertInventoryLease(), identity.catalog.uid, check, assertInventoryLease, identity
-      );
+      const footprint = await captureRetirementFootprint(directory, slot, cached, check);
       footprint.recheck();
       if (footprint.status !== "existing") return fail("UNAVAILABLE");
       const inventoryDigest = footprint.inventoryDigest(target);
@@ -133,7 +153,28 @@ export async function retireIndexReuse(
     }
     await slot.retireCatalog(target, identity, check);
     return { ok: true, alreadyRetired: false };
-  }
+  });
+}
+
+export async function inspectRetiredIndexReuse(directory: string, target: IndexRetirementTarget, current: () => boolean) {
+  const result = await useRetirementSlot<{ ok: true; inventoryDigest: string; files: number; logicalBytes: number }>(
+    directory, target, current, async (slot, cached, check) => {
+      if (cached.status !== "retired" || cached.catalog.version !== 2) return fail("SCHEMA");
+      const footprint = await captureRetirementFootprint(directory, slot, cached, check);
+      footprint.recheck();
+      if (footprint.status !== "existing") return fail("UNAVAILABLE");
+      const inventoryDigest = footprint.inventoryDigest(target);
+      if (inventoryDigest !== cached.catalog.inventoryDigest) return fail("MISMATCH");
+      const valid = await validReclaimLayout(
+        slot.indexPath, new Map(footprint.nativeFiles()), target.generation, footprint.checkIndex
+      );
+      footprint.recheck();
+      if (!valid) return fail("SCHEMA");
+      if (footprint.totalBytes > BigInt(Number.MAX_SAFE_INTEGER)) return fail("UNAVAILABLE");
+      return { ok: true, inventoryDigest, files: footprint.files, logicalBytes: Number(footprint.totalBytes) };
+    }
+  );
+  return result.ok && !current() ? fail("CANCELLED") : result;
 }
 
 /** One private cache, one bounded verified snapshot. Cache state never grants access. */

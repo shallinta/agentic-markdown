@@ -6,8 +6,10 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import {
-  inspectAppIndexCacheFootprint, reopenAppIndexCache, retireAppIndexCache, searchAppIndexCache,
+  inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, reopenAppIndexCache,
+  retireAppIndexCache, searchAppIndexCache,
 } from "./app-cache";
+import { record } from "./protocol";
 
 const prefix = "f064ar-index-retire-";
 const mode = process.env.AGENTIC_MARKDOWN_INDEX_RETIRE_TEST;
@@ -23,7 +25,7 @@ const wrongGeneration = { ...retirement, generation: 2 };
 const failed = <E extends string>(error: E) => ({ ok: false as const, error, accepted: false });
 const current = () => true;
 
-async function runFixture(scratch: string, childMode: "owner" | "sealed" | "reopen") {
+async function runFixture(scratch: string, childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen") {
   const child = Bun.spawn([process.execPath, "test", import.meta.path], {
     env: {
       ...process.env,
@@ -100,6 +102,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "owner");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "sealed");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "preflight");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -370,6 +374,161 @@ test.skipIf(mode !== "reopen")("a fresh process refuses to reopen a retired cach
     expect(await searchAppIndexCache({ ...input, rows: [] }, current)).toEqual(failed("SCHEMA"));
     expect(f.workers()).toBe(0);
     expect(await f.fingerprint(f.catalog)).toEqual(marker);
+    expect(await f.nativeFiles()).toEqual(native);
+    await f.cleanSlot();
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "preflight")("only a sealed matching index with known native files passes reclaim preflight", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  f.startRecording();
+  const preflight = (target = retirement, guard = current) => inspectRetiredIndexReclaim(target, guard);
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toEqual({
+      ok: true, generation: 1, applied: 1, hits: [{ id: "fixture-a", from: 3, to: 9 }],
+    });
+  }
+  async function refuseSealedFixture(install: () => Promise<void>) {
+    await seed();
+    await install();
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const files = await f.nativeFiles();
+    const marker = await f.fingerprint(f.catalog);
+    const workers = f.workers();
+    expect(await preflight()).toEqual(failed("SCHEMA"));
+    expect(await f.fingerprint(f.catalog)).toEqual(marker);
+    expect(await f.nativeFiles()).toEqual(files);
+    expect(f.workers()).toBe(workers);
+    await f.cleanSlot();
+    await rm(f.home, { recursive: true, force: true });
+  }
+  try {
+    expect(await preflight(retirement, () => false)).toEqual(failed("CANCELLED"));
+    expect(await preflight()).toEqual(failed("UNAVAILABLE"));
+    expect(await readdir(f.scratch)).toEqual([]);
+    await seed();
+    const active = await f.fingerprint(f.catalog);
+    const files = await f.nativeFiles();
+    expect(await preflight()).toEqual(failed("SCHEMA"));
+    expect(await f.fingerprint(f.catalog)).toEqual(active);
+    expect(await retireAppIndexCache(retirement, current)).toEqual({ ok: true, alreadyRetired: false });
+    const legacy = await f.fingerprint(f.catalog);
+    expect(await preflight()).toEqual(failed("SCHEMA"));
+    expect(await f.fingerprint(f.catalog)).toEqual(legacy);
+    expect(await f.nativeFiles()).toEqual(files);
+    expect(f.workers()).toBe(1);
+    await f.cleanSlot();
+    await rm(f.home, { recursive: true, force: true });
+
+    await refuseSealedFixture(() => writeFile(join(f.index, "foreign.txt"), "keep outside reclaim", { mode: 0o600 }));
+    await refuseSealedFixture(async () => {
+      const meta = join(f.index, "meta.json");
+      const original = await readFile(meta, "utf8");
+      const mismatched = original.replace("bridge-v1:1", "bridge-v1:2");
+      expect(mismatched).not.toBe(original);
+      await writeFile(meta, mismatched);
+    });
+    await refuseSealedFixture(() => writeFile(join(f.index, "bridge.schema"), "invalid bridge format\n"));
+    await refuseSealedFixture(async () => {
+      const managed = join(f.index, ".managed.json");
+      const original = await readFile(managed, "utf8");
+      const unsafe = original.replace('"meta.json"', '"../meta.json"');
+      expect(unsafe).not.toBe(original);
+      await writeFile(managed, unsafe);
+    });
+
+    await mkdir(f.home, { mode: 0o700 });
+    const emptyTarget = { ...retirement, generation: 0 };
+    expect(await searchAppIndexCache({ ...input, rows: [] }, current)).toEqual({
+      ok: true, generation: 0, applied: 0, hits: [],
+    });
+    expect(await retireAppIndexCache(emptyTarget, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const emptyFiles = await f.nativeFiles();
+    const emptyMarker = await f.fingerprint(f.catalog);
+    const emptyWorkers = f.workers();
+    expect(await preflight(emptyTarget)).toMatchObject({
+      ok: true, files: emptyFiles.length + 1,
+      logicalBytes: Number(emptyFiles.reduce((sum, file) => sum + file.size, emptyMarker.size)),
+    });
+    expect(f.workers()).toBe(emptyWorkers);
+    expect(await f.nativeFiles()).toEqual(emptyFiles);
+    expect(await f.fingerprint(f.catalog)).toEqual(emptyMarker);
+    await f.cleanSlot();
+    await rm(f.home, { recursive: true, force: true });
+
+    await seed();
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const marker = await f.fingerprint(f.catalog);
+    const nativeDirectory = await f.fingerprint(f.index);
+    const native = await f.nativeFiles();
+    const workers = f.workers();
+    expect(await preflight(wrongScope)).toEqual(failed("SCHEMA"));
+    expect(await preflight(wrongGeneration)).toEqual(failed("MISMATCH"));
+    await mkdir(f.lease, { mode: 0o700 });
+    const busy = join(f.lease, "keep");
+    await writeFile(busy, "busy", { mode: 0o600 });
+    expect(await preflight()).toEqual(failed("BUSY"));
+    expect(await readFile(busy, "utf8")).toBe("busy");
+    await rm(busy);
+    await rmdir(f.lease);
+    await runFixture(f.scratch, "preflight-reopen");
+
+    let guards = 0;
+    expect(await preflight(retirement, () => { guards++; return true; })).toMatchObject({ ok: true });
+    expect(guards).toBeGreaterThan(1);
+    let checks = 0;
+    expect(await preflight(retirement, () => ++checks < guards)).toEqual(failed("CANCELLED"));
+    expect(checks).toBe(guards);
+    expect(await f.fingerprint(f.catalog)).toEqual(marker);
+    expect(await f.fingerprint(f.index)).toEqual(nativeDirectory);
+    expect(await f.nativeFiles()).toEqual(native);
+    await f.cleanSlot();
+
+    const file = native[0];
+    if (!file) throw Error("Native fixture files missing");
+    const filePath = join(f.index, file.name);
+    const stat = await lstat(filePath);
+    await utimes(filePath, stat.atime, new Date(stat.mtimeMs + 10_000));
+    const changed = await f.fingerprint(filePath);
+    expect(await preflight()).toEqual(failed("MISMATCH"));
+    expect(await f.fingerprint(filePath)).toEqual(changed);
+    expect(await f.fingerprint(f.catalog)).toEqual(marker);
+    const link = join(f.index, "foreign-link");
+    await symlink(f.catalog, link);
+    expect(await preflight()).toEqual(failed("UNAVAILABLE"));
+    expect(await readlink(link)).toBe(f.catalog);
+    expect(await f.fingerprint(f.catalog)).toEqual(marker);
+    await rm(link);
+    expect(f.workers()).toBe(workers);
+    await f.cleanSlot();
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "preflight-reopen")("a new process confirms the reclaim digest and logical size without starting native", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual(["home"]);
+  const parsed: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
+  if (!record(parsed) || typeof parsed.inventoryDigest !== "string") throw Error("Sealed fixture missing");
+  const native = await f.nativeFiles();
+  const catalog = await f.fingerprint(f.catalog);
+  const directory = await f.fingerprint(f.index);
+  f.startRecording();
+  try {
+    expect(await inspectRetiredIndexReclaim(retirement, current)).toEqual({
+      ok: true, inventoryDigest: parsed.inventoryDigest,
+      files: native.length + 1,
+      logicalBytes: Number(native.reduce((sum, file) => sum + file.size, catalog.size)),
+    });
+    expect(f.workers()).toBe(0);
+    expect(await f.fingerprint(f.catalog)).toEqual(catalog);
+    expect(await f.fingerprint(f.index)).toEqual(directory);
     expect(await f.nativeFiles()).toEqual(native);
     await f.cleanSlot();
   } finally {

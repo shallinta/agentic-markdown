@@ -1,4 +1,6 @@
-export const READER_SNAPSHOT_MAX_BYTES = 64 * 1024;
+import { MAX_DOCUMENT_BYTES } from "./documents";
+
+export const READER_SNAPSHOT_MAX_BYTES = MAX_DOCUMENT_BYTES;
 export const READER_SNAPSHOT_EVENT = "agentic-markdown:reader-snapshot";
 
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

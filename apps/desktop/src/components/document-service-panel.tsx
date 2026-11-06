@@ -647,7 +647,7 @@ function ReadingSnapshotLab({ controller, buttonClass }: {
         {status === "pending" ? "正在提交已保存快照…" :
           status === "submitted" ? "快照已提交，请在阅读窗口核对。" :
             status === "error" ? "未能确认快照已提交，请核对当前文档和阅读窗口。" :
-              "仅支持当前已保存、且不超过 64 KiB 的文档。"}
+              "仅支持当前已保存、且不超过 1 MiB 的文档。"}
       </span>
     </div>
   );

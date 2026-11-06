@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 独立阅读快照容量（F-021e）
+
+alpha.264 实验入口覆盖已支持的单文件上限 1 MiB。需先打开已授权且无未保存修改的文档，阅读窗显示这次快照。普通启动的正式入口待下一片。见[F-021e 迭代](iterations/F-021e-full-size-reading-snapshot.md)。
+
 ## 草稿恢复（F-066）
 
 F-066b 已验证私有检查点的排他发布与跨进程读回，目前是合成文件实验，尚无用户可用的草稿恢复入口。见[F-066b 迭代](iterations/F-066b-private-checkpoint-publication.md)。

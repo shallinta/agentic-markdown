@@ -32,12 +32,19 @@ test("rejects noncanonical, invalid UTF-8 and over-limit snapshots", () => {
   }
   expect(decodeReaderSnapshot({ data: "Zg==" })).toBeUndefined();
   expect(decodeReaderSnapshot("/w==")).toBeUndefined();
-  const exact = "x".repeat(READER_SNAPSHOT_MAX_BYTES);
+  const start = "\uFEFF# 中文 📖\r\n";
+  const end = "\r\n保存快照末尾 `</script>`\r\n";
+  const exact = start + "x".repeat(READER_SNAPSHOT_MAX_BYTES - Buffer.byteLength(start + end)) + end;
   const within = Buffer.from(exact).toString("base64");
   const oversized = Buffer.from(`${exact}x`).toString("base64");
   expect(within.length).toBe(oversized.length);
-  expect(readerSnapshotDeliveryScript(within)).toBeDefined();
-  expect(decodeReaderSnapshot(within)).toBe(exact);
+  const script = readerSnapshotDeliveryScript(within);
+  if (script === undefined) throw new Error("missing maximum-size delivery expression");
+  const events: CustomEvent[] = [];
+  runInNewContext(script, { CustomEvent, window: { dispatchEvent: (event: CustomEvent) => events.push(event) } });
+  expect(events).toHaveLength(1);
+  expect(events[0]?.type).toBe(READER_SNAPSHOT_EVENT);
+  expect(decodeReaderSnapshot(events[0]?.detail)).toBe(exact);
   expect(readerSnapshotDeliveryScript(oversized)).toBeUndefined();
   expect(decodeReaderSnapshot(oversized)).toBeUndefined();
 });

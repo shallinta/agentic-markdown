@@ -103,18 +103,18 @@ test("reading snapshot rejects a same-inode rewrite and a replacement without re
   }
 });
 
-test("reading snapshot enforces its smaller byte limit on an authorized document", async () => {
-  for (const length of [READER_SNAPSHOT_MAX_BYTES, READER_SNAPSHOT_MAX_BYTES + 1]) {
-    const f = await fixture("x".repeat(length));
-    try {
-      expect((await f.documents.observe(f.observer)).ok).toBe(true);
-      const capture = await f.documents.captureReadingSnapshot(f.source);
-      if (length === READER_SNAPSHOT_MAX_BYTES) {
-        if (!capture.ok) throw Error(capture.error);
-        expect(Buffer.from(capture.base64, "base64").byteLength).toBe(length);
-      } else expect(capture).toEqual({ ok: false, error: "TOO_LARGE" });
-    } finally {
-      await f.cleanup();
-    }
+test("reading snapshot accepts the document byte limit and rejects growth past it", async () => {
+  const exact = "x".repeat(READER_SNAPSHOT_MAX_BYTES);
+  const f = await fixture(exact);
+  try {
+    expect((await f.documents.observe(f.observer)).ok).toBe(true);
+    const capture = await f.documents.captureReadingSnapshot(f.source);
+    if (!capture.ok) throw Error(capture.error);
+    expect(Buffer.from(capture.base64, "base64").byteLength).toBe(READER_SNAPSHOT_MAX_BYTES);
+    // Ordinary selection already refuses an oversized file. Grow the existing grant instead.
+    await writeFile(f.path, `${exact}x`);
+    expect(await f.documents.captureReadingSnapshot(f.source)).toEqual({ ok: false, error: "TOO_LARGE" });
+  } finally {
+    await f.cleanup();
   }
 });

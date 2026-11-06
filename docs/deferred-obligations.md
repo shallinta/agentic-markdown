@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-021e 阅读快照容量（2026-11-07）
+
+现有 1 MiB 文档上限已在独立阅读实验入口实测，OBL-029 的主题迁移保持开放。正式入口、未保存同步及最终离线另行承接。见[F-021e 迭代](iterations/F-021e-full-size-reading-snapshot.md)。
+
 ## F-066b 私有检查点排他发布（2026-11-07）
 
 隔离验证已完成。OBL-036 仍承接真实草稿写入、整理、关闭及恢复。OBL-034、OBL-065、OBL-067 按原责任跟踪。见[F-066b 迭代](iterations/F-066b-private-checkpoint-publication.md)。

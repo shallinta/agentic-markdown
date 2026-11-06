@@ -1196,13 +1196,13 @@ export function createWorkspaceService({
     };
   }
   async function searchContentCandidatesForRoots(
-    input: ContentSearchRootSetInput,
+    input: ContentSearchRootSetInput & Pick<ContentSearchInput, "fragments">,
     signal?: AbortSignal,
     mixed?: { standaloneHandles: readonly string[] }
   ): Promise<ContentSearchCandidates> {
     if (signal?.aborted) return { ok: false, error: "CANCELLED" };
     if (indexTask) return { ok: false, error: "BUSY" };
-    const { fileFilters, pathFilters } = input;
+    const { fileFilters, pathFilters, fragments } = input;
     const requestedRoots: unknown = input.roots;
     const openHandles: unknown = input.handles;
     const standaloneInput: unknown = mixed?.standaloneHandles;
@@ -1220,6 +1220,7 @@ export function createWorkspaceService({
     }
     if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
         new Set(input.handles).size !== input.handles.length ||
+        ("fragments" in input && fragments !== true) ||
         (fileFilters !== undefined && !validContentSearchFileFilters(fileFilters)) ||
         (pathFilters !== undefined && !validContentSearchPathFilters(pathFilters)) ||
         (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > CONTENT_SEARCH_FILTER_COUNT_LIMIT)
@@ -1341,8 +1342,9 @@ export function createWorkspaceService({
         })),
         input.query,
         current,
-        mixed ? "direct" : contentSearchStrategy,
-        standalone
+        mixed || fragments ? "direct" : contentSearchStrategy,
+        standalone,
+        fragments
       );
       if (!result.ok) {
         const error = result.error;
@@ -1501,7 +1503,10 @@ export function createWorkspaceService({
     searchContentCandidates({ root, generation, ...input }, signal) {
       return searchContentCandidatesForRoots({ ...input, roots: [{ handle: root, generation }] }, signal);
     },
-    searchContentCandidatesForRoots,
+    async searchContentCandidatesForRoots(input, signal) {
+      if ("fragments" in input) return { ok: false, error: "INVALID" };
+      return searchContentCandidatesForRoots(input, signal);
+    },
     searchContentCandidatesForWorkspace({ standaloneHandles, ...input }, signal) {
       return searchContentCandidatesForRoots(input, signal, { standaloneHandles });
     },

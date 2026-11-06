@@ -998,6 +998,34 @@ test.skipIf(childScenario !== "mixed")(
         coverage: [evidence(hidden.handle, hiddenRaw)], mappings: [selected.mappings[1]],
       });
       expect(receipt.coverage).toHaveLength(1);
+      const grouped = { ...wire, ...env(), fragments: true as const };
+      const groupedReceipt = await rpc.run(grouped);
+      expect(validContentSearchResponse(groupedReceipt, grouped)).toBe(true);
+      expect(groupedReceipt).toMatchObject({
+        ok: true,
+        coverage: [{
+          entry: hidden.handle, bytes: Buffer.byteLength(hiddenRaw), hash: sha(hiddenRaw),
+          fragments: { matches: [{ from: 7, to: 13, before: "hidden ", after: "" }], more: false },
+        }],
+      });
+      const groupedDirectory = {
+        ...env(), op: "query" as const, root: first.handle, generation: first.generation,
+        query, handles: [], fragments: true as const,
+        pathFilters: ["budget", ...Array.from({ length: 7 }, (_, i) => `pad-${i + 1}`)]
+          .map((value) => ({ kind: "-path" as const, value })),
+      };
+      const directoryReceipt = await rpc.run(groupedDirectory);
+      expect(validContentSearchResponse(directoryReceipt, groupedDirectory)).toBe(true);
+      if (!directoryReceipt.ok || directoryReceipt.op !== "query") throw Error("Missing grouped directory receipt");
+      expect(directoryReceipt.coverage).toHaveLength(2);
+      expect(directoryReceipt.coverage).toContainEqual({
+        entry: firstEntry, bytes: Buffer.byteLength(visibleRaw), hash: sha(visibleRaw),
+        fragments: { matches: [{ from: 8, to: 14, before: "visible ", after: "" }], more: false },
+      });
+      expect(directoryReceipt.coverage).toContainEqual({
+        entry: await entryFor(first, "pad-0.md"), bytes: 0, hash: sha(""),
+        fragments: { matches: [], more: false },
+      });
       const prepare = {
         ...env(), op: "prepare-retained" as const, roots: mixed.roots,
         entry: hidden.handle, expectedHash: receipt.coverage[0].hash,

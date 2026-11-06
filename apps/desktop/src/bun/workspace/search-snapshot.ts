@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SearchCoverage } from "../../shared/content-search";
+import { contentSearchFragments } from "../../shared/content-search-fragments";
 import {
   DocumentPathError,
   verifySingleFileAuthorization,
@@ -103,13 +104,14 @@ export async function searchSnapshotEvidenceAcrossRoots(
   query: string,
   current: () => boolean,
   strategy: SearchSnapshotStrategy = "native",
-  standalone?: readonly SearchSnapshotStandalone[]
+  standalone?: readonly SearchSnapshotStandalone[],
+  fragments = false
 ): Promise<EvidenceResult> {
   if (!scalar(query, INDEX_LIMITS.query)) return fail("INPUT");
   const direct = strategy === "direct";
   if (!direct && quarantined) return fail("UNAVAILABLE");
   if (busy) return fail("BUSY");
-  if ((!roots.length && !standalone) || (standalone && !direct)) return fail("INPUT");
+  if ((!roots.length && !standalone) || ((standalone || fragments) && !direct)) return fail("INPUT");
   if (roots.length > SEARCH_SNAPSHOT_ROOT_LIMIT) return fail("LIMIT");
   let candidates = 0;
   const entries = new Set<string>();
@@ -185,18 +187,23 @@ export async function searchSnapshotEvidenceAcrossRoots(
         fatal: true,
         ignoreBOM: true,
       }).decode(contents);
-      const evidence: SearchCoverage = {
+      const base = {
         entry, bytes: contents.length, hash: createHash("sha256").update(contents).digest("hex"),
       };
-      if (direct) {
-        const from = query ? raw.indexOf(query) : -1;
-        if (from >= 0) evidence.hit = { from, to: from + query.length };
+      if (fragments) {
+        coverage.push({ ...base, fragments: contentSearchFragments(raw, query) });
       } else {
-        const id = randomUUID().replaceAll("-", "");
-        indexed.set(id, { evidence, length: raw.length });
-        changes.push({ kind: "put", id, path: id, raw });
+        const evidence: SearchCoverage = base;
+        if (direct) {
+          const from = query ? raw.indexOf(query) : -1;
+          if (from >= 0) evidence.hit = { from, to: from + query.length };
+        } else {
+          const id = randomUUID().replaceAll("-", "");
+          indexed.set(id, { evidence, length: raw.length });
+          changes.push({ kind: "put", id, path: id, raw });
+        }
+        coverage.push(evidence);
       }
-      coverage.push(evidence);
       remaining -= contents.length;
     }
     for (const { authorization, files, showHidden } of roots) {

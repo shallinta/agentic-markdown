@@ -3,6 +3,7 @@ import {
   type SearchCoverage,
   type SearchMapping,
 } from "../shared/content-search";
+import { contentSearchFragments, type ContentSearchFragments } from "../shared/content-search-fragments";
 
 interface ContentSearchDocumentVersion {
   handle: string;
@@ -35,15 +36,33 @@ export interface ContentSearchHit {
   source: "disk" | "memory";
 }
 
+export type ContentSearchHitGroup = ContentSearchFragments & Pick<ContentSearchHit, "entry" | "source">;
+
+interface SearchEvidence {
+  coverage: readonly SearchCoverage[];
+  mappings: readonly SearchMapping[];
+}
+type HitResult = SearchFailure | { ok: true; covered: number; hits: ContentSearchHit[] };
+type FragmentResult = SearchFailure | { ok: true; covered: number; groups: ContentSearchHitGroup[] };
+
 /** Combines validated Bun evidence with one unchanged renderer capture. */
 export function mergeContentSearch(
   query: string,
   documents: readonly ContentSearchDocument[],
-  evidence: {
-    coverage: readonly SearchCoverage[];
-    mappings: readonly SearchMapping[];
-  }
-): SearchFailure | { ok: true; covered: number; hits: ContentSearchHit[] } {
+  evidence: SearchEvidence
+): HitResult;
+export function mergeContentSearch(
+  query: string,
+  documents: readonly ContentSearchDocument[],
+  evidence: SearchEvidence,
+  fragments: true
+): FragmentResult;
+export function mergeContentSearch(
+  query: string,
+  documents: readonly ContentSearchDocument[],
+  evidence: SearchEvidence,
+  fragments = false
+): HitResult | FragmentResult {
   if (
     documents.length > CONTENT_SEARCH_LIMITS.documents ||
     evidence.coverage.length > CONTENT_SEARCH_LIMITS.documents
@@ -51,6 +70,8 @@ export function mergeContentSearch(
     return { ok: false, reason: "limit" };
   const incomplete = { ok: false, reason: "incomplete" } as const;
   if (!query.length || evidence.mappings.length !== documents.length)
+    return incomplete;
+  if (fragments && evidence.coverage.some((row) => !row.fragments || row.hit))
     return incomplete;
 
   const coverage = new Map(evidence.coverage.map((row) => [row.entry, row]));
@@ -64,7 +85,7 @@ export function mergeContentSearch(
 
   let bytes = evidence.coverage.reduce((total, row) => total + row.bytes, 0);
   const matched = new Set<string>();
-  const replacements = new Map<string, ContentSearchHit | null>();
+  const replacements = new Map<string, string>();
   for (const document of documents) {
     const mapping = mappings.get(document.handle);
     if (!mapping || mapping.kind === "unresolved") return incomplete;
@@ -93,22 +114,30 @@ export function mergeContentSearch(
     )
       return incomplete;
     bytes += new TextEncoder().encode(raw).byteLength - row.bytes;
-    const from = raw.indexOf(query);
-    replacements.set(
-      row.entry,
-      from < 0
-        ? null
-        : { entry: row.entry, from, to: from + query.length, source: "memory" }
-    );
+    replacements.set(row.entry, raw);
   }
   if (bytes > CONTENT_SEARCH_LIMITS.bytes)
     return { ok: false, reason: "limit" };
 
+  if (fragments) {
+    const groups: ContentSearchHitGroup[] = [];
+    for (const row of evidence.coverage) {
+      const raw = replacements.get(row.entry);
+      const found = raw === undefined ? row.fragments : contentSearchFragments(raw, query);
+      if (found?.matches.length)
+        groups.push({ entry: row.entry, source: raw === undefined ? "disk" : "memory", ...found });
+    }
+    return { ok: true, covered: coverage.size, groups };
+  }
+
   const hits: ContentSearchHit[] = [];
   for (const row of evidence.coverage) {
-    const replacement = replacements.get(row.entry);
-    if (replacement) hits.push(replacement);
-    else if (replacement === undefined && row.hit)
+    const raw = replacements.get(row.entry);
+    if (raw !== undefined) {
+      const from = raw.indexOf(query);
+      if (from >= 0)
+        hits.push({ entry: row.entry, from, to: from + query.length, source: "memory" });
+    } else if (row.hit)
       hits.push({ entry: row.entry, ...row.hit, source: "disk" });
   }
   return { ok: true, covered: coverage.size, hits };

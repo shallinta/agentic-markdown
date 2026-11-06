@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064y 按文件显示命中片段（2026-11-06）
+
+alpha.211 已验证分组片段和未保存整组覆盖。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。流式进度、持久增量与最终离线继续承接。见[F-064y 迭代](iterations/F-064y-group-content-search-fragments.md)。
+
 ## F-064x 目录命中重开（2026-11-06）
 
 alpha.210 已验证关闭的目录文档从命中重开。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。按文件显示上下文、流式结果及持久增量由后续承接。见[F-064x 迭代](iterations/F-064x-reopen-retained-directory-search-result.md)。

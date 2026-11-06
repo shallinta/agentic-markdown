@@ -4,6 +4,12 @@ import {
   validContentSearchPathFilters,
   type ContentSearchPathFilter,
 } from "./content-search-filters";
+import {
+  CONTENT_SEARCH_CONTEXT_LIMIT,
+  CONTENT_SEARCH_FRAGMENT_LIMIT,
+  isWellFormedContentSearchText,
+  type ContentSearchFragments,
+} from "./content-search-fragments";
 import { isDocumentSnapshot } from "./document-snapshot";
 import type { DocumentSnapshot } from "./documents";
 import { perfRecord, perfUuid } from "./perf-lab";
@@ -22,6 +28,7 @@ export interface ContentSearchInput {
   handles: readonly string[];
   fileFilters?: readonly string[];
   pathFilters?: readonly ContentSearchPathFilter[];
+  fragments?: true;
 }
 
 export interface ContentSearchScopeRoot {
@@ -29,12 +36,13 @@ export interface ContentSearchScopeRoot {
   generation: number;
 }
 
-export interface ContentSearchRootSetInput extends Omit<ContentSearchInput, "root" | "generation"> {
+export interface ContentSearchRootSetInput extends Omit<ContentSearchInput, "root" | "generation" | "fragments"> {
   roots: readonly ContentSearchScopeRoot[];
 }
 
 export interface ContentSearchWorkspaceInput extends ContentSearchRootSetInput {
   standaloneHandles: readonly string[];
+  fragments?: true;
 }
 
 export interface ContentSearchDocumentBinding {
@@ -69,12 +77,14 @@ type SearchPreparation<Kind extends "open" | "retained"> =
 export type ContentSearchPrepared = SearchPreparation<"open">;
 export type ContentSearchRetainedPrepared = SearchPreparation<"retained">;
 
-export interface SearchCoverage {
+export type SearchCoverage = {
   entry: string;
   hash: string;
   bytes: number;
-  hit?: { from: number; to: number };
-}
+} & (
+  | { hit?: { from: number; to: number }; fragments?: never }
+  | { hit?: never; fragments: ContentSearchFragments }
+);
 
 export type SearchMapping =
   | {
@@ -110,7 +120,7 @@ interface Envelope {
 export type ContentSearchRequest = Envelope &
   (
     | (ContentSearchInput & { op: "query" })
-    | (ContentSearchRootSetInput & { op: "query-roots" })
+    | (ContentSearchRootSetInput & { op: "query-roots"; fragments?: never })
     | (ContentSearchWorkspaceInput & { op: "query-workspace" })
     | { op: "cancel"; targetRequestId: string }
   );
@@ -305,8 +315,30 @@ export function validContentSearchPrepareResponse(
         Object.prototype.hasOwnProperty.call(snapshot, key)),
     ]);
 }
-const unpaired =
-  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
+function validFragments(value: unknown, queryLength: number, bytes: number): boolean {
+  if (!perfRecord(value) || !exact(value, ["matches", "more"]) ||
+      typeof value.more !== "boolean" || !Array.isArray(value.matches) ||
+      value.matches.length > CONTENT_SEARCH_FRAGMENT_LIMIT ||
+      Object.keys(value.matches).length !== value.matches.length ||
+      (value.more && value.matches.length !== CONTENT_SEARCH_FRAGMENT_LIMIT))
+    return false;
+  let previousEnd = 0;
+  for (let index = 0; index < value.matches.length; index++) {
+    const match: unknown = value.matches[index];
+    if (!Object.prototype.hasOwnProperty.call(value.matches, index) ||
+        !perfRecord(match) || !exact(match, ["from", "to", "before", "after"]) ||
+        !natural(match.from) || !natural(match.to) || match.from < previousEnd ||
+        match.to - match.from !== queryLength ||
+        typeof match.before !== "string" || typeof match.after !== "string" ||
+        match.before.length > CONTENT_SEARCH_CONTEXT_LIMIT ||
+        match.after.length > CONTENT_SEARCH_CONTEXT_LIMIT ||
+        match.before.length > match.from || match.to + match.after.length > bytes ||
+        !isWellFormedContentSearchText(match.before) || !isWellFormedContentSearchText(match.after))
+      return false;
+    previousEnd = match.to;
+  }
+  return !value.more || previousEnd + queryLength <= bytes;
+}
 
 export function validContentSearchRequest(
   value: unknown
@@ -334,6 +366,10 @@ export function validContentSearchRequest(
   const scopeKeys = value.op === "query" ? ["root", "generation"]
     : mixed ? ["roots", "standaloneHandles"] : ["roots"];
   const queryKeys = [...base, ...scopeKeys, "query", "handles"];
+  if ("fragments" in value) {
+    if (value.fragments !== true || value.op === "query-roots") return false;
+    queryKeys.push("fragments");
+  }
   let filterCount = 0;
   if (ownFileFilters) {
     if (!validContentSearchFileFilters(value.fileFilters)) return false;
@@ -357,7 +393,7 @@ export function validContentSearchRequest(
     typeof value.query === "string" &&
     value.query.length <= CONTENT_SEARCH_LIMITS.query &&
     value.query.trim().length > 0 &&
-    !unpaired.test(value.query) &&
+    isWellFormedContentSearchText(value.query) &&
     validHandles(value.handles, mixed)
   );
 }
@@ -425,16 +461,20 @@ export function validContentSearchResponse(
     )
       return false;
     const hasHit = Object.keys(row).includes("hit");
+    const coverageKeys = ["entry", "hash", "bytes"];
     if (
       !exact(
         row,
-        hasHit ? ["entry", "hash", "bytes", "hit"] : ["entry", "hash", "bytes"]
+        request.fragments ? [...coverageKeys, "fragments"]
+          : hasHit ? [...coverageKeys, "hit"] : coverageKeys
       )
     )
       return false;
     total += row.bytes;
     if (total > CONTENT_SEARCH_LIMITS.bytes) return false;
-    if (hasHit) {
+    if (request.fragments) {
+      if (!validFragments(row.fragments, request.query.length, row.bytes)) return false;
+    } else if (hasHit) {
       const hit = row.hit;
       if (
         !perfRecord(hit) ||

@@ -1,6 +1,6 @@
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { mergeContentSearch } from "@/client/content-search";
+import { mergeContentSearch, type ContentSearchHitGroup } from "@/client/content-search";
 import type { ContentSearchLocation } from "@/client/content-search-location";
 import {
   captureContentSearchScope,
@@ -75,21 +75,22 @@ const fieldClass =
   "bg-background focus-visible:outline-ring w-full min-w-0 rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50";
 
 type Query = Extract<ContentSearchRequest, { op: "query" | "query-workspace" }>;
-type Merged = Extract<ReturnType<typeof mergeContentSearch>, { ok: true }>;
-type PresentedHit = Merged["hits"][number] & {
+type SearchMatch = ContentSearchHitGroup["matches"][number];
+type PresentedGroup = ContentSearchHitGroup & {
   name: string;
   root: WorkspaceRoot | null;
   retained?: DocumentEntry;
   rootLabel: string;
   relativePath?: string;
-  location: ContentSearchLocation;
+  location: Omit<ContentSearchLocation, "from" | "to">;
   binding?: ContentSearchDocumentBinding;
 };
 interface Presented {
   covered: number;
-  hits: PresentedHit[];
+  groups: PresentedGroup[];
   search: SearchLifetime;
 }
+type FocusedHit = Pick<PresentedGroup, "entry" | "name" | "rootLabel" | "relativePath" | "matches">;
 interface SearchLifetime {
   request: Query;
   scopeCurrent(): boolean;
@@ -103,6 +104,10 @@ interface LocationIntent {
 
 function envelope() {
   return { protocolVersion: 1 as const, requestId: crypto.randomUUID() };
+}
+
+function matchKey(entry: string, { from, to }: SearchMatch) {
+  return `${entry}:${from}:${to}`;
 }
 
 function cancel(requestId: string) {
@@ -177,7 +182,7 @@ export function ContentSearchPanel({
   const [status, setStatus] = useState(initialStatus);
   const [result, setResult] = useState<Presented | null>(null);
   // Retain the clicked DOM button when the document load invalidates its results.
-  const [focusedHit, setFocusedHit] = useState<Pick<PresentedHit, "entry" | "name"> | null>(null);
+  const [focusedHit, setFocusedHit] = useState<FocusedHit | null>(null);
   const filters = useMemo(() => parseContentSearchFilters(filterText), [filterText]);
   const workspace = folders.getSnapshot();
   const { roots, nodes, coveredHandles } = workspace;
@@ -376,6 +381,7 @@ export function ContentSearchPanel({
     const params = {
       ...envelope(),
       query,
+      fragments: true as const,
       handles: capture.documents.map(({ handle }) => handle),
       ...(filters.fileFilters.length ? { fileFilters: filters.fileFilters } : {}),
       ...(filters.pathFilters.length ? { pathFilters: filters.pathFilters } : {}),
@@ -438,7 +444,7 @@ export function ContentSearchPanel({
         reset(incomplete);
         return;
       }
-      const merged = mergeContentSearch(query, capture.documents, response);
+      const merged = mergeContentSearch(query, capture.documents, response, true);
       if (!merged.ok) {
         reset(merged.reason === "limit" ? errors.LIMIT : incomplete);
         return;
@@ -451,7 +457,7 @@ export function ContentSearchPanel({
         const { handle, documentId, revision, hash } = mapping;
         bindings.set(mapping.entry, { handle, documentId, revision, hash });
       }
-      const hits: PresentedHit[] = [];
+      const groups: PresentedGroup[] = [];
       const rootNameCounts = new Map<string, number>();
       const fileNameCounts = new Map<string, number>();
       for (const item of scope.roots)
@@ -465,44 +471,50 @@ export function ContentSearchPanel({
           retainedByPath.has(entry.displayPath) || typeof entry.explicitStandalone !== "boolean" || !entry.locationId
             ? null : entry);
       }
-      for (const hit of merged.hits) {
-        const file = files.get(hit.entry);
-        const diskHash = coverage.get(hit.entry)?.hash;
-        const binding = bindings.get(hit.entry);
+      let visibleMatches = 0;
+      for (const group of merged.groups) {
+        const file = files.get(group.entry);
+        const diskHash = coverage.get(group.entry)?.hash;
+        const binding = bindings.get(group.entry);
         const version = binding && versions.get(binding.handle);
-        if (!file?.name || !diskHash || ((binding || hit.source === "memory") && !version) ||
+        if (!file?.name || !diskHash || ((binding || group.source === "memory") && !version) ||
             (!file.root && binding && binding.handle !== file.standalone.handle) ||
             (file.root && !binding && retainedByPath.get(file.displayPath) === null)) {
           reset(incomplete);
           return;
         }
-        const { from, to, source } = hit;
         const retained = file.standalone ?? (!binding ? retainedByPath.get(file.displayPath) ?? undefined : undefined);
         const rootLabel = file.root
           ? (rootNameCounts.get(file.root.name) ?? 0) > 1
             ? `${file.root.name} · ${file.root.displayPath}`
             : file.root.name
           : (fileNameCounts.get(file.name) ?? 0) > 1 ? `独立文件 · ${file.displayPath}` : "独立文件";
-        hits.push({
-          ...hit,
+        groups.push({
+          ...group,
           name: file.name,
           root: file.root,
           retained,
           rootLabel,
           relativePath: file.relativePath,
           binding,
-          location: { query, from, to, source, diskHash, version },
+          location: { query, source: group.source, diskHash, version },
         });
+        visibleMatches += group.matches.length;
       }
-      setResult({ covered: merged.covered, hits, search });
-      setStatus(merged.hits.length ? `命中 ${merged.hits.length} 篇。` : "未找到匹配正文。");
+      setResult({ covered: merged.covered, groups, search });
+      setStatus(groups.length ? `命中 ${groups.length} 篇，显示 ${visibleMatches} 处。` : "未找到匹配正文。");
       setBusy(false);
     } catch {
       if (active.current === search) reset("正文查询通信失败，请重试。");
     }
   }
 
-  async function openHit(hit: PresentedHit, search: SearchLifetime, button: HTMLButtonElement) {
+  async function openHit(
+    group: PresentedGroup,
+    { from, to }: SearchMatch,
+    search: SearchLifetime,
+    button: HTMLButtonElement
+  ) {
     if (active.current !== search) return;
     if (!search.current()) {
       reset(changed);
@@ -510,7 +522,8 @@ export function ContentSearchPanel({
     }
     retireLocation();
     const activation = controller.getContentSearchActivation();
-    const { retained, root } = hit;
+    const { retained, root, entry, binding } = group;
+    const targetLocation = { ...group.location, from, to };
     const retainedCurrent = () => {
       if (!retained) return true;
       const peers = controller.getSnapshot().entries.filter((entry) =>
@@ -531,7 +544,13 @@ export function ContentSearchPanel({
             search.current())),
     };
     location.current = intent;
-    setFocusedHit(button === document.activeElement ? { entry: hit.entry, name: hit.name } : null);
+    setFocusedHit(button === document.activeElement ? {
+      entry,
+      name: group.name,
+      rootLabel: group.rootLabel,
+      relativePath: group.relativePath,
+      matches: [{ from, to, before: "", after: "" }],
+    } : null);
     setStatus("正在打开并定位…");
     let failure = "无法定位此命中，请重新查询。";
 
@@ -541,8 +560,8 @@ export function ContentSearchPanel({
       const common = {
         protocolVersion,
         requestId,
-        expectedHash: hit.location.diskHash,
-        ...(hit.binding ? { binding: hit.binding } : {}),
+        expectedHash: targetLocation.diskHash,
+        ...(binding ? { binding } : {}),
       };
       const request: ContentSearchPrepareRequest | null = retained
         ? {
@@ -552,9 +571,9 @@ export function ContentSearchPanel({
           roots: root
             ? [{ handle: root.handle, generation: root.generation }]
             : search.request.op === "query-workspace" ? search.request.roots : [],
-          ...(root ? { rootEntry: hit.entry } : {}),
+          ...(root ? { rootEntry: entry } : {}),
         }
-        : root ? { ...common, entry: hit.entry, root: root.handle, generation: root.generation } : null;
+        : root ? { ...common, entry, root: root.handle, generation: root.generation } : null;
       if (!request) return null;
       intent.pendingId = requestId;
       try {
@@ -580,11 +599,11 @@ export function ContentSearchPanel({
 
     let positioned = false;
     try {
-      if (hit.binding) {
+      if (binding) {
         const target = await prepare(envelope());
         if (intent.current() && target?.kind === "reuse") {
           awaitingPrepare = false;
-          positioned = await controller.activateContentSearchLocation(hit.location, intent.current);
+          positioned = await controller.activateContentSearchLocation(targetLocation, intent.current);
         }
       } else if (retained) {
         positioned = await controller.openRetainedContentSearchLocation(retained, async (params) => {
@@ -593,7 +612,7 @@ export function ContentSearchPanel({
           return target?.kind === "retained"
             ? { ...params, ok: true, snapshot: target.snapshot }
             : { ...params, ok: false, error: intent.current() ? "INVALID_HANDLE" : "CANCELLED" };
-        }, hit.location, intent.current);
+        }, targetLocation, intent.current);
       } else {
         positioned = await controller.openContentSearchLocation(async (params) => {
           const target = await prepare(params);
@@ -601,7 +620,7 @@ export function ContentSearchPanel({
           return target?.kind === "open"
             ? { ...params, ok: true, snapshot: target.snapshot }
             : { ...params, ok: false, error: intent.current() ? "INVALID_HANDLE" : "CANCELLED" };
-        }, hit.location, intent.current);
+        }, targetLocation, intent.current);
       }
     } catch {
       failure = "无法打开文档并定位此命中，请重新查询。";
@@ -615,8 +634,7 @@ export function ContentSearchPanel({
     setStatus(positioned ? "已定位正文命中。" : failure);
   }
 
-  const hits: (PresentedHit | (NonNullable<typeof focusedHit> & { location?: undefined }))[] =
-    result?.hits ?? (focusedHit ? [focusedHit] : []);
+  const groups: (PresentedGroup | FocusedHit)[] = result?.groups ?? (focusedHit ? [focusedHit] : []);
   const hasWorkspaceFiles = roots.length > 0 || entries.some(({ explicitStandalone }) => explicitStandalone === true);
 
   return (
@@ -654,7 +672,7 @@ export function ContentSearchPanel({
           </p>
           {effectiveRoots?.length && !ready ? <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p> : null}
           <p className="text-muted-foreground text-xs">
-            区分大小写，每篇显示首个匹配。最多 16 个文件夹，筛选前合计 16 篇，查询正文合计 64 KiB。
+            区分大小写，每篇最多显示前三处命中。最多 16 个文件夹，筛选前合计 16 篇，查询正文合计 64 KiB。
           </p>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void search(); }}>
             <div className="flex items-center gap-2">
@@ -747,35 +765,55 @@ export function ContentSearchPanel({
           </form>
           <p role="status" className="break-words text-xs">{status}</p>
           {result && <p className="text-muted-foreground text-xs">本次覆盖 {result.covered} 篇文档。</p>}
-          {hits.length > 0 && (
-            <ul aria-label="正文搜索命中" className="max-h-32 space-y-1 overflow-y-auto text-xs">
-              {hits.map((hit) => {
-                const match = result && hit.location ? hit : null;
+          {groups.length > 0 && (
+            <ul aria-label="正文搜索命中" className="max-h-32 space-y-2 overflow-y-auto text-xs">
+              {groups.map((group) => {
+                const current = "location" in group ? group : null;
                 return (
-                  <li key={hit.entry} className="break-words">
-                    <button
-                      type="button"
-                      className={`${buttonClass} w-full text-left`}
-                      aria-disabled={!match || undefined}
-                      tabIndex={match ? undefined : -1}
-                      onBlur={() => {
-                        if (focusedHit?.entry === hit.entry) setFocusedHit(null);
-                      }}
-                      onClick={(event) => {
-                        if (match && result) void openHit(match, result.search, event.currentTarget);
-                      }}
-                    >
-                      <span className="font-medium">{hit.name}</span>
-                      {match && <span className="text-muted-foreground block">{match.rootLabel}</span>}
-                      {match?.relativePath && (
-                        <span className="text-muted-foreground block">{match.relativePath}</span>
-                      )}
-                      {match && (
-                        <span className="text-muted-foreground block">
-                          {match.source === "memory" ? "未保存正文" : "磁盘正文"} · UTF-16 [{match.from}, {match.to})
-                        </span>
-                      )}
-                    </button>
+                  <li key={group.entry} className="break-words">
+                    <span className="font-medium">{group.name}</span>
+                    <span className="text-muted-foreground block">{group.rootLabel}</span>
+                    {group.relativePath && (
+                      <span className="text-muted-foreground block">{group.relativePath}</span>
+                    )}
+                    <ul aria-label={`${group.name}的正文命中`} className="my-1 space-y-1">
+                      {group.matches.map((match) => {
+                        const key = matchKey(group.entry, match);
+                        return (
+                          <li key={key}>
+                            <button
+                              type="button"
+                              className={`${buttonClass} w-full text-left`}
+                              aria-disabled={!current || undefined}
+                              tabIndex={current ? undefined : -1}
+                              onBlur={() => {
+                                if (focusedHit?.matches.some((item) => matchKey(focusedHit.entry, item) === key))
+                                  setFocusedHit(null);
+                              }}
+                              onClick={(event) => {
+                                if (current && result) void openHit(current, match, result.search, event.currentTarget);
+                              }}
+                            >
+                              {current ? (
+                                <>
+                                  <span className="block whitespace-pre-wrap break-all">
+                                    {match.before}
+                                    <mark className="rounded-sm bg-yellow-200 px-0.5 font-semibold text-neutral-900 dark:bg-yellow-300">
+                                      {current.location.query}
+                                    </mark>
+                                    {match.after}
+                                  </span>
+                                  <span className="text-muted-foreground block">
+                                    {current.source === "memory" ? "未保存正文" : "磁盘正文"} · UTF-16 [{match.from}, {match.to})
+                                  </span>
+                                </>
+                              ) : `命中片段 · UTF-16 [${match.from}, ${match.to})`}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {current?.more && <p className="text-muted-foreground">此文件还有更多命中。</p>}
                   </li>
                 );
               })}

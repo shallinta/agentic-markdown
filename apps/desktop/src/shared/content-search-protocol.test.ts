@@ -8,6 +8,7 @@ import {
   validContentSearchResponse,
   type ContentSearchRequest,
 } from "./content-search";
+import { contentSearchFragments } from "./content-search-fragments";
 import { analyzeTextFidelity } from "./text-fidelity";
 
 function queryRoots(): Extract<ContentSearchRequest, { op: "query-roots" }> {
@@ -128,6 +129,75 @@ test("mixed query wire requires complete dense roots and opaque retained handles
     expect(validContentSearchRequest({ ...request, ...extra })).toBe(false);
   }
   expect(validContentSearchRequest({ ...queryRoots(), standaloneHandles: [] })).toBe(false);
+});
+
+test("fragments preserve raw BOM and CRLF offsets, exclude overlaps and cap context safely", () => {
+  expect(contentSearchFragments("\uFEFFa\r\n😀aa😀aa😀aa😀aa", "😀aa")).toEqual({
+    matches: [
+      { from: 4, to: 8, before: "\uFEFFa\r\n", after: "😀aa😀aa😀aa" },
+      { from: 8, to: 12, before: "\uFEFFa\r\n😀aa", after: "😀aa😀aa" },
+      { from: 12, to: 16, before: "\uFEFFa\r\n😀aa😀aa", after: "😀aa" },
+    ],
+    more: true,
+  });
+  expect(contentSearchFragments("aaaaaaa", "aa").matches.map(({ from, to }) => [from, to]))
+    .toEqual([[0, 2], [2, 4], [4, 6]]);
+  const middle = "x".repeat(31);
+  expect(contentSearchFragments(`😀${middle}hit${middle}😀`, "hit")).toEqual({
+    matches: [{ from: 33, to: 36, before: middle, after: middle }], more: false,
+  });
+  for (const query of ["", "absent", "\uD83D"])
+    expect(contentSearchFragments("😀", query)).toEqual({ matches: [], more: false });
+});
+
+test("fragments wire requires explicit opt-in and exact bounded evidence per covered document", () => {
+  const legacy = { ...queryWorkspace(), roots: [], handles: [], query: "aa" };
+  const request = { ...legacy, fragments: true as const };
+  expect(validContentSearchRequest(request)).toBe(true);
+  for (const fragments of [false, undefined, 1, "true"])
+    expect(validContentSearchRequest({ ...legacy, fragments })).toBe(false);
+  expect(validContentSearchRequest({ ...queryRoots(), fragments: true })).toBe(false);
+  const raw = "😀aaaaaa\r\naa";
+  const row = {
+    entry: request.standaloneHandles[0], hash: "c".repeat(64),
+    bytes: Buffer.byteLength(raw), fragments: contentSearchFragments(raw, request.query),
+  };
+  const { protocolVersion, requestId, op, roots, standaloneHandles } = request;
+  const response = {
+    protocolVersion, requestId, op, roots, standaloneHandles, ok: true,
+    coverage: [row], mappings: [],
+  };
+  expect(validContentSearchResponse(response, request)).toBe(true);
+  expect(validContentSearchResponse(response, legacy)).toBe(false);
+  const { fragments, ...evidence } = row;
+  expect(validContentSearchResponse({ ...response, coverage: [
+    { ...evidence, fragments: { matches: [], more: false } },
+  ] }, request)).toBe(true);
+  const [first, second, third] = fragments.matches;
+  const sparse = [first];
+  sparse.length = 3;
+  for (const forged of [
+    evidence,
+    { ...evidence, hit: { from: 2, to: 4 } },
+    { ...row, hit: { from: 2, to: 4 } },
+    { ...row, entry: crypto.randomUUID() },
+    { ...row, fragments: { ...fragments, raw } },
+    { ...row, fragments: { matches: fragments.matches.slice(0, 2), more: true } },
+    { ...row, fragments: { ...fragments, matches: [...fragments.matches, fragments.matches[0]] } },
+    { ...row, fragments: { ...fragments, matches: sparse } },
+  ]) {
+    expect(validContentSearchResponse({ ...response, coverage: [forged] }, request)).toBe(false);
+  }
+  for (const change of [
+    { from: second.from - 1, to: second.to - 1 },
+    { to: second.to - 1 },
+    { before: "\uD83D" }, { after: "\uDE00" },
+    { after: "x".repeat(33) }, { before: "x".repeat(second.from + 1) },
+    { after: "x".repeat(row.bytes - second.to + 1) }, { raw },
+  ]) {
+    const bad = { ...row, fragments: { ...fragments, matches: [first, { ...second, ...change }, third] } };
+    expect(validContentSearchResponse({ ...response, coverage: [bad] }, request)).toBe(false);
+  }
 });
 
 test("mixed response echoes both scope lists and rejects cross-operation or partial evidence", () => {

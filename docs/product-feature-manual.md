@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064y 的 alpha.211 将正文结果按文件分组。每篇最多显示前三处和上下文，更多命中另有提示。可单独点开或用键盘定位每处，未保存正文替换该文件的整组磁盘结果。见[F-064y 迭代](iterations/F-064y-group-content-search-fragments.md)。
+
 F-064x 的 alpha.210 修复了普通目录文档关闭标签后无法从搜索重开的问题。重新查询并点击命中时，通过原目录授权核对内容并定位。见[F-064x 迭代](iterations/F-064x-reopen-retained-directory-search-result.md)。
 
 F-064w 的 alpha.209 在「搜索正文」中用「当前窗口」搜索已加入的目录和顶层独立文件。只有独立文件时可以直接搜索，`root:` 仍优先限定目录。结果区分来源，点击可重开已关闭的独立标签。独立文件被父目录吸收后仍只出现一次，点击目录结果可定位。已打开文档的未保存正文优先。见[F-064w 迭代](iterations/F-064w-window-content-search-with-standalone.md)。

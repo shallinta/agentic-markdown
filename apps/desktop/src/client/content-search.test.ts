@@ -59,6 +59,80 @@ test("dirty raw text replaces disk hits and can match a disk-zero entry", () => 
   });
 });
 
+test("fragment mode replaces every disk match, context, and overflow flag with dirty evidence", () => {
+  const query = "😀中文";
+  const disk = {
+    matches: [
+      { from: 0, to: 4, before: "", after: "disk context" },
+      { from: 5, to: 9, before: "disk context", after: "disk context" },
+      { from: 10, to: 14, before: "disk context", after: "" },
+    ],
+    more: true,
+  };
+  const sibling = {
+    matches: [{ from: 2, to: 6, before: "另 ", after: "磁盘正文" }],
+    more: false,
+  };
+  const evidence = {
+    coverage: [
+      { entry: "matched", hash, bytes: 32, fragments: disk },
+      { entry: "sibling", hash, bytes: 32, fragments: sibling },
+    ],
+    mappings: [mapping],
+  };
+  const dirty = (raw: string): ContentSearchDocument => ({ ...document, status: "dirty", raw });
+  expect(mergeContentSearch(query, [dirty("\uFEFFa\r\n😀中文/<x>😀中文")], evidence, true))
+    .toEqual({
+      ok: true,
+      covered: 2,
+      groups: [
+        {
+          entry: "matched", source: "memory", more: false,
+          matches: [
+            { from: 4, to: 8, before: "\uFEFFa\r\n", after: "/<x>😀中文" },
+            { from: 12, to: 16, before: "\uFEFFa\r\n😀中文/<x>", after: "" },
+          ],
+        },
+        { entry: "sibling", source: "disk", ...sibling },
+      ],
+    });
+  expect(mergeContentSearch(query, [dirty("")], evidence, true))
+    .toEqual({ ok: true, covered: 2, groups: [{ entry: "sibling", source: "disk", ...sibling }] });
+  expect(mergeContentSearch(query, [dirty(query.repeat(4))], {
+    ...evidence,
+    coverage: [{ ...evidence.coverage[0], fragments: { matches: [], more: false } }],
+  }, true)).toMatchObject({
+    ok: true,
+    covered: 1,
+    groups: [{
+      entry: "matched", source: "memory", more: true,
+      matches: [{ from: 0, to: 4 }, { from: 4, to: 8 }, { from: 8, to: 12 }],
+    }],
+  });
+});
+
+test("fragment mode refuses legacy shapes and applies the same disk and dirty limits", () => {
+  const dirty: ContentSearchDocument = { ...document, status: "dirty", raw: "😀😀" };
+  const fragments = { matches: [], more: false };
+  const legacy = { entry: "matched", hash, bytes: 1, hit: { from: 0, to: 2 } };
+  for (const coverage of [[legacy], [legacy, { entry: "disk", hash, bytes: 1, fragments }]]) {
+    expect(mergeContentSearch("😀", [dirty], { coverage, mappings: [mapping] }, true))
+      .toEqual({ ok: false, reason: "incomplete" });
+  }
+  const evidence = {
+    coverage: [
+      { entry: "matched", hash, bytes: 1, fragments },
+      { entry: "disk", hash, bytes: 65_530, fragments },
+    ],
+    mappings: [mapping],
+  };
+  expect(mergeContentSearch("😀", [dirty], evidence, true)).toEqual({ ok: false, reason: "limit" });
+  expect(mergeContentSearch("😀", [dirty], {
+    ...evidence,
+    coverage: [{ ...evidence.coverage[0], hash: "b".repeat(64) }],
+  }, true)).toEqual({ ok: false, reason: "incomplete" });
+});
+
 test("unresolved, risky or different disk baselines cannot yield complete hits", () => {
   const risky = { ...document, status: "risky" as const };
   const clean = { ...document, status: "clean" as const };

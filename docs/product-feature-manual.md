@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 多标签性能基线（F-069a）
+
+已建立 1、5、20、50 标签的合成观察脚本，验证切换后正文、模式、选区和撤销，并记录控制器耗时和内存。此轮没有界面变化。见[F-069a 迭代](iterations/F-069a-multitab-performance-baseline.md)。
+
 ## 独立阅读窗查找（F-041e）
 
 在独立阅读窗按 ⌘F 打开右上角查找栏。可选区分大小写与全词，Enter 到下一项，Shift+Enter 到上一项，Esc 关闭。只查当前快照的可见正文，主窗查询保持独立。见[F-041e 迭代](iterations/F-041e-independent-reading-find.md)。

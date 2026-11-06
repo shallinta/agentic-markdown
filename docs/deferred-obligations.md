@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-069a 多标签基线（2026-11-07）
+
+已记录包内 Bun 源控制器的多标签数据。F-039 / OBL-024 的真实 WK 视图、资源归因和缓存回收仍待承接。见[F-069a 迭代](iterations/F-069a-multitab-performance-baseline.md)。
+
 ## F-041e 独立阅读窗查找（2026-11-07）
 
 已验独立子窗的可见正文查找。OBL-056 继续跟踪跨窗口条件及最近项，F-041d 的冻结候选与最终离线保持开放。见[F-041e 迭代](iterations/F-041e-independent-reading-find.md)。

@@ -1,0 +1,5 @@
+{
+  "extends": "../../apps/desktop/tsconfig.json",
+  "compilerOptions": { "incremental": false },
+  "include": ["*.ts"]
+}

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ah 私有索引同名册只读重开（2026-11-06）
+
+alpha.220 已验证清单预检和内部只读重开。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。原生实际正文核对、撤权处置、配额及最终离线继续承接。见[F-064ah 迭代](iterations/F-064ah-exact-index-readonly-reopen.md)。
+
 ## F-064ag 授权正文与私有索引连验（2026-11-06）
 
 alpha.219 包内资源已用合成夹具连验快照和持久索引。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。正式接入、撤权处置、容量和重建及最终离线继续承接。见[F-064ag 迭代](iterations/F-064ag-authorized-private-index-integration.md)。

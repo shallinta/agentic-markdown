@@ -5,11 +5,14 @@ import { isAbsolute, join, resolve } from "node:path";
 import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { record } from "./protocol";
-import { searchWithIndexReuse, type IndexReuseInput } from "./reuse";
+import { reopenWithIndexReuse, searchWithIndexReuse, type IndexReuseInput } from "./reuse";
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
 
-const fail = (error: BoundaryError | "BUSY") => ({ ok: false as const, error, accepted: false });
+const fail = <Error extends BoundaryError | "BUSY" | "MISSING">(error: Error) =>
+  ({ ok: false as const, error, accepted: false });
+const cacheName = "search-index";
+const profileName = "limited-v1";
 const maxIndexFiles = 128;
 const absent = { ok: true as const, present: false, files: 0, catalogBytes: 0, indexBytes: 0, totalBytes: 0 };
 
@@ -68,15 +71,34 @@ function appCacheBoundary(current: () => boolean) {
 }
 
 /** The supplied rows must come from a fresh authorized snapshot. */
-export async function searchAppIndexCache(input: IndexReuseInput, current: () => boolean) {
+export function searchAppIndexCache(input: IndexReuseInput, current: () => boolean) {
+  return queryAppIndexCache(input, current, false);
+}
+
+export function reopenAppIndexCache(input: IndexReuseInput, current: () => boolean) {
+  return queryAppIndexCache(input, current, true);
+}
+
+function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: false): ReturnType<typeof searchWithIndexReuse>;
+function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: true): ReturnType<typeof reopenWithIndexReuse>;
+async function queryAppIndexCache(input: IndexReuseInput, current: () => boolean, exact: boolean) {
   const boundary = appCacheBoundary(current);
   if (!boundary.ok) return boundary;
   const { home, pin, cacheCurrent, callerCurrent, boundaryFailure } = boundary;
   try {
     let directory = home;
-    for (const name of ["search-index", "limited-v1"]) {
+    for (const name of [cacheName, profileName]) {
       if (!cacheCurrent()) return boundaryFailure();
       directory = join(directory, name);
+      if (exact) {
+        const stat = present(directory);
+        if (!stat) {
+          if (!cacheCurrent()) return boundaryFailure();
+          return fail(present(directory) ? "UNAVAILABLE" : "MISSING");
+        }
+        pin(directory, true, stat);
+        continue;
+      }
       try {
         await mkdir(directory, { mode: 0o700 });
       } catch (error) {
@@ -86,7 +108,8 @@ export async function searchAppIndexCache(input: IndexReuseInput, current: () =>
       pin(directory, true);
     }
     if (!cacheCurrent()) return boundaryFailure();
-    const result = await searchWithIndexReuse(directory, input, cacheCurrent);
+    const run = exact ? reopenWithIndexReuse : searchWithIndexReuse;
+    const result = await run(directory, input, cacheCurrent);
     if (!result.ok && (result.error === "UNKNOWN" || result.error === "SCHEMA" || result.error === "BUSY"))
       return result;
     return cacheCurrent() ? result : boundaryFailure();
@@ -149,8 +172,8 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
     if (present(path)) throw Error("Index cache path appeared");
     return { ...absent };
   };
-  const cache = join(home, "search-index");
-  const profile = join(cache, "limited-v1");
+  const cache = join(home, cacheName);
+  const profile = join(cache, profileName);
   const lease = join(profile, ".lease");
   const checkLease = () => {
     if (present(lease)) throw new CacheBusy();

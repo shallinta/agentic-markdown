@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import type { Dir } from "node:fs";
+import { opendir } from "node:fs/promises";
 
 import {
   INDEX_LIMITS,
@@ -27,19 +29,45 @@ type Failure = Extract<IndexResult, { ok: false }>;
 type ReuseResult =
   | Failure
   | { ok: true; generation: number; hits: IndexHit[]; applied: number };
+type ExactError = "MISSING" | "MISMATCH";
+type ExactReuseResult = ReuseResult | { ok: false; error: ExactError; accepted: boolean };
 
-const fail = (error: Failure["error"]): Failure => ({
-  ok: false,
+const fail = <Error extends Failure["error"] | ExactError>(error: Error) => ({
+  ok: false as const,
   error,
   accepted: error === "UNKNOWN",
 });
 
+async function closeProfileInspection(directory: Dir) {
+  try {
+    await directory.close();
+  } catch {
+    throw new IndexReuseCleanupError("Index reuse profile inspection close unconfirmed");
+  }
+}
+
 /** One private cache, one bounded verified snapshot. Cache state never grants access. */
-export async function searchWithIndexReuse(
+export function searchWithIndexReuse(
   directory: string,
   input: IndexReuseInput,
   current: () => boolean
 ): Promise<ReuseResult> {
+  return runIndexReuse(directory, input, current, false);
+}
+
+export function reopenWithIndexReuse(
+  directory: string,
+  input: IndexReuseInput,
+  current: () => boolean
+): Promise<ExactReuseResult> {
+  return runIndexReuse(directory, input, current, true);
+}
+
+function runIndexReuse(directory: string, input: IndexReuseInput, current: () => boolean, exact: false): Promise<ReuseResult>;
+function runIndexReuse(directory: string, input: IndexReuseInput, current: () => boolean, exact: true): Promise<ExactReuseResult>;
+async function runIndexReuse(
+  directory: string, input: IndexReuseInput, current: () => boolean, exact: boolean
+): Promise<ExactReuseResult> {
   if (!current()) return fail("CANCELLED");
   const { scopeKey, query } = input;
   const source: unknown = input.rows;
@@ -76,7 +104,7 @@ export async function searchWithIndexReuse(
   let session: ReturnType<typeof createIndexSession> | undefined;
   let nativeGeneration: number | undefined;
   let catalog: IndexReuseCatalog | undefined;
-  let result: ReuseResult;
+  let result: ExactReuseResult;
   try {
     try {
       result = await run();
@@ -109,13 +137,18 @@ export async function searchWithIndexReuse(
   }
   return result.ok && !current() ? fail("CANCELLED") : result;
 
-  async function run(): Promise<ReuseResult> {
+  async function run(): Promise<ExactReuseResult> {
     check();
     const cached = await slot.readCatalog();
     check();
     if (cached.status === "invalid") return fail("SCHEMA");
     const prior = cached.status === "existing" ? cached.catalog : undefined;
     if (prior && prior.scopeKey !== scopeKey) return fail("SCHEMA");
+    if (exact && !prior) {
+      const empty = await profileContainsOnlyLease();
+      check();
+      return fail(empty ? "MISSING" : "SCHEMA");
+    }
 
     const previous = new Map(prior?.entries.map(({ id, hash }) => [id, hash]));
     const changes: IndexChange[] = [];
@@ -123,6 +156,7 @@ export async function searchWithIndexReuse(
       if (!rows.has(id)) changes.push({ kind: "delete", id });
     for (const [id, { raw, hash }] of rows)
       if (previous.get(id) !== hash) changes.push({ kind: "put", id, path: id, raw });
+    if (exact && changes.length) return fail("MISMATCH");
     if (changes.length) {
       try {
         encodeChanges(changes);
@@ -132,7 +166,7 @@ export async function searchWithIndexReuse(
     }
     check();
     session = createIndexSession();
-    const opened = await session.open(slot.indexPath, prior ? "writer-existing" : "create-new");
+    const opened = await session.open(slot.indexPath, exact ? "reader-only" : prior ? "writer-existing" : "create-new");
     if (opened.ok) nativeGeneration = opened.generation;
     if (!opened.ok && opened.error === "UNKNOWN") return opened;
     check();
@@ -160,7 +194,7 @@ export async function searchWithIndexReuse(
     if (!hits || queried.generation !== generation || hits.length !== expected.size ||
         hits.some(({ id, from, to }) => expected.get(id) !== from || to !== from + query.length))
       return fail("UNKNOWN");
-    if (!prior || changes.length) {
+    if (!exact && (!prior || changes.length)) {
       catalog = {
         version: 1,
         profile: "limited-v1",
@@ -170,5 +204,20 @@ export async function searchWithIndexReuse(
       };
     }
     return { ok: true, generation, hits, applied: changes.length };
+  }
+
+  async function profileContainsOnlyLease() {
+    const directoryHandle = await opendir(directory, { bufferSize: 2 });
+    try {
+      check();
+      const first = await directoryHandle.read();
+      check();
+      if (first?.name !== ".lease") return false;
+      const second = await directoryHandle.read();
+      check();
+      return second === null;
+    } finally {
+      await closeProfileInspection(directoryHandle);
+    }
   }
 }

@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ah 的 alpha.220 已验证现有私有索引的严格只读重开。范围和正文名册一致才启动原生查询，普通窗口仍使用直接搜索。见[F-064ah 迭代](iterations/F-064ah-exact-index-readonly-reopen.md)。
+
 F-064ag 用合成文件连验了授权快照与私有索引的冷建、热重开、单行更新和失效结果处理。沿用 alpha.219，普通窗口仍使用直接搜索。见[F-064ag 迭代](iterations/F-064ag-authorized-private-index-integration.md)。
 
 F-064af 的 alpha.219 已验证已授权单根的内存正文快照。逐篇核对原始字节，文件变更、授权失效或超限时整批拒绝。普通窗口仍使用直接搜索。见[F-064af 迭代](iterations/F-064af-single-root-index-rows.md)。

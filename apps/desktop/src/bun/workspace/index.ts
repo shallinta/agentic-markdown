@@ -124,6 +124,7 @@ type ContentSearchFileObserver = (update: ContentSearchFileProgress) => void;
 
 type IndexScopeError = "CANCELLED" | "BUSY" | "STALE" | "NOT_READY" | "UNAVAILABLE" | "LIMIT";
 interface IndexScopeFailure { ok: false; error: IndexScopeError }
+type IndexWatchHint = IndexScopeFailure | { ok: true; current: () => boolean };
 interface IndexScopeProof { ok: true; scopeKey: string; current: () => boolean; verify: () => Promise<boolean> }
 type IndexScopeCapture = IndexScopeFailure | IndexScopeProof;
 interface IndexRow {
@@ -142,6 +143,7 @@ type ExistingIndexSearch =
 
 export interface TrustedWorkspaceService extends WorkspaceService {
   searchExistingIndex(handle: string, generation: number, query: string, signal?: AbortSignal): Promise<ExistingIndexSearch>;
+  captureIndexWatchHint(handle: string, generation: number): IndexWatchHint;
   captureIndexScope(handle: string, generation: number, signal?: AbortSignal): Promise<IndexScopeCapture>;
   captureIndexRows(handle: string, generation: number, signal?: AbortSignal): Promise<IndexRowsCapture>;
   searchSnapshot(
@@ -1699,6 +1701,20 @@ export function createWorkspaceService({
         await new Promise<void>(resolve=>setTimeout(resolve,0));
       }
       const current=()=>{check();for(const validate of validations)validate();};current();return {items,incomplete:incomplete||roots.some(root=>root.meta.status!=="complete"),current};
+    },
+    captureIndexWatchHint(handle, generation) {
+      const scope = captureIndexRoot(handle, generation);
+      if (!scope.ok) return scope;
+      const observed = observation.captureIndexHint(handle);
+      if (!observed) return { ok: false, error: "UNAVAILABLE" };
+      let valid = true;
+      return {
+        ok: true,
+        current: () => {
+          if (valid) valid = scope.current() && observed();
+          return valid;
+        },
+      };
     },
     async captureIndexScope(handle, generation, signal) {
       const scope = captureIndexProof(handle, generation, signal);

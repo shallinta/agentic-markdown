@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ap 工作区观察失效信号（2026-11-06）
+
+alpha.227 已验证当前观察回执对旧凭据的失效。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。内部消费、正式接入、持久写入、撤权及最终离线继续承接。见[F-064ap 迭代](iterations/F-064ap-workspace-watch-invalidation-hint.md)。
+
 ## F-064ao 只读缓存逻辑字节准入（2026-11-06）
 
 alpha.226 已验现有缓存只读准入。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。默认预算、总量与淘汰、写入及撤权处置、最终离线继续承接。见[F-064ao 迭代](iterations/F-064ao-index-read-byte-admission.md)。

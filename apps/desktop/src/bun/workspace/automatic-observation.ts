@@ -17,6 +17,7 @@ interface Binding {
   dirty: boolean;
   started: boolean;
   failed: boolean;
+  indexHint?: object;
   unknown?: { operation: DirectoryOperation; queries: number };
 }
 /** Owner scheduling adapter. Worker calls happen only in step, from drain. */
@@ -117,6 +118,13 @@ export function createAutomaticObservation({
       list().includes(binding.root)
     );
   }
+  function indexReady(binding: Binding) {
+    const { meta } = binding.root;
+    return !halt && !fatal && !shutdown && current(binding) &&
+      binding.started && !binding.failed && !binding.dirty && !binding.unknown &&
+      automatic?.binding !== binding && meta.status === "complete" &&
+      binding.hidden === (meta.showHidden ?? false) && meta.observation === "watching";
+  }
   function startAutomatic() {
     if (disposed || automatic || !canStart()) return;
     const binding = [...bindings.values()].find(
@@ -193,6 +201,17 @@ export function createAutomaticObservation({
     })();
   }
   return {
+    captureIndexHint(handle: string): (() => boolean) | undefined {
+      const binding = bindings.get(handle);
+      const token = binding?.indexHint;
+      if (!binding || !token || !indexReady(binding)) return;
+      let valid = true;
+      // A watching receipt describes observed state only, not disk freshness.
+      return () => {
+        valid &&= binding.indexHint === token && indexReady(binding);
+        return valid;
+      };
+    },
     bytes: () => bytes + reserved,
     settle: async () => {
       await activity;
@@ -202,6 +221,7 @@ export function createAutomaticObservation({
       if (!automatic) return false;
       automatic.cancelled = true;
       automatic.binding.dirty = true;
+      automatic.binding.indexHint = undefined;
       reconciliation.invalidate(automatic.binding.root.meta.handle);
       return true;
     },
@@ -212,6 +232,7 @@ export function createAutomaticObservation({
       // Do not reset in-flight retry counters: one user action can invalidate twice.
       const binding = bindings.get(handle);
       if (binding) {
+        binding.indexHint = undefined;
         if (automatic?.binding === binding) {
           automatic.cancelled = true;
           reconciliation.invalidate(handle);
@@ -232,8 +253,10 @@ export function createAutomaticObservation({
           automatic.cancelled = true;
           reconciliation.invalidate(automatic.binding.root.meta.handle);
         }
-        for (const binding of bindings.values())
+        for (const binding of bindings.values()) {
+          binding.indexHint = undefined;
           binding.root.meta.observation = "limited";
+        }
         try {
           const result = await call({ op: "watchDispose", key: pollKey });
           if (
@@ -275,8 +298,10 @@ export function createAutomaticObservation({
           retry.attempts++;
           if (retry.attempts >= 3) shutdown = true;
           retry.retryAt = Date.now() + interval;
-          for (const binding of bindings.values())
+          for (const binding of bindings.values()) {
+            binding.indexHint = undefined;
             binding.root.meta.observation = "limited";
+          }
         }
         return;
       }
@@ -318,6 +343,7 @@ export function createAutomaticObservation({
         if (!bindings.has(root.meta.handle)) {
           if (sequence === Number.MAX_SAFE_INTEGER) {
             halt = true;
+            for (const binding of bindings.values()) binding.indexHint = undefined;
             root.meta.observation = "limited";
             return;
           }
@@ -380,18 +406,25 @@ export function createAutomaticObservation({
         bytes = Number(response.bytes);
         if (response.roots.some((row) => row.status === "establishing"))
           due = true;
+        const reported = new Set<string>();
         for (const row of response.roots) {
           const binding = [...bindings.values()].find(
             (item) => item.key === row.key
           );
           if (!binding || !current(binding)) continue;
+          reported.add(binding.key);
           if (!binding.failed) binding.root.meta.observation = row.status;
           binding.dirty ||= row.dirty;
+          if (binding.failed || row.status !== "watching") binding.indexHint = undefined;
+          else if (row.dirty || !binding.indexHint) binding.indexHint = {};
         }
+        for (const binding of bindings.values())
+          if (!reported.has(binding.key)) binding.indexHint = undefined;
         startAutomatic();
       } catch {
         for (const binding of bindings.values()) {
           binding.failed = true;
+          binding.indexHint = undefined;
           binding.root.meta.observation = "limited";
           if (binding.started) queueCleanup(binding.key);
         }

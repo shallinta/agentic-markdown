@@ -6,6 +6,7 @@ import type { ReconciliationResult } from "./reconciliation";
 
 type Options = Parameters<typeof createAutomaticObservation>[0];
 const ROOT = "11111111-1111-4111-8111-111111111111";
+const OTHER_ROOT = "22222222-2222-4222-8222-222222222222";
 const disposers: (() => void)[] = [];
 afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
@@ -105,6 +106,12 @@ function fixture(interval = 60_000) {
       },
     ],
   });
+  const watchRow = (handle: string, dirty = false) => {
+    const key = [...calls].reverse().find((item) => item.op === "watchStart" &&
+      typeof item.key === "string" && item.key.startsWith(`${handle}:`))?.key;
+    if (typeof key !== "string") throw Error("Fixture watcher has not started");
+    return { key, status: "watching", dirty };
+  };
   const observer = createAutomaticObservation({
     list: () => controls.roots,
     canStart: () => controls.canStart,
@@ -145,6 +152,7 @@ function fixture(interval = 60_000) {
     observer,
     initialize,
     response,
+    watchRow,
   };
 }
 
@@ -264,6 +272,109 @@ test("zero difference releases candidate without commit or self-trigger", async 
   expect(f.releases).toEqual(["candidate"]);
   expect(f.accepts).toHaveLength(0);
   expect(f.controls.wakes).toBe(0);
+});
+
+test("clean observation survives unrelated work but its own dirty report retires the hint before reconciliation", async () => {
+  const f = fixture();
+  f.controls.roots.push({
+    meta: { ...f.root.meta, handle: OTHER_ROOT, displayPath: "/other" },
+    authorization: { path: "/other", directories: [] },
+  });
+  f.controls.tick = () => Promise.resolve({
+    bytes: 100,
+    queueBytes: 0,
+    roots: [f.watchRow(ROOT, f.controls.dirty), f.watchRow(OTHER_ROOT)],
+  });
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  await f.observer.step();
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  await f.observer.step();
+  await f.observer.step();
+  const first = f.observer.captureIndexHint(ROOT);
+  const other = f.observer.captureIndexHint(OTHER_ROOT);
+  expect(first?.()).toBe(true);
+  expect(other?.()).toBe(true);
+  await f.observer.step();
+  expect(first?.()).toBe(true);
+
+  const result = await f.controls.prepare();
+  if (!result.ok) throw Error("Fixture candidate missing");
+  result.summary.added = 0;
+  const gate = Promise.withResolvers<ReconciliationResult>();
+  f.controls.prepare = () => gate.promise;
+  f.controls.dirty = true;
+  await f.observer.step();
+  expect(f.prepares).toEqual([ROOT]);
+  expect(first?.()).toBe(false);
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  expect(other?.()).toBe(true);
+  f.controls.dirty = false;
+  await f.observer.step();
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  gate.resolve(result);
+  await settle();
+
+  expect(f.releases).toEqual(["candidate"]);
+  expect(f.accepts).toEqual([]);
+  const refreshed = f.observer.captureIndexHint(ROOT);
+  expect(refreshed?.()).toBe(true);
+  expect(first?.()).toBe(false);
+  expect(other?.()).toBe(true);
+
+  f.controls.tick = () => Promise.resolve({
+    ...f.response(), roots: [f.watchRow(OTHER_ROOT)],
+  });
+  await f.observer.step();
+  expect(refreshed?.()).toBe(false);
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  expect(other?.()).toBe(true);
+});
+
+test("missing, degraded, or replaced observations never revive an old index hint", async () => {
+  const f = fixture();
+  await f.initialize();
+  const initial = f.observer.captureIndexHint(ROOT);
+  const priorRow = f.watchRow(ROOT);
+  expect(initial?.()).toBe(true);
+  f.controls.tick = () => Promise.resolve({ ...f.response(), roots: [] });
+  await f.observer.step();
+  expect(initial?.()).toBe(false);
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  f.controls.tick = undefined;
+  await f.observer.step();
+  const recovered = f.observer.captureIndexHint(ROOT);
+  expect(recovered?.()).toBe(true);
+  expect(initial?.()).toBe(false);
+
+  f.controls.tick = () => Promise.resolve({
+    ...f.response(), roots: [{ ...priorRow, status: "limited" }],
+  });
+  await f.observer.step();
+  expect(recovered?.()).toBe(false);
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  f.controls.tick = undefined;
+  await f.observer.step();
+  const beforeHidden = f.observer.captureIndexHint(ROOT);
+  expect(beforeHidden?.()).toBe(true);
+  f.root.meta.showHidden = true;
+  expect(beforeHidden?.()).toBe(false);
+  f.observer.cancel(ROOT, true);
+  await f.observer.step();
+  await f.observer.step();
+  expect(f.watchRow(ROOT).key).not.toBe(priorRow.key);
+  f.controls.tick = () => Promise.resolve({ ...f.response(), roots: [priorRow] });
+  await f.observer.step();
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
+  f.controls.tick = () => Promise.resolve({
+    ...f.response(), roots: [f.watchRow(ROOT)],
+  });
+  await f.observer.step();
+  const afterHidden = f.observer.captureIndexHint(ROOT);
+  expect(afterHidden?.()).toBe(true);
+  expect(beforeHidden?.()).toBe(false);
+  f.observer.dispose();
+  expect(afterHidden?.()).toBe(false);
+  expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
 });
 
 test("BUSY accept releases candidate and only retries on a later owner tick", async () => {
@@ -481,11 +592,15 @@ test("invalid tick payload fails closed without admitting a candidate", async ()
   ]) {
     const f = fixture();
     await f.initialize();
+    const clean = f.observer.captureIndexHint(ROOT);
+    expect(clean?.()).toBe(true);
     f.controls.tick = () => Promise.resolve(invalid);
     await f.observer.step();
     await settle();
     expect(f.prepares).toHaveLength(0);
     expect(f.root.meta.observation).toBe("limited");
     expect(f.observer.hasCleanup()).toBe(true);
+    expect(clean?.()).toBe(false);
+    expect(f.observer.captureIndexHint(ROOT)).toBeUndefined();
   }
 });

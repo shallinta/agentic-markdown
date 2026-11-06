@@ -32,7 +32,7 @@ test.skipIf(isolated)("isolated root-scope checks leave app data empty", async (
       child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
     ]);
     if (exit !== 0) throw Error(stdout + stderr);
-    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("4 pass");
     expect(await readdir(scratch)).toEqual(["app"]);
     expect(await readdir(home)).toEqual([]);
   } finally {
@@ -40,7 +40,7 @@ test.skipIf(isolated)("isolated root-scope checks leave app data empty", async (
   }
 }, 15_000);
 
-async function createFixture() {
+async function createFixture(fakeWatch = false) {
   const scratch = await realpath(tmpdir());
   const home = join(scratch, "app");
   if (!basename(scratch).startsWith(prefix) || process.env.AGENTIC_MARKDOWN_HOME !== home ||
@@ -51,6 +51,8 @@ async function createFixture() {
   const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
   const scanner = createScanWorker();
   const gate = Promise.withResolvers<void>();
+  const watchKeys = new Set<unknown>();
+  let watchStarts = 0, reportedWatchStarts = 0;
   let delayStart = false;
   const workspace = createWorkspaceService({
     documents,
@@ -58,6 +60,22 @@ async function createFixture() {
     worker: {
       call: async (message) => {
         if (delayStart && message.op === "start") await gate.promise;
+        if (fakeWatch && message.op === "watchStart") {
+          watchKeys.add(message.key);
+          watchStarts++;
+          return { bytes: 0 };
+        }
+        if (fakeWatch && message.op === "watchClose") {
+          watchKeys.delete(message.key);
+          return { bytes: 0 };
+        }
+        if (fakeWatch && message.op === "watchTick") {
+          if (watchKeys.size) reportedWatchStarts = watchStarts;
+          return {
+            bytes: 0, queueBytes: 0,
+            roots: [...watchKeys].map(key => ({ key, dirty: false, status: "watching" })),
+          };
+        }
         return scanner.call(message);
       },
       dispose: () => scanner.dispose(),
@@ -77,13 +95,15 @@ async function createFixture() {
     if (!root) throw Error("Fixture root was not selected");
     return root;
   }
-  async function settle(path: string) {
+  async function settle(path: string, expectedWatchStarts = 0) {
     const canonical = await realpath(path);
     for (let attempt = 0; attempt < 1000; attempt++) {
       const state = await request({ op: "state" });
       const root = state.roots.find(({ displayPath }) => displayPath === canonical);
-      if (root?.status === "complete") return root;
-      if (root && root.status !== "scanning") throw Error("Fixture scan incomplete: " + root.status);
+      if (root?.status === "complete") {
+        if (!expectedWatchStarts || (reportedWatchStarts >= expectedWatchStarts &&
+            root.observation === "watching")) return root;
+      } else if (root && root.status !== "scanning") throw Error("Fixture scan incomplete: " + root.status);
       await Bun.sleep(2);
     }
     throw Error("Fixture scan did not finish");
@@ -107,6 +127,44 @@ async function createFixture() {
     },
   };
 }
+
+test.skipIf(!isolated)("the trusted watch hint requires the exact authorized root and scan generation", async () => {
+  const fixture = await createFixture(true);
+  const { parent, select, settle, request, workspace } = fixture;
+  const path = join(parent, "root");
+  try {
+    await mkdir(path);
+    await writeFile(join(path, "note.md"), "fixture");
+    fixture.holdFirstScan();
+    const scanning = await select(path);
+    const watch = (root: WorkspaceRoot) => workspace.captureIndexWatchHint(root.handle, root.generation);
+    expect(watch(scanning)).toEqual({ ok: false, error: "NOT_READY" });
+    fixture.releaseScan();
+    const root = await settle(path, 1);
+    expect(watch({ ...root, handle: crypto.randomUUID() })).toEqual({ ok: false, error: "STALE" });
+    expect(watch({ ...root, generation: root.generation + 1 })).toEqual({ ok: false, error: "STALE" });
+    const first = watch(root);
+    if (!first.ok) throw Error("Fixture watcher unavailable: " + first.error);
+    expect(Object.keys(first).sort()).toEqual(["current", "ok"]);
+    expect(first.current()).toBe(true);
+
+    await request({ op: "hidden", root: root.handle, showHidden: true });
+    expect(first.current()).toBe(false);
+    const nextRoot = await settle(path, 2);
+    expect(nextRoot.generation).toBeGreaterThan(root.generation);
+    expect(watch(root)).toEqual({ ok: false, error: "STALE" });
+    const second = watch(nextRoot);
+    if (!second.ok) throw Error("New fixture watcher unavailable: " + second.error);
+    expect(second.current()).toBe(true);
+    expect(first.current()).toBe(false);
+    await workspace.dispose();
+    expect(second.current()).toBe(false);
+    expect(watch(nextRoot)).toEqual({ ok: false, error: "STALE" });
+    expect(await readFile(join(path, "note.md"), "utf8")).toBe("fixture");
+  } finally {
+    await fixture.dispose();
+  }
+}, 10_000);
 
 test.skipIf(!isolated)("a physical root keeps its key across rescan and rejoin but the live proof and hidden policy change", async () => {
   const fixture = await createFixture();

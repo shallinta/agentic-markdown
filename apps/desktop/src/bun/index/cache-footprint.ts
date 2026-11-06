@@ -3,6 +3,7 @@ import { lstatSync, type BigIntStats, type Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import { record } from "./protocol";
 import {
   INDEX_PURGE_COMPLETE_NAME, INDEX_PURGE_ROSTER_FILES, INDEX_PURGE_ROSTER_NAME, reclaimStagingDigest,
 } from "./purge-roster";
@@ -24,6 +25,11 @@ function identityStamp(stat: BigIntStats) {
     stat.birthtimeNs, stat.dev, stat.ino, stat.mode, stat.uid, stat.nlink,
     stat.size, stat.mtimeNs, stat.ctimeNs,
   ].map(String);
+}
+
+export function reclaimDirectoryStamp(stat: BigIntStats) {
+  const { dev, ino, birthtimeNs, uid, mode } = stat;
+  return [dev, ino, birthtimeNs, uid, mode].map(String);
 }
 
 async function closeDirectory(dir: Dir) {
@@ -135,10 +141,7 @@ export async function captureIndexFootprint(
   const fileStamps = () => nativeFiles()
     .map(([name, stat]) => [name, identityStamp(stat)] as const)
     .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  const directoryStamp = () => {
-    const { dev, ino, birthtimeNs, uid, mode } = indexStat;
-    return [dev, ino, birthtimeNs, uid, mode].map(String);
-  };
+  const directoryStamp = () => reclaimDirectoryStamp(indexStat);
   return {
     status: "existing" as const, recheck, files: names.size + 1 + Number(includePurge) + Number(includeComplete),
     catalogStat, purgeStat, completionStat, catalogBytes, indexBytes,
@@ -163,4 +166,72 @@ export async function captureIndexFootprint(
       return reclaimStagingDigest({ scopeKey, generation, inventoryDigest }, directoryStamp(), fileStamps());
     },
   };
+}
+
+function assertAbsent(path: string) {
+  try {
+    lstatSync(path, { bigint: true });
+  } catch (error) {
+    if (record(error) && error.code === "ENOENT") return;
+    throw error;
+  }
+  throw Error("Index cache path appeared");
+}
+
+/** The completion record outlives the optional empty pending directory. */
+export async function captureCompletedPlacement(
+  profile: string, profileStat: BigIntStats, owner: bigint, check: () => void, checkLease: () => void
+) {
+  const guard = () => { check(); checkLease(); };
+  const pendingName = reclaimDirectoryName("pending");
+  const pendingPath = join(profile, pendingName);
+  const names = await readMembers(profile, 5, guard);
+  guard();
+  const hasPending = names.has(pendingName);
+  if (names.size !== 4 + Number(hasPending) || !names.has(".lease") || !names.has("catalog.json") ||
+      !names.has(INDEX_PURGE_ROSTER_NAME) || !names.has(INDEX_PURGE_COMPLETE_NAME))
+    throw Error("Index completion layout unavailable");
+
+  const inventory = [{ path: profile, stat: profileStat }];
+  const privateRecord = (name: string) => {
+    const path = join(profile, name);
+    const stat = lstatSync(path, { bigint: true });
+    if (!stat.isFile() || stat.uid !== owner || stat.nlink !== 1n ||
+        (stat.mode & 0o077n) !== 0n || stat.size < 1n)
+      throw Error("Index completion record unavailable");
+    inventory.push({ path, stat });
+    return stat;
+  };
+  const catalogStat = privateRecord("catalog.json");
+  const purgeStat = privateRecord(INDEX_PURGE_ROSTER_NAME);
+  const completionStat = privateRecord(INDEX_PURGE_COMPLETE_NAME);
+  const pendingStat = hasPending ? lstatSync(pendingPath, { bigint: true }) : undefined;
+  if (pendingStat) {
+    if (!pendingStat.isDirectory() || pendingStat.uid !== owner || (pendingStat.mode & 0o022n) !== 0n)
+      throw Error("Index completion directory unavailable");
+    inventory.push({ path: pendingPath, stat: pendingStat });
+  }
+  const recheck = () => {
+    guard();
+    for (const { path, stat } of inventory)
+      if (!sameIndexInventoryMetadata(stat, lstatSync(path, { bigint: true })))
+        throw Error("Index completion layout changed");
+    assertAbsent(join(profile, reclaimDirectoryName("original")));
+    if (!pendingStat) assertAbsent(pendingPath);
+    checkLease();
+  };
+  recheck();
+  let empty = true;
+  if (pendingStat) {
+    const pending = await opendir(pendingPath, { bufferSize: 1 });
+    try {
+      recheck();
+      empty = await pending.read() === null;
+      recheck();
+    } finally {
+      await closeDirectory(pending);
+    }
+  }
+  recheck();
+  return { catalogStat, purgeStat, completionStat, pendingStat, empty, recheck };
 }

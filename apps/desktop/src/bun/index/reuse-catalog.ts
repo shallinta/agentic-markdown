@@ -49,6 +49,13 @@ export interface HeldIndexPlacement {
   checkPendingAfterRemoval: () => BigIntStats;
   syncPending: () => Promise<void>;
 }
+interface HeldCompletionPlacement {
+  profileFd: number;
+  pendingFd?: number;
+  check: () => void;
+  checkAbsent: () => void;
+  sync: () => Promise<void>;
+}
 interface RetiredCatalogBase extends IndexRetirementTarget {
   profile: "limited-v1";
   state: "retired";
@@ -90,6 +97,9 @@ interface IndexReuseSlot {
     placement: ReclaimPlacement, identity: IndexReuseInventoryIdentity,
     openOriginal: ((profileFd: number) => number) | undefined,
     use: (held: HeldIndexPlacement) => Promise<Result>
+  ): Promise<Result>;
+  withCompletionPlacement<Result>(
+    expected: BigIntStats | undefined, use: (held: HeldCompletionPlacement) => Promise<Result>
   ): Promise<Result>;
   release(): Promise<void>;
 }
@@ -532,6 +542,43 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
             } finally {
               if (index) await closeCatalogFile(index);
               else closeStageDescriptor(indexFd);
+            }
+          } finally {
+            await closeCatalogFile(profile);
+          }
+        },
+        async withCompletionPlacement(expected, use) {
+          const flags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+          const profile = await open(directory, flags);
+          try {
+            const checkProfile = () => {
+              assertProfileDescriptor(profile);
+              if (present(indexPath)) throw Error("Original index placement appeared");
+            };
+            checkProfile();
+            const pending = expected ? await open(pendingPath, flags) : undefined;
+            try {
+              const checkAbsent = () => {
+                checkProfile();
+                if (present(pendingPath) ||
+                    (pending && expected && !sameStableIdentity(expected, fstatSync(pending.fd, { bigint: true }))))
+                  throw Error("Pending index absence unconfirmed");
+              };
+              const check = () => {
+                if (!pending || !expected) return checkAbsent();
+                checkProfile();
+                const held = fstatSync(pending.fd, { bigint: true });
+                const named = present(pendingPath);
+                if (!named || !sameRenameStableMetadata(expected, held) || !sameFile(expected, held) ||
+                    !sameRenameStableMetadata(held, named) || !sameFile(held, named))
+                  throw Error("Pending index directory identity changed");
+              };
+              check();
+              return await use({
+                profileFd: profile.fd, pendingFd: pending?.fd, check, checkAbsent, sync: () => profile.sync(),
+              });
+            } finally {
+              if (pending) await closeCatalogFile(pending);
             }
           } finally {
             await closeCatalogFile(profile);

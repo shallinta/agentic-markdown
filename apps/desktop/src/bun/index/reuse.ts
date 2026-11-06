@@ -3,7 +3,7 @@ import type { Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { captureIndexFootprint, sameIndexInventoryMetadata } from "./cache-footprint";
+import { captureCompletedPlacement, captureIndexFootprint, sameIndexInventoryMetadata } from "./cache-footprint";
 import {
   INDEX_LIMITS,
   encodeChanges,
@@ -15,12 +15,14 @@ import {
   type IndexHit,
   type IndexResult,
 } from "./protocol";
-import { samePurgeRecords, samePurgeStamp, verifyPurgeSubset } from "./purge-proof";
+import {
+  sameCompletedRecords, samePurgeRecords, samePurgeStamp, verifyCompletedPlacement, verifyPurgeSubset,
+} from "./purge-proof";
 import { publishReclaimRecord } from "./purge-publish";
 import { unlinkPurgeMember } from "./purge-remove";
 import { encodePurgeCompletion, encodePurgeRoster, purgeMemberOrder } from "./purge-roster";
 import { readPinnedPurgeCompletion, readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
-import { loadReclaimStage } from "./reclaim-stage";
+import { loadEmptyPendingRemover, loadReclaimStage } from "./reclaim-stage";
 import {
   acquireIndexReuseSlot,
   IndexReuseCleanupError,
@@ -83,10 +85,9 @@ async function profileContainsOnlyLease(directory: string, check: () => void) {
   }
 }
 
-async function useRetirementSlot<Result extends { ok: true }>(
-  directory: string, target: IndexRetirementTarget, current: () => boolean,
-  use: (slot: RetirementSlot, cached: ProvenCatalog, check: () => void) => Promise<Result | RetirementFailure>,
-  mode: "retirement" | "prepare" | "stage" = "retirement"
+async function useRetirementLease<Result extends { ok: true }>(
+  directory: string, current: () => boolean,
+  use: (slot: RetirementSlot, check: () => void) => Promise<Result | RetirementFailure>
 ): Promise<Result | RetirementFailure> {
   if (!current()) return fail("CANCELLED");
   const acquired = await acquireIndexReuseSlot(directory);
@@ -98,7 +99,7 @@ async function useRetirementSlot<Result extends { ok: true }>(
   };
   let result: Result | RetirementFailure;
   try {
-    result = await run();
+    result = await use(slot, check);
   } catch (error) {
     result = fail(error instanceof IndexReuseCleanupError
       ? "UNKNOWN" : current() ? "UNAVAILABLE" : "CANCELLED");
@@ -110,8 +111,14 @@ async function useRetirementSlot<Result extends { ok: true }>(
     }
   }
   return result;
+}
 
-  async function run(): Promise<Result | RetirementFailure> {
+function useRetirementSlot<Result extends { ok: true }>(
+  directory: string, target: IndexRetirementTarget, current: () => boolean,
+  use: (slot: RetirementSlot, cached: ProvenCatalog, check: () => void) => Promise<Result | RetirementFailure>,
+  mode: "retirement" | "prepare" | "stage" = "retirement"
+) {
+  return useRetirementLease<Result>(directory, current, async (slot, check) => {
     check();
     const cached = await (mode === "stage" ? slot.readStageCatalog()
       : mode === "prepare" ? slot.readPrepareCatalog() : slot.readCatalog());
@@ -131,7 +138,7 @@ async function useRetirementSlot<Result extends { ok: true }>(
     if (catalog.scopeKey !== target.scopeKey) return fail("SCHEMA");
     if (catalog.generation !== target.generation) return fail("MISMATCH");
     return use(slot, cached, check);
-  }
+  });
 }
 
 function captureRetirementFootprint(
@@ -452,6 +459,47 @@ export function prepareEmptyStagedIndexReuseCompletion(directory: string, target
     },
     "stage"
   );
+}
+
+export function removeEmptyStagedIndexReuseDirectory(
+  directory: string, target: IndexReclaimIntentTarget, current: () => boolean
+) {
+  return useRetirementLease<{ ok: true; alreadyAbsent: boolean }>(directory, current, async (slot, check) => {
+    check();
+    const { assertInventoryLease } = slot;
+    const profile = assertInventoryLease();
+    const placement = await captureCompletedPlacement(directory, profile, profile.uid, check, assertInventoryLease);
+    const proof = await verifyCompletedPlacement(directory, placement, target, profile.uid);
+    if (!proof.ok) return proof;
+    const alreadyAbsent = !placement.pendingStat;
+    const remove = alreadyAbsent ? undefined : loadEmptyPendingRemover();
+    if (!alreadyAbsent && !remove) return fail("UNAVAILABLE");
+
+    return slot.withCompletionPlacement(placement.pendingStat, async (held) => {
+      placement.recheck();
+      held.check();
+      if (remove) {
+        if (held.pendingFd === undefined) return fail("UNAVAILABLE");
+        const result = remove(held.profileFd, held.pendingFd);
+        if (result !== "removed") return fail(result);
+      }
+      try {
+        held.checkAbsent();
+        await held.sync();
+        const final = await captureCompletedPlacement(
+          directory, assertInventoryLease(), profile.uid, held.checkAbsent, assertInventoryLease
+        );
+        const terminal = await verifyCompletedPlacement(directory, final, target, profile.uid);
+        if (!terminal.ok || final.pendingStat || !sameCompletedRecords(proof, terminal))
+          throw Error("Empty pending index removal confirmation changed");
+        final.recheck();
+        held.checkAbsent();
+        return { ok: true, alreadyAbsent };
+      } catch {
+        throw new IndexReuseCleanupError("Empty pending index removal unconfirmed");
+      }
+    });
+  });
 }
 
 /** One private cache, one bounded verified snapshot. Cache state never grants access. */

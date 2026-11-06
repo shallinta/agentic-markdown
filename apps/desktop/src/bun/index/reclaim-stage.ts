@@ -105,3 +105,23 @@ export function loadPurgeMemberRemover() {
     },
   };
 }
+
+export function loadEmptyPendingRemover() {
+  const native = loadSaveNative();
+  if (typeof native?.removeEmptyRetiredIndexDirectory !== "function") return;
+  const remove = native.removeEmptyRetiredIndexDirectory;
+  return (profileFd: number, pendingFd: number) => {
+    try {
+      const result: unknown = Reflect.apply(remove, native, [profileFd, pendingFd]);
+      if (!record(result)) return "UNKNOWN" as const;
+      if (result.ok === true && keys(result, "ok")) return "removed" as const;
+      if (result.ok === false && keys(result, "error,ok")) {
+        if (result.error === "NOT_EMPTY") return "MISMATCH" as const;
+        if (result.error === "PRECONDITION" || result.error === "INPUT") return "UNAVAILABLE" as const;
+      }
+      return "UNKNOWN" as const;
+    } catch {
+      return "UNKNOWN" as const;
+    }
+  };
+}

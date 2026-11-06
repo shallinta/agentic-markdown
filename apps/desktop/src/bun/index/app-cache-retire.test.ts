@@ -8,7 +8,7 @@ import { basename, join } from "node:path";
 import {
   inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, inspectStagedIndexPurgeProgress, reopenAppIndexCache,
   prepareEmptyStagedIndexCompletion, prepareRetiredIndexReclaim, prepareStagedIndexPurge,
-  removeStagedIndexPurgeMember, retireAppIndexCache, searchAppIndexCache,
+  removeEmptyStagedIndexDirectory, removeStagedIndexPurgeMember, retireAppIndexCache, searchAppIndexCache,
   stageRetiredIndexReclaim,
 } from "./app-cache";
 import { record } from "./protocol";
@@ -103,7 +103,8 @@ async function runFixture(
   scratch: string,
   childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen"
     | "stage" | "stage-reopen" | "purge" | "purge-reopen" | "progress" | "progress-reopen"
-    | "remove-member" | "remove-member-reopen" | "empty-completion" | "empty-completion-reopen",
+    | "remove-member" | "remove-member-reopen" | "empty-completion" | "empty-completion-reopen"
+    | "remove-empty-directory" | "remove-empty-directory-reopen",
   entry = import.meta.path
 ) {
   const child = Bun.spawn([process.execPath, "test", entry], {
@@ -123,7 +124,9 @@ async function runFixture(
   expect(stderr).toContain("1 pass");
 }
 
-async function runFixtureWithoutNative(scratch: string, childMode: "stage-reopen" | "empty-completion-reopen") {
+async function runFixtureWithoutNative(
+  scratch: string, childMode: "stage-reopen" | "empty-completion-reopen" | "remove-empty-directory-reopen"
+) {
   const retry = join(scratch, "retry");
   try {
     const outdir = join(retry, "bun");
@@ -234,6 +237,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "remove-member");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "empty-completion");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "remove-empty-directory");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -1872,6 +1877,195 @@ test.skipIf(mode !== "empty-completion-reopen")("fresh process confirms the empt
     expect((await readdir(f.profile)).sort()).toEqual([
       ".reclaim-complete.json", ".reclaim-pending", ".reclaim-purge.json", "catalog.json",
     ]);
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "remove-empty-directory")("only the confirmed empty directory is removed and all three records survive", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  const pending = join(f.profile, ".reclaim-pending");
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const completion = join(f.profile, ".reclaim-complete.json");
+  const markers = [f.catalog, roster, completion];
+  const unavailable = failed("UNAVAILABLE");
+  const mismatch = failed("MISMATCH");
+  const unknown = { ok: false, error: "UNKNOWN", accepted: true } as const;
+  f.startRecording();
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toMatchObject({ ok: true, generation: 1, applied: 1 });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const preflight = await inspectRetiredIndexReclaim(retirement, current);
+    if (!preflight.ok) throw Error("Empty-directory removal fixture unavailable: " + preflight.error);
+    const target = { ...retirement, inventoryDigest: preflight.inventoryDigest };
+    const remove = (guard = current) => removeEmptyStagedIndexDirectory(target, guard);
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: false });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    const files = await f.nativeFiles(pending);
+    for (let ordinal = 0; ordinal < files.length; ordinal++)
+      expect(await removeStagedIndexPurgeMember({ ...target, ordinal }, current))
+        .toEqual({ ok: true, alreadyMissing: false, remainingFiles: files.length - ordinal - 1 });
+    expect(await remove()).toEqual(unavailable);
+    expect(await prepareEmptyStagedIndexCompletion(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    return {
+      target, remove, snapshots: await Promise.all(markers.map(f.fingerprint)),
+      profile: await f.fingerprint(f.profile), workers: f.workers(),
+    };
+  }
+  async function noDirectory() {
+    expect(await lstat(pending).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+  }
+  async function checkRemoved(snapshot: Awaited<ReturnType<typeof seed>>) {
+    await noDirectory();
+    expect(await Promise.all(markers.map(f.fingerprint))).toEqual(snapshot.snapshots);
+    expect(await f.fingerprint(f.profile)).toMatchObject({
+      dev: snapshot.profile.dev, ino: snapshot.profile.ino, birth: snapshot.profile.birth,
+      uid: snapshot.profile.uid, mode: snapshot.profile.mode,
+    });
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-complete.json", ".reclaim-purge.json", "catalog.json"]);
+    expect(f.workers()).toBe(snapshot.workers);
+  }
+  try {
+    const initial = await seed();
+    expect(await removeEmptyStagedIndexDirectory({ ...initial.target, ...wrongScope }, current)).toEqual(failed("SCHEMA"));
+    expect(await removeEmptyStagedIndexDirectory({ ...initial.target, ...wrongGeneration }, current)).toEqual(mismatch);
+    expect(await removeEmptyStagedIndexDirectory({ ...initial.target, inventoryDigest: sha("wrong removal target") }, current))
+      .toEqual(mismatch);
+    expect(await removeEmptyStagedIndexDirectory({ ...initial.target, inventoryDigest: "invalid" }, current)).toEqual(failed("INPUT"));
+    expect(await initial.remove(() => false)).toEqual(failed("CANCELLED"));
+    await mkdir(f.lease, { mode: 0o700 });
+    const occupied = join(f.lease, "keep");
+    await writeFile(occupied, "busy", { mode: 0o600 });
+    expect(await initial.remove()).toEqual(failed("BUSY"));
+    expect(await readFile(occupied, "utf8")).toBe("busy");
+    await rm(occupied);
+    await rmdir(f.lease);
+
+    const canonical = await readFile(completion, "utf8");
+    const altered = canonical.replace(sha(await readFile(roster)), sha("wrong completion binding"));
+    expect(altered).not.toBe(canonical);
+    await writeFile(completion, altered);
+    const mismatchedMarker = await f.fingerprint(completion);
+    expect(await initial.remove()).toEqual(mismatch);
+    expect(await f.fingerprint(completion)).toEqual(mismatchedMarker);
+    expect(await readdir(pending)).toEqual([]);
+    await writeFile(completion, canonical);
+    initial.snapshots[2] = await f.fingerprint(completion);
+
+    const extra = join(f.profile, "extra-fixture");
+    await writeFile(extra, "extra", { mode: 0o600 });
+    expect(await initial.remove()).toEqual(unavailable);
+    expect(await readFile(extra, "utf8")).toBe("extra");
+    await rm(extra);
+    await mkdir(f.index, { mode: 0o700 });
+    expect(await initial.remove()).toEqual(unavailable);
+    expect(await readdir(f.index)).toEqual([]);
+    await rmdir(f.index);
+    const member = join(pending, "reappeared");
+    await writeFile(member, "nonempty", { mode: 0o600 });
+    expect(await initial.remove()).toEqual(mismatch);
+    expect(await readFile(member, "utf8")).toBe("nonempty");
+    await rm(member);
+
+    const parked = join(f.scratch, "parked-pending");
+    await rename(pending, parked);
+    try {
+      await symlink(parked, pending);
+      expect(await initial.remove()).toEqual(unavailable);
+      expect(await readlink(pending)).toBe(parked);
+      await rm(pending);
+      await mkdir(pending, { mode: 0o700 });
+      const replacement = await f.fingerprint(pending);
+      expect(await initial.remove()).toEqual(mismatch);
+      expect(await f.fingerprint(pending)).toEqual(replacement);
+      expect(await readdir(pending)).toEqual([]);
+      await rmdir(pending);
+    } finally {
+      await rm(pending, { recursive: true, force: true });
+      await rename(parked, pending);
+    }
+    expect(await Promise.all(markers.map(f.fingerprint))).toEqual(initial.snapshots);
+    const handle = await open(pending, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    let beforeRemoval = 0;
+    try {
+      const before = await handle.stat({ bigint: true });
+      expect(await initial.remove(() => {
+        if (existsSync(pending)) beforeRemoval++;
+        return true;
+      })).toEqual({ ok: true, alreadyAbsent: false });
+      const after = await handle.stat({ bigint: true });
+      expect({ dev: after.dev, ino: after.ino, birth: after.birthtimeNs, uid: after.uid, mode: after.mode })
+        .toEqual({ dev: before.dev, ino: before.ino, birth: before.birthtimeNs, uid: before.uid, mode: before.mode });
+    } finally {
+      await handle.close();
+    }
+    expect(beforeRemoval).toBeGreaterThan(1);
+    await checkRemoved(initial);
+    await runFixtureWithoutNative(f.scratch, "remove-empty-directory-reopen");
+    await checkRemoved(initial);
+    await rm(f.home, { recursive: true, force: true });
+
+    const second = await seed();
+    const directory = await f.fingerprint(pending);
+    let checks = 0;
+    expect(await second.remove(() => ++checks < beforeRemoval)).toEqual(failed("CANCELLED"));
+    expect(checks).toBe(beforeRemoval);
+    expect(await f.fingerprint(pending)).toEqual(directory);
+
+    const parkedLease = join(f.profile, "parked-lease");
+    const lateLease = join(f.lease, "late-lease");
+    checks = 0;
+    expect(await second.remove(() => {
+      if (++checks === beforeRemoval) {
+        renameSync(f.lease, parkedLease);
+        mkdirSync(f.lease, { mode: 0o700 });
+        writeFileSync(lateLease, "preserve", { mode: 0o600 });
+      }
+      return true;
+    })).toEqual(unknown);
+    expect(await readFile(lateLease, "utf8")).toBe("preserve");
+    expect(await readdir(parkedLease)).toEqual([]);
+    expect(await f.fingerprint(pending)).toEqual(directory);
+    await rm(lateLease);
+    await rmdir(f.lease);
+    await rmdir(parkedLease);
+    expect(await Promise.all(markers.map(f.fingerprint))).toEqual(second.snapshots);
+
+    const uncertain = await refuseDirectorySync(f.profile, () => Promise.resolve(!existsSync(pending)), second.remove);
+    expect(uncertain).toEqual(unknown);
+    await checkRemoved(second);
+    expect(await second.remove()).toEqual({ ok: true, alreadyAbsent: true });
+    await checkRemoved(second);
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "remove-empty-directory-reopen")("fresh process confirms the fixed directory remains absent without a native addon", async () => {
+  const f = await fixture();
+  expect((await readdir(f.scratch)).sort()).toEqual(["home", "retry"]);
+  expect(existsSync(join(f.scratch, "retry", "native", "save-primitives.node"))).toBe(false);
+  const pending = join(f.profile, ".reclaim-pending");
+  const markers = [f.catalog, join(f.profile, ".reclaim-purge.json"), join(f.profile, ".reclaim-complete.json")];
+  const catalog: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
+  if (!record(catalog) || typeof catalog.inventoryDigest !== "string")
+    throw Error("Directory removal fixture missing catalog");
+  const target = { ...retirement, inventoryDigest: catalog.inventoryDigest };
+  const before = await Promise.all(markers.map(f.fingerprint));
+  f.startRecording();
+  try {
+    expect(await removeEmptyStagedIndexDirectory(target, current)).toEqual({ ok: true, alreadyAbsent: true });
+    expect(await lstat(pending).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
+    expect(await Promise.all(markers.map(f.fingerprint))).toEqual(before);
+    expect(f.workers()).toBe(0);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-complete.json", ".reclaim-purge.json", "catalog.json"]);
   } finally {
     f.stopRecording();
   }

@@ -175,3 +175,33 @@ static napi_value remove_retired_index_member(napi_env env, napi_callback_info i
         return unknown;
     return success;
 }
+
+static napi_value remove_empty_retired_index_directory(napi_env env, napi_callback_info info) {
+    napi_value argv[2];
+    int profile_fd, pending_fd;
+    if (!args(env, info, argv, 2) || !integer(env, argv[0], &profile_fd) ||
+        !integer(env, argv[1], &pending_fd) || profile_fd == pending_fd)
+        return reclaim_receipt(env, "INPUT");
+
+    napi_value success = reclaim_receipt(env, NULL);
+    napi_value precondition = reclaim_receipt(env, "PRECONDITION");
+    napi_value not_empty = reclaim_receipt(env, "NOT_EMPTY");
+    napi_value unknown = reclaim_receipt(env, "UNKNOWN");
+    if (!success || !precondition || !not_empty || !unknown) return NULL;
+
+    uid_t owner = geteuid();
+    struct stat profile, pending;
+    if (fstat(profile_fd, &profile) != 0 || !reclaim_owned_directory(&profile, owner, 0) ||
+        (profile.st_mode & 07777) != 0700 ||
+        !held_pending_directory(profile_fd, pending_fd, &profile, &pending))
+        return precondition;
+    if (unlinkat(profile_fd, reclaim_destination_name, AT_REMOVEDIR) != 0)
+        return errno == ENOTEMPTY || errno == EEXIST ? not_empty : unknown;
+
+    struct stat profile_after, pending_after;
+    if (fstat(profile_fd, &profile_after) != 0 || !reclaim_same_identity(&profile, &profile_after) ||
+        fstat(pending_fd, &pending_after) != 0 || !reclaim_same_identity(&pending, &pending_after) ||
+        !reclaim_source_absent(profile_fd) || !absent_reclaim_member(profile_fd, reclaim_destination_name))
+        return unknown;
+    return success;
+}

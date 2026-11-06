@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bc 的 alpha.240 已在隔离夹具验证内部移除已确认的空待回收目录。私有槽和三份控制记录继续保留。见[F-064bc 迭代](iterations/F-064bc-remove-confirmed-empty-index-directory.md)。
+
 F-064bb 的 alpha.239 已验证内部持久确认待回收目录已空。确认后目录、原清单和名册仍保留。见[F-064bb 迭代](iterations/F-064bb-staged-index-empty-confirmation.md)。
 
 F-064ba 的 alpha.238 已在隔离夹具验证内部显式清理单个待回收成员。同一序号重试只复核原成员，目录和两份控制记录继续保留。见[F-064ba 迭代](iterations/F-064ba-staged-index-remove-one-member.md)。

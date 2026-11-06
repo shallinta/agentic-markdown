@@ -17,6 +17,7 @@ import {
   type WriteCapability,
 } from "../../shared/documents";
 import { localImageReference, validLocalImageRequest, type LocalImageResult } from "../../shared/local-images";
+import { READER_IMAGE_SNAPSHOT_MAX_SLOTS, type ReaderImageSnapshotSlot } from "../../shared/reader-image-snapshot";
 import { READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import { validMirror } from "../../shared/save-content";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
@@ -116,9 +117,9 @@ interface ReadingSnapshotSource {
 type ReadingSnapshotCapture =
   | { ok: true; base64: string; current: () => boolean; readImage?: ReadingSnapshotImageRead }
   | { ok: false; error: DocumentErrorCode };
-export type ReadingSnapshotImageRead = (reference: string, childCurrent: () => boolean) => Promise<
-  | (Pick<Extract<LocalImageResult, { ok: true }>, "ok" | "mime" | "width" | "height" | "data"> & { current(): boolean })
-  | { ok: false; error: "UNAVAILABLE" }
+export type ReadingSnapshotImageRead = (slot: ReaderImageSnapshotSlot, reference: string, childCurrent: () => boolean) => Promise<
+  | (Pick<Extract<LocalImageResult, { ok: true }>, "ok" | "mime" | "width" | "height" | "data"> & { current(): boolean; sourceCurrent(): boolean })
+  | { ok: false; error: "UNAVAILABLE" | "STALE" }
 >;
 interface PastedRasterSourceProof { path: string; fingerprint: string }
 interface PastedRasterSourceTicket {
@@ -943,66 +944,80 @@ export function createDocumentService({
           return reject("INVALID_UTF8");
         }
         let retired = false;
-        let imageUsed = false;
+        let nextImageSlot = 0, imageActive = false, imageTicketRetired = false;
         const savedStamp = stamp;
-        const readImage: ReadingSnapshotImageRead = async (reference, childCurrent) => {
+        const readImage: ReadingSnapshotImageRead = async (slot, reference, childCurrent) => {
           const unavailable = { ok: false as const, error: "UNAVAILABLE" as const };
-          if (!savedStamp || imageUsed) return unavailable;
-          imageUsed = true;
+          const stale = { ok: false as const, error: "STALE" as const };
+          if (!savedStamp || imageTicketRetired) return stale;
+          if (imageActive || slot !== nextImageSlot || slot >= READER_IMAGE_SNAPSHOT_MAX_SLOTS) return unavailable;
+          nextImageSlot++;
+          const checkSource = () => {
+            check(childCurrent);
+            if (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch)
+              throw new DocumentFailure("CONFLICT");
+          };
+          const sourceCurrent = () => {
+            if (imageTicketRetired) return false;
+            try {
+              checkSource();
+              if (sameReadingStamp(savedStamp, lstatSync(path, { bigint: true }))) return true;
+            } catch { /* A retired ticket cannot admit another slot. */ }
+            imageTicketRetired = true;
+            return false;
+          };
+          if (!sourceCurrent()) return stale;
           const decoded = typeof reference === "string" ? localImageReference(reference) : null;
           if (decoded === null || imageJobs >= 9) return unavailable;
           const assetPath = resolve(dirname(path), decoded);
-          const checkImage = () => {
-            check(childCurrent);
-            if (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch || trashGuard(assetPath))
-              throw new DocumentFailure("CONFLICT");
-          };
+          if (trashGuard(assetPath)) return unavailable;
+          imageActive = true;
           imageJobs++;
           try {
-            checkImage();
             const sourceFile = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
             let image: LocalImageResult;
             try {
               const verifySource = async () => {
-                checkImage();
+                checkSource();
                 await assetScope?.verify();
-                checkImage();
+                checkSource();
                 const observed = await verify({ ...grant, file: sourceFile });
-                checkImage();
+                checkSource();
                 if (!sameReadingStamp(savedStamp, observed) ||
                     !sameReadingStamp(savedStamp, fstatSync(sourceFile.fd, { bigint: true })))
                   throw new DocumentFailure("FILE_CHANGED");
               };
               await verifySource();
+              if (trashGuard(assetPath)) return unavailable;
               image = await images.read({
                 authorization: { selectedPath: grant.selectedPath, selectedParent: grant.selectedParent, path, fingerprint, directories },
                 reference,
                 profile: "reader-snapshot",
                 ...(assetScope ? { assetRoot: { path: assetScope.path, directories: assetScope.directories } } : {}),
-              });
-              if (!image.ok) return unavailable;
+              }).catch(() => unavailable);
               await verifySource();
             } finally {
               await sourceFile.close();
             }
-            checkImage();
+            if (!sourceCurrent()) return stale;
+            if (!image.ok || trashGuard(assetPath)) return unavailable;
             let imageRetired = false;
             const current = () => {
               if (imageRetired) return false;
               try {
-                checkImage();
-                if (sameReadingStamp(savedStamp, lstatSync(path, { bigint: true }))) return true;
+                if (sourceCurrent() && !trashGuard(assetPath)) return true;
               } catch { /* A retired result stays unavailable. */ }
               imageRetired = true;
               return false;
             };
-            if (!current()) return unavailable;
             const { mime, width, height, data } = image;
-            return { ok: true, mime, width, height, data, current };
+            return { ok: true, mime, width, height, data, current, sourceCurrent };
           } catch {
-            return unavailable;
+            imageTicketRetired = true;
+            return stale;
           } finally {
             imageJobs--;
+            imageActive = false;
           }
         };
         return {

@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 独立阅读窗显示前两张本地图片（F-022e）
+
+在已保存的阅读快照中，前两处符合条件的本地 PNG/JPEG 可分别显示。首图无法读取时仍会尝试第二张，后续图片保持占位。每张最多 1 MiB，并共用同一窗口的图片预算。见[F-022e 迭代](iterations/F-022e-two-authorized-images-in-independent-reader.md)。
+
 ## 在独立阅读窗查看未保存正文（F-021h）
 
 编辑或源码模式有未保存修改时，点击「在阅读窗口打开当前未保存内容」。子窗展示点击当时的只读正文并标记「未保存快照」，图片保留占位。主窗可以继续编辑、保存或撤销。关闭后重开可以查看更新的内容。见[F-021h 迭代](iterations/F-021h-open-current-buffer-in-independent-reader.md)。
@@ -10,7 +14,7 @@
 
 ## 独立阅读窗显示本地图片（F-022d）
 
-打开已保存版本后，阅读窗可显示正文第一处符合条件的本地 PNG 或 JPEG。图片需在现有授权内，且满足 1 MiB 和呈现预算。其他图片、无法读取的首图和远程资源保留占位。见[F-022d 迭代](iterations/F-022d-one-authorized-image-in-independent-reader.md)。
+F-022d 在 alpha.274 验证了首张本地 PNG/JPEG 及安全边界。F-022e 随后接入第二处。图片需在现有授权内，无法读取的图片和远程资源保留占位。见[F-022d 迭代](iterations/F-022d-one-authorized-image-in-independent-reader.md)。
 
 ## 多标签切换与资源观察（F-039a）
 

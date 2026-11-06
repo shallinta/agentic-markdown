@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-022e 独立阅读窗双图（2026-11-07）
+
+已保存快照已验前两处本地图片和聚合预算。大图、更多图片、按视口读取及未保存图片授权继续跟踪，OBL-010、OBL-031 和最终离线仍开放。见[F-022e 迭代](iterations/F-022e-two-authorized-images-in-independent-reader.md)。
+
 ## F-021h 独立阅读窗未保存快照（2026-11-07）
 
 普通窗口已验一次性未保存正文及 1 MiB 实际往返。OBL-029 的恢复、外观组合与最终离线继续跟踪。未保存图片授权、主窗双模式迁移、实时同步和预览保持开放。见[F-021h 迭代](iterations/F-021h-open-current-buffer-in-independent-reader.md)。

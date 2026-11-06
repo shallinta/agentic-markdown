@@ -12,7 +12,7 @@ function dispatch(events: EventTarget, detail: unknown) {
   events.dispatchEvent(new CustomEvent(READER_IMAGE_SNAPSHOT_EVENT, { detail }));
 }
 
-test("only the bound first valid event may publish to the selected occurrence", () => {
+test("only the first valid event for each slot may publish to its bound occurrence", () => {
   const events = new EventTarget();
   const first = { reference: "same.png" };
   const second = { reference: "same.png" };
@@ -28,12 +28,18 @@ test("only the bound first valid event may publish to the selected occurrence", 
     dispatch(events, image);
     expect(publications).toBe(1);
     expect(receiver.getImage(first)).toBeUndefined();
-    expect(receiver.setTarget(first)).toBe(true);
+    expect(receiver.setTargets([first, second])).toBe(true);
     expect(receiver.getImage(first)).toEqual(image);
     expect(receiver.getImage(second)).toBeUndefined();
     dispatch(events, { ...image, mime: "image/jpeg" });
     expect(publications).toBe(1);
     expect(receiver.getImage(first)).toEqual(image);
+    const later = { ...image, slot: 1 } as const;
+    dispatch(events, later);
+    expect(publications).toBe(2);
+    expect(receiver.getImage(second)).toEqual(later);
+    dispatch(events, later);
+    expect(publications).toBe(2);
   } finally {
     unsubscribe();
     receiver.close();
@@ -47,14 +53,14 @@ test("expiration and pagehide discard early or late data", async () => {
   try {
     dispatch(events, image);
     await Bun.sleep(5);
-    expect(expired.setTarget(target)).toBe(false);
+    expect(expired.setTargets([target])).toBe(false);
     dispatch(events, image);
     expect(expired.getImage(target)).toBeUndefined();
   } finally {
     expired.close();
   }
   const closed = createReaderImageReceiver(events, deliveryId);
-  expect(closed.setTarget(target)).toBe(true);
+  expect(closed.setTargets([target])).toBe(true);
   dispatch(events, image);
   expect(closed.getImage(target)).toEqual(image);
   events.dispatchEvent(new Event("pagehide"));
@@ -67,11 +73,45 @@ test("one valid but too costly raster stays a placeholder and cannot be retried"
   const target = {};
   const receiver = createReaderImageReceiver(events, deliveryId);
   try {
-    expect(receiver.setTarget(target)).toBe(true);
+    expect(receiver.setTargets([target])).toBe(true);
     dispatch(events, { ...image, width: 2000, height: 2000 });
     expect(receiver.getImage(target)).toBeUndefined();
     dispatch(events, image);
     expect(receiver.getImage(target)).toBeUndefined();
+  } finally {
+    receiver.close();
+  }
+});
+
+test("two individually affordable rasters share the original retained and presentation budget", () => {
+  const events = new EventTarget();
+  const a = {}, b = {};
+  const receiver = createReaderImageReceiver(events, deliveryId);
+  const large = { ...image, width: 1500, height: 1500 };
+  try {
+    expect(receiver.setTargets([a, b])).toBe(true);
+    dispatch(events, large);
+    dispatch(events, { ...large, slot: 1 });
+    expect(receiver.getImage(a)).toEqual(large);
+    expect(receiver.getImage(b)).toBeUndefined();
+    dispatch(events, { ...image, slot: 1 });
+    expect(receiver.getImage(b)).toBeUndefined();
+  } finally {
+    receiver.close();
+  }
+});
+
+test("an over-budget first raster does not block a valid second raster", () => {
+  const events = new EventTarget();
+  const a = {}, b = {};
+  const receiver = createReaderImageReceiver(events, deliveryId);
+  const second = { ...image, slot: 1 } as const;
+  try {
+    expect(receiver.setTargets([a, b])).toBe(true);
+    dispatch(events, { ...image, width: 2000, height: 2000 });
+    dispatch(events, second);
+    expect(receiver.getImage(a)).toBeUndefined();
+    expect(receiver.getImage(b)).toEqual(second);
   } finally {
     receiver.close();
   }

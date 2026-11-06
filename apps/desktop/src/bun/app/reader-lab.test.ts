@@ -94,7 +94,7 @@ const source = {
 };
 const readyEvent = (url: string) => ({ data: { detail: url } });
 
-function snapshotFixture(timeoutMs?: number, candidate?: (base64: string, signal: AbortSignal) => Promise<string | undefined>, imageTimeoutMs?: number) {
+function snapshotFixture(timeoutMs?: number, candidate?: (base64: string, signal: AbortSignal) => Promise<readonly string[]>, imageTimeoutMs?: number) {
   const captured = Promise.withResolvers<{ ok: true; base64: string; current(): boolean; readImage?: ReadingSnapshotImageRead }>();
   const callers: (() => boolean)[] = [];
   const sources: unknown[] = [];
@@ -272,7 +272,7 @@ test("snapshot route times out a held capture without stacking reads or creating
   f.lab.dispose();
 });
 
-const imageResult = { ok: true, mime: "image/png", width: 2, height: 3, data: "AA==", current: () => true } as const;
+const imageResult = { ok: true, mime: "image/png", width: 2, height: 3, data: "AA==", current: () => true, sourceCurrent: () => true } as const;
 const unavailable = { ok: false, error: "UNAVAILABLE" } as const;
 
 function readDeliveryEvents(scripts: readonly string[]) {
@@ -289,12 +289,13 @@ test("image work starts after the body is submitted, with one exact fixed receip
   const f = snapshotFixture(undefined, (base64) => {
     expect(f.calls[f.calls.length - 1]).toBe("show");
     seen.push(base64);
-    return Promise.resolve("图%20像.png");
+    return Promise.resolve(["图%20像.png"]);
   });
   try {
     f.ready();
     const body = f.open();
-    f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: (reference, current) => {
+    f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: (slot, reference, current) => {
+      expect(slot).toBe(0);
       expect(current()).toBe(true);
       seen.push(reference);
       entered.resolve();
@@ -336,7 +337,7 @@ test("plain body and candidate miss avoid an image read, while known image failu
     const f = snapshotFixture(undefined, () => {
       candidates++;
       if (mode === "candidate-failure") return Promise.reject(Error("candidate failed"));
-      return Promise.resolve(mode === "missing" ? undefined : "raster.png");
+      return Promise.resolve(mode === "missing" ? [] : ["raster.png"]);
     });
     try {
       f.ready();
@@ -344,7 +345,7 @@ test("plain body and candidate miss avoid an image read, while known image failu
       f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, ...(mode === "plain" ? {} : {
         readImage: () => {
           reads++;
-          return Promise.resolve(mode === "stale" ? { ...imageResult, current: () => false } : unavailable);
+          return Promise.resolve(mode === "stale" ? { ...imageResult, sourceCurrent: () => false } : unavailable);
         },
       }) });
       await f.registered.promise;
@@ -374,13 +375,13 @@ test("late image from closed reader A cannot reach reader B", async () => {
   const signals: AbortSignal[] = [];
   const f = snapshotFixture(undefined, (_base64, signal) => {
     signals.push(signal);
-    return Promise.resolve("raster.png");
+    return Promise.resolve(["raster.png"]);
   });
   let reads = 0;
   try {
     f.ready();
     const resultA = f.open();
-    f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: (_reference, current) => {
+    f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: (_slot, _reference, current) => {
       if (++reads === 1) {
         entered.resolve(current);
         return finishA.promise;
@@ -422,10 +423,53 @@ test("late image from closed reader A cannot reach reader B", async () => {
   }
 });
 
+test("only the first two image slots run serially and each finishes before the next", async () => {
+  for (const first of ["unavailable", "budget", "stale"] as const) {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<Awaited<ReturnType<ReadingSnapshotImageRead>>>();
+    const f = snapshotFixture(undefined, () => Promise.resolve(["a.png", "b.jpg", "third.png"]));
+    const reads: [number, string][] = [];
+    const large = { ...imageResult, width: 2048, height: 1024 };
+    try {
+      f.ready();
+      const body = f.open();
+      f.captured.resolve({ ok: true, base64: "5Lit", current: () => true, readImage: (slot, reference) => {
+        reads.push([slot, reference]);
+        if (slot === 0) {
+          entered.resolve();
+          return release.promise;
+        }
+        expect(f.child.scripts).toHaveLength(2);
+        return Promise.resolve(large);
+      } });
+      await f.registered.promise;
+      f.dom();
+      expect(await body).toEqual({ ok: true, submitted: true });
+      await entered.promise;
+      expect(reads).toEqual([[0, "a.png"]]);
+      expect(f.child.scripts).toHaveLength(1);
+      release.resolve(first === "budget" ? large : first === "stale" ? { ok: false, error: "STALE" } : unavailable);
+      await Bun.sleep(0);
+      const [bodyEvent, ...events] = readDeliveryEvents(f.child.scripts);
+      const id = decodeReaderSnapshotDelivery(bodyEvent?.detail)?.deliveryId;
+      if (!id) throw Error("missing delivery ID");
+      expect(reads).toEqual(first === "stale" ? [[0, "a.png"]] : [[0, "a.png"], [1, "b.jpg"]]);
+      const receipts = events.map(event => parseReaderImageSnapshot(event.detail, id));
+      expect(receipts.map(receipt => receipt?.slot)).toEqual(first === "stale" ? [] : [0, 1]);
+      expect(receipts.map(receipt => receipt?.status)).toEqual(
+        first === "stale" ? [] : first === "budget" ? ["image", "unavailable"] : ["unavailable", "image"]
+      );
+    } finally {
+      release.resolve(unavailable);
+      f.lab.dispose();
+    }
+  }
+});
+
 test("held candidate aborts on deadline, quit suspension, or committed child or main navigation", async () => {
   for (const cause of ["deadline", "suspend", "child-navigation", "main-navigation", "dispose"] as const) {
     const entered = Promise.withResolvers<AbortSignal>();
-    const finished = Promise.withResolvers<string>();
+    const finished = Promise.withResolvers<string[]>();
     let reads = 0;
     const f = snapshotFixture(undefined, (_base64, signal) => {
       entered.resolve(signal);
@@ -448,12 +492,12 @@ test("held candidate aborts on deadline, quit suspension, or committed child or 
       if (cause === "main-navigation") { f.lab.retireMainReady(f.main); f.ready(); }
       if (cause === "dispose") f.lab.dispose();
       expect(signal.aborted).toBe(true);
-      finished.resolve("raster.png");
+      finished.resolve(["raster.png"]);
       await Bun.sleep(0);
       expect(reads).toBe(0);
       expect(f.child.scripts).toHaveLength(1);
     } finally {
-      finished.resolve("raster.png");
+      finished.resolve(["raster.png"]);
       f.lab.dispose();
     }
   }
@@ -464,7 +508,7 @@ test("unsaved 1 MiB snapshot shares the existing single child without touching f
   let reads = 0;
   const f = snapshotFixture(undefined, () => {
     candidates++;
-    return Promise.resolve("raster.png");
+    return Promise.resolve(["raster.png"]);
   });
   const start = '\uFEFF# 未保存 📖\r\n![资产](raster.png)\r\n`</script>`\r\n';
   const end = "\r\n末尾\r\n";

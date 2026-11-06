@@ -1,8 +1,9 @@
 import { PACKAGED_READER_SNAPSHOT_URL } from "../../security/reader-policy";
 import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
+import { MAX_IMAGE_CACHE_BYTES } from "../../shared/local-images";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
-import { readerImageSnapshotDeliveryScript } from "../../shared/reader-image-snapshot";
+import { readerImageSnapshotCost, readerImageSnapshotDeliveryScript } from "../../shared/reader-image-snapshot";
 import { readerBufferSnapshotDeliveryScript, readerSnapshotDeliveryScript, readerSnapshotOwnValue } from "../../shared/reader-snapshot";
 import type { BufferReadingSnapshotSource, OpenReadingSnapshotResponse, ReadingSnapshotSource } from "../../shared/rpc";
 import { hashPattern } from "../../shared/save-content";
@@ -34,7 +35,7 @@ interface SnapshotReaderWindow extends ReaderWindow {
 interface SnapshotDependencies {
   capture(source: ReadingSnapshotSource, current: () => boolean, options?: { includeImage: true }):
     ReturnType<TrustedDocumentService["captureReadingSnapshot"]>;
-  candidate?(this: void, base64: string, signal: AbortSignal): Promise<string | undefined>;
+  candidate?(this: void, base64: string, signal: AbortSignal): Promise<readonly string[]>;
   open(): SnapshotReaderWindow;
   timeoutMs?: number;
   imageTimeoutMs?: number;
@@ -129,16 +130,32 @@ export function createReaderLab(
     const timer = setTimeout(ticket.retire, snapshot?.imageTimeoutMs ?? SNAPSHOT_TIMEOUT_MS);
     deliveringImage = ticket;
     const current = () => deliveringImage === ticket && ready() && reader === child && isSnapshotWindow(child);
-    void Promise.resolve().then(() => current() ? candidate(base64, abort.signal) : undefined).then(async (reference) => {
-      if (!reference || !current()) return;
-      const result = await read(reference, current);
-      if (!current()) return;
-      const envelope = { protocolVersion: 1, deliveryId, slot: 0 } as const;
-      const script = readerImageSnapshotDeliveryScript(result.ok
-        ? { ...envelope, status: "image", mime: result.mime, width: result.width, height: result.height, data: result.data }
-        : { ...envelope, status: "unavailable" }, deliveryId);
-      if (!script || (result.ok && !result.current()) || !current()) return;
-      child.webview.executeJavascript(script);
+    void Promise.resolve().then(() => current() ? candidate(base64, abort.signal) : []).then(async references => {
+      let remaining = MAX_IMAGE_CACHE_BYTES;
+      for (const slot of [0, 1] as const) {
+        const reference = references[slot];
+        if (!reference || !current()) return;
+        const result = await read(slot, reference, current);
+        if (!current() || (result.ok ? !result.sourceCurrent() : result.error === "STALE")) return;
+        const envelope = { protocolVersion: 1, deliveryId, slot } as const;
+        if (result.ok) {
+          const { mime, width, height, data } = result;
+          const cost = readerImageSnapshotCost(data, width, height);
+          const script = cost <= remaining
+            ? readerImageSnapshotDeliveryScript({ ...envelope, status: "image", mime, width, height, data }, deliveryId)
+            : undefined;
+          if (script && result.current()) {
+            if (!current()) return;
+            child.webview.executeJavascript(script);
+            remaining -= cost;
+            continue;
+          }
+          if (!result.sourceCurrent()) return;
+        }
+        const unavailable = readerImageSnapshotDeliveryScript({ ...envelope, status: "unavailable" }, deliveryId);
+        if (!unavailable || !current()) return;
+        child.webview.executeJavascript(unavailable);
+      }
     }).catch(() => { /* A failed image never changes the submitted body. */ }).finally(ticket.retire);
   };
   const syncCloseAvailability = () => {

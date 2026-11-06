@@ -7,16 +7,23 @@ import {
 
 export const READER_IMAGE_SNAPSHOT_EVENT = "agentic-markdown:reader-image-snapshot";
 export const READER_IMAGE_SNAPSHOT_MAX_BYTES = 1024 * 1024;
+export const READER_IMAGE_SNAPSHOT_MAX_SLOTS = 2;
+export type ReaderImageSnapshotSlot = 0 | 1;
 
 interface ReaderImageEnvelope {
   protocolVersion: 1;
   deliveryId: string;
-  slot: 0;
+  slot: ReaderImageSnapshotSlot;
 }
 export type ReaderImageSnapshot = ReaderImageEnvelope & (
   | { status: "unavailable" }
   | { status: "image"; mime: "image/png" | "image/jpeg"; width: number; height: number; data: string }
 );
+
+/** Retained Base64, decoded pixels and presentation reservation. */
+export function readerImageSnapshotCost(data: string, width: number, height: number): number {
+  return data.length * 2 + width * height * 8;
+}
 
 /** Returns only the validated fields, without retaining the original event object. */
 export function parseReaderImageSnapshot(value: unknown, expectedDeliveryId: string): ReaderImageSnapshot | undefined {
@@ -26,10 +33,11 @@ export function parseReaderImageSnapshot(value: unknown, expectedDeliveryId: str
     const keyCount = Reflect.ownKeys(value).length;
     if (keyCount !== 4 && keyCount !== 8) return undefined;
     const deliveryId = readerSnapshotOwnValue(value, "deliveryId");
-    if (readerSnapshotOwnValue(value, "protocolVersion") !== 1 || readerSnapshotOwnValue(value, "slot") !== 0 ||
+    const slot = readerSnapshotOwnValue(value, "slot");
+    if (readerSnapshotOwnValue(value, "protocolVersion") !== 1 || (slot !== 0 && slot !== 1) ||
         !isReaderSnapshotDeliveryId(deliveryId) || deliveryId !== expectedDeliveryId) return undefined;
 
-    const envelope = { protocolVersion: 1, deliveryId, slot: 0 } as const;
+    const envelope = { protocolVersion: 1, deliveryId, slot } as const;
     const status = readerSnapshotOwnValue(value, "status");
     if (status === "unavailable" && keyCount === 4) return { ...envelope, status };
     if (status !== "image" || keyCount !== 8) return undefined;

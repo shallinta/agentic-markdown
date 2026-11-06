@@ -1,10 +1,10 @@
 import { parseReadingMarkdown } from "../../client/canonical-parser";
-import { firstReaderImageCandidate } from "../../client/reader-image-candidate";
+import { readerImageCandidates } from "../../client/reader-image-candidate";
 import { decodeReaderSnapshot } from "../../shared/reader-snapshot";
 
 self.onmessage = (event: MessageEvent<unknown>) => {
   self.onmessage = null;
-  let reference: string | null = null;
+  let references: readonly string[] = [];
   try {
     const input = event.data;
     if (input && typeof input === "object" && !Array.isArray(input) &&
@@ -13,10 +13,10 @@ self.onmessage = (event: MessageEvent<unknown>) => {
       const text = request.protocolVersion === 1 && typeof request.data === "string"
         ? decodeReaderSnapshot(request.data) : undefined;
       if (text)
-        reference = firstReaderImageCandidate(parseReadingMarkdown(text), text.length)?.reference ?? null;
+        references = readerImageCandidates(parseReadingMarkdown(text), text.length).map(item => item.reference);
     }
   } catch {
     // An unavailable candidate never causes another occurrence to be selected.
   }
-  self.postMessage({ protocolVersion: 1, reference });
+  self.postMessage({ protocolVersion: 1, references });
 };

@@ -21,7 +21,7 @@ const image = {
 test("uses one fixed one-way event for either valid image format or unavailability", () => {
   const events: CustomEvent[] = [];
   const window = { dispatchEvent: (event: CustomEvent) => events.push(event) };
-  const receipts: ReaderImageSnapshot[] = [image, { ...image, mime: "image/jpeg", data: "/9j/" }, unavailable];
+  const receipts: ReaderImageSnapshot[] = [image, { ...image, slot: 1, mime: "image/jpeg", data: "/9j/" }, unavailable];
   for (const value of receipts) {
     const script = readerImageSnapshotDeliveryScript(value, deliveryId);
     if (script === undefined) throw new Error("missing image delivery expression");
@@ -57,7 +57,7 @@ test("bounds exact decoded bytes and requires canonical padding", () => {
 test("rejects invalid slot, version, delivery ID, MIME and dimensions", () => {
   expect(parseReaderImageSnapshot({ ...image, width: 4096, height: 4096 }, deliveryId)?.status).toBe("image");
   for (const fields of [
-    { slot: 1 }, { protocolVersion: 2 }, { deliveryId: otherId }, { mime: "image/svg+xml" },
+    { slot: 2 }, { slot: -1 }, { slot: "1" }, { protocolVersion: 2 }, { deliveryId: otherId }, { mime: "image/svg+xml" },
     { width: 0 }, { height: -1 }, { width: 1.5 }, { width: Infinity }, { height: "1" },
     { width: MAX_IMAGE_PIXELS + 1 }, { width: 4096, height: 4097 },
   ]) expect(parseReaderImageSnapshot({ ...image, ...fields }, deliveryId)).toBeUndefined();

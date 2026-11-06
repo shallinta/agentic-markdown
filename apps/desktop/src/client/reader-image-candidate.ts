@@ -1,4 +1,5 @@
 import { localImageReference } from "../shared/local-images";
+import { READER_IMAGE_SNAPSHOT_MAX_SLOTS } from "../shared/reader-image-snapshot";
 
 import type { parseReadingMarkdown } from "./canonical-parser";
 
@@ -6,18 +7,19 @@ type Tree = ReturnType<typeof parseReadingMarkdown>;
 type Node = Tree | Tree["children"][number];
 type ImageNode = Extract<Node, { type: "image" | "imageReference" }>;
 
-interface ImageCandidate {
+export interface ReaderImageCandidate {
   node: ImageNode;
   reference: string;
+  from: number;
+  to: number;
 }
 
 const MAX_NODES = 100_000;
 const MAX_DEPTH = 128;
 
-/** Selects a single visible AST occurrence. Authorization remains with Bun. */
-export function firstReaderImageCandidate(tree: Tree, sourceLength: number):
-  (ImageCandidate & { from: number; to: number }) | undefined {
-  if (!Number.isSafeInteger(sourceLength) || sourceLength < 0) return undefined;
+/** Selects bounded visible AST occurrences. Authorization remains with Bun. */
+export function readerImageCandidates(tree: Tree, sourceLength: number): readonly ReaderImageCandidate[] {
+  if (!Number.isSafeInteger(sourceLength) || sourceLength < 0) return [];
 
   let visited = 0;
   const definitions = new Map<string, string>();
@@ -33,26 +35,31 @@ export function firstReaderImageCandidate(tree: Tree, sourceLength: number):
     return true;
   }
 
-  function find(node: Node): ImageCandidate | undefined {
+  const candidates: ReaderImageCandidate[] = [];
+  function scan(node: Node): boolean {
     switch (node.type) {
       case "image":
       case "imageReference": {
         const reference = node.type === "image" ? node.url : definitions.get(node.identifier.toUpperCase());
         const path = reference === undefined ? null : localImageReference(reference);
-        return reference !== undefined && path !== null && /\.(?:png|jpe?g)$/i.test(path)
-          ? { node, reference }
-          : undefined;
+        if (reference === undefined || path === null || !/\.(?:png|jpe?g)$/i.test(path)) return false;
+        const from = node.position?.start.offset;
+        const to = node.position?.end.offset;
+        // A malformed chosen occurrence cannot silently fall back to a later image.
+        if (from === undefined || to === undefined || !Number.isSafeInteger(from) ||
+            !Number.isSafeInteger(to) || from < 0 || to <= from || to > sourceLength) return true;
+        candidates.push({ node, reference, from, to });
+        return candidates.length >= READER_IMAGE_SNAPSHOT_MAX_SLOTS;
       }
       case "table": {
         // The renderer skips extra row cells that have no header column.
         const columns = node.children[0]?.children.length ?? 0;
         for (const row of node.children) {
           for (let index = 0; index < columns && index < row.children.length; index++) {
-            const candidate = find(row.children[index]);
-            if (candidate) return candidate;
+            if (scan(row.children[index])) return true;
           }
         }
-        return undefined;
+        return false;
       }
       case "root":
       case "paragraph":
@@ -67,22 +74,16 @@ export function firstReaderImageCandidate(tree: Tree, sourceLength: number):
       case "linkReference":
       case "tableCell":
         for (const child of node.children) {
-          const candidate = find(child);
-          if (candidate) return candidate;
+          if (scan(child)) return true;
         }
-        return undefined;
+        return false;
       default:
-        return undefined;
+        return false;
     }
   }
 
   // The second walk uses only the visible subset of this fully bounded tree.
-  if (!collect(tree, 0)) return undefined;
-  const candidate = find(tree);
-  const from = candidate?.node.position?.start.offset;
-  const to = candidate?.node.position?.end.offset;
-  if (!candidate || from === undefined || to === undefined ||
-      !Number.isSafeInteger(from) || !Number.isSafeInteger(to) ||
-      from < 0 || to <= from || to > sourceLength) return undefined;
-  return { ...candidate, from, to };
+  if (!collect(tree, 0)) return [];
+  scan(tree);
+  return candidates;
 }

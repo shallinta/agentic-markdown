@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { createCurrentCanonical } from "../client/current-canonical";
 import ReaderWorker from "../client/current-canonical.worker?worker&inline";
-import { firstReaderImageCandidate } from "../client/reader-image-candidate";
+import { readerImageCandidates } from "../client/reader-image-candidate";
 import { createReaderImageReceiver, type ReaderImageReceiver } from "../client/reader-image-receiver";
 import { firstReadingBlock } from "../client/reading-position";
 import { createReadingSearchRegistry, type ReadingSearchRegistry } from "../client/reading-search-registry";
@@ -219,14 +219,14 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
     };
     const current = experimental ? undefined : () =>
       !closed && verifiedArticle?.isConnected === true && canonical.isCurrent(result);
-    const candidate = current && imageReceiver ? firstReaderImageCandidate(result.tree, source.text.length) : undefined;
-    const snapshotImage = candidate && current && imageReceiver?.setTarget(candidate.node)
-      ? { node: candidate.node, receiver: imageReceiver, current }
+    const nodes = current && imageReceiver ? readerImageCandidates(result.tree, source.text.length).map(({ node }) => node) : undefined;
+    const snapshotImages = nodes && current && imageReceiver?.setTargets(nodes)
+      ? { nodes, receiver: imageReceiver, current }
       : undefined;
-    if (!snapshotImage) imageReceiver?.close();
+    if (!snapshotImages) imageReceiver?.close();
     root.render(
       <Reader
-        content={commonmarkContent(result.tree, source.text, undefined, current, searchRegistry, snapshotImage)}
+        content={commonmarkContent(result.tree, source.text, undefined, current, searchRegistry, snapshotImages)}
         label={label}
         experimental={experimental}
         retainVerifiedArticle={retainVerifiedArticle}

@@ -91,20 +91,26 @@ test("reading image ticket is opt-in and independent of the settled body ticket"
     bodyPending = false;
     expect(captured.current()).toBe(false);
     let childLive = true;
-    const image = await captured.readImage("raster.png", () => childLive);
+    const image = await captured.readImage(0, "raster.png", () => childLive);
     if (!image.ok) throw Error(image.error);
-    expect(Object.keys(image).sort()).toEqual(["current", "data", "height", "mime", "ok", "width"]);
+    expect(Object.keys(image).sort()).toEqual(["current", "data", "height", "mime", "ok", "sourceCurrent", "width"]);
     expect(image.mime).toBe("image/png");
     expect(image.width).toBe(128);
     expect(Buffer.from(image.data, "base64")).toEqual(png);
-    expect(jobs.map(job => [job.reference, job.profile])).toEqual([["raster.png", "reader-snapshot"]]);
+    const duplicate = await captured.readImage(1, "raster.png", () => childLive);
+    if (!duplicate.ok) throw Error(duplicate.error);
+    expect(Buffer.from(duplicate.data, "base64")).toEqual(png);
+    expect(await captured.readImage(1, "raster.png", () => childLive)).toEqual(unavailable);
+    expect(jobs.map(job => [job.reference, job.profile])).toEqual([
+      ["raster.png", "reader-snapshot"], ["raster.png", "reader-snapshot"],
+    ]);
     expect(image.current()).toBe(true);
     childLive = false;
     expect(image.current()).toBe(false);
     childLive = true;
     expect(image.current()).toBe(false);
-    expect(await captured.readImage("raster.png", () => true)).toEqual(unavailable);
-    expect(jobs).toHaveLength(1);
+    expect(await captured.readImage(1, "raster.png", () => true)).toEqual({ ok: false, error: "STALE" });
+    expect(jobs).toHaveLength(2);
   } finally {
     await f.cleanup();
   }
@@ -124,7 +130,7 @@ test("reading image ticket rejects same-size body rewrites before, during, and a
       if (!captured.ok || !captured.readImage) throw Error("missing image ticket");
       const initial = await stat(f.path, { bigint: true });
       if (phase === "before") await writeFile(f.path, "![asset](raster.png)\nnew body");
-      const pending = captured.readImage("raster.png", () => true);
+      const pending = captured.readImage(0, "raster.png", () => true);
       if (phase !== "before") await entered.promise;
       if (phase === "during") await writeFile(f.path, "![asset](raster.png)\nnew body");
       unblock.resolve(imageResult);
@@ -134,7 +140,7 @@ test("reading image ticket rejects same-size body rewrites before, during, and a
         expect(result.current()).toBe(true);
         await writeFile(f.path, "![asset](raster.png)\nnew body");
         expect(result.current()).toBe(false);
-      } else expect(result).toEqual(unavailable);
+      } else expect(result).toEqual({ ok: false, error: "STALE" });
       expect(reads).toBe(phase === "before" ? 0 : 1);
       const changed = await stat(f.path, { bigint: true });
       expect(changed.ino).toBe(initial.ino);
@@ -177,8 +183,9 @@ test("held reading image is discarded when the child or saved grant ceases to ma
       const captured = await f.documents.captureReadingSnapshot(f.source, () => true, { includeImage: true });
       if (!captured.ok || !captured.readImage) throw Error("missing image ticket");
       let childLive = true;
-      const pending = captured.readImage("raster.png", () => childLive);
+      const pending = captured.readImage(0, "raster.png", () => childLive);
       await entered.promise;
+      expect(await captured.readImage(1, "later.png", () => true)).toEqual(unavailable);
       if (cause === "close") childLive = false;
       if (cause === "scope") f.documents.setAssetScope(f.source.handle, { path: f.directory, directories: [], verify: () => Promise.resolve() });
       if (cause === "trash") f.documents.setTrashGuard(path => path.endsWith("/raster.png"));
@@ -196,8 +203,10 @@ test("held reading image is discarded when the child or saved grant ceases to ma
         })).ok).toBe(true);
       }
       unblock.resolve(imageResult);
-      expect(await pending).toEqual(unavailable);
-      expect(await captured.readImage("later.png", () => true)).toEqual(unavailable);
+      expect(await pending).toEqual(cause === "trash" ? unavailable : { ok: false, error: "STALE" });
+      const later = await captured.readImage(1, "later.png", () => true);
+      if (cause === "trash") expect(later.ok).toBe(true);
+      else expect(later).toEqual({ ok: false, error: "STALE" });
     } finally {
       unblock.resolve(unavailable);
       await f.cleanup();

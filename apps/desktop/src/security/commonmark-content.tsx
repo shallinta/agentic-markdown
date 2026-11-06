@@ -38,7 +38,7 @@ export function commonmarkContent(
   images?: LocalImages,
   codeCurrent?: () => boolean,
   search?: ReadingSearchRegistry,
-  snapshotImage?: { node: object; receiver: ReaderImageReceiver; current: () => boolean }
+  snapshotImages?: { nodes: readonly object[]; receiver: ReaderImageReceiver; current: () => boolean }
 ): ReactNode {
   let work = 0;
   let definitionWork = 0;
@@ -269,8 +269,9 @@ export function commonmarkContent(
         );
       case "image":
       case "imageReference":
-        if (snapshotImage?.node === node)
-          return <ReadingSnapshotImage key={key} {...snapshotImage} alt={node.alt || ""} search={search} />;
+        if (snapshotImages?.nodes.includes(node))
+          return <ReadingSnapshotImage key={key} node={node} receiver={snapshotImages.receiver}
+            current={snapshotImages.current} alt={node.alt || ""} search={search} />;
         if (images) {
           const reference =
             node.type === "image"

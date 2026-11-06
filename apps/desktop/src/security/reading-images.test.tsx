@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { parseReadingMarkdown as parseCanonicalMarkdown } from "../client/canonical-parser";
 import { createLocalImages } from "../client/local-images";
-import { firstReaderImageCandidate } from "../client/reader-image-candidate";
+import { readerImageCandidates } from "../client/reader-image-candidate";
 import { createReaderImageReceiver } from "../client/reader-image-receiver";
 import { ReadingImagePlaceholder, ReadingSnapshotImage } from "../components/reading-image";
 
@@ -33,11 +33,11 @@ test("reference image uses first definition and does not fetch before intersecti
   images.dispose();
 });
 
-test("independent reading attaches a receiver only to the selected AST node", () => {
-  const source = "![first](same.png) ![later](same.png)";
+test("independent reading attaches receivers only to the first two exact AST nodes", () => {
+  const source = "![first](same.png) ![second](same.png) ![later](same.png)";
   const tree = parseCanonicalMarkdown(source);
-  const candidate = firstReaderImageCandidate(tree, source.length);
-  if (!candidate) throw new Error("missing first image");
+  const nodes = readerImageCandidates(tree, source.length).map(({ node }) => node);
+  expect(nodes).toHaveLength(2);
   const receiver = createReaderImageReceiver(new EventTarget(), crypto.randomUUID());
   function imageTypes(content: ReactNode): unknown[] {
     return Children.toArray(content).flatMap((element) => {
@@ -47,11 +47,13 @@ test("independent reading attaches a receiver only to the selected AST node", ()
     });
   }
   try {
-    receiver.setTarget(candidate.node);
-    expect(imageTypes(commonmarkContent(tree, source))).toEqual([ReadingImagePlaceholder, ReadingImagePlaceholder]);
+    receiver.setTargets(nodes);
+    expect(imageTypes(commonmarkContent(tree, source))).toEqual([
+      ReadingImagePlaceholder, ReadingImagePlaceholder, ReadingImagePlaceholder,
+    ]);
     expect(imageTypes(commonmarkContent(tree, source, undefined, undefined, undefined, {
-      node: candidate.node, receiver, current: () => false,
-    }))).toEqual([ReadingSnapshotImage, ReadingImagePlaceholder]);
+      nodes, receiver, current: () => false,
+    }))).toEqual([ReadingSnapshotImage, ReadingSnapshotImage, ReadingImagePlaceholder]);
   } finally {
     receiver.close();
   }

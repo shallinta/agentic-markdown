@@ -21,9 +21,9 @@ test("holds a first valid receipt until the exact AST occurrence is known", () =
   expect(slot.receive({ ...image, data: "AB==" })).toBe(false);
   expect(slot.receive(image)).toBe(true);
   expect(slot.get(first)).toBeUndefined();
-  expect(slot.setTarget(first)).toBe(true);
+  expect(slot.setTargets([first])).toBe(true);
   expect(slot.get(first)).toEqual(image);
-  expect(slot.setTarget(second)).toBe(false);
+  expect(slot.setTargets([second])).toBe(false);
   expect(slot.get(second)).toBeUndefined();
   expect(slot.receive(unavailable)).toBe(false);
   slot.expire();
@@ -35,7 +35,7 @@ test("holds a first valid receipt until the exact AST occurrence is known", () =
 test("unavailability is terminal when the image target is already mounted", () => {
   const target = {};
   const slot = createReaderImageSlot(deliveryId);
-  expect(slot.setTarget(target)).toBe(true);
+  expect(slot.setTargets([target])).toBe(true);
   expect(slot.get(target)).toBeUndefined();
   expect(slot.receive(unavailable)).toBe(true);
   expect(slot.get(target)).toEqual(unavailable);
@@ -47,16 +47,47 @@ test("timeout drops buffered bytes and close or a new reader rejects a late old 
   const timedOut = createReaderImageSlot(deliveryId);
   expect(timedOut.receive(image)).toBe(true);
   timedOut.expire();
-  expect(timedOut.setTarget(target)).toBe(false);
+  expect(timedOut.setTargets([target])).toBe(false);
   expect(timedOut.get(target)).toBeUndefined();
   expect(timedOut.receive(image)).toBe(false);
 
   const old = createReaderImageSlot(deliveryId);
   old.close();
   const next = createReaderImageSlot(nextId);
-  expect(next.setTarget(target)).toBe(true);
+  expect(next.setTargets([target])).toBe(true);
   expect(old.receive(image)).toBe(false);
   expect(next.receive(image)).toBe(false);
   expect(next.receive({ ...image, deliveryId: nextId })).toBe(true);
   expect(next.get(target)?.deliveryId).toBe(nextId);
+});
+
+test("slot one waits for slot zero's terminal state and maps to a separate exact node", () => {
+  const a = { reference: "same.png" }, b = { reference: "same.png" }, extra = { reference: "same.png" };
+  const second = { ...image, slot: 1 } as const;
+  const slot = createReaderImageSlot(deliveryId);
+  expect(slot.setTargets([a, a])).toBe(false);
+  expect(slot.setTargets([a, b, extra])).toBe(false);
+  expect(slot.receive(second)).toBe(false);
+  expect(slot.receive(unavailable)).toBe(true);
+  expect(slot.receive(image)).toBe(false);
+  expect(slot.receive(second)).toBe(true);
+  expect(slot.settled()).toBe(true);
+  expect(slot.setTargets([a, b])).toBe(true);
+  expect(slot.get(a)).toEqual(unavailable);
+  expect(slot.get(b)).toEqual(second);
+  expect(slot.get(extra)).toBeUndefined();
+  expect(slot.receive(second)).toBe(false);
+});
+
+test("bound expiry preserves settled slot zero and discards late slot one", () => {
+  const a = {}, b = {};
+  const slot = createReaderImageSlot(deliveryId);
+  expect(slot.setTargets([a, b])).toBe(true);
+  expect(slot.receive(image)).toBe(true);
+  expect(slot.settled()).toBe(false);
+  slot.expire();
+  expect(slot.settled()).toBe(true);
+  expect(slot.receive({ ...image, slot: 1 })).toBe(false);
+  expect(slot.get(a)).toEqual(image);
+  expect(slot.get(b)).toBeUndefined();
 });

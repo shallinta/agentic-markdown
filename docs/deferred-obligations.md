@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064z 有界搜索逐文件进度（2026-11-06）
+
+alpha.212 已验证内部进度与取消。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。窗口传输和暂定结果、持久增量及最终离线继续承接。见[F-064z 迭代](iterations/F-064z-bounded-per-file-search-progress.md)。
+
 ## F-064y 按文件显示命中片段（2026-11-06）
 
 alpha.211 已验证分组片段和未保存整组覆盖。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。流式进度、持久增量与最终离线继续承接。见[F-064y 迭代](iterations/F-064y-group-content-search-fragments.md)。

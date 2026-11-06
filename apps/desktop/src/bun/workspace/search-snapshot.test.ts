@@ -27,7 +27,7 @@ import { verifySingleFileAuthorization } from "../documents/path-authorization";
 import { validRequest, type IndexRequest, type IndexResult } from "../index/protocol";
 import { createContentSearchRPC } from "../rpc/content-search";
 
-import { createWorkspaceService } from ".";
+import { createWorkspaceService, type ContentSearchFileProgress } from ".";
 
 const env = () => ({
   protocolVersion: 1 as const,
@@ -869,8 +869,8 @@ test.skipIf(childScenario !== "mixed")(
     });
     type Input = Parameters<typeof workspace.searchContentCandidatesForWorkspace>[0];
     const rootless = { roots: [], standaloneHandles: [], query, handles: [] };
-    const search = (input: Input, signal?: AbortSignal) =>
-      workspace.searchContentCandidatesForWorkspace(input, signal);
+    const search = (input: Input, signal?: AbortSignal, onFile?: (event: ContentSearchFileProgress) => void) =>
+      workspace.searchContentCandidatesForWorkspace(input, signal, onFile);
     const sha = (raw: string) => createHash("sha256").update(raw).digest("hex");
     const evidence = (entry: string, raw: string) => {
       const from = raw.indexOf(query);
@@ -1058,15 +1058,84 @@ test.skipIf(childScenario !== "mixed")(
       expect(await search({ ...mixed, standaloneHandles: [scoped.snapshot.handle] }))
         .toEqual({ ok: false, error: "STALE" });
 
-      async function interrupt(input: Input, invalidate: () => Promise<void> | void, signal?: AbortSignal) {
+      const progressInput = {
+        ...mixed, standaloneHandles: [handle],
+        pathFilters: ["budget", "pad-", "peer.md"].map((value) => ({ kind: "-path" as const, value })),
+      };
+      const groupedProgress = { ...progressInput, fragments: true as const };
+      const firstProgress: ContentSearchFileProgress = {
+        sequence: 1, entry: firstEntry, kind: "fragments",
+        fragments: { matches: [{ from: 8, to: 14, before: "visible ", after: "" }], more: false },
+      };
+      const standaloneProgress: ContentSearchFileProgress = {
+        sequence: 2, entry: handle, kind: "fragments",
+        fragments: { matches: [{ from: 5, to: 11, before: "\uFEFF改写😀", after: "" }], more: false },
+      };
+      const redacted = ({ sequence, entry }: ContentSearchFileProgress): ContentSearchFileProgress =>
+        ({ sequence, entry, kind: "redacted" });
+      const observed: ContentSearchFileProgress[] = [];
+      const recordProgress = (event: ContentSearchFileProgress) => observed.push(event);
+      expect(await workspace.searchContentCandidates({
+        root: first.handle, generation: first.generation, query, handles: [], fragments: true,
+        pathFilters: groupedDirectory.pathFilters,
+      }, undefined, recordProgress)).toMatchObject({ ok: true });
+      const directoryProgress = observed.splice(0);
+      expect(directoryProgress.map(({ sequence }) => sequence)).toEqual([1, 2]);
+      expect(directoryProgress).toContainEqual({
+        sequence: directoryProgress.find(({ entry }) => entry === firstEntry)?.sequence ?? 0,
+        entry: firstEntry, kind: "fragments", fragments: firstProgress.fragments,
+      });
+      const emptyEntry = await entryFor(first, "pad-0.md");
+      expect(directoryProgress).toContainEqual({
+        sequence: directoryProgress.find(({ entry }) => entry === emptyEntry)?.sequence ?? 0,
+        entry: emptyEntry, kind: "fragments", fragments: { matches: [], more: false },
+      });
+      expect(await search(progressInput, undefined, recordProgress)).toMatchObject({ ok: true });
+      expect(observed).toEqual([]);
+      expect(await search({ ...groupedProgress, handles: [visible.handle] }, undefined, recordProgress))
+        .toMatchObject({ ok: true, mappings: [{ kind: "matched", entry: firstEntry }] });
+      expect(observed.splice(0)).toEqual([redacted(firstProgress), standaloneProgress]);
+      const unknown = crypto.randomUUID();
+      expect(await search({ ...groupedProgress, handles: [unknown] }, undefined, recordProgress))
+        .toMatchObject({ ok: true, mappings: [{ kind: "unresolved", handle: unknown }] });
+      expect(observed.splice(0)).toEqual([redacted(firstProgress), redacted(standaloneProgress)]);
+
+      const successful = await search(groupedProgress);
+      expect(successful).toMatchObject({ ok: true });
+      const mutating = await search(groupedProgress, undefined, (event) => {
+        recordProgress(event);
+        if (event.kind === "fragments") {
+          event.fragments.matches[0].before = "mutated";
+          event.fragments.matches.length = 0;
+          event.fragments.more = true;
+        }
+        throw Error("Synthetic progress sink failure");
+      });
+      expect(observed.splice(0).length).toBeGreaterThan(0);
+      expect(mutating).toEqual(successful);
+      const overBudget = await search({
+        ...mixed, standaloneHandles: [sharedBudget.handle], fragments: true,
+      }, undefined, recordProgress);
+      expect(overBudget).toEqual({ ok: false, error: "LIMIT" });
+      expect(observed.splice(0).length).toBeGreaterThan(0);
+
+      async function interrupt(
+        input: Input, invalidate: () => Promise<void> | void, signal?: AbortSignal,
+        onFile?: (event: ContentSearchFileProgress) => void
+      ) {
         const state = readGate();
         gate = state;
-        const pending = search(input, signal);
+        let settled = false;
+        const pending = search(input, signal, onFile).then((result) => {
+          settled = true;
+          return result;
+        });
         try {
           await Promise.race([state.entered.promise, pending.then((result) => {
             throw Error("Expected held standalone read: " + JSON.stringify(result));
           })]);
           await invalidate();
+          expect(settled).toBe(false);
         } finally {
           gate = undefined;
           state.resume.resolve();
@@ -1075,12 +1144,23 @@ test.skipIf(childScenario !== "mixed")(
       }
       const externalOnly = { ...mixed, standaloneHandles: [handle], fileFilters: ["explicit.md"] };
       const abort = new AbortController();
-      await interrupt(externalOnly, async () => {
+      await interrupt(groupedProgress, async () => {
+        // One real file was verified and published while the second file was
+        // still held. Cancelling cannot make the slot reusable prematurely.
+        expect(observed).toEqual([firstProgress]);
+        abort.abort();
         expect(await workspace.searchContentCandidatesForRoots({ roots: mixed.roots, handles: [], query }))
           .toEqual({ ok: false, error: "BUSY" });
-        abort.abort();
-      }, abort.signal);
-      await interrupt(externalOnly, async () => { await joinRoot(thirdPath); });
+        expect(observed).toEqual([firstProgress]);
+      }, abort.signal, recordProgress);
+      expect(observed.splice(0)).toEqual([firstProgress]);
+      expect(await search(groupedProgress, undefined, recordProgress)).toEqual(successful);
+      expect(observed.splice(0)).toEqual([firstProgress, standaloneProgress]);
+      await interrupt(groupedProgress, async () => {
+        expect(observed).toEqual([firstProgress]);
+        await joinRoot(thirdPath);
+      }, undefined, recordProgress);
+      expect(observed.splice(0)).toEqual([firstProgress]);
       const current = await workspace.request({ ...env(), op: "state" });
       if (!current.ok) throw Error("Root roster unavailable");
       const complete = { ...externalOnly, roots: current.roots.map(({ handle, generation }) => ({ handle, generation })) };

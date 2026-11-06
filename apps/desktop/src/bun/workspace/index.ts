@@ -29,6 +29,7 @@ import {
   validContentSearchFileFilters,
   validContentSearchPathFilters,
 } from "../../shared/content-search-filters";
+import type { ContentSearchFragments } from "../../shared/content-search-fragments";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
@@ -113,6 +114,12 @@ interface Root {
 interface Owner extends DocumentScope {
   root: Root;
 }
+export type ContentSearchFileProgress = { sequence: number; entry: string } & (
+  | { kind: "redacted" }
+  | { kind: "fragments"; fragments: ContentSearchFragments }
+);
+type ContentSearchFileObserver = (update: ContentSearchFileProgress) => void;
+
 export interface TrustedWorkspaceService extends WorkspaceService {
   searchSnapshot(
     root: string,
@@ -122,7 +129,8 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   ): ReturnType<typeof searchSnapshot>;
   searchContentCandidates(
     input: ContentSearchInput,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onFile?: ContentSearchFileObserver
   ): Promise<ContentSearchCandidates>;
   searchContentCandidatesForRoots(
     input: ContentSearchRootSetInput,
@@ -130,7 +138,8 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   ): Promise<ContentSearchCandidates>;
   searchContentCandidatesForWorkspace(
     input: ContentSearchWorkspaceInput,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onFile?: ContentSearchFileObserver
   ): Promise<ContentSearchCandidates>;
   prepareContentSearchDocument(
     input: ContentSearchPrepareInput,
@@ -1198,7 +1207,8 @@ export function createWorkspaceService({
   async function searchContentCandidatesForRoots(
     input: ContentSearchRootSetInput & Pick<ContentSearchInput, "fragments">,
     signal?: AbortSignal,
-    mixed?: { standaloneHandles: readonly string[] }
+    mixed?: { standaloneHandles: readonly string[] },
+    onFile?: ContentSearchFileObserver
   ): Promise<ContentSearchCandidates> {
     if (signal?.aborted) return { ok: false, error: "CANCELLED" };
     if (indexTask) return { ok: false, error: "BUSY" };
@@ -1278,6 +1288,25 @@ export function createWorkspaceService({
     const check = () => {
       if (!current()) throw Error("Content search invalidated");
     };
+    const notify = fragments && onFile ? (() => {
+      const openPaths = new Set<string>();
+      let redactAll = false;
+      for (const [index] of handles.entries()) {
+        const binding = admission.bindings[index];
+        if (binding) openPaths.add(binding.path);
+        else redactAll = true;
+      }
+      let sequence = 0;
+      return (path: string, entry: string, evidence: ContentSearchFragments) => {
+        if (!current()) return;
+        const base = { entry, sequence: ++sequence };
+        onFile(redactAll || openPaths.has(path)
+          ? { ...base, kind: "redacted" }
+          : { ...base, kind: "fragments", fragments: {
+              more: evidence.more, matches: evidence.matches.map((match) => ({ ...match })),
+            } });
+      };
+    })() : undefined;
     const initialRetainedChecks: (() => Promise<void>)[] = [];
     const retainedChecks: (() => Promise<void>)[] = [];
     const standalone: SearchSnapshotStandalone[] | undefined = mixed ? [] : undefined;
@@ -1344,7 +1373,8 @@ export function createWorkspaceService({
         current,
         mixed || fragments ? "direct" : contentSearchStrategy,
         standalone,
-        fragments
+        fragments,
+        notify
       );
       if (!result.ok) {
         const error = result.error;
@@ -1500,15 +1530,15 @@ export function createWorkspaceService({
         indexTask = undefined;
       }
     },
-    searchContentCandidates({ root, generation, ...input }, signal) {
-      return searchContentCandidatesForRoots({ ...input, roots: [{ handle: root, generation }] }, signal);
+    searchContentCandidates({ root, generation, ...input }, signal, onFile) {
+      return searchContentCandidatesForRoots({ ...input, roots: [{ handle: root, generation }] }, signal, undefined, onFile);
     },
     async searchContentCandidatesForRoots(input, signal) {
       if ("fragments" in input) return { ok: false, error: "INVALID" };
       return searchContentCandidatesForRoots(input, signal);
     },
-    searchContentCandidatesForWorkspace({ standaloneHandles, ...input }, signal) {
-      return searchContentCandidatesForRoots(input, signal, { standaloneHandles });
+    searchContentCandidatesForWorkspace({ standaloneHandles, ...input }, signal, onFile) {
+      return searchContentCandidatesForRoots(input, signal, { standaloneHandles }, onFile);
     },
     async prepareContentSearchDocument(input, requestId, signal) {
       if (signal?.aborted) return { ok: false, error: "CANCELLED" };

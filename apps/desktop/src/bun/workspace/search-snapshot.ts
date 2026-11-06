@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SearchCoverage } from "../../shared/content-search";
-import { contentSearchFragments } from "../../shared/content-search-fragments";
+import { contentSearchFragments, type ContentSearchFragments } from "../../shared/content-search-fragments";
 import {
   DocumentPathError,
   verifySingleFileAuthorization,
@@ -105,7 +105,8 @@ export async function searchSnapshotEvidenceAcrossRoots(
   current: () => boolean,
   strategy: SearchSnapshotStrategy = "native",
   standalone?: readonly SearchSnapshotStandalone[],
-  fragments = false
+  fragments = false,
+  onFile?: (path: string, entry: string, fragments: ContentSearchFragments) => void
 ): Promise<EvidenceResult> {
   if (!scalar(query, INDEX_LIMITS.query)) return fail("INPUT");
   const direct = strategy === "direct";
@@ -182,7 +183,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
     const changes: IndexChange[] = [];
     const indexed = new Map<string, { evidence: SearchCoverage; length: number }>();
     let remaining: number = INDEX_LIMITS.bytes;
-    function recordContents(entry: string, contents: Buffer) {
+    function recordContents(entry: string, contents: Buffer): SearchCoverage {
       const raw = new TextDecoder("utf-8", {
         fatal: true,
         ignoreBOM: true,
@@ -190,10 +191,9 @@ export async function searchSnapshotEvidenceAcrossRoots(
       const base = {
         entry, bytes: contents.length, hash: createHash("sha256").update(contents).digest("hex"),
       };
-      if (fragments) {
-        coverage.push({ ...base, fragments: contentSearchFragments(raw, query) });
-      } else {
-        const evidence: SearchCoverage = base;
+      const evidence: SearchCoverage = fragments
+        ? { ...base, fragments: contentSearchFragments(raw, query) } : base;
+      if (!fragments) {
         if (direct) {
           const from = query ? raw.indexOf(query) : -1;
           if (from >= 0) evidence.hit = { from, to: from + query.length };
@@ -202,9 +202,19 @@ export async function searchSnapshotEvidenceAcrossRoots(
           indexed.set(id, { evidence, length: raw.length });
           changes.push({ kind: "put", id, path: id, raw });
         }
-        coverage.push(evidence);
       }
+      coverage.push(evidence);
       remaining -= contents.length;
+      return evidence;
+    }
+    function publish(path: string, evidence: SearchCoverage) {
+      if (!onFile || !evidence.fragments) return;
+      check();
+      try {
+        onFile(path, evidence.entry, evidence.fragments);
+      } catch {
+        // Progress is advisory; the full authority checks still determine the final result.
+      }
     }
     for (const { authorization, files, showHidden } of roots) {
       for (const [entry, file] of files) {
@@ -217,13 +227,15 @@ export async function searchSnapshotEvidenceAcrossRoots(
           showHidden,
           check
         );
+        let evidence: SearchCoverage;
         try {
           const contents = await readStableSearchBytes(grant, remaining, check);
           if (!contents) return fail("LIMIT");
-          recordContents(entry, contents);
+          evidence = recordContents(entry, contents);
         } finally {
           await grant.file.close();
         }
+        publish(file.path, evidence);
       }
     }
     for (const item of standalone ?? []) {
@@ -240,7 +252,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
       }
       check();
       if (contents.length > remaining) return fail("LIMIT");
-      recordContents(item.entry, contents);
+      publish(item.path, recordContents(item.entry, contents));
     }
     check();
     if (direct || !changes.length) return { ok: true, coverage };

@@ -106,7 +106,9 @@ export function CommandPalette({
       type === "reloadDocument" ||
       type === "saveDocument" ||
       type === "clearDocument" ||
-      type === "closeDocument"
+      type === "closeDocument" ||
+      type === "pinCurrentTab" ||
+      type === "unpinCurrentTab"
     )
       return PRODUCT_COMMANDS[type]!.label;
     return PRODUCT_COMMANDS[type]?.label ?? t(type);

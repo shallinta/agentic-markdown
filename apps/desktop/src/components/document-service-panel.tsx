@@ -299,6 +299,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       saveDocument: controller.save,
       clearDocument: () => controller.clear(folders.clear),
       closeDocument: controller.closeActive,
+      pinCurrentTab: () => { controller.setActiveTabPinned(true); },
+      unpinCurrentTab: () => { controller.setActiveTabPinned(false); },
       undoDocument: ({ documentId }) => {
         if (documentId || !isExternalTextTarget(document.activeElement))
           controller.runHistory("undo", documentId);
@@ -384,6 +386,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
           folders.getSnapshot().roots.length > 0),
       closeDocument: () =>
         !controller.getSnapshot().frozen && !!controller.getSnapshot().snapshot,
+      pinCurrentTab: () => controller.canSetActiveTabPinned(true),
+      unpinCurrentTab: () => controller.canSetActiveTabPinned(false),
     }
   );
   useEffect(
@@ -667,6 +671,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
   const snapshot = state.snapshot;
+  const visualTabs = controller.getVisualTabs();
+  const pinCommand = snapshot && controller.isTabPinned(snapshot.documentId)
+    ? "unpinCurrentTab"
+    : "pinCurrentTab";
   const dialog = useSyncExternalStore(
     discardGuard.subscribe,
     discardGuard.getSnapshot
@@ -688,35 +696,40 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         aria-label="已打开的文档"
         className="flex shrink-0 gap-1 overflow-x-auto"
       >
-        {state.tabs.map((tab) => (
-          <div
-            key={tab.documentId}
-            className={`flex shrink-0 items-center rounded border ${snapshot?.documentId === tab.documentId ? "bg-muted" : ""}`}
-          >
-            <button
-              disabled={state.frozen}
-              aria-current={
-                snapshot?.documentId === tab.documentId ? "page" : undefined
-              }
-              title={tab.displayPath ?? tab.fileName}
-              className="max-w-48 truncate px-3 py-2 text-sm"
-              onClick={() => controller.activateTab(tab.documentId)}
+        {visualTabs.map((tab, index) => {
+          const pinned = controller.isTabPinned(tab.documentId);
+          const next = visualTabs[index + 1];
+          const groupEnd = pinned && next && !controller.isTabPinned(next.documentId);
+          const name = `${tab.fileName}${documentCapabilitySuffix(tab.writeCapability)}${controller.isDirty(tab.documentId) ? " ● 未保存" : ""}`;
+          return (
+            <div
+              key={tab.documentId}
+              className={`flex shrink-0 items-center rounded border ${pinned ? "border-primary/60" : ""} ${groupEnd ? "mr-2" : ""} ${snapshot?.documentId === tab.documentId ? "bg-muted" : ""}`}
             >
-              {tab.fileName}
-              {documentCapabilitySuffix(tab.writeCapability)}
-              {controller.isDirty(tab.documentId) ? " ● 未保存" : ""}
-            </button>
-            <button
-              disabled={state.frozen}
-              aria-label={`关闭 ${tab.fileName}`}
-              title={`关闭 ${tab.fileName}`}
-              className="hover:bg-muted rounded px-2 py-2 text-sm"
-              onClick={() => controller.closeTab(tab.documentId)}
-            >
-              ×
-            </button>
-          </div>
-        ))}
+              <button
+                disabled={state.frozen}
+                aria-current={
+                  snapshot?.documentId === tab.documentId ? "page" : undefined
+                }
+                aria-label={pinned ? `${name} · 已固定` : undefined}
+                title={tab.displayPath ?? tab.fileName}
+                className="max-w-48 truncate px-3 py-2 text-sm"
+                onClick={() => controller.activateTab(tab.documentId)}
+              >
+                {name}
+              </button>
+              <button
+                disabled={state.frozen}
+                aria-label={`关闭 ${tab.fileName}`}
+                title={`关闭 ${tab.fileName}`}
+                className="hover:bg-muted rounded px-2 py-2 text-sm"
+                onClick={() => controller.closeTab(tab.documentId)}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
       </nav>
       <div>
         <h1 className="text-xl font-semibold">
@@ -824,6 +837,17 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         </div>
       )}
       <div className="flex flex-wrap gap-2">
+        {snapshot && (
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={!isCommandEnabled(pinCommand)}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => executeCommand({ type: pinCommand, args: {} })}
+          >
+            {PRODUCT_COMMANDS[pinCommand]?.label}
+          </button>
+        )}
         <button
           className={buttonClass}
           disabled={!isCommandEnabled("selectFolder")}

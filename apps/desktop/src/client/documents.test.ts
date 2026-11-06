@@ -254,6 +254,106 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
   };
 }
 
+test("pinned tabs keep original order and editor state, and explicit close follows the visual order", async () => {
+  let discard = false;
+  const { controller, transport, value: first, released } = setup(() =>
+    Promise.resolve(discard)
+  );
+  const second = snapshot("B");
+  const third = snapshot("C");
+  const fourth = snapshot("D");
+  await controller.select();
+  for (const tab of [second, third, fourth]) {
+    transport.selectDocument = request => Promise.resolve(result(request, tab));
+    await controller.select();
+  }
+  controller.activateTab(third.documentId);
+  expect(controller.toggleSourceMode()).toBe(true);
+  const editor = controller.getEditor(third.documentId)!;
+  expect(controller.updateEditor(third.documentId, editor.state.update({
+    changes: { from: 0, insert: "未保存" },
+    selection: { anchor: 2 },
+  }))).toBe(true);
+  const edited = controller.getEditor(third.documentId);
+  const original = controller.getSnapshot();
+  const activation = controller.getContentSearchActivation();
+  let activations = 0;
+  const stopActivation = controller.subscribeActivation(() => { activations++; });
+  expect(controller.canSetActiveTabPinned(true)).toBe(true);
+  expect(controller.setActiveTabPinned(true)).toBe(true);
+  expect(controller.setActiveTabPinned(true)).toBe(false);
+  expect(controller.getSnapshot()).not.toBe(original);
+  expect(controller.getSnapshot().tabs).toBe(original.tabs);
+  expect(controller.getSnapshot().entries).toBe(original.entries);
+  expect(controller.getSnapshot().snapshot).toBe(original.snapshot);
+  expect(controller.getEditor(third.documentId)).toBe(edited);
+  expect(controller.getContentSearchActivation()).toBe(activation);
+  expect(controller.isDirty(third.documentId)).toBe(true);
+  expect(activations).toBe(0);
+  stopActivation();
+
+  controller.activateTab(second.documentId);
+  expect(controller.setActiveTabPinned(true)).toBe(true);
+  expect(controller.getVisualTabs().map(tab => tab.documentId)).toEqual(
+    [second, third, first, fourth].map(tab => tab.documentId)
+  );
+  controller.activateTab(third.documentId);
+  await controller.closeActive();
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(third.documentId);
+  expect(controller.isTabPinned(third.documentId)).toBe(true);
+  expect(controller.isDirty(third.documentId)).toBe(true);
+  discard = true;
+  await controller.closeActive();
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(first.documentId);
+  expect(controller.isTabPinned(third.documentId)).toBe(false);
+  expect(controller.getSnapshot().tabs.map(tab => tab.documentId)).toEqual(
+    [first, second, fourth].map(tab => tab.documentId)
+  );
+  expect(released).toEqual([]);
+
+  transport.readDocument = request => Promise.resolve(result(request, third));
+  await controller.activate(controller.getSnapshot().entries.find(entry => entry.documentId === third.documentId)!);
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(third.documentId);
+  expect(controller.isTabPinned(third.documentId)).toBe(false);
+  controller.activateTab(second.documentId);
+  expect(controller.setActiveTabPinned(false)).toBe(true);
+  expect(controller.getVisualTabs()).toBe(controller.getSnapshot().tabs);
+  controller.dispose();
+});
+
+test("pin gates respect busy, frozen and composing state, and replaced tabs lose their pin", async () => {
+  const { controller, transport, value } = setup(() => Promise.resolve(true));
+  value.locationId = crypto.randomUUID();
+  expect(controller.setActiveTabPinned(true)).toBe(false);
+  await controller.select();
+  controller.setEditorInputBlocked(true);
+  expect(controller.setActiveTabPinned(true)).toBe(false);
+  controller.setEditorInputBlocked(false);
+  const restoreInteraction = controller.setInteractionCheck(() => false);
+  expect(controller.setActiveTabPinned(true)).toBe(false);
+  restoreInteraction();
+  expect(controller.beginDiscard()).toBe(true);
+  expect(controller.setActiveTabPinned(true)).toBe(false);
+  controller.endDiscard();
+  expect(controller.setActiveTabPinned(true)).toBe(true);
+  const replacement = { ...snapshot("replacement"), locationId: value.locationId };
+  const receipt = deferred<DocumentResponse>();
+  let selectionRequest: DocumentRequest | undefined;
+  transport.selectDocument = request => {
+    selectionRequest = request;
+    return receipt.promise;
+  };
+  const selection = controller.select();
+  expect(controller.getSnapshot().busy).toBe(true);
+  expect(controller.setActiveTabPinned(false)).toBe(false);
+  receipt.resolve(result(selectionRequest!, replacement));
+  await selection;
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(replacement.documentId);
+  expect(controller.isTabPinned(value.documentId)).toBe(false);
+  expect(controller.isTabPinned(replacement.documentId)).toBe(false);
+  controller.dispose();
+});
+
 test("heading fold survives actual controller tab suspension and mode switch without dirtying readonly", async () => {
   const { controller, transport, value } = setup();
   value.text = "# A\nbody\n# B\nlast";

@@ -179,6 +179,7 @@ async function fixture(
 test("keep swaps both stores before every terminal notification; dirty editor and history survive", async () => {
   const f = await fixture();
   f.edit(f.a);
+  expect(f.documents.setActiveTabPinned(true)).toBe(true);
   const editor = f.documents.getEditor(f.a.documentId);
   const terminal: {
     promoted: boolean | undefined;
@@ -206,6 +207,7 @@ test("keep swaps both stores before every terminal notification; dirty editor an
     expect(sample.editor).toBe(editor);
   }
   expect(f.documents.isDirty(f.a.documentId)).toBe(true);
+  expect(f.documents.isTabPinned(f.a.documentId)).toBe(true);
   expect(
     f.documents.getSnapshot().entries.some((e) => e.handle === f.d.handle)
   ).toBe(false);
@@ -223,6 +225,7 @@ test("close protects dirty targets and preserves original standalone entry; pick
   f.edit(f.a);
   f.edit(f.b);
   f.documents.activateTab(f.a.documentId);
+  expect(f.documents.setActiveTabPinned(true)).toBe(true);
   const cEditor = f.documents.getEditor(f.c.documentId);
   await f.owner.remove(f.root.handle);
   expect(f.getConfirmations()).toBe(1);
@@ -233,6 +236,7 @@ test("close protects dirty targets and preserves original standalone entry; pick
     f.documents.getSnapshot().entries.map((entry) => entry.handle)
   ).toEqual([f.b.handle, f.c.handle]);
   expect(f.documents.getSnapshot().snapshot?.handle).toBe(f.c.handle);
+  expect(f.documents.isTabPinned(f.a.documentId)).toBe(false);
   expect(f.documents.getEditor(f.a.documentId)).toBeUndefined();
   expect(f.documents.getEditor(f.c.documentId)?.revision).toBe(
     cEditor?.revision

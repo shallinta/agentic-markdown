@@ -89,6 +89,33 @@ test("the saved reading window is a document-scoped webview command with no shor
   expect(forward).not.toHaveBeenCalled();
 });
 
+test("tab pin commands use live state, require no supplied identity, and have no accelerator", () => {
+  const forward = mock(() => undefined);
+  const registry = createCommandRegistry(forward, () => undefined);
+  const pin = { type: "pinCurrentTab", args: {} } as const;
+  const unpin = { type: "unpinCurrentTab", args: {} } as const;
+  for (const command of [pin, unpin]) {
+    expect(isCommand(command)).toBe(true);
+    expect(isCommand({ ...command, args: { documentId: crypto.randomUUID() } })).toBe(false);
+    expect(COMMAND_META[command.type]).toEqual({ target: "webview" });
+    expect(registry.isCommandEnabled(command.type)).toBe(false);
+  }
+  expect(PRODUCT_COMMANDS.pinCurrentTab).toEqual({ label: "固定当前标签" });
+  expect(PRODUCT_COMMANDS.unpinCurrentTab).toEqual({ label: "取消固定当前标签" });
+  let pinned = false;
+  const setPinned = mock((value: boolean) => { pinned = value; });
+  registry.registerCommandHandlers({
+    pinCurrentTab: () => setPinned(true),
+    unpinCurrentTab: () => setPinned(false),
+  }, { pinCurrentTab: () => !pinned, unpinCurrentTab: () => pinned });
+  registry.executeCommand(unpin);
+  registry.executeCommand(pin);
+  registry.executeCommand(pin);
+  registry.executeCommand(unpin);
+  expect(setPinned.mock.calls).toEqual([[true], [false]]);
+  expect(forward).not.toHaveBeenCalled();
+});
+
 test("registration ownership, unavailable guard and native forwarding", () => {
   const forward = mock(() => undefined);
   const failed = mock(() => undefined);

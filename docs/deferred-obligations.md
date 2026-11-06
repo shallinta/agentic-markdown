@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-036a 固定主区标签（2026-11-07）
+
+固定与取消固定已通过统一命令和键盘命令面板验证。OBL-053 的排序和其他消费者键盘路径继续跟踪。见[F-036a 迭代](iterations/F-036a-pin-primary-document-tabs.md)。
+
 ## F-069a 多标签基线（2026-11-07）
 
 已记录包内 Bun 源控制器的多标签数据。F-039 / OBL-024 的真实 WK 视图、资源归因和缓存回收仍待承接。见[F-069a 迭代](iterations/F-069a-multitab-performance-baseline.md)。

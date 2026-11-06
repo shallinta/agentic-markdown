@@ -50,12 +50,18 @@ test("directory root and subtree success atomically close only confirmed binding
     const dialogs: TrashDialog[] = [];
     const f = await directoryFixture(dialog => { dialogs.push(dialog); return Promise.resolve("discard"); }, child);
     try {
+      expect(f.documents.setActiveTabPinned(true)).toBe(true);
+      f.documents.activateTab(f.snapshots[0].documentId);
+      expect(f.documents.setActiveTabPinned(true)).toBe(true);
+      f.documents.activateTab(f.snapshots[2].documentId);
       const other = f.documents.getEditor(f.snapshots[2].documentId)!.state;
       const seen: boolean[] = [];
       const off = f.documents.subscribe(() => { if (f.documents.getSnapshot().tabs.length === 1) seen.push(!f.folders.getSnapshot().nodes[f.root]?.length); });
       await f.trash.start(f.target); off();
       expect(dialogs.map(d => d.stage)).toEqual(["dirty", "dirty", "disk"]);
       expect(f.commits()).toBe(1); expect(f.documents.getSnapshot().tabs).toHaveLength(1);
+      expect(f.documents.isTabPinned(f.snapshots[0].documentId)).toBe(false);
+      expect(f.documents.isTabPinned(f.snapshots[2].documentId)).toBe(true);
       expect(f.documents.getEditor(f.snapshots[2].documentId)!.state).toBe(other);
       expect(seen.length).toBeGreaterThan(0); expect(seen.every(Boolean)).toBe(true);
       expect(f.folders.getSnapshot().coveredHandles).toHaveLength(0);

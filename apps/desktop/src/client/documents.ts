@@ -178,6 +178,23 @@ export function createDocumentController(
     elapsedMs: null,
     frozen: false,
   };
+  const pinnedTabs = new Set<string>();
+  function getVisualTabs(): readonly DocumentSnapshot[] {
+    if (!pinnedTabs.size) return state.tabs;
+    const pinned: DocumentSnapshot[] = [];
+    const unpinned: DocumentSnapshot[] = [];
+    for (const tab of state.tabs) {
+      (pinnedTabs.has(tab.documentId) ? pinned : unpinned).push(tab);
+    }
+    return [...pinned, ...unpinned];
+  }
+  function prunePinnedTabs(tabs: readonly DocumentSnapshot[]) {
+    if (!pinnedTabs.size) return;
+    const liveIds = new Set(tabs.map(tab => tab.documentId));
+    for (const id of pinnedTabs) {
+      if (!liveIds.has(id)) pinnedTabs.delete(id);
+    }
+  }
   let generation = 0;
   let pending: DocumentRequest | null = null;
   let removalGate = false;
@@ -683,7 +700,10 @@ export function createDocumentController(
       }
     }
     state = next;
-    if (previousTabs !== next.tabs) observation.sync(next.tabs);
+    if (previousTabs !== next.tabs) {
+      prunePinnedTabs(next.tabs);
+      observation.sync(next.tabs);
+    }
     checkContentSearch?.();
     tryContentSearchLocation?.();
     listeners.forEach((listener) => listener());
@@ -1029,10 +1049,13 @@ export function createDocumentController(
     cancelPending();
     const tabs = state.tabs.filter((tab) => tab.documentId !== documentId);
     capabilityLifetimes.delete(state.tabs[index].handle);
-    const snapshot =
-      state.snapshot?.documentId === documentId
-        ? (tabs[index] ?? tabs[index - 1] ?? null)
-        : state.snapshot;
+    let snapshot = state.snapshot;
+    if (snapshot?.documentId === documentId) {
+      // Standalone removal keeps its existing underlying-order fallback.
+      const visible = removeHandle ? state.tabs : getVisualTabs();
+      const visibleIndex = visible.findIndex(tab => tab.documentId === documentId);
+      snapshot = visible[visibleIndex + 1] ?? visible[visibleIndex - 1] ?? null;
+    }
     staleDocuments.delete(documentId);
     scrollPositions.delete(documentId);
     scrollSnapshots.delete(documentId);
@@ -1212,6 +1235,25 @@ export function createDocumentController(
   }
   const controller = {
     captureContentSearch,
+    getVisualTabs,
+    isTabPinned: (documentId: string) => pinnedTabs.has(documentId),
+    canSetActiveTabPinned(pinned: boolean): boolean {
+      const active = state.snapshot;
+      return !!active && !metadataDisposed && !state.busy && !state.frozen &&
+        !editorInputBlocked && canLeaveEditor() &&
+        state.tabs.some(tab => tab.documentId === active.documentId) &&
+        pinnedTabs.has(active.documentId) !== pinned;
+    },
+    setActiveTabPinned(pinned: boolean): boolean {
+      const active = state.snapshot;
+      if (!active || !controller.canSetActiveTabPinned(pinned)) return false;
+      if (pinned) pinnedTabs.add(active.documentId);
+      else pinnedTabs.delete(active.documentId);
+      // The view changes without replaying document or selection effects.
+      state = { ...state };
+      listeners.forEach(listener => listener());
+      return true;
+    },
     captureReadingSnapshotSource(): ReadingSnapshotSource | null {
       const snapshot = state.snapshot;
       if (!snapshot || metadataDisposed || state.frozen || state.busy || state.stale ||
@@ -1379,6 +1421,7 @@ export function createDocumentController(
     },
     swapTrashedDocument: (prepared: { next: DocumentViewState; nextEditors: typeof editors; trashToken: string }) => {
       state = prepared.next; editors = prepared.nextEditors; generation++;
+      prunePinnedTabs(state.tabs);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
     },
     canBeginFolderRemoval: () => !metadataDisposed && !removal && !state.folderRemovalPending && !state.busy && !state.frozen && canLeaveEditor(),
@@ -1421,6 +1464,7 @@ export function createDocumentController(
     },
     swapPrepared: (prepared: { next: DocumentViewState; nextEditors: typeof editors }) => {
       state = prepared.next;
+      prunePinnedTabs(state.tabs);
       editors = prepared.nextEditors;
       folderRemovalGate = false;
       generation++;
@@ -1878,6 +1922,7 @@ export function createDocumentController(
         revealPending = null;
       }
       metadataDisposed = true;
+      pinnedTabs.clear();
       quickFocusTarget = undefined;
       quickFocusListeners.clear();
       activationListeners.clear();

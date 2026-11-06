@@ -93,6 +93,8 @@ export type Command =
   | GenericCommand<"reloadDocument">
   | GenericCommand<"clearDocument">
   | GenericCommand<"closeDocument">
+  | GenericCommand<"pinCurrentTab">
+  | GenericCommand<"unpinCurrentTab">
   | OpenSettingsCommand
   | OpenCommandPaletteCommand
   | ToggleSidebarCommand
@@ -279,6 +281,8 @@ export const COMMAND_META: Record<
   reloadDocument: { target: "webview" },
   clearDocument: { target: "webview" },
   closeDocument: { target: "webview" },
+  pinCurrentTab: { target: "webview" },
+  unpinCurrentTab: { target: "webview" },
   openSettings: { target: "webview" },
   openCommandPalette: { target: "webview" },
   toggleSidebar: { target: "webview" },
@@ -362,6 +366,8 @@ export const PRODUCT_COMMANDS: Partial<
     accelerator: "CommandOrControl+W",
     shortcut: "⌘W",
   },
+  pinCurrentTab: { label: "固定当前标签" },
+  unpinCurrentTab: { label: "取消固定当前标签" },
   toggleSidebar: {
     label: "切换侧栏",
     accelerator: "CommandOrControl+B",

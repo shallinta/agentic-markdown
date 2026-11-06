@@ -9,7 +9,7 @@ import {
   IndexReuseCleanupError, reclaimDirectoryName, type HeldCompletionPlacement, type HeldIndexPlacement, type HeldIndexProfile,
 } from "./reuse-catalog";
 
-type Destination = ReclaimRecord | "catalog" | "cold-catalog";
+type Destination = ReclaimRecord | "catalog" | "cold-catalog" | "active-catalog";
 interface HeldProfile {
   profileFd: number;
   check: () => void;
@@ -27,8 +27,9 @@ function closeProfile(directory: Dir) {
 function assertStagedLayout(profile: string, temporary: string, held: HeldProfile, destination: Destination) {
   held.check();
   const names = new Set([".lease", temporary]);
-  if (destination === "cold-catalog") {
+  if (destination === "cold-catalog" || destination === "active-catalog") {
     names.add(reclaimDirectoryName("original"));
+    if (destination === "active-catalog") names.add("catalog.json");
   } else {
     names.add("catalog.json");
     if (destination === "catalog") names.add(INDEX_RECLAIM_RECORD_NAMES.complete);
@@ -80,8 +81,15 @@ export function publishColdIndexCatalog(
   return publishIndexRecord(profile, { ...held, check: held.checkProfile }, contents, beforeCommit, "cold-catalog");
 }
 
+export function replaceActiveIndexCatalog(
+  profile: string, held: HeldIndexProfile, contents: Buffer, beforeCommit: () => void, beforeInstall: () => void
+) {
+  return publishIndexRecord(profile, { ...held, check: held.checkProfile }, contents, beforeCommit, "active-catalog", beforeInstall);
+}
+
 function publishIndexRecord(
-  profile: string, held: HeldProfile, contents: Buffer, beforeCommit: () => void, destination: Destination
+  profile: string, held: HeldProfile, contents: Buffer, beforeCommit: () => void, destination: Destination,
+  beforeInstall?: () => void
 ) {
   const native = loadReclaimPublisher(destination);
   if (!native) return { ok: false as const, error: "UNAVAILABLE" as const };
@@ -122,14 +130,15 @@ function publishIndexRecord(
         !sameIndexInventoryMetadata(staged, fstatSync(fd, { bigint: true })) ||
         !sameIndexInventoryMetadata(staged, lstatSync(path, { bigint: true })))
       throw Error("Purge roster staging identity changed");
+    beforeInstall?.();
     const outcome = native.publish(held.profileFd, temporary);
     if (outcome === "UNKNOWN") cleanup = false;
     if (outcome !== "published") return { ok: false as const, error: outcome };
     cleanup = false;
     try {
       const installed = fstatSync(fd, { bigint: true });
-      const name = destination === "catalog" || destination === "cold-catalog"
-        ? "catalog.json" : INDEX_RECLAIM_RECORD_NAMES[destination];
+      const name = destination === "purge" || destination === "complete"
+        ? INDEX_RECLAIM_RECORD_NAMES[destination] : "catalog.json";
       if (!sameOwnedFile(staged, installed) || staged.size !== installed.size || staged.mtimeNs !== installed.mtimeNs ||
           !sameIndexInventoryMetadata(installed, lstatSync(join(profile, name), { bigint: true })))
         throw Error("Purge roster publication changed");

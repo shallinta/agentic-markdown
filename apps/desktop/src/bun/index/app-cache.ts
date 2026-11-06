@@ -5,7 +5,10 @@ import { isAbsolute, join, resolve } from "node:path";
 import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
-import { prepareColdIndex, readColdIndexInput, type ColdIndexGuard, type ColdIndexInput } from "./cold-prepare";
+import {
+  prepareColdIndex, readActiveIndexInput, readColdIndexInput, refreshActiveIndex,
+  type ActiveIndexInput, type ColdIndexGuard, type ColdIndexInput,
+} from "./cold-prepare";
 import { natural, record } from "./protocol";
 import { verifyPurgeSubset } from "./purge-proof";
 import { encodePurgeRoster, INDEX_PURGE_ROSTER_NAME } from "./purge-roster";
@@ -128,19 +131,42 @@ async function initializeProfile({ home, pin, cacheCurrent, boundaryFailure }: C
   return { ok: true as const, directory };
 }
 
-export async function prepareColdAppIndexCache(input: ColdIndexInput, guard: ColdIndexGuard) {
+export function prepareColdAppIndexCache(input: ColdIndexInput, guard: ColdIndexGuard) {
   const parsed = readColdIndexInput(input);
-  if (!parsed.ok) return parsed;
+  if (!parsed.ok) return Promise.resolve(parsed);
+  return useAppIndexWriter(parsed, guard, initializeProfile, prepareColdIndex);
+}
+
+export function refreshActiveAppIndexCache(input: ActiveIndexInput, guard: ColdIndexGuard) {
+  const parsed = readActiveIndexInput(input);
+  if (!parsed.ok) return Promise.resolve(parsed);
+  return useAppIndexWriter(parsed, guard, existingProfile, refreshActiveIndex);
+}
+
+type WriterProfile<Error extends BoundaryError | "MISSING"> =
+  | { ok: true; directory: string }
+  | { ok: false; error: Error; accepted: boolean };
+
+async function useAppIndexWriter<
+  T extends ColdIndexInput,
+  R extends { ok: true } | { ok: false; error: string },
+  Error extends BoundaryError | "MISSING"
+>(
+  input: T, guard: ColdIndexGuard,
+  profileFor: (boundary: CacheBoundary) => WriterProfile<Error> | Promise<WriterProfile<Error>>,
+  write: (directory: string, input: T, guard: ColdIndexGuard) => Promise<R>
+) {
   if (!guard || typeof guard.current !== "function" || typeof guard.verify !== "function") return fail("INPUT");
   const { current, verify } = guard;
   const boundary = appCacheBoundary(current);
   if (!boundary.ok) return boundary;
   const { cacheCurrent, callerCurrent, boundaryFailure } = boundary;
   try {
-    const profile = await initializeProfile(boundary);
+    const profile = await profileFor(boundary);
     if (!profile.ok) return profile;
-    const result = await prepareColdIndex(profile.directory, parsed, { current: cacheCurrent, verify });
-    return !result.ok && result.error === "CANCELLED" ? boundaryFailure() : result;
+    const result = await write(profile.directory, input, { current: cacheCurrent, verify });
+    return result.ok ? cacheCurrent() ? result : boundaryFailure()
+      : result.error === "CANCELLED" ? boundaryFailure() : result;
   } catch {
     callerCurrent();
     return boundaryFailure();

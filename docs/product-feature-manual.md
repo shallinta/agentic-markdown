@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bi 的 alpha.246 已验证同范围的内部索引更新。目标名册无变化时只读核验。有变化时先提交一批，再核对完整名册并替换清单。普通窗口仍沿用现有搜索路径。见[F-064bi 迭代](iterations/F-064bi-refresh-active-index.md)。
+
 F-064bh 的 alpha.245 已验证可信工作区可为已授权、已建立观察的一个根目录显式建索引。观察失效、取消或正文变化会拒绝迟到结果。普通窗口仍沿用现有搜索路径。见[F-064bh 迭代](iterations/F-064bh-prepare-observed-workspace-index.md)。
 
 F-064bg 的 alpha.244 已验证内部空槽准备。写入和只读重开共用一个租约，核对完整文档名册后才发布清单。普通窗口仍沿用现有搜索路径。见[F-064bg 迭代](iterations/F-064bg-prepare-cold-index-cache.md)。

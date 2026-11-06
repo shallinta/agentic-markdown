@@ -225,15 +225,30 @@ export async function captureVacantIndexSlot(profile: string, check: () => void,
   return { profile: pinnedProfile, catalog: catalog?.stat, recheck };
 }
 
-export async function captureColdNativeIndex(profile: string, check: () => void, checkLease: () => BigIntStats) {
+export async function captureIndexPublicationInventory(
+  profile: string, check: () => void, checkLease: () => BigIntStats, expectedCatalog?: BigIntStats
+) {
   const pinnedProfile = checkLease();
+  const catalog = join(profile, "catalog.json");
+  const checkCatalog = () => {
+    if (expectedCatalog) {
+      if (!sameIndexInventoryMetadata(expectedCatalog, lstatSync(catalog, { bigint: true })))
+        throw Error("Index publication catalog changed");
+    } else assertAbsent(catalog);
+  };
   const checkProfile = () => {
     if (!sameIndexInventoryMetadata(pinnedProfile, checkLease()))
-      throw Error("Cold index slot membership changed");
+      throw Error("Index publication slot membership changed");
+    checkCatalog();
   };
-  const names = await readMembers(profile, 2, () => { check(); checkProfile(); });
+  const names = await readMembers(profile, expectedCatalog ? 3 : 2, () => {
+    check();
+    if (!sameIndexInventoryMetadata(pinnedProfile, checkLease()))
+      throw Error("Index publication slot membership changed");
+  });
+  if (names.size !== (expectedCatalog ? 3 : 2) || !names.has(".lease") || !names.has("index") ||
+      names.has("catalog.json") !== Boolean(expectedCatalog)) return;
   checkProfile();
-  if (names.size !== 2 || !names.has(".lease") || !names.has("index")) return;
 
   const index = join(profile, "index");
   const indexStat = lstatSync(index, { bigint: true });
@@ -260,7 +275,7 @@ export async function captureColdNativeIndex(profile: string, check: () => void,
   };
   checkProfile();
   recheck();
-  return { indexStat, files, recheck, checkProfile };
+  return { indexStat, files, recheck, checkProfile, checkCatalog };
 }
 
 /** The completion record outlives the optional empty pending directory. */

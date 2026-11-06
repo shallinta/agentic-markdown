@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064bl 使用 alpha.248 比较了两种有界查询。直接搜索在两档合成语料中的中位耗时均更低，普通窗口继续使用直接搜索。见[F-064bl 迭代](iterations/F-064bl-index-candidate-search-cost.md)。
+
 F-064bk 的 alpha.248 已验证可信工作区可显式更新同根索引，并在符合条件时补齐清单。恢复需要当前观察和文件证明，普通窗口沿用直接搜索。见[F-064bk 迭代](iterations/F-064bk-refresh-observed-workspace-index.md)。
 
 F-064bj 的 alpha.247 已验证内部补齐落后一代的清单。仅在完整授权名册匹配时补写，原生索引文件保持不变。见[F-064bj 迭代](iterations/F-064bj-reconcile-active-index-catalog.md)。

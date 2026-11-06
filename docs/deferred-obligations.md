@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bl 索引候选查询成本对照（2026-11-06）
+
+两批包形态对照通过，继续沿用 alpha.248 与普通直接搜索。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。下一片先承接查询取消与接续。见[F-064bl 迭代](iterations/F-064bl-index-candidate-search-cost.md)。
+
 ## F-064bk 为已观察的工作区更新索引（2026-11-06）
 
 alpha.248 已验证单根的工作区显式更新与补齐清单。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。普通窗口接入、跨根、未保存覆盖、调度、自动配额和最终离线继续承接。见[F-064bk 迭代](iterations/F-064bk-refresh-observed-workspace-index.md)。

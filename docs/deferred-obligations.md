@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064bn 按目标条目核验正文命中（2026-11-06）
+
+alpha.251 已验证按目标定位的授权边界，部分承接 OBL-006。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。大目录筛选、索引调度、自动配额和最终离线继续登记。见[F-064bn 迭代](iterations/F-064bn-locate-one-search-entry.md)。
+
 ## F-064bm 接续窗口正文搜索（2026-11-06）
 
 alpha.250 已验证普通窗口流式查询的有界接续，部分承接 OBL-018。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。索引后台调度、自动配额、跨根及最终离线继续登记。见[F-064bm 迭代](iterations/F-064bm-latest-window-search-query.md)。

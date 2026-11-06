@@ -655,6 +655,80 @@ test("content search preparation cannot publish a snapshot invalidated at the co
 const searchHash = (text: string) => createHash("sha256").update(text).digest("hex");
 const documentEnvelope = () => ({ protocolVersion: 1 as const, requestId: crypto.randomUUID() });
 
+test("exact search location stays available above the root query coverage limit", async () => {
+  const owner = join(directory, "owner");
+  await mkdir(owner);
+  const text = "\uFEFF# 标题\r\n🎯 target\r\n";
+  const file = join(owner, "target.md");
+  const oversized = join(owner, "large.md");
+  const largeText = "x".repeat(65_537);
+  await writeFile(file, text);
+  await writeFile(oversized, largeText);
+  await Promise.all(Array.from({ length: 31 }, (_, index) =>
+    writeFile(join(owner, `other-${index}.md`), "unrelated")
+  ));
+  selected = owner;
+  good(await workspace.request(request("select")));
+  const root = (await settle()).roots[0];
+  expect(root.status).toBe("complete");
+  const entries = await nodes(root);
+  expect(entries.filter((node) => node.kind === "file")).toHaveLength(33);
+  const target = entries.find((node) => node.name === "target.md");
+  const large = entries.find((node) => node.name === "large.md");
+  if (!target || !large) throw Error("Missing exact search location fixture");
+  const expectedHash = searchHash(text);
+  const input = { root: root.handle, generation: root.generation, entry: target.handle, expectedHash };
+  const roots = [{ handle: root.handle, generation: root.generation }];
+  const limited = { root: root.handle, generation: root.generation, query: "target", handles: [], fragments: true as const };
+  expect(await workspace.searchContentCandidates(limited)).toEqual({ ok: false, error: "LIMIT" });
+  expect(await workspace.searchContentCandidates({ ...limited, fileFilters: ["target.md"] }))
+    .toEqual({ ok: false, error: "LIMIT" });
+
+  const oversizedPath = await realpath(oversized);
+  documents.setTrashGuard((path) => path === oversizedPath);
+  const prepare = (change: Partial<typeof input> = {}) =>
+    workspace.prepareContentSearchDocument({ ...input, ...change }, crypto.randomUUID());
+  expect(await prepare({ generation: root.generation + 1 })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare({ entry: crypto.randomUUID() })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare({ expectedHash: searchHash("changed") })).toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations()).toEqual([]);
+  const opened = await prepare();
+  if (!opened.ok || opened.target.kind !== "open") throw Error(JSON.stringify(opened));
+  const { handle, documentId, revision, hash, locationId } = opened.target.snapshot;
+  const binding = { handle, documentId, revision, hash };
+  expect(opened.target.snapshot).toMatchObject({ text, hash: expectedHash, explicitStandalone: false });
+  expect(await workspace.prepareContentSearchDocument({ ...input, binding }, crypto.randomUUID()))
+    .toEqual({ ok: true, target: { kind: "reuse", ...binding } });
+  const anchored = { entry: handle, expectedHash, roots, rootEntry: target.handle };
+  const reopen = (change: Partial<typeof anchored> = {}) =>
+    workspace.prepareRetainedContentSearchDocument({ ...anchored, ...change }, crypto.randomUUID());
+  expect(await reopen({ roots: [{ handle: root.handle, generation: root.generation + 1 }] }))
+    .toEqual({ ok: false, error: "STALE" });
+  expect(await reopen({ rootEntry: large.handle })).toEqual({ ok: false, error: "STALE" });
+  expect(await reopen({ expectedHash: searchHash("changed") })).toEqual({ ok: false, error: "STALE" });
+  expect(await reopen()).toMatchObject({ ok: true, target: { kind: "retained", snapshot: {
+    ...binding, locationId, text, explicitStandalone: false,
+  } } });
+  expect(documents.locations()).toMatchObject([{ handle, documentId }]);
+
+  documents.setTrashGuard(() => false);
+  expect(await prepare({ entry: large.handle, expectedHash: searchHash(largeText) }))
+    .toEqual({ ok: false, error: "LIMIT" });
+  const standalonePath = join(directory, "standalone.md");
+  await writeFile(standalonePath, "independent");
+  const standalone = await pickSearchFile(standalonePath);
+  expect(await workspace.prepareRetainedContentSearchDocument({
+    entry: standalone.handle, expectedHash: standalone.hash, roots,
+  }, crypto.randomUUID())).toEqual({ ok: false, error: "LIMIT" });
+  expect(await documents.release({ ...documentEnvelope(), handle: standalone.handle })).toMatchObject({ ok: true });
+
+  await writeFile(file, text.replace("target", "change"));
+  expect(await reopen()).toEqual({ ok: false, error: "STALE" });
+  expect(await workspace.prepareContentSearchDocument({ ...input, binding }, crypto.randomUUID()))
+    .toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations()).toMatchObject([{ handle, documentId }]);
+});
+
 async function pickSearchFile(file: string) {
   selected = file;
   const picked = await documents.select(documentEnvelope());

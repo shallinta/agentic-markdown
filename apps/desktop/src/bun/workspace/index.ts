@@ -333,12 +333,7 @@ export function createWorkspaceService({
   const openingRoots = new Map<Root, number>();
   let indexTask: Promise<unknown> | undefined;
   let indexDisposing = false;
-  function captureIndexRoot(
-    handle: string,
-    generation: number,
-    signal?: AbortSignal,
-    coverageLimit: number = INDEX_LIMITS.documents
-  ) {
+  function captureIndexRootState(handle: string, generation: number, signal?: AbortSignal) {
     const root = roots.find((candidate) => candidate.meta.handle === handle);
     if (!root || !live(root, generation)) return { ok: false, error: "STALE" } as const;
     if (root.meta.status !== "complete") return { ok: false, error: "NOT_READY" } as const;
@@ -352,19 +347,42 @@ export function createWorkspaceService({
       !signal?.aborted;
     if (!eligible()) return { ok: false, error: "UNAVAILABLE" } as const;
     const files = root.files;
-    if (files.size > coverageLimit) return { ok: false, error: "LIMIT" } as const;
-    const entries = new Map(files);
+    const fileCount = files.size;
     const showHidden = root.meta.showHidden ?? false;
     const scanVersion = root.registry.version();
+    const current = () => eligible() && root.files === files && files.size === fileCount &&
+      (root.meta.showHidden ?? false) === showHidden && root.registry.version() === scanVersion;
+    return { ok: true as const, root, files, showHidden, current };
+  }
+  function captureIndexRoot(
+    handle: string, generation: number, signal?: AbortSignal, coverageLimit: number = INDEX_LIMITS.documents
+  ) {
+    const scope = captureIndexRootState(handle, generation, signal);
+    if (!scope.ok) return scope;
+    const { root, files, showHidden } = scope;
+    if (files.size > coverageLimit) return { ok: false, error: "LIMIT" } as const;
+    const entries = new Map(files);
     const current = () => {
-      if (!eligible() || root.files !== files || files.size !== entries.size ||
-          (root.meta.showHidden ?? false) !== showHidden ||
-          root.registry.version() !== scanVersion) return false;
+      if (!scope.current()) return false;
       for (const [entry, file] of entries)
         if (files.get(entry) !== file) return false;
       return true;
     };
     return { ok: true as const, root, entries, showHidden, current };
+  }
+  function captureIndexEntry(handle: string, generation: number, entry: string, signal?: AbortSignal) {
+    const scope = captureIndexRootState(handle, generation, signal);
+    if (!scope.ok) return scope;
+    const { root, files, showHidden } = scope;
+    const byPath = root.byPath;
+    const file = files.get(entry);
+    const node = file && byPath.get(file.path);
+    if (!file || node?.kind !== "file" || node.handle !== entry) return { ok: false, error: "STALE" } as const;
+    const { path, fingerprint } = file;
+    const current = () => scope.current() && files.get(entry) === file &&
+      file.path === path && file.fingerprint === fingerprint && root.byPath === byPath &&
+      byPath.get(path) === node && node.handle === entry;
+    return { ok: true as const, root, file, showHidden, current };
   }
   function captureIndexProof(handle: string, generation: number, signal?: AbortSignal, requireObserved = false) {
     if (signal?.aborted) return { ok: false, error: "CANCELLED" } as const;
@@ -1920,11 +1938,9 @@ export function createWorkspaceService({
       if (!validContentSearchPrepareRequest({ ...input, protocolVersion: 1, requestId }))
         return { ok: false, error: "INVALID" };
       const { root: handle, generation, entry, expectedHash, binding } = input;
-      const captured = captureIndexRoot(handle, generation, signal, CONTENT_SEARCH_LIMITS.coverageDocuments);
+      const captured = captureIndexEntry(handle, generation, entry, signal);
       if (!captured.ok) return captured;
-      const { root, entries, showHidden } = captured;
-      const file = entries.get(entry);
-      if (!file) return { ok: false, error: "STALE" };
+      const { root, file, showHidden } = captured;
       const check = () => {
         if (signal?.aborted) throw new DocumentPathError("CANCELLED");
         if (!captured.current()) throw new DocumentPathError("FILE_CHANGED");
@@ -2025,11 +2041,19 @@ export function createWorkspaceService({
         return { ok: false, error: "INVALID" };
       const roster = captureSearchRoster(requested, signal, !anchored);
       if (!roster.ok) return roster;
+      let anchor: Extract<ReturnType<typeof captureIndexEntry>, { ok: true }> | undefined;
       const captures: Extract<ReturnType<typeof captureIndexRoot>, { ok: true }>[] = [];
-      for (const { handle, generation } of requested) {
-        const captured = captureIndexRoot(handle, generation, signal, CONTENT_SEARCH_LIMITS.coverageDocuments);
+      if (rootEntry) {
+        const { handle, generation } = requested[0];
+        const captured = captureIndexEntry(handle, generation, rootEntry, signal);
         if (!captured.ok) return captured;
-        captures.push(captured);
+        anchor = captured;
+      } else {
+        for (const { handle, generation } of requested) {
+          const captured = captureIndexRoot(handle, generation, signal, CONTENT_SEARCH_LIMITS.coverageDocuments);
+          if (!captured.ok) return captured;
+          captures.push(captured);
+        }
       }
       const admission = documents.captureContentSearchBindings([entry]);
       if (!admission) return { ok: false, error: "BUSY" };
@@ -2037,14 +2061,12 @@ export function createWorkspaceService({
       if (!retained?.prepareRetainedSnapshot)
         return { ok: false, error: "STALE" };
       const { path, fingerprint, documentId, revision, hash, scope, readStandalone, prepareRetainedSnapshot } = retained;
-      const anchor = rootEntry ? captures[0] : undefined;
-      const anchorFile = rootEntry ? anchor?.entries.get(rootEntry) : undefined;
+      const anchorFile = anchor?.file;
       const owner = scope && anchor
         ? [...anchor.root.scopes].find((owner) => owner === scope && owner.root === anchor.root)
         : undefined;
       if (scope ? !owner : !readStandalone) return { ok: false, error: "STALE" };
-      if (anchored && (anchorFile?.path !== path ||
-          anchorFile.fingerprint !== fingerprint || anchor?.root.byPath.get(path)?.handle !== rootEntry))
+      if (anchored && (anchorFile?.path !== path || anchorFile.fingerprint !== fingerprint))
         return { ok: false, error: "STALE" };
       const visible = () => captures.some(({ root, entries }) => {
         const node = root.byPath.get(path);
@@ -2056,9 +2078,9 @@ export function createWorkspaceService({
         return { ok: false, error: "STALE" };
       const check = () => {
         if (signal?.aborted) throw new DocumentPathError("CANCELLED");
-        if (!roster.current() || captures.some((captured) => !captured.current()) ||
+        if (!roster.current() || anchor?.current() === false || captures.some((captured) => !captured.current()) ||
             (owner && (owner.root !== anchor?.root || !owner.root.scopes.has(owner))) ||
-            (anchored ? anchor?.root.byPath.get(path)?.handle !== rootEntry : visible()))
+            (!anchored && visible()))
           throw new DocumentPathError("FILE_CHANGED");
       };
       const verifyScope = async (current: () => void) => {

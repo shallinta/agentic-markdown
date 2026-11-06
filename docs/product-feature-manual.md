@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064al 的 alpha.223 将直接搜索的覆盖、句柄和字节预算与原生索引分开。窗口现有上限仍为筛选前 16 篇、查询正文合计 64 KiB。见[F-064al 迭代](iterations/F-064al-separate-content-search-budgets.md)。
+
 F-064ak 用同一授权工作区对照了直接搜索和严格热重开。两档合成语料命中一致，普通窗口仍使用直接搜索。见[F-064ak 迭代](iterations/F-064ak-authorized-search-cost-comparison.md)。
 
 F-064aj 的 alpha.222 已验证内部工作区可以查询匹配的现有私有索引，命中使用当次扫描条目。普通窗口仍使用直接搜索。见[F-064aj 迭代](iterations/F-064aj-trusted-workspace-readonly-index.md)。

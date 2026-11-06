@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064al 搜索容量分离（2026-11-06）
+
+alpha.223 已验证原有上限及预算分离。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。直接覆盖扩展、持久索引接入及最终离线继续承接。见[F-064al 迭代](iterations/F-064al-separate-content-search-budgets.md)。
+
 ## F-064ak 授权查询成本对照（2026-11-06）
 
 沿用 alpha.222 的两批有界成本对照通过。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。直接容量扩展、正式持久接入、配额、撤权处置及最终离线继续承接。见[F-064ak 迭代](iterations/F-064ak-authorized-search-cost-comparison.md)。

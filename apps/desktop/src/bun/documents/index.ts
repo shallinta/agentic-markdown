@@ -828,7 +828,7 @@ export function createDocumentService({
             };
             if (standalone) {
               binding.readStandalone = async (maxBytes, check) => {
-                if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.bytes)
+                if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.fileBytes)
                   throw new DocumentFailure("INVALID_REQUEST");
                 const current = checkRead(check);
                 return withRetained(current, (opened) => stableBytes(opened, current, maxBytes));
@@ -872,10 +872,10 @@ export function createDocumentService({
                   check();
                   await verifyScope(check);
                   const next = await withRetained(check, async (opened) => {
-                    const snapshotValue = await snapshot(opened, generation, task, CONTENT_SEARCH_LIMITS.bytes, check);
+                    const snapshotValue = await snapshot(opened, generation, task, CONTENT_SEARCH_LIMITS.fileBytes, check);
                     if (snapshotValue.hash !== expectedHash) throw new DocumentFailure("FILE_CHANGED");
                     await verifyScope(check);
-                    const bytes = await stableBytes(opened, check, CONTENT_SEARCH_LIMITS.bytes);
+                    const bytes = await stableBytes(opened, check, CONTENT_SEARCH_LIMITS.fileBytes);
                     if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
                       throw new DocumentFailure("FILE_CHANGED");
                     return snapshotValue;

@@ -446,7 +446,7 @@ export function createDocumentController(
     checkContentSearch = undefined;
     if (metadataDisposed || state.busy || state.frozen || editorInputBlocked)
       return { ok: false, reason: "incomplete" };
-    if (state.tabs.length > CONTENT_SEARCH_LIMITS.documents)
+    if (state.tabs.length > CONTENT_SEARCH_LIMITS.openHandles)
       return { ok: false, reason: "limit" };
     const captured = state.tabs.map((tab) => {
       const editor = editors.get(tab.documentId);

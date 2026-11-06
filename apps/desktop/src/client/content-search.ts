@@ -64,8 +64,8 @@ export function mergeContentSearch(
   fragments = false
 ): HitResult | FragmentResult {
   if (
-    documents.length > CONTENT_SEARCH_LIMITS.documents ||
-    evidence.coverage.length > CONTENT_SEARCH_LIMITS.documents
+    documents.length > CONTENT_SEARCH_LIMITS.openHandles ||
+    evidence.coverage.length > CONTENT_SEARCH_LIMITS.coverageDocuments
   )
     return { ok: false, reason: "limit" };
   const incomplete = { ok: false, reason: "incomplete" } as const;
@@ -84,6 +84,7 @@ export function mergeContentSearch(
     return incomplete;
 
   let bytes = evidence.coverage.reduce((total, row) => total + row.bytes, 0);
+  let oversizedFile = false;
   const matched = new Set<string>();
   const replacements = new Map<string, string>();
   for (const document of documents) {
@@ -105,7 +106,7 @@ export function mergeContentSearch(
     if (document.status !== "dirty") continue;
 
     const raw = document.raw;
-    if (raw.length > CONTENT_SEARCH_LIMITS.bytes)
+    if (raw.length > CONTENT_SEARCH_LIMITS.fileBytes)
       return { ok: false, reason: "limit" };
     if (
       /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(
@@ -113,10 +114,12 @@ export function mergeContentSearch(
       )
     )
       return incomplete;
-    bytes += new TextEncoder().encode(raw).byteLength - row.bytes;
+    const encodedBytes = new TextEncoder().encode(raw).byteLength;
+    oversizedFile ||= encodedBytes > CONTENT_SEARCH_LIMITS.fileBytes;
+    bytes += encodedBytes - row.bytes;
     replacements.set(row.entry, raw);
   }
-  if (bytes > CONTENT_SEARCH_LIMITS.bytes)
+  if (oversizedFile || bytes > CONTENT_SEARCH_LIMITS.aggregateBytes)
     return { ok: false, reason: "limit" };
 
   if (fragments) {

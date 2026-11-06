@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import type { SearchMapping } from "../shared/content-search";
+import { CONTENT_SEARCH_LIMITS, type SearchMapping } from "../shared/content-search";
 import type { DocumentRequest, DocumentSnapshot } from "../shared/documents";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 
@@ -186,6 +186,30 @@ test("memory overrides count UTF-8 bytes and reject invalid Unicode", () => {
       evidence
     )
   ).toEqual({ ok: false, reason: "incomplete" });
+});
+
+test("dirty file budget uses UTF-8 and preserves incomplete evidence precedence", () => {
+  const raw = "😀".repeat(CONTENT_SEARCH_LIMITS.fileBytes / 4);
+  const exact: ContentSearchDocument = { ...document, status: "dirty", raw };
+  const oversized = { ...exact, raw: raw + "x" };
+  const evidence = {
+    coverage: [{ entry: "matched", hash, bytes: 1 }],
+    mappings: [mapping],
+  };
+  expect(mergeContentSearch("😀", [exact], evidence)).toEqual({
+    ok: true, covered: 1, hits: [{ entry: "matched", from: 0, to: 2, source: "memory" }],
+  });
+  expect(mergeContentSearch("😀", [oversized], evidence)).toEqual({ ok: false, reason: "limit" });
+
+  const invalid: ContentSearchDocument = {
+    ...document, handle: "later", documentId: "later-document", status: "dirty", raw: "\ud800",
+  };
+  expect(mergeContentSearch("😀", [oversized, invalid], {
+    coverage: [...evidence.coverage, { entry: "later-entry", hash, bytes: 1 }],
+    mappings: [...evidence.mappings, {
+      ...mapping, handle: invalid.handle, documentId: invalid.documentId, entry: "later-entry",
+    }],
+  })).toEqual({ ok: false, reason: "incomplete" });
 });
 
 test("a document outside the filtered scope cannot contribute a memory hit", () => {

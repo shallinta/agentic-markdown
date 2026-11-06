@@ -167,7 +167,8 @@ function pickableFilters(
 ) {
   if (!roots || roots.length > CONTENT_SEARCH_LIMITS.roots) return [];
   let count = leaves.length;
-  if (count > CONTENT_SEARCH_LIMITS.documents) return [];
+  if (count > CONTENT_SEARCH_LIMITS.standaloneHandles ||
+      count > CONTENT_SEARCH_LIMITS.coverageDocuments) return [];
   const names = new Set(leaves.map(({ fileName }) => fileName));
   const paths = new Set(names);
   for (const root of roots) {
@@ -175,7 +176,7 @@ function pickableFilters(
     if (entries.length !== root.entries || root.status !== "complete") return [];
     for (const node of entries) {
       if (node.kind !== "file") continue;
-      if (++count > CONTENT_SEARCH_LIMITS.documents) return [];
+      if (++count > CONTENT_SEARCH_LIMITS.coverageDocuments) return [];
       names.add(node.name);
       const path = relativeContentSearchPath(root.displayPath, node.displayPath);
       if (path) paths.add(path);

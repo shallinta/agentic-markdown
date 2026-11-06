@@ -16,8 +16,11 @@ import { perfRecord, perfUuid } from "./perf-lab";
 
 export const CONTENT_SEARCH_LIMITS = {
   roots: 16,
-  documents: 16,
-  bytes: 65_536,
+  coverageDocuments: 16,
+  openHandles: 16,
+  standaloneHandles: 16,
+  aggregateBytes: 65_536,
+  fileBytes: 65_536,
   query: 4096,
 } as const;
 
@@ -213,8 +216,8 @@ export function validContentSearchScopeRoots(
   return true;
 }
 
-function validHandles(value: unknown, own = false): value is readonly string[] {
-  if (!Array.isArray(value) || value.length > CONTENT_SEARCH_LIMITS.documents)
+function validHandles(value: unknown, limit: number, own = false): value is readonly string[] {
+  if (!Array.isArray(value) || value.length > limit)
     return false;
   if (own) {
     if (Object.keys(value).length !== value.length) return false;
@@ -307,7 +310,7 @@ export function validContentSearchPrepareResponse(
   const snapshot = target.snapshot;
   if (kind !== (retained ? "retained" : "open") ||
       !exact(target, ["snapshot"]) ||
-      !isDocumentSnapshot(snapshot, CONTENT_SEARCH_LIMITS.bytes) ||
+      !isDocumentSnapshot(snapshot, CONTENT_SEARCH_LIMITS.fileBytes) ||
       snapshot.hash !== request.expectedHash)
     return false;
   if (!retained) return true;
@@ -396,7 +399,7 @@ export function validContentSearchRequest(
   const validScope = value.op === "query"
     ? perfUuid(value.root) && natural(value.generation)
     : validContentSearchScopeRoots(value.roots, mixed) &&
-      (!mixed || (validHandles(value.standaloneHandles, true) &&
+      (!mixed || (validHandles(value.standaloneHandles, CONTENT_SEARCH_LIMITS.standaloneHandles, true) &&
         (value.roots.length > 0 || value.standaloneHandles.length > 0)));
   return (
     exact(value, queryKeys) &&
@@ -406,7 +409,7 @@ export function validContentSearchRequest(
     value.query.length <= CONTENT_SEARCH_LIMITS.query &&
     value.query.trim().length > 0 &&
     isWellFormedContentSearchText(value.query) &&
-    validHandles(value.handles, mixed)
+    validHandles(value.handles, CONTENT_SEARCH_LIMITS.openHandles, mixed)
   );
 }
 
@@ -420,7 +423,7 @@ export function validContentSearchProgress(
       !Object.prototype.hasOwnProperty.call(request, "fragments") ||
       !perfRecord(value) || value.protocolVersion !== 1 ||
       !perfUuid(value.requestId) || value.requestId !== request.requestId ||
-      !natural(value.sequence) || value.sequence < 1 || value.sequence > CONTENT_SEARCH_LIMITS.documents ||
+      !natural(value.sequence) || value.sequence < 1 || value.sequence > CONTENT_SEARCH_LIMITS.coverageDocuments ||
       !perfUuid(value.entry) ||
       (request.op === "query-workspace" && !request.roots.length &&
         !request.standaloneHandles.includes(value.entry)))
@@ -428,7 +431,7 @@ export function validContentSearchProgress(
   const keys = ["protocolVersion", "requestId", "sequence", "entry", "kind"];
   return value.kind === "redacted" ? exact(value, keys)
     : value.kind === "fragments" && exact(value, [...keys, "fragments"]) &&
-      validFragments(value.fragments, request.query.length, CONTENT_SEARCH_LIMITS.bytes);
+      validFragments(value.fragments, request.query.length, CONTENT_SEARCH_LIMITS.fileBytes);
 }
 
 export function validContentSearchResponse(
@@ -467,7 +470,7 @@ export function validContentSearchResponse(
         root.handle !== request.roots[index].handle ||
         root.generation !== request.roots[index].generation
       ) ||
-      (mixed && (!validHandles(value.standaloneHandles, true) ||
+      (mixed && (!validHandles(value.standaloneHandles, CONTENT_SEARCH_LIMITS.standaloneHandles, true) ||
         value.standaloneHandles.length !== request.standaloneHandles.length ||
         value.standaloneHandles.some((handle, index) => handle !== request.standaloneHandles[index])))
     )
@@ -475,7 +478,7 @@ export function validContentSearchResponse(
   }
   if (
     !Array.isArray(value.coverage) ||
-    value.coverage.length > CONTENT_SEARCH_LIMITS.documents ||
+    value.coverage.length > CONTENT_SEARCH_LIMITS.coverageDocuments ||
     !Array.isArray(value.mappings) ||
     value.mappings.length !== request.handles.length
   )
@@ -490,7 +493,8 @@ export function validContentSearchResponse(
       (request.op === "query-workspace" && !request.roots.length &&
         !request.standaloneHandles.includes(row.entry)) ||
       !digest(row.hash) ||
-      !natural(row.bytes)
+      !natural(row.bytes) ||
+      row.bytes > CONTENT_SEARCH_LIMITS.fileBytes
     )
       return false;
     const hasHit = Object.keys(row).includes("hit");
@@ -504,7 +508,7 @@ export function validContentSearchResponse(
     )
       return false;
     total += row.bytes;
-    if (total > CONTENT_SEARCH_LIMITS.bytes) return false;
+    if (total > CONTENT_SEARCH_LIMITS.aggregateBytes) return false;
     if (request.fragments) {
       if (!validFragments(row.fragments, request.query.length, row.bytes)) return false;
     } else if (hasHit) {

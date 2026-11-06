@@ -4,7 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { SearchCoverage } from "../../shared/content-search";
+import { CONTENT_SEARCH_LIMITS, type SearchCoverage } from "../../shared/content-search";
 import { contentSearchFragments, type ContentSearchFragments } from "../../shared/content-search-fragments";
 import {
   DocumentPathError,
@@ -111,18 +111,21 @@ export async function searchSnapshotEvidenceAcrossRoots(
   fragments = false,
   onFile?: (path: string, entry: string, fragments: ContentSearchFragments) => void
 ): Promise<EvidenceResult> {
-  if (!scalar(query, INDEX_LIMITS.query)) return fail("INPUT");
   const direct = strategy === "direct";
+  const queryLimit = direct ? CONTENT_SEARCH_LIMITS.query : INDEX_LIMITS.query;
+  if (!scalar(query, queryLimit)) return fail("INPUT");
   if (!direct && quarantined) return fail("UNAVAILABLE");
   if (busy) return fail("BUSY");
   if ((!roots.length && !standalone) || ((standalone || fragments) && !direct)) return fail("INPUT");
-  if (roots.length > SEARCH_SNAPSHOT_ROOT_LIMIT) return fail("LIMIT");
+  const rootLimit = direct ? CONTENT_SEARCH_LIMITS.roots : SEARCH_SNAPSHOT_ROOT_LIMIT;
+  if (roots.length > rootLimit) return fail("LIMIT");
+  const coverageLimit = direct ? CONTENT_SEARCH_LIMITS.coverageDocuments : INDEX_LIMITS.documents;
   let candidates = 0;
   const entries = new Set<string>();
   const paths = new Set<string>();
   for (const { files } of roots) {
     candidates += files.size;
-    if (candidates > INDEX_LIMITS.documents) return fail("LIMIT");
+    if (candidates > coverageLimit) return fail("LIMIT");
     for (const [entry, file] of files) {
       if (entries.has(entry) || paths.has(file.path)) return fail("INPUT");
       entries.add(entry);
@@ -130,7 +133,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
     }
   }
   if (standalone) {
-    if (candidates + standalone.length > INDEX_LIMITS.documents) return fail("LIMIT");
+    if (candidates + standalone.length > coverageLimit) return fail("LIMIT");
     for (const { entry, path } of standalone) {
       if (entries.has(entry) || paths.has(path)) return fail("INPUT");
       entries.add(entry);
@@ -185,7 +188,8 @@ export async function searchSnapshotEvidenceAcrossRoots(
     const coverage: SearchCoverage[] = [];
     const changes: IndexChange[] = [];
     const indexed = new Map<string, { evidence: SearchCoverage; length: number }>();
-    let remaining: number = INDEX_LIMITS.bytes;
+    let remaining: number = direct ? CONTENT_SEARCH_LIMITS.aggregateBytes : INDEX_LIMITS.bytes;
+    const fileLimit = direct ? CONTENT_SEARCH_LIMITS.fileBytes : INDEX_LIMITS.bytes;
     function recordContents(entry: string, contents: Buffer): SearchCoverage {
       const raw = new TextDecoder("utf-8", {
         fatal: true,
@@ -232,7 +236,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
         );
         let evidence: SearchCoverage;
         try {
-          const contents = await readStableSearchBytes(grant, remaining, check);
+          const contents = await readStableSearchBytes(grant, Math.min(remaining, fileLimit), check);
           if (!contents) return fail("LIMIT");
           evidence = recordContents(entry, contents);
         } finally {
@@ -244,8 +248,9 @@ export async function searchSnapshotEvidenceAcrossRoots(
     for (const item of standalone ?? []) {
       check();
       let contents: Buffer;
+      const limit = Math.min(remaining, fileLimit);
       try {
-        contents = await item.read(remaining, check);
+        contents = await item.read(limit, check);
       } catch (error) {
         const code = record(error) ? error.code : undefined;
         if (!current() || code === "CANCELLED") return fail("CANCELLED");
@@ -254,7 +259,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
         throw error;
       }
       check();
-      if (contents.length > remaining) return fail("LIMIT");
+      if (contents.length > limit) return fail("LIMIT");
       publish(item.path, recordContents(item.entry, contents));
     }
     check();

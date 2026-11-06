@@ -310,7 +310,12 @@ export function createWorkspaceService({
   const openingRoots = new Map<Root, number>();
   let indexTask: Promise<unknown> | undefined;
   let indexDisposing = false;
-  function captureIndexRoot(handle: string, generation: number, signal?: AbortSignal) {
+  function captureIndexRoot(
+    handle: string,
+    generation: number,
+    signal?: AbortSignal,
+    coverageLimit: number = INDEX_LIMITS.documents
+  ) {
     const root = roots.find((candidate) => candidate.meta.handle === handle);
     if (!root || !live(root, generation)) return { ok: false, error: "STALE" } as const;
     if (root.meta.status !== "complete") return { ok: false, error: "NOT_READY" } as const;
@@ -324,7 +329,7 @@ export function createWorkspaceService({
       !signal?.aborted;
     if (!eligible()) return { ok: false, error: "UNAVAILABLE" } as const;
     const files = root.files;
-    if (files.size > INDEX_LIMITS.documents) return { ok: false, error: "LIMIT" } as const;
+    if (files.size > coverageLimit) return { ok: false, error: "LIMIT" } as const;
     const entries = new Map(files);
     const showHidden = root.meta.showHidden ?? false;
     const scanVersion = root.registry.version();
@@ -1401,6 +1406,9 @@ export function createWorkspaceService({
     if (signal?.aborted) return { ok: false, error: "CANCELLED" };
     if (indexTask) return { ok: false, error: "BUSY" };
     const { fileFilters, pathFilters, fragments } = input;
+    const strategy = mixed || fragments ? "direct" : contentSearchStrategy;
+    const coverageLimit = strategy === "direct" ? CONTENT_SEARCH_LIMITS.coverageDocuments : INDEX_LIMITS.documents;
+    const queryLimit = strategy === "direct" ? CONTENT_SEARCH_LIMITS.query : INDEX_LIMITS.query;
     const requestedRoots: unknown = input.roots;
     const openHandles: unknown = input.handles;
     const standaloneInput: unknown = mixed?.standaloneHandles;
@@ -1409,21 +1417,21 @@ export function createWorkspaceService({
       Array.from(value).every(perfUuid) && new Set(value).size === value.length;
     let retainedHandles: readonly string[] = [];
     if (mixed) {
-      if ((Array.isArray(standaloneInput) && standaloneInput.length > INDEX_LIMITS.documents) ||
-          (Array.isArray(openHandles) && openHandles.length > INDEX_LIMITS.documents))
+      if ((Array.isArray(standaloneInput) && standaloneInput.length > CONTENT_SEARCH_LIMITS.standaloneHandles) ||
+          (Array.isArray(openHandles) && openHandles.length > CONTENT_SEARCH_LIMITS.openHandles))
         return { ok: false, error: "LIMIT" };
       if (!validHandles(standaloneInput) || !validHandles(openHandles))
         return { ok: false, error: "INVALID" };
       retainedHandles = standaloneInput;
     }
-    if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
+    if (!scalar(input.query, queryLimit) || !input.query.trim() ||
         new Set(input.handles).size !== input.handles.length ||
         ("fragments" in input && fragments !== true) ||
         (fileFilters !== undefined && !validContentSearchFileFilters(fileFilters)) ||
         (pathFilters !== undefined && !validContentSearchPathFilters(pathFilters)) ||
         (fileFilters?.length ?? 0) + (pathFilters?.length ?? 0) > CONTENT_SEARCH_FILTER_COUNT_LIMIT)
       return { ok: false, error: "INVALID" };
-    if (input.handles.length > INDEX_LIMITS.documents ||
+    if (input.handles.length > CONTENT_SEARCH_LIMITS.openHandles ||
         (Array.isArray(requestedRoots) && requestedRoots.length > CONTENT_SEARCH_LIMITS.roots))
       return { ok: false, error: "LIMIT" };
     const rootless = mixed && retainedHandles.length > 0 && Array.isArray(requestedRoots) &&
@@ -1440,7 +1448,7 @@ export function createWorkspaceService({
     const entryHandles = new Set<string>();
     const filesByPath = new Map<string, { file: ScanFile; root: Root; showHidden: boolean }>();
     for (const { handle, generation } of requested) {
-      const snapshot = captureIndexRoot(handle, generation, signal);
+      const snapshot = captureIndexRoot(handle, generation, signal, coverageLimit);
       if (!snapshot.ok) return snapshot;
       const { root, entries } = snapshot;
       const rootPath = root.authorization.path;
@@ -1448,7 +1456,7 @@ export function createWorkspaceService({
         containsPath(root.authorization.path, rootPath) ||
         containsPath(rootPath, root.authorization.path)
       )) return { ok: false, error: "INVALID" };
-      if (entryHandles.size + entries.size > INDEX_LIMITS.documents)
+      if (entryHandles.size + entries.size > coverageLimit)
         return { ok: false, error: "LIMIT" };
       const filtered = fileFilters || pathFilters ? new Map<string, ScanFile>() : undefined;
       for (const [entry, file] of entries) {
@@ -1529,7 +1537,7 @@ export function createWorkspaceService({
           initialRetainedChecks.push(verify);
           continue;
         }
-        if (entryHandles.size + standaloneByPath.size >= INDEX_LIMITS.documents)
+        if (entryHandles.size + standaloneByPath.size >= coverageLimit)
           return { ok: false, error: "LIMIT" };
         const name = basename(path);
         const included = (!fileFilters || matchesContentSearchFileFilters(name, fileFilters)) &&
@@ -1559,7 +1567,7 @@ export function createWorkspaceService({
         })),
         input.query,
         current,
-        mixed || fragments ? "direct" : contentSearchStrategy,
+        strategy,
         standalone,
         fragments,
         notify
@@ -1814,7 +1822,7 @@ export function createWorkspaceService({
       if (!validContentSearchPrepareRequest({ ...input, protocolVersion: 1, requestId }))
         return { ok: false, error: "INVALID" };
       const { root: handle, generation, entry, expectedHash, binding } = input;
-      const captured = captureIndexRoot(handle, generation, signal);
+      const captured = captureIndexRoot(handle, generation, signal, CONTENT_SEARCH_LIMITS.coverageDocuments);
       if (!captured.ok) return captured;
       const { root, entries, showHidden } = captured;
       const file = entries.get(entry);
@@ -1832,7 +1840,7 @@ export function createWorkspaceService({
         current: () => void
       ) => {
         checkTrash(authorization);
-        const bytes = await readStableSearchBytes(authorization, INDEX_LIMITS.bytes, current);
+        const bytes = await readStableSearchBytes(authorization, CONTENT_SEARCH_LIMITS.fileBytes, current);
         current();
         checkTrash(authorization);
         if (!bytes) throw new DocumentPathError("TOO_LARGE");
@@ -1850,7 +1858,7 @@ export function createWorkspaceService({
       try {
         if (!binding) {
           const opened = await openWorkspaceFile(root, entry, file, { protocolVersion: 1, requestId }, {
-            maxBytes: INDEX_LIMITS.bytes,
+            maxBytes: CONTENT_SEARCH_LIMITS.fileBytes,
             check,
             async verify(authorization, snapshot, current) {
               if (snapshot.hash !== expectedHash) throw new DocumentPathError("FILE_CHANGED");
@@ -1921,7 +1929,7 @@ export function createWorkspaceService({
       if (!roster.ok) return roster;
       const captures: Extract<ReturnType<typeof captureIndexRoot>, { ok: true }>[] = [];
       for (const { handle, generation } of requested) {
-        const captured = captureIndexRoot(handle, generation, signal);
+        const captured = captureIndexRoot(handle, generation, signal, CONTENT_SEARCH_LIMITS.coverageDocuments);
         if (!captured.ok) return captured;
         captures.push(captured);
       }
@@ -1997,7 +2005,7 @@ export function createWorkspaceService({
           if (!admission.current()) throw new DocumentPathError("FILE_CHANGED");
         };
         await verifyScope(current);
-        const bytes = await readStandalone(INDEX_LIMITS.bytes, current);
+        const bytes = await readStandalone(CONTENT_SEARCH_LIMITS.fileBytes, current);
         if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
           throw new DocumentPathError("FILE_CHANGED");
         current();

@@ -131,7 +131,8 @@ export function captureContentSearchScope(
 
   const { kind } = resolved;
   const leaves = kind === "all" ? standalone : [];
-  if (leaves.length > CONTENT_SEARCH_LIMITS.documents)
+  if (leaves.length > CONTENT_SEARCH_LIMITS.standaloneHandles ||
+      leaves.length > CONTENT_SEARCH_LIMITS.coverageDocuments)
     return { ok: false, error: "limit" };
   const roots = resolved.roots.map((root) => ({ ...root }));
   const pages = roots.map(({ handle }) => workspace.nodes[handle]);
@@ -158,7 +159,7 @@ export function captureContentSearchScope(
   for (const [index, root] of roots.entries()) {
     for (const node of pages[index] ?? []) {
       if (node.kind !== "file") continue;
-      if (++fileCount > CONTENT_SEARCH_LIMITS.documents)
+      if (++fileCount > CONTENT_SEARCH_LIMITS.coverageDocuments)
         return { ok: false, error: "limit" };
       if (handles.has(node.handle) || paths.has(node.displayPath))
         return { ok: false, error: "incomplete" };

@@ -82,9 +82,26 @@ test("multi-root response must echo the same ordered scope and valid aggregate e
     expect(validContentSearchResponse({ ...response, roots }, request)).toBe(false);
   }
   const row = response.coverage[0];
+  const additional = { entry: crypto.randomUUID(), hash, bytes: 0 };
+  const { aggregateBytes, fileBytes } = CONTENT_SEARCH_LIMITS;
+  const coverage = Array.from({ length: Math.ceil(aggregateBytes / fileBytes) }, (_, index) => ({
+    ...(index === 0 ? row : { ...additional, entry: crypto.randomUUID() }),
+    bytes: Math.min(fileBytes, aggregateBytes - index * fileBytes),
+  }));
+  expect(validContentSearchResponse({ ...response, coverage }, request)).toBe(true);
+  expect(validContentSearchResponse({
+    ...response, coverage: [...coverage, { ...additional, bytes: 1 }],
+  }, request)).toBe(false);
+  const fullCoverage = [
+    row, ...Array.from({ length: CONTENT_SEARCH_LIMITS.coverageDocuments - 1 }, () => ({
+      ...additional, entry: crypto.randomUUID(),
+    })),
+  ];
+  expect(validContentSearchResponse({ ...response, coverage: fullCoverage }, request)).toBe(true);
+  expect(validContentSearchResponse({ ...response, coverage: [...fullCoverage, additional] }, request)).toBe(false);
   for (const change of [
     { op: "query" }, { root: first.handle }, { coverage: [row, row] },
-    { coverage: [{ ...row, bytes: CONTENT_SEARCH_LIMITS.bytes + 1 }] },
+    { coverage: [{ ...row, bytes: CONTENT_SEARCH_LIMITS.fileBytes + 1 }] },
     { coverage: [{ ...row, hit: { from: 2, to: 3 } }] },
     { mappings: [] }, { mappings: [{ ...response.mappings[0], entry: crypto.randomUUID() }] },
   ]) {
@@ -107,8 +124,11 @@ test("mixed query wire requires complete dense roots and opaque retained handles
   expect(validContentSearchRequest({ ...request, roots: [] })).toBe(true);
   expect(validContentSearchRequest({ ...request, standaloneHandles: [] })).toBe(true);
   expect(validContentSearchRequest({ ...request, roots: [], standaloneHandles: [] })).toBe(false);
-  const limit = Array.from({ length: CONTENT_SEARCH_LIMITS.documents }, () => crypto.randomUUID());
+  const limit = Array.from({ length: CONTENT_SEARCH_LIMITS.standaloneHandles }, () => crypto.randomUUID());
+  const openHandles = Array.from({ length: CONTENT_SEARCH_LIMITS.openHandles }, () => crypto.randomUUID());
   expect(validContentSearchRequest({ ...request, standaloneHandles: limit })).toBe(true);
+  expect(validContentSearchRequest({ ...request, handles: openHandles, standaloneHandles: limit })).toBe(true);
+  expect(validContentSearchRequest({ ...request, handles: [...openHandles, first] })).toBe(false);
   const sparse = [first];
   sparse.length = 2;
   for (const standaloneHandles of [
@@ -242,14 +262,25 @@ test("progress wire accepts only bounded same-request redaction or exact fragmen
   expect(validContentSearchProgress(redacted, request)).toBe(true);
   expect(validContentSearchProgress(progress, request)).toBe(true);
   expect(validContentSearchProgress({
-    ...progress, sequence: CONTENT_SEARCH_LIMITS.documents,
+    ...progress, sequence: CONTENT_SEARCH_LIMITS.coverageDocuments,
     fragments: { matches: [], more: false },
   }, request)).toBe(true);
+  const atFileLimit = {
+    from: CONTENT_SEARCH_LIMITS.fileBytes - request.query.length,
+    to: CONTENT_SEARCH_LIMITS.fileBytes,
+    before: "", after: "",
+  };
+  expect(validContentSearchProgress({
+    ...progress, fragments: { matches: [atFileLimit], more: false },
+  }, request)).toBe(true);
+  expect(validContentSearchProgress({
+    ...progress, fragments: { matches: [{ ...atFileLimit, from: atFileLimit.from + 1, to: atFileLimit.to + 1 }], more: false },
+  }, request)).toBe(false);
   const { stream, ...nonStreaming } = request;
   expect(stream).toBe(true);
   expect(validContentSearchProgress(progress, nonStreaming)).toBe(false);
   expect(validContentSearchProgress(progress, { ...request, requestId: crypto.randomUUID() })).toBe(false);
-  for (const sequence of [0, -1, 1.5, CONTENT_SEARCH_LIMITS.documents + 1, Number.NaN])
+  for (const sequence of [0, -1, 1.5, CONTENT_SEARCH_LIMITS.coverageDocuments + 1, Number.NaN])
     expect(validContentSearchProgress({ ...progress, sequence }, request)).toBe(false);
   for (const malformed of [
     { ...progress, protocolVersion: 2 }, { ...progress, entry: "/outside" },
@@ -291,7 +322,7 @@ test("mixed response echoes both scope lists and rejects cross-operation or part
     { standaloneHandles: [first, first] }, { standaloneHandles: [first, crypto.randomUUID()] },
     { op: "query-roots" }, { op: "query" }, { op: "cancel" }, { path: "/outside.md" },
     { coverage: [] }, { mappings: [] },
-    { coverage: [{ ...response.coverage[0], bytes: CONTENT_SEARCH_LIMITS.bytes + 1 }] },
+    { coverage: [{ ...response.coverage[0], bytes: CONTENT_SEARCH_LIMITS.fileBytes + 1 }] },
   ]) {
     expect(validContentSearchResponse({ ...response, ...change }, request)).toBe(false);
   }
@@ -346,7 +377,7 @@ test("retained prepare wire distinguishes original handles from directory open r
   for (const change of [
     { explicitStandalone: false }, { explicitStandalone: undefined },
     { handle: crypto.randomUUID() }, { documentId: "bad" }, { hash: "e".repeat(64) },
-    { locationId: "bad" }, { byteLength: CONTENT_SEARCH_LIMITS.bytes + 1 },
+    { locationId: "bad" }, { byteLength: CONTENT_SEARCH_LIMITS.fileBytes + 1 },
   ]) {
     expect(validContentSearchPrepareResponse({
       ...response, target: { kind: "retained", snapshot: { ...snapshot, ...change } },

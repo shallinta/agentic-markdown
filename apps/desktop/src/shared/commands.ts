@@ -95,6 +95,7 @@ export type Command =
   | GenericCommand<"closeDocument">
   | GenericCommand<"pinCurrentTab">
   | GenericCommand<"unpinCurrentTab">
+  | GenericCommand<"cycleRecentTabs">
   | OpenSettingsCommand
   | OpenCommandPaletteCommand
   | ToggleSidebarCommand
@@ -283,6 +284,7 @@ export const COMMAND_META: Record<
   closeDocument: { target: "webview" },
   pinCurrentTab: { target: "webview" },
   unpinCurrentTab: { target: "webview" },
+  cycleRecentTabs: { target: "webview", palette: false },
   openSettings: { target: "webview" },
   openCommandPalette: { target: "webview" },
   toggleSidebar: { target: "webview" },

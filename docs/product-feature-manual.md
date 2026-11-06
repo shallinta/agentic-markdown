@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 按最近使用顺序切换主区标签（F-036b）
+
+短按 Control+Tab 在当前标签和最近使用的另一标签之间往返。按住 Control 连按 Tab 可轮换候选，松开 Control 才激活，Esc 可取消。固定分组、视觉顺序和文件树保持原样。仅作用于当前窗口主区。见[F-036b 迭代](iterations/F-036b-recent-primary-tab-switch.md)。
+
 ## 固定主区标签（F-036a）
 
 通过文档操作区或命令面板固定和取消固定当前标签。固定标签归到左侧，仍可单独关闭。关闭后重新打开会建立未固定标签。见[F-036a 迭代](iterations/F-036a-pin-primary-document-tabs.md)。

@@ -58,7 +58,7 @@ export function CommandPalette({
   const { readyVersion } = useUpdateStatus();
   const { mode: updateMode } = useUpdateMode();
   const label = (type: CommandType): string => {
-    if (type === "toggleSourceMode") return "";
+    if (type === "toggleSourceMode" || type === "cycleRecentTabs") return "";
     if (
       type === "openSourceSearch" ||
       type === "closeSourceSearch" ||

@@ -354,6 +354,138 @@ test("pin gates respect busy, frozen and composing state, and replaced tabs lose
   controller.dispose();
 });
 
+test("recent tab preview freezes MRU, wraps through the origin, and activates only on finish", async () => {
+  const { controller, transport, value: first } = setup();
+  const second = snapshot("B");
+  const third = snapshot("C");
+  expect(controller.canCycleRecentTabs()).toBe(false);
+  await controller.select();
+  expect(controller.cycleRecentTabs()).toBe(false);
+  for (const tab of [second, third]) {
+    transport.selectDocument = request => Promise.resolve(result(request, tab));
+    await controller.select();
+  }
+  expect(controller.setActiveTabPinned(true)).toBe(true);
+  controller.activateTab(first.documentId);
+  expect(controller.toggleSourceMode()).toBe(true);
+  const original = controller.getSnapshot();
+  const editor = controller.getEditor(first.documentId);
+  const activation = controller.getContentSearchActivation();
+  const candidates: (string | null)[] = [];
+  const recorded: string[] = [];
+  const stopCandidates = controller.subscribeRecentTabCandidate(() => candidates.push(controller.getRecentTabCandidate()));
+  const stopActivation = controller.subscribeActivation(item => recorded.push(item.documentId));
+  for (const expected of [third, second, first]) {
+    expect(controller.cycleRecentTabs()).toBe(true);
+    expect(controller.getRecentTabCandidate()).toBe(expected.documentId);
+    expect(controller.getSnapshot()).toBe(original);
+    expect(controller.getEditor(first.documentId)).toBe(editor);
+  }
+  expect(controller.getContentSearchActivation()).toBe(activation);
+  expect(controller.finishRecentTabSwitch()).toBe(false);
+  expect(recorded).toEqual([]);
+  for (const expected of [third, first]) {
+    expect(controller.cycleRecentTabs()).toBe(true);
+    expect(controller.getRecentTabCandidate()).toBe(expected.documentId);
+    expect(controller.finishRecentTabSwitch()).toBe(true);
+    expect(controller.getSnapshot().snapshot?.documentId).toBe(expected.documentId);
+  }
+  expect(candidates).toEqual([third.documentId, second.documentId, first.documentId, null, third.documentId, null, first.documentId, null]);
+  expect(recorded).toEqual([third.documentId, first.documentId]);
+  expect(controller.getSnapshot().tabs).toBe(original.tabs);
+  expect(controller.getVisualTabs().map(tab => tab.documentId)).toEqual([third.documentId, first.documentId, second.documentId]);
+  stopActivation();
+  stopCandidates();
+  controller.dispose();
+});
+
+test("recent tab completion settles before a candidate subscriber can start another cycle", async () => {
+  const { controller, transport, value: first } = setup();
+  const second = snapshot("B");
+  await controller.select();
+  transport.selectDocument = request => Promise.resolve(result(request, second));
+  await controller.select();
+  expect(controller.cycleRecentTabs()).toBe(true);
+  expect(controller.getRecentTabCandidate()).toBe(first.documentId);
+  let activeAtClear: string | undefined;
+  const stop = controller.subscribeRecentTabCandidate(() => {
+    if (controller.getRecentTabCandidate() !== null) return;
+    activeAtClear = controller.getSnapshot().snapshot?.documentId;
+    controller.cycleRecentTabs();
+  });
+  expect(controller.finishRecentTabSwitch()).toBe(true);
+  expect(activeAtClear).toBe(first.documentId);
+  expect(controller.getRecentTabCandidate()).toBe(second.documentId);
+  stop();
+  controller.dispose();
+});
+
+test("recent tab candidate cancels on lifecycle changes and automatic close fallback becomes most recent", async () => {
+  const { controller, transport, value: first } = setup();
+  const second = snapshot("B");
+  const third = snapshot("C");
+  const fourth = snapshot("D");
+  await controller.select();
+  for (const tab of [second, third, fourth]) {
+    transport.selectDocument = request => Promise.resolve(result(request, tab));
+    await controller.select();
+  }
+  controller.activateTab(second.documentId);
+  controller.activateTab(first.documentId);
+  expect(controller.cycleRecentTabs()).toBe(true);
+  expect(controller.getRecentTabCandidate()).toBe(second.documentId);
+  await controller.closeTab(second.documentId);
+  expect(controller.getRecentTabCandidate()).toBeNull();
+  expect(controller.finishRecentTabSwitch()).toBe(false);
+  expect(controller.cycleRecentTabs()).toBe(true);
+  expect(controller.getRecentTabCandidate()).toBe(fourth.documentId);
+  controller.cancelRecentTabSwitch();
+  expect(controller.finishRecentTabSwitch()).toBe(false);
+  expect(controller.cycleRecentTabs()).toBe(true);
+  controller.activateTab(third.documentId);
+  expect(controller.getRecentTabCandidate()).toBeNull();
+  expect(controller.cycleRecentTabs()).toBe(true);
+  controller.setEditorInputBlocked(true);
+  expect(controller.getRecentTabCandidate()).toBeNull();
+  expect(controller.cycleRecentTabs()).toBe(false);
+  controller.setEditorInputBlocked(false);
+  expect(controller.cycleRecentTabs()).toBe(true);
+  expect(controller.beginDiscard()).toBe(true);
+  expect(controller.getRecentTabCandidate()).toBeNull();
+  expect(controller.finishRecentTabSwitch()).toBe(false);
+  controller.endDiscard();
+
+  expect(controller.cycleRecentTabs()).toBe(true);
+  const receipt = deferred<DocumentResponse>();
+  let readRequest: DocumentRequest | undefined;
+  transport.readDocument = request => {
+    readRequest = request;
+    return receipt.promise;
+  };
+  const reload = controller.reload();
+  expect(controller.getRecentTabCandidate()).toBeNull();
+  expect(controller.cycleRecentTabs()).toBe(false);
+  receipt.resolve(result(readRequest!, third));
+  await reload;
+
+  transport.readDocument = request => Promise.resolve(result(request, second));
+  await controller.activate(controller.getSnapshot().entries.find(entry => entry.documentId === second.documentId)!);
+  controller.activateTab(first.documentId);
+  controller.activateTab(third.documentId);
+  await controller.closeActive();
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(fourth.documentId);
+  controller.activateTab(first.documentId);
+  expect(controller.cycleRecentTabs()).toBe(true);
+  expect(controller.getRecentTabCandidate()).toBe(fourth.documentId);
+  const releaseInteraction = controller.setInteractionCheck(() => false);
+  expect(controller.getRecentTabCandidate()).toBeNull();
+  expect(controller.finishRecentTabSwitch()).toBe(false);
+  releaseInteraction();
+  expect(controller.cycleRecentTabs()).toBe(true);
+  controller.dispose();
+  expect(controller.getRecentTabCandidate()).toBeNull();
+});
+
 test("heading fold survives actual controller tab suspension and mode switch without dirtying readonly", async () => {
   const { controller, transport, value } = setup();
   value.text = "# A\nbody\n# B\nlast";

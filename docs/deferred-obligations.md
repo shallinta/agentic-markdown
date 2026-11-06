@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-036b 最近主区标签切换（2026-11-07）
+
+当前主区的 Control+Tab 已验。OBL-053 仍跟踪标签排序及其他消费者的键盘路径，最近使用顺序跨重启恢复由 F-037 承接。见[F-036b 迭代](iterations/F-036b-recent-primary-tab-switch.md)。
+
 ## F-036a 固定主区标签（2026-11-07）
 
 固定与取消固定已通过统一命令和键盘命令面板验证。OBL-053 的排序和其他消费者键盘路径继续跟踪。见[F-036a 迭代](iterations/F-036a-pin-primary-document-tabs.md)。

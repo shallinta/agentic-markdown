@@ -659,6 +659,31 @@ export function createDocumentController(
       void transport.cancelDocument(previous).catch(() => undefined);
   }
   const listeners = new Set<() => void>();
+  const recentTabListeners = new Set<() => void>();
+  let recentTabIds: string[] = [];
+  let recentTabSwitch: { order: readonly string[]; index: number; generation: number } | undefined;
+  const getRecentTabCandidate = () => recentTabSwitch?.order[recentTabSwitch.index] ?? null;
+  const notifyRecentTabCandidate = () => recentTabListeners.forEach(listener => listener());
+  function cancelRecentTabSwitch() {
+    if (!recentTabSwitch) return;
+    recentTabSwitch = undefined;
+    notifyRecentTabCandidate();
+  }
+  const canCycleRecentTabs = () => !!state.snapshot && recentTabIds.length > 1 &&
+    !metadataDisposed && !state.busy && !state.frozen && !editorInputBlocked && canLeaveEditor();
+  function syncRecentTabOrder(previousTabs: DocumentViewState["tabs"], previousId: string | undefined) {
+    if (state.tabs !== previousTabs) {
+      const openIds = new Set(state.tabs.map(tab => tab.documentId));
+      recentTabIds = recentTabIds.filter(id => openIds.has(id));
+    }
+    const activeId = state.snapshot?.documentId;
+    if (activeId && activeId !== previousId)
+      recentTabIds = [activeId, ...recentTabIds.filter(id => id !== activeId)];
+  }
+  function cancelInvalidRecentTabSwitch() {
+    if (recentTabSwitch && (recentTabSwitch.generation !== generation || !canCycleRecentTabs()))
+      cancelRecentTabSwitch();
+  }
   let revealPending: { requestId: string; handle: string } | null = null;
   const request = (): DocumentRequest => ({
     protocolVersion: 1,
@@ -700,10 +725,12 @@ export function createDocumentController(
       }
     }
     state = next;
+    syncRecentTabOrder(previousTabs, previousId);
     if (previousTabs !== next.tabs) {
       prunePinnedTabs(next.tabs);
       observation.sync(next.tabs);
     }
+    cancelInvalidRecentTabSwitch();
     checkContentSearch?.();
     tryContentSearchLocation?.();
     listeners.forEach((listener) => listener());
@@ -1235,6 +1262,35 @@ export function createDocumentController(
   }
   const controller = {
     captureContentSearch,
+    canCycleRecentTabs,
+    getRecentTabCandidate,
+    subscribeRecentTabCandidate(this: void, listener: () => void) {
+      recentTabListeners.add(listener);
+      return () => { recentTabListeners.delete(listener); };
+    },
+    cycleRecentTabs(): boolean {
+      cancelInvalidRecentTabSwitch();
+      if (!canCycleRecentTabs()) return false;
+      if (!recentTabSwitch) recentTabSwitch = { order: recentTabIds, index: 0, generation };
+      const cycle = recentTabSwitch;
+      cycle.index = (cycle.index + 1) % cycle.order.length;
+      notifyRecentTabCandidate();
+      return true;
+    },
+    finishRecentTabSwitch(): boolean {
+      const cycle = recentTabSwitch;
+      if (!cycle) return false;
+      const candidate = cycle.order[cycle.index];
+      recentTabSwitch = undefined;
+      try {
+        if (cycle.generation !== generation || !candidate ||
+            state.snapshot?.documentId === candidate || !canCycleRecentTabs()) return false;
+        return activateTab(candidate) !== undefined;
+      } finally {
+        notifyRecentTabCandidate();
+      }
+    },
+    cancelRecentTabSwitch,
     getVisualTabs,
     isTabPinned: (documentId: string) => pinnedTabs.has(documentId),
     canSetActiveTabPinned(pinned: boolean): boolean {
@@ -1420,8 +1476,10 @@ export function createDocumentController(
       return { next, nextEditors, removedIds, closed: result.documents.map(item => item.handle), trashToken: token };
     },
     swapTrashedDocument: (prepared: { next: DocumentViewState; nextEditors: typeof editors; trashToken: string }) => {
+      const previous = state;
       state = prepared.next; editors = prepared.nextEditors; generation++;
       prunePinnedTabs(state.tabs);
+      syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
     },
     canBeginFolderRemoval: () => !metadataDisposed && !removal && !state.folderRemovalPending && !state.busy && !state.frozen && canLeaveEditor(),
@@ -1463,8 +1521,10 @@ export function createDocumentController(
       return { next, nextEditors, removedIds, closed: result.closed };
     },
     swapPrepared: (prepared: { next: DocumentViewState; nextEditors: typeof editors }) => {
+      const previous = state;
       state = prepared.next;
       prunePinnedTabs(state.tabs);
+      syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       editors = prepared.nextEditors;
       folderRemovalGate = false;
       generation++;
@@ -1922,6 +1982,8 @@ export function createDocumentController(
         revealPending = null;
       }
       metadataDisposed = true;
+      cancelRecentTabSwitch();
+      recentTabListeners.clear();
       pinnedTabs.clear();
       quickFocusTarget = undefined;
       quickFocusListeners.clear();
@@ -2077,6 +2139,7 @@ export function createDocumentController(
     reportDiscardFailure,
     setInteractionCheck: (check: () => boolean) => {
       canLeaveEditor = check;
+      cancelInvalidRecentTabSwitch();
       scheduleFaultRecovery();
       return () => {
         if (canLeaveEditor !== check) return;

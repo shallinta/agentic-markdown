@@ -33,6 +33,7 @@ import { longLineProtection } from "@/client/long-line-protection";
 import { createQuickOpen } from "@/client/quick-open";
 import { rawText } from "@/client/raw-buffer";
 import { createReadingThemeSelection } from "@/client/reading-theme";
+import { routeRecentTabKey } from "@/client/recent-tab-shortcut";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { createTrashDocument, type TrashChoice, type TrashDialog } from "@/client/trash-document";
 import { createFolderWorkspace } from "@/client/workspace";
@@ -64,6 +65,10 @@ const readLocalImage = (request: LocalImageRequest): Promise<unknown> =>
   electrobun.rpc
     ? electrobun.rpc.request.readLocalImage(request, { maxRequestTime: 12000 })
     : Promise.reject(new Error("RPC unavailable"));
+
+const recentTabContextAvailable = () =>
+  !isExternalTextTarget(document.activeElement) &&
+  !document.querySelector('[role="dialog"], [role="alertdialog"]');
 
 export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   const [trashDialog, setTrashDialog] = useState<(TrashDialog & { respond(choice: TrashChoice): void }) | null>(null);
@@ -301,6 +306,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       closeDocument: controller.closeActive,
       pinCurrentTab: () => { controller.setActiveTabPinned(true); },
       unpinCurrentTab: () => { controller.setActiveTabPinned(false); },
+      cycleRecentTabs: () => { controller.cycleRecentTabs(); },
       undoDocument: ({ documentId }) => {
         if (documentId || !isExternalTextTarget(document.activeElement))
           controller.runHistory("undo", documentId);
@@ -388,6 +394,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         !controller.getSnapshot().frozen && !!controller.getSnapshot().snapshot,
       pinCurrentTab: () => controller.canSetActiveTabPinned(true),
       unpinCurrentTab: () => controller.canSetActiveTabPinned(false),
+      cycleRecentTabs: () => controller.canCycleRecentTabs() && recentTabContextAvailable(),
     }
   );
   useEffect(
@@ -420,6 +427,46 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     window.addEventListener("keydown", shortcut, true);
     return () => window.removeEventListener("keydown", shortcut, true);
   }, [executeCommand, isCommandEnabled]);
+  useEffect(() => {
+    // Once canceled, this held chord cannot start a new candidate sequence.
+    let advancedInHold = false;
+    const hasCandidate = () => controller.getRecentTabCandidate() !== null;
+    const actions = {
+      canCycle: () => (!advancedInHold || hasCandidate()) && isCommandEnabled("cycleRecentTabs"),
+      hasCandidate,
+      advance: () => {
+        executeCommand({ type: "cycleRecentTabs", args: {} });
+        advancedInHold ||= hasCandidate();
+      },
+      finish: () => controller.finishRecentTabSwitch(),
+      cancel: () => controller.cancelRecentTabSwitch(),
+    };
+    const down = (event: KeyboardEvent) => routeRecentTabKey(event, "keydown", actions);
+    const up = (event: KeyboardEvent) => {
+      routeRecentTabKey(event, "keyup", actions);
+      if (event.key === "Control" && !event.ctrlKey) advancedInHold = false;
+    };
+    const blur = () => {
+      actions.cancel();
+      advancedInHold = false;
+    };
+    const focus = () => {
+      if (actions.hasCandidate() && !recentTabContextAvailable()) actions.cancel();
+    };
+    window.addEventListener("keydown", down, true);
+    window.addEventListener("keyup", up, true);
+    window.addEventListener("blur", blur);
+    window.addEventListener("compositionstart", actions.cancel, true);
+    document.addEventListener("focusin", focus);
+    return () => {
+      window.removeEventListener("keydown", down, true);
+      window.removeEventListener("keyup", up, true);
+      window.removeEventListener("blur", blur);
+      window.removeEventListener("compositionstart", actions.cancel, true);
+      document.removeEventListener("focusin", focus);
+      actions.cancel();
+    };
+  }, [controller, executeCommand, isCommandEnabled]);
   useEffect(() => {
     const refresh = () => {
       void controller.refreshWriteCapability();
@@ -666,12 +713,71 @@ function SavedReadingWindowAction({ controller, snapshot, buttonClass }: {
   );
 }
 
+function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "controller">) {
+  const subscribe = useCallback((listener: () => void) => controller.subscribeRecentTabCandidate(listener), [controller]);
+  const candidateId = useSyncExternalStore(subscribe, controller.getRecentTabCandidate);
+  const visualTabs = controller.getVisualTabs();
+  const strip = useRef<HTMLElement>(null);
+  const candidateTab = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const scroller = strip.current;
+    const tab = candidateTab.current;
+    if (!candidateId || !scroller || !tab) return;
+    const frame = scroller.getBoundingClientRect();
+    const rect = tab.getBoundingClientRect();
+    if (rect.left < frame.left) scroller.scrollBy(rect.left - frame.left, 0);
+    else if (rect.right > frame.right) scroller.scrollBy(rect.right - frame.right, 0);
+  }, [candidateId]);
+  return (
+    <nav
+      ref={strip}
+      aria-label="已打开的文档"
+      className="flex shrink-0 gap-1 overflow-x-auto"
+    >
+      {visualTabs.map((tab, index) => {
+        const pinned = controller.isTabPinned(tab.documentId);
+        const candidate = candidateId === tab.documentId;
+        const active = state.snapshot?.documentId === tab.documentId;
+        const next = visualTabs[index + 1];
+        const groupEnd = pinned && next && !controller.isTabPinned(next.documentId);
+        const name = `${tab.fileName}${documentCapabilitySuffix(tab.writeCapability)}${controller.isDirty(tab.documentId) ? " ● 未保存" : ""}`;
+        return (
+          <div
+            key={tab.documentId}
+            ref={candidate ? candidateTab : undefined}
+            className={`flex shrink-0 items-center rounded border ${pinned ? "border-primary/60" : ""} ${groupEnd ? "mr-2" : ""} ${active ? "bg-muted" : ""} ${candidate ? "ring-primary ring-2 ring-inset" : ""}`}
+          >
+            <button
+              disabled={state.frozen}
+              aria-current={active ? "page" : undefined}
+              aria-label={pinned || candidate ? `${name}${pinned ? " · 已固定" : ""}${candidate ? " · 切换候选" : ""}` : undefined}
+              title={tab.displayPath ?? tab.fileName}
+              className="max-w-48 truncate px-3 py-2 text-sm"
+              onClick={() => controller.activateTab(tab.documentId)}
+            >
+              {name}
+            </button>
+            <button
+              disabled={state.frozen}
+              aria-label={`关闭 ${tab.fileName}`}
+              title={`关闭 ${tab.fileName}`}
+              className="hover:bg-muted rounded px-2 py-2 text-sm"
+              onClick={() => controller.closeTab(tab.documentId)}
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
 export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
   const previousFocus = useRef<HTMLElement | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
   const snapshot = state.snapshot;
-  const visualTabs = controller.getVisualTabs();
   const pinCommand = snapshot && controller.isTabPinned(snapshot.documentId)
     ? "unpinCurrentTab"
     : "pinCurrentTab";
@@ -692,45 +798,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       className="flex size-full min-w-0 flex-col gap-3 px-6 pt-16 pb-6"
       aria-label="文档工作区"
     >
-      <nav
-        aria-label="已打开的文档"
-        className="flex shrink-0 gap-1 overflow-x-auto"
-      >
-        {visualTabs.map((tab, index) => {
-          const pinned = controller.isTabPinned(tab.documentId);
-          const next = visualTabs[index + 1];
-          const groupEnd = pinned && next && !controller.isTabPinned(next.documentId);
-          const name = `${tab.fileName}${documentCapabilitySuffix(tab.writeCapability)}${controller.isDirty(tab.documentId) ? " ● 未保存" : ""}`;
-          return (
-            <div
-              key={tab.documentId}
-              className={`flex shrink-0 items-center rounded border ${pinned ? "border-primary/60" : ""} ${groupEnd ? "mr-2" : ""} ${snapshot?.documentId === tab.documentId ? "bg-muted" : ""}`}
-            >
-              <button
-                disabled={state.frozen}
-                aria-current={
-                  snapshot?.documentId === tab.documentId ? "page" : undefined
-                }
-                aria-label={pinned ? `${name} · 已固定` : undefined}
-                title={tab.displayPath ?? tab.fileName}
-                className="max-w-48 truncate px-3 py-2 text-sm"
-                onClick={() => controller.activateTab(tab.documentId)}
-              >
-                {name}
-              </button>
-              <button
-                disabled={state.frozen}
-                aria-label={`关闭 ${tab.fileName}`}
-                title={`关闭 ${tab.fileName}`}
-                className="hover:bg-muted rounded px-2 py-2 text-sm"
-                onClick={() => controller.closeTab(tab.documentId)}
-              >
-                ×
-              </button>
-            </div>
-          );
-        })}
-      </nav>
+      <DocumentTabStrip state={state} controller={controller} />
       <div>
         <h1 className="text-xl font-semibold">
           {snapshot?.fileName ??

@@ -13,7 +13,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
 
-const maxCatalogBytes = 4096;
+export const INDEX_REUSE_CATALOG_BYTES = 4096;
 const digest = /^[a-f0-9]{64}$/;
 const indexId = /^[A-Za-z0-9-]{1,32}$/;
 
@@ -139,7 +139,7 @@ export function readIndexReclaimIntentTarget(value: unknown): IndexReclaimIntent
     return { scopeKey, generation, inventoryDigest };
 }
 
-function validPreparedCatalog(value: unknown): value is PreparedReclaimCatalog {
+export function validPreparedCatalog(value: unknown): value is PreparedReclaimCatalog {
   return record(value) && keys(value, "generation,inventoryDigest,profile,scopeKey,stagingDigest,state,version") &&
     value.version === 3 && value.profile === "limited-v1" && value.state === "reclaim-prepared" &&
     typeof value.scopeKey === "string" && digest.test(value.scopeKey) && natural(value.generation) &&
@@ -256,7 +256,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
     ) {
       assertLease();
       const contents = JSON.stringify(value);
-      if (Buffer.byteLength(contents) > maxCatalogBytes)
+      if (Buffer.byteLength(contents) > INDEX_REUSE_CATALOG_BYTES)
         throw Error("Index reuse catalog exceeds limit");
       const tempPath = join(directory, `.catalog-${randomUUID()}.tmp`);
       let created = false;
@@ -334,7 +334,7 @@ export async function acquireIndexReuseSlot(directory: string): Promise<AcquireR
         const catalog = present(catalogPath);
         if (!index && !catalog) return { status: "cold" };
         if (!index || !ownedDirectory(index) || !catalog || !privateFile(catalog) ||
-            catalog.size > BigInt(maxCatalogBytes))
+            catalog.size > BigInt(INDEX_REUSE_CATALOG_BYTES))
           return { status: "invalid" };
         const file = await open(
           catalogPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK

@@ -25,6 +25,29 @@ const wrongGeneration = { ...retirement, generation: 2 };
 const failed = <E extends string>(error: E) => ({ ok: false as const, error, accepted: false });
 const current = () => true;
 
+function footprintOf(catalog: { size: bigint }, files: readonly { size: bigint }[]) {
+  const indexBytes = files.reduce((sum, file) => sum + file.size, 0n);
+  return {
+    ok: true as const, present: true as const, files: files.length + 1,
+    catalogBytes: Number(catalog.size), indexBytes: Number(indexBytes),
+    totalBytes: Number(catalog.size + indexBytes),
+  };
+}
+
+async function preparedDigest(directory: string, target: typeof retirement & { inventoryDigest: string }) {
+  const stat = await lstat(directory, { bigint: true });
+  const childStamps = await Promise.all((await readdir(directory)).sort().map(async name => {
+    const s = await lstat(join(directory, name), { bigint: true });
+    return [name, [s.birthtimeNs, s.dev, s.ino, s.mode, s.uid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String)];
+  }));
+  return sha(JSON.stringify([
+    3, "agentic-markdown-index-reclaim-intent", "limited-v1", target.scopeKey, target.generation,
+    target.inventoryDigest,
+    [stat.dev, stat.ino, stat.birthtimeNs, stat.uid, stat.mode].map(String),
+    childStamps,
+  ]));
+}
+
 async function runFixture(
   scratch: string,
   childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen" | "stage" | "stage-reopen",
@@ -648,17 +671,7 @@ test.skipIf(mode !== "intent")("preparing a reclaim intent seals the original pl
     await rmdir(pending);
     await f.cleanSlot();
 
-    const directoryStat = await lstat(f.index, { bigint: true });
-    const childStamps = await Promise.all((await readdir(f.index)).sort().map(async name => {
-      const s = await lstat(join(f.index, name), { bigint: true });
-      return [name, [s.birthtimeNs, s.dev, s.ino, s.mode, s.uid, s.nlink, s.size, s.mtimeNs, s.ctimeNs].map(String)];
-    }));
-    const stagingDigest = sha(JSON.stringify([
-      3, "agentic-markdown-index-reclaim-intent", "limited-v1", target.scopeKey, target.generation,
-      target.inventoryDigest,
-      [directoryStat.dev, directoryStat.ino, directoryStat.birthtimeNs, directoryStat.uid, directoryStat.mode].map(String),
-      childStamps,
-    ]));
+    const stagingDigest = await preparedDigest(f.index, target);
     expect(await prepared(target)).toEqual({ ok: true, alreadyPrepared: false });
     expect(JSON.parse(await readFile(f.catalog, "utf8"))).toEqual({
       version: 3, profile: "limited-v1", state: "reclaim-prepared", ...target, stagingDigest,
@@ -778,6 +791,9 @@ test.skipIf(mode !== "stage")("a prepared index moves exclusively and a sync fau
     const original = await f.fingerprint(f.index);
     const files = await f.nativeFiles();
     const workers = f.workers();
+    const originalFootprint = footprintOf(marker, files);
+    const pendingFootprint = { ...originalFootprint, placement: "pending" as const };
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(originalFootprint);
     expect(await stageRetiredIndexReclaim(invalid, current)).toEqual(failed("MISMATCH"));
     expect(await stageRetiredIndexReclaim({ ...target, ...wrongScope }, current)).toEqual(failed("SCHEMA"));
     expect(await stageRetiredIndexReclaim({ ...target, ...wrongGeneration }, current)).toEqual(failed("MISMATCH"));
@@ -813,6 +829,35 @@ test.skipIf(mode !== "stage")("a prepared index moves exclusively and a sync fau
     expect(await f.nativeFiles(pending)).toEqual(files);
     expect(await f.fingerprint(f.catalog)).toEqual(marker);
     expect(f.workers()).toBe(workers);
+    let inspectionChecks = 0;
+    let sawLease = false;
+    expect(await inspectAppIndexCacheFootprint(() => {
+      inspectionChecks++;
+      sawLease ||= existsSync(f.lease);
+      return true;
+    })).toEqual(pendingFootprint);
+    expect(inspectionChecks).toBeGreaterThan(1);
+    expect(sawLease).toBe(false);
+    let checked = 0;
+    expect(await inspectAppIndexCacheFootprint(() => ++checked < inspectionChecks)).toEqual(failed("CANCELLED"));
+    expect(checked).toBe(inspectionChecks);
+    await absent(f.lease);
+
+    await mkdir(f.lease, { mode: 0o700 });
+    await writeFile(occupied, "keep during stats", { mode: 0o600 });
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("BUSY"));
+    expect(await readFile(occupied, "utf8")).toBe("keep during stats");
+    await rm(occupied);
+    await rmdir(f.lease);
+    checked = 0;
+    expect(await inspectAppIndexCacheFootprint(() => {
+      if (++checked === inspectionChecks) mkdirSync(f.lease, { mode: 0o700 });
+      return true;
+    })).toEqual(failed("BUSY"));
+    expect(await readdir(f.lease)).toEqual([]);
+    await rmdir(f.lease);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(pendingFootprint);
+    expect(await f.fingerprint(f.catalog)).toEqual(marker);
     const retry = join(f.scratch, "retry");
     try {
       const outdir = join(retry, "bun");
@@ -831,13 +876,20 @@ test.skipIf(mode !== "stage")("a prepared index moves exclusively and a sync fau
     const other = join(f.index, "unrelated");
     await writeFile(other, "new original name", { mode: 0o600 });
     expect(await stageRetiredIndexReclaim(target, current)).toEqual(failed("SCHEMA"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
     expect(await readFile(other, "utf8")).toBe("new original name");
     expect(await f.fingerprint(pending)).toEqual(moved);
     await rm(other);
     await rmdir(f.index);
     await rename(pending, parked);
     expect(await stageRetiredIndexReclaim(target, current)).toEqual(failed("SCHEMA"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
     expect(await f.nativeFiles(parked)).toEqual(files);
+    await symlink("fixture-parked", pending);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
+    expect(await readlink(pending)).toBe("fixture-parked");
+    expect(await f.nativeFiles(parked)).toEqual(files);
+    await rm(pending);
     await rename(parked, pending);
     expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: true });
     const member = files[0];
@@ -846,6 +898,7 @@ test.skipIf(mode !== "stage")("a prepared index moves exclusively and a sync fau
     const stat = await lstat(changed);
     await utimes(changed, stat.atime, new Date(stat.mtimeMs + 10_000));
     expect(await stageRetiredIndexReclaim(target, current)).toEqual(failed("MISMATCH"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
     expect(await f.fingerprint(f.catalog)).toEqual(marker);
     await absent(f.lease);
     const parkedMarker = join(f.scratch, "parked-marker");
@@ -854,6 +907,7 @@ test.skipIf(mode !== "stage")("a prepared index moves exclusively and a sync fau
     try {
       expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
       expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+      expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
       expect(f.workers()).toBe(workers);
       await absent(f.index);
       await absent(f.catalog);
@@ -904,6 +958,40 @@ test.skipIf(mode !== "stage")("a prepared index moves exclusively and a sync fau
     expect(await f.fingerprint(pending)).toEqual(recovered);
     expect(await f.fingerprint(f.catalog)).toEqual(secondMarker);
     expect(f.workers()).toBe(secondWorkers);
+
+    const goodCatalog = await readFile(f.catalog);
+    await writeFile(f.catalog, "{bad staged record");
+    const malformed = await f.fingerprint(f.catalog);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
+    expect(await f.fingerprint(f.catalog)).toEqual(malformed);
+    await writeFile(f.catalog, goodCatalog);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual({
+      ...footprintOf(await f.fingerprint(f.catalog), secondFiles), placement: "pending",
+    });
+    const inspectMember = secondFiles[0];
+    if (!inspectMember) throw Error("Pending statistics fixture missing files");
+    const inspectPath = join(pending, inspectMember.name);
+    const inspectBefore = await lstat(inspectPath);
+    checked = 0;
+    expect(await inspectAppIndexCacheFootprint(() => {
+      if (++checked === inspectionChecks)
+        utimesSync(inspectPath, inspectBefore.atime, new Date(inspectBefore.mtimeMs + 10_000));
+      return true;
+    })).toEqual(failed("UNAVAILABLE"));
+    expect((await lstat(inspectPath)).mtimeMs).toBeGreaterThan(inspectBefore.mtimeMs);
+    const foreign = join(pending, "foreign.txt");
+    await writeFile(foreign, "preserve foreign", { mode: 0o600 });
+    const markerBody: unknown = JSON.parse(goodCatalog.toString());
+    if (!record(markerBody)) throw Error("Prepared fixture record missing");
+    await writeFile(f.catalog, JSON.stringify({ ...markerBody, stagingDigest: await preparedDigest(pending, second) }));
+    const foreignFiles = await f.nativeFiles(pending);
+    const foreignCatalog = await f.fingerprint(f.catalog);
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
+    expect(await f.fingerprint(f.catalog)).toEqual(foreignCatalog);
+    expect(await f.nativeFiles(pending)).toEqual(foreignFiles);
+    expect(await readFile(foreign, "utf8")).toBe("preserve foreign");
+    await absent(f.lease);
+    expect(f.workers()).toBe(secondWorkers);
   } finally {
     f.stopRecording();
     await rm(f.home, { recursive: true, force: true });
@@ -928,7 +1016,9 @@ test.skipIf(mode !== "stage-reopen")("fresh process validates a staged directory
     expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: true });
     expect(await prepareRetiredIndexReclaim(target, current)).toEqual(failed("SCHEMA"));
     expect(await inspectRetiredIndexReclaim(retirement, current)).toEqual(failed("SCHEMA"));
-    expect(await inspectAppIndexCacheFootprint(current)).toEqual(failed("UNAVAILABLE"));
+    expect(await inspectAppIndexCacheFootprint(current)).toEqual({
+      ...footprintOf(catalog, files), placement: "pending",
+    });
     expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
     expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
     expect(await retireAppIndexCache(retirement, current, true)).toEqual(failed("SCHEMA"));

@@ -6,12 +6,14 @@ import { getAppHomePath } from "@agentic-markdown/shared/server";
 
 import { captureIndexFootprint } from "./cache-footprint";
 import { natural, record } from "./protocol";
+import { readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
   stageRetiredIndexReuse, type IndexReuseInput,
 } from "./reuse";
 import {
-  readIndexReclaimIntentTarget, readIndexRetirementTarget, type IndexReclaimIntentTarget, type IndexRetirementTarget,
+  IndexReuseCleanupError, reclaimDirectoryName, readIndexReclaimIntentTarget, readIndexRetirementTarget,
+  type IndexReclaimIntentTarget, type IndexRetirementTarget,
 } from "./reuse-catalog";
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
@@ -20,7 +22,7 @@ const fail = <Error extends BoundaryError | "BUSY" | "MISSING" | "INPUT">(error:
   ({ ok: false as const, error, accepted: false });
 const cacheName = "search-index";
 const profileName = "limited-v1";
-const absent = { ok: true as const, present: false, files: 0, catalogBytes: 0, indexBytes: 0, totalBytes: 0 };
+const absent = { ok: true as const, present: false as const, files: 0, catalogBytes: 0, indexBytes: 0, totalBytes: 0 };
 
 function appCacheBoundary(current: () => boolean) {
   let stopped: BoundaryError | undefined;
@@ -207,9 +209,11 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
   const cache = join(home, cacheName);
   const profile = join(cache, profileName);
   const lease = join(profile, ".lease");
+  const pendingPath = join(profile, reclaimDirectoryName("pending"));
   const checkLease = () => {
     if (present(lease)) throw new CacheBusy();
   };
+  let pending = false;
   try {
     check();
     const cacheStat = present(cache);
@@ -218,17 +222,41 @@ export async function inspectAppIndexCacheFootprint(current: () => boolean) {
     const profileStat = present(profile);
     if (!profileStat) return absentAt(profile);
     pin(profile, true, profileStat);
-    const footprint = await captureIndexFootprint(profile, profileStat, owner, check, checkLease);
+    checkLease();
+    pending = present(pendingPath) !== undefined;
+    const footprint = await captureIndexFootprint(
+      profile, profileStat, owner, check, checkLease, undefined, pending ? "pending" : "original"
+    );
     footprint.recheck();
     if (footprint.status === "empty") return { ...absent };
+    if (pending) {
+      const catalog = await readPreparedReclaimCatalog(profile, footprint.catalogStat, footprint.checkIndex);
+      footprint.recheck();
+      if (!catalog) return fail("UNAVAILABLE");
+      if (footprint.stagingDigest(catalog) !== catalog.stagingDigest) return fail("UNAVAILABLE");
+      const valid = await validReclaimLayout(
+        pendingPath, new Map(footprint.nativeFiles()), catalog.generation, footprint.checkIndex
+      );
+      footprint.recheck();
+      if (!valid) return fail("UNAVAILABLE");
+    }
     const { files, catalogBytes, indexBytes, totalBytes } = footprint;
     if (totalBytes > BigInt(Number.MAX_SAFE_INTEGER)) return fail("UNAVAILABLE");
     return {
-      ok: true as const, present: true, files,
+      ok: true as const, present: true as const, files,
       catalogBytes: Number(catalogBytes), indexBytes: Number(indexBytes), totalBytes: Number(totalBytes),
+      ...(pending ? { placement: "pending" as const } : {}),
     };
   } catch (error) {
     if (error instanceof CacheBusy) return fail("BUSY");
+    // A failed async read may have skipped its next lease check.
+    if (pending && !(error instanceof IndexReuseCleanupError) && cacheCurrent()) {
+      try {
+        checkLease();
+      } catch (leaseError) {
+        if (leaseError instanceof CacheBusy) return fail("BUSY");
+      }
+    }
     callerCurrent();
     return boundaryFailure();
   }

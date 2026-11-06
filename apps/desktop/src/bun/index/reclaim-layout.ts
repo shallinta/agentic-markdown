@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { sameIndexInventoryMetadata } from "./cache-footprint";
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
-import { IndexReuseCleanupError } from "./reuse-catalog";
+import { INDEX_REUSE_CATALOG_BYTES, IndexReuseCleanupError, validPreparedCatalog } from "./reuse-catalog";
 
 const bridgeConfig = Buffer.from("bridge=1\nschema=1\ntantivy=0.27.0\nprofile=literal-gram-v1\n");
 const maxControlBytes = 32 * 1024;
@@ -55,6 +55,12 @@ function parseControl(bytes: Buffer | undefined): unknown {
   } catch {
     return;
   }
+}
+
+export async function readPreparedReclaimCatalog(profile: string, pinned: BigIntStats, check: () => void) {
+  const bytes = await readControl(join(profile, "catalog.json"), pinned, INDEX_REUSE_CATALOG_BYTES, check);
+  const catalog = parseControl(bytes);
+  return validPreparedCatalog(catalog) ? catalog : undefined;
 }
 
 function validSchema(value: unknown) {

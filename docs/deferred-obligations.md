@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ax 待回收索引占用统计（2026-11-06）
+
+alpha.234 已验证待回收逻辑占用及错误边界。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接删除名册、遗留租约、自动配额、实际回收及最终离线。见[F-064ax 迭代](iterations/F-064ax-staged-index-cache-footprint.md)。
+
 ## F-064aw 退役索引移入待回收位置（2026-11-06）
 
 alpha.233 已验证内部排他移动及跨进程位置复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接暂存占用、删除名册、遗留租约、撤权接入及最终离线。见[F-064aw 迭代](iterations/F-064aw-retired-index-stage.md)。

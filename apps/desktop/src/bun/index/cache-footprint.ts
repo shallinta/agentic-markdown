@@ -90,19 +90,20 @@ export async function captureIndexFootprint(
         (privateMode && (stat.mode & 0o077n) !== 0n) || (expected && !sameIndexInventoryMetadata(expected, stat)))
       throw Error("Index cache file unavailable");
     inventory.push({ path, stat });
-    return stat.size;
+    return stat;
   };
 
   const memberLimit = expected ? 3 : 2;
   const indexName = reclaimDirectoryName(placement);
   const members = await readMembers(profile, memberLimit, checkInspection);
   checkInspection();
-  if (!members.size && !expected) return { status: "empty" as const, recheck };
+  if (!members.size && !expected && placement === "original") return { status: "empty" as const, recheck };
   if (members.size !== memberLimit || !members.has("catalog.json") || !members.has(indexName) ||
       (expected && !members.has(".lease")))
     throw Error("Index cache layout unavailable");
 
-  const catalogBytes = readFileMetadata(join(profile, "catalog.json"), expected?.catalog, true);
+  const catalogStat = readFileMetadata(join(profile, "catalog.json"), expected?.catalog, true);
+  const catalogBytes = catalogStat.size;
   if (catalogBytes === 0n) throw Error("Index cache catalog unavailable");
   const index = join(profile, indexName);
   const indexStat = lstatSync(index, { bigint: true });
@@ -118,7 +119,7 @@ export async function captureIndexFootprint(
   };
   let indexBytes = 0n;
   const names = await readMembers(index, maxIndexFiles, checkIndex, (name) => {
-    indexBytes += readFileMetadata(join(index, name));
+    indexBytes += readFileMetadata(join(index, name)).size;
   });
   const nativeFiles = () => inventory.slice(nativeStart + 1).map(({ path, stat }) => [basename(path), stat] as const);
   const fileStamps = () => nativeFiles()
@@ -126,7 +127,7 @@ export async function captureIndexFootprint(
     .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   return {
     status: "existing" as const, recheck, files: names.size + 1,
-    catalogBytes, indexBytes, totalBytes: catalogBytes + indexBytes,
+    catalogStat, catalogBytes, indexBytes, totalBytes: catalogBytes + indexBytes,
     recheckAfterStaging: () => recheckInventory(1),
     recheckNative: () => {
       checkLease();

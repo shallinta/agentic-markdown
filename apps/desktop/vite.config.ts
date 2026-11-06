@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { READER_CONTENT_SECURITY_POLICY } from "./src/security/reader-policy";
 import { shellContentSecurityPolicy } from "./src/security/shell-policy";
 import { electrobunViteAliases } from "./.hutch/devkit/api/config/electrobun-vite";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const readerEntry = path.resolve(__dirname, "src/mainview/reader.html");
 
 export default defineConfig({
   worker: {
@@ -29,7 +31,7 @@ export default defineConfig({
   plugins: [
     react(),
     {
-      name: "shell-content-security-policy",
+      name: "desktop-content-security-policy",
       transformIndexHtml: {
         order: "post",
         handler(html, context) {
@@ -41,10 +43,9 @@ export default defineConfig({
             (match) =>
               `'sha256-${createHash("sha256").update(match[1]).digest("base64")}'`
           );
-          const policy = shellContentSecurityPolicy(
-            hashes,
-            Boolean(context.server)
-          );
+          const policy = path.resolve(context.filename) === readerEntry
+            ? READER_CONTENT_SECURITY_POLICY
+            : shellContentSecurityPolicy(hashes, Boolean(context.server));
           return html.replace(
             '<meta charset="UTF-8" />',
             `<meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="${policy}" />`
@@ -70,6 +71,10 @@ export default defineConfig({
     // intentionally split chunks.
     chunkSizeWarningLimit: 700,
     rollupOptions: {
+      input: {
+        index: path.resolve(__dirname, "src/mainview/index.html"),
+        reader: readerEntry,
+      },
       output: {
         // Split the stable, heavy vendor libraries out of the app chunk. They
         // change far less often than app code, so isolating them means an

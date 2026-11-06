@@ -36,6 +36,7 @@ export default {
     // Vite builds to dist/; imported assets are copied with their hashes.
     copy: {
       "dist/index.html": "views/mainview/index.html",
+      "dist/reader.html": "views/mainview/reader.html",
       "dist/assets": "views/mainview/assets",
       "dist-native": "native",
     },

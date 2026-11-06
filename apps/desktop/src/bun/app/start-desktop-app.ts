@@ -1,10 +1,14 @@
 import { getSettingsDir } from "@agentic-markdown/shared/server";
 import Electrobun, {
-  type BrowserWindow,
+  BrowserWindow,
   type ElectrobunEvent,
   Utils,
 } from "electrobun/bun";
 
+import {
+  PACKAGED_READER_URL,
+  readerNavigationRules,
+} from "../../security/reader-policy";
 import type { Command } from "../../shared/commands";
 import { isReloadCommitResponse } from "../../shared/discard";
 import { MRU_EXIT_MS } from "../../shared/document-mru";
@@ -27,6 +31,7 @@ import { createHiddenPreferences } from "../workspace/preferences";
 import { createDiscardCoordinator } from "./discard-coordinator";
 import { createLifecycleGuard } from "./lifecycle-guard";
 import { setLocaleInMenu } from "./menu";
+import { createReaderLab } from "./reader-lab";
 import { createMainWindow, type ManagedMainWindow } from "./window";
 
 export interface DesktopAppRuntime {
@@ -37,6 +42,19 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   let mainWindow: ManagedMainWindow | null = null;
   let browserWindow: BrowserWindow | null = null;
   let rpc: MainWindowRPC | null = null;
+  const readerLab = process.env.AGENTIC_MARKDOWN_READER_LAB === "1"
+    ? createReaderLab(() => new BrowserWindow({
+        title: "独立阅读窗口实验",
+        url: PACKAGED_READER_URL,
+        renderer: "native",
+        sandbox: true,
+        navigationRules: readerNavigationRules(),
+        titleBarStyle: "default",
+        hidden: true,
+        activate: false,
+        frame: { width: 680, height: 720 },
+      }))
+    : undefined;
   const nativeFiles = createNativeFileCapabilities();
   const recent = createRecentFiles(getSettingsDir(), (reason) =>
     rpc?.send.recentFilesFailed({ reason })
@@ -86,6 +104,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   );
   const guard = createDiscardCoordinator({
     prepare: (request) => {
+      if (request.reason === "quit" && browserWindow)
+        readerLab?.activateMainForDiscard(browserWindow);
       mruDeadline = performance.now() + MRU_EXIT_MS;
       return getRpc().request.prepareDiscard({...request,mruBudgetMs:Math.max(0,mruDeadline-performance.now())});
     },
@@ -150,6 +170,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const runtime: DesktopAppRuntime = {
     stop() {
       stopPromise ??= stopDesktopApp([
+        ["reader lab", () => readerLab?.dispose()],
         ["content search", async () => {
           contentSearch?.setReady(false);
           await contentSearch?.drain();
@@ -209,13 +230,17 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     });
     mainWindow = await createMainWindow({
       rpc,
-      executeCommand,
+      executeCommand: (command, window) => {
+        if (!readerLab?.interceptMenu(command)) executeCommand(command, window);
+      },
       onWindowCreated: (window) => {
         browserWindow = window;
+        readerLab?.bindMain(window);
         mru.bindWindow();
         window.webview.on("dom-ready",()=>{
           mru.domReady();
           contentSearch?.setReady(true);
+          readerLab?.openAfterMainReady(window);
         });
         window.on("will-close", (event) =>
           lifecycle.beforeClose(

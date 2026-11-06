@@ -2,6 +2,11 @@ import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 
 import {
+  PACKAGED_READER_URL,
+  READER_CONTENT_SECURITY_POLICY,
+  readerNavigationRules,
+} from "./reader-policy";
+import {
   DEV_VIEW_URL,
   PACKAGED_VIEW_URL,
   SHELL_PRELOAD,
@@ -44,6 +49,15 @@ test("production CSP allows hashed bootstrap and loopback bridge only", () => {
   expect(shellContentSecurityPolicy([], true)).toContain(
     "http://localhost:5173"
   );
+});
+
+test("the reader allows only its own navigation and no bridge or asset requests", () => {
+  expect(JSON.parse(readerNavigationRules())).toEqual(["^*", PACKAGED_READER_URL]);
+  expect(shellNavigationRules(PACKAGED_READER_URL)).not.toContain(PACKAGED_READER_URL);
+  expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("worker-src blob:");
+  expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("connect-src 'none'");
+  expect(READER_CONTENT_SECURITY_POLICY.split("; ")).toContain("img-src 'none'");
+  expect(READER_CONTENT_SECURITY_POLICY).not.toMatch(/unsafe|(?:^|\s)(?:https?|wss?):/);
 });
 
 test("shell capture prevents link/download clicks and form submission", () => {

@@ -3,6 +3,7 @@ import { constants, watch, type FSWatcher } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
+import { CONTENT_SEARCH_LIMITS } from "../../shared/content-search";
 import { validDuplicateVersion, type DuplicateSource } from "../../shared/create-markdown";
 import { validObservationRequest, type ObservationBinding, type ObservationEvent } from "../../shared/document-observation";
 import {
@@ -93,6 +94,7 @@ interface ContentSearchBinding {
   revision: number;
   hash: string;
   verify(check: () => void): Promise<void>;
+  readStandalone?(maxBytes: number, check: () => void): Promise<Buffer>;
 }
 export interface TrustedDocumentService extends DocumentService {
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
@@ -767,18 +769,53 @@ export function createDocumentService({
               check();
             },
           };
+          if (grant.explicitStandalone === true && !scope) {
+            const directories = grant.directories;
+            binding.readStandalone = async (maxBytes, callerCheck) => {
+              if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.bytes)
+                throw new DocumentFailure("INVALID_REQUEST");
+              const check = () => {
+                try {
+                  callerCheck();
+                } catch {
+                  throw new DocumentFailure("CANCELLED");
+                }
+                if (!current() || grant.explicitStandalone !== true || grant.directories !== directories)
+                  throw new DocumentFailure("INVALID_HANDLE");
+                if (!admissionCurrent()) throw new DocumentFailure("CANCELLED");
+                if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
+              };
+              try {
+                check();
+                const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+                  .catch(() => { throw new DocumentFailure("FILE_CHANGED"); });
+                let bytes: Buffer;
+                try {
+                  bytes = await stableBytes({ ...grant, file }, check, maxBytes);
+                  check();
+                } finally {
+                  await file.close();
+                }
+                check();
+                return bytes;
+              } catch (error) {
+                throw new DocumentFailure(codeOf(error));
+              }
+            };
+          }
         }
         return { binding, current };
       });
+      const admissionCurrent = (): boolean =>
+        searchIdle() &&
+        authorization === searchAdmissionGeneration &&
+        barrier === selectBarrierGeneration &&
+        save === saveStartGeneration &&
+        grantCount === grants.size &&
+        captured.every((binding) => binding.current());
       return {
         bindings: captured.map(({ binding }) => binding),
-        current: () =>
-          searchIdle() &&
-          authorization === searchAdmissionGeneration &&
-          barrier === selectBarrierGeneration &&
-          save === saveStartGeneration &&
-          grantCount === grants.size &&
-          captured.every((binding) => binding.current()),
+        current: admissionCurrent,
       };
     },
     setTrashGuard(guard) { trashGuard = guard; },

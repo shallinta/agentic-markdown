@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064s 独立文件授权快照（2026-11-06）
+
+alpha.205 已验证原授权的有界只读快照。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。混合查询、普通窗口入口和定位由后续切片承接。见[F-064s 迭代](iterations/F-064s-retained-standalone-search-snapshot.md)。
+
 ## F-064r 有界直接匹配（2026-11-06）
 
 alpha.204 已验证普通窗口直接匹配和原生同义性。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。原生持久增量路线、顶层独立文件和最终离线继续承接。见[F-064r 迭代](iterations/F-064r-direct-bounded-window-search.md)。

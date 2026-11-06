@@ -118,7 +118,13 @@ interface Owner extends DocumentScope {
 export type { ContentSearchFileProgress } from "../../shared/content-search";
 type ContentSearchFileObserver = (update: ContentSearchFileProgress) => void;
 
+type IndexScopeError = "CANCELLED" | "BUSY" | "STALE" | "NOT_READY" | "UNAVAILABLE" | "LIMIT";
+type IndexScopeCapture =
+  | { ok: false; error: IndexScopeError }
+  | { ok: true; scopeKey: string; current: () => boolean; verify: () => Promise<boolean> };
+
 export interface TrustedWorkspaceService extends WorkspaceService {
+  captureIndexScope(handle: string, generation: number, signal?: AbortSignal): Promise<IndexScopeCapture>;
   searchSnapshot(
     root: string,
     generation: number,
@@ -1501,6 +1507,51 @@ export function createWorkspaceService({
         await new Promise<void>(resolve=>setTimeout(resolve,0));
       }
       const current=()=>{check();for(const validate of validations)validate();};current();return {items,incomplete:incomplete||roots.some(root=>root.meta.status!=="complete"),current};
+    },
+    async captureIndexScope(handle, generation, signal) {
+      if (signal?.aborted) return { ok: false, error: "CANCELLED" };
+      if (indexTask) return { ok: false, error: "BUSY" };
+      const captured = captureIndexRoot(handle, generation, signal);
+      if (!captured.ok) return captured;
+      const { authorization } = captured.root;
+      const { directories } = authorization;
+      const directory = directories[directories.length - 1];
+      if (directory?.path !== authorization.path) return { ok: false, error: "UNAVAILABLE" };
+
+      let invalid: IndexScopeError | undefined;
+      const current = () => {
+        if (!invalid && !captured.current())
+          invalid = signal?.aborted ? "CANCELLED" : "STALE";
+        return invalid === undefined;
+      };
+      const verify = async () => {
+        if (!current()) return false;
+        try {
+          await verifyRoot(authorization, () => {
+            if (!current()) throw new DocumentPathError("FILE_CHANGED");
+          });
+          return current();
+        } catch (error) {
+          const changed = error instanceof DocumentPathError ||
+            (record(error) && (error.code === "ENOENT" || error.code === "ENOTDIR"));
+          invalid ??= signal?.aborted ? "CANCELLED" : changed ? "STALE" : "UNAVAILABLE";
+          return false;
+        }
+      };
+      const task = verify();
+      indexTask = task;
+      try {
+        if (!await task || !current())
+          return { ok: false, error: signal?.aborted ? "CANCELLED" : invalid ?? "UNAVAILABLE" };
+        // The key groups snapshots; callers still need live root and file proofs.
+        const scopeKey = createHash("sha256").update(JSON.stringify([
+          1, "agentic-markdown-index-scope", "limited-v1",
+          authorization.path, directory.fingerprint, captured.showHidden,
+        ])).digest("hex");
+        return { ok: true, scopeKey, current, verify };
+      } finally {
+        indexTask = undefined;
+      }
     },
     async searchSnapshot(handle, generation, query, signal) {
       if (signal?.aborted) return { ok: false, error: "CANCELLED", accepted: false };

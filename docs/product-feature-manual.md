@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ae 的 alpha.218 已验证单个授权目录的索引范围身份。同一目录重扫可沿用范围键，旧扫描凭据会失效。普通窗口暂无新增入口。见[F-064ae 迭代](iterations/F-064ae-single-root-index-scope.md)。
+
 F-064ad 的 alpha.217 已验证私有索引槽的只读占用统计。统计按逻辑字节计，目录变化、租约或异常布局会阻止发布计数。普通窗口无新增入口。见[F-064ad 迭代](iterations/F-064ad-private-index-cache-footprint.md)。
 
 F-064ac 的 alpha.216 在隔离 App 数据目录验证私有索引槽。合成快照热重开保持代数并跳过写入。普通窗口继续使用直接搜索。见[F-064ac 迭代](iterations/F-064ac-private-app-index-cache-slot.md)。

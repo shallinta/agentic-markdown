@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ae 单根索引范围身份（2026-11-06）
+
+alpha.218 已验证单根范围键与当次授权复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。正文快照、撤权后的缓存处置、配额及正式接入和最终离线继续承接。见[F-064ae 迭代](iterations/F-064ae-single-root-index-scope.md)。
+
 ## F-064ad 私有索引槽占用统计（2026-11-06）
 
 alpha.217 已验证有界逻辑字节统计。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。容量配额、淘汰、授权撤销、正式接入及最终离线继续承接。见[F-064ad 迭代](iterations/F-064ad-private-index-cache-footprint.md)。

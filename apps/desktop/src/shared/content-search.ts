@@ -33,6 +33,10 @@ export interface ContentSearchRootSetInput extends Omit<ContentSearchInput, "roo
   roots: readonly ContentSearchScopeRoot[];
 }
 
+export interface ContentSearchWorkspaceInput extends ContentSearchRootSetInput {
+  standaloneHandles: readonly string[];
+}
+
 export interface ContentSearchDocumentBinding {
   handle: string;
   documentId: string;
@@ -48,14 +52,20 @@ export interface ContentSearchPrepareInput {
   binding?: ContentSearchDocumentBinding;
 }
 
-export type ContentSearchPrepared =
+export interface ContentSearchRetainedPrepareInput extends Omit<ContentSearchPrepareInput, "root" | "generation"> {
+  roots: readonly ContentSearchScopeRoot[];
+}
+
+type SearchPreparation<Kind extends "open" | "retained"> =
   | {
       ok: true;
       target:
-        | { kind: "open"; snapshot: DocumentSnapshot }
+        | { kind: Kind; snapshot: DocumentSnapshot }
         | ({ kind: "reuse" } & ContentSearchDocumentBinding);
     }
   | { ok: false; error: ContentSearchError };
+export type ContentSearchPrepared = SearchPreparation<"open">;
+export type ContentSearchRetainedPrepared = SearchPreparation<"retained">;
 
 export interface SearchCoverage {
   entry: string;
@@ -99,13 +109,18 @@ export type ContentSearchRequest = Envelope &
   (
     | (ContentSearchInput & { op: "query" })
     | (ContentSearchRootSetInput & { op: "query-roots" })
+    | (ContentSearchWorkspaceInput & { op: "query-workspace" })
     | { op: "cancel"; targetRequestId: string }
   );
-export type ContentSearchPrepareRequest = Envelope & ContentSearchPrepareInput;
+export type ContentSearchRetainedPrepareRequest = Envelope &
+  ContentSearchRetainedPrepareInput & { op: "prepare-retained" };
+export type ContentSearchPrepareRequest =
+  | (Envelope & ContentSearchPrepareInput)
+  | ContentSearchRetainedPrepareRequest;
 export type ContentSearchPrepareResponse = {
   protocolVersion: 1;
   requestId: string | null;
-} & ContentSearchPrepared;
+} & (ContentSearchPrepared | ContentSearchRetainedPrepared);
 export type ContentSearchResponse =
   | {
       protocolVersion: 1;
@@ -128,6 +143,14 @@ export type ContentSearchResponse =
       roots: readonly ContentSearchScopeRoot[];
       coverage: SearchCoverage[];
       mappings: SearchMapping[];
+    })
+  | (Envelope & {
+      ok: true;
+      op: "query-workspace";
+      roots: readonly ContentSearchScopeRoot[];
+      standaloneHandles: readonly string[];
+      coverage: SearchCoverage[];
+      mappings: SearchMapping[];
     });
 
 function exact(value: Record<string, unknown>, keys: readonly string[]) {
@@ -144,11 +167,12 @@ function digest(value: unknown): value is string {
 }
 
 export function validContentSearchScopeRoots(
-  value: unknown
+  value: unknown,
+  allowEmpty = false
 ): value is readonly ContentSearchScopeRoot[] {
   if (
     !Array.isArray(value) ||
-    !value.length ||
+    (!allowEmpty && !value.length) ||
     value.length > CONTENT_SEARCH_LIMITS.roots ||
     Object.keys(value).length !== value.length
   )
@@ -168,6 +192,17 @@ export function validContentSearchScopeRoots(
     handles.add(root.handle);
   }
   return true;
+}
+
+function validHandles(value: unknown, own = false): value is readonly string[] {
+  if (!Array.isArray(value) || value.length > CONTENT_SEARCH_LIMITS.documents)
+    return false;
+  if (own) {
+    if (Object.keys(value).length !== value.length) return false;
+    for (let index = 0; index < value.length; index++)
+      if (!Object.prototype.hasOwnProperty.call(value, index)) return false;
+  }
+  return Array.from(value).every(perfUuid) && new Set(value).size === value.length;
 }
 
 export function validContentSearchDocumentBinding(value: unknown): value is ContentSearchDocumentBinding {
@@ -190,23 +225,25 @@ export function validContentSearchPrepareRequest(
     !perfUuid(value.requestId)
   )
     return false;
+  const retained = "op" in value;
+  if (retained && value.op !== "prepare-retained") return false;
   const keys = [
     "protocolVersion",
     "requestId",
-    "root",
-    "generation",
+    ...(retained ? ["op", "roots"] : ["root", "generation"]),
     "entry",
     "expectedHash",
   ];
   return (
-    perfUuid(value.root) &&
-    natural(value.generation) &&
+    (retained ? validContentSearchScopeRoots(value.roots, true)
+      : perfUuid(value.root) && natural(value.generation)) &&
     perfUuid(value.entry) &&
     digest(value.expectedHash) &&
-    (exact(value, keys) ||
+    ((exact(value, keys) && (!retained || !("binding" in value))) ||
       (exact(value, [...keys, "binding"]) &&
         validContentSearchDocumentBinding(value.binding) &&
-        value.binding.hash === value.expectedHash))
+        value.binding.hash === value.expectedHash &&
+        (!retained || value.binding.handle === value.entry)))
   );
 }
 
@@ -244,12 +281,22 @@ export function validContentSearchPrepareResponse(
       target.hash === binding.hash
     );
   }
-  return (
-    kind === "open" &&
-    exact(target, ["snapshot"]) &&
-    isDocumentSnapshot(target.snapshot, CONTENT_SEARCH_LIMITS.bytes) &&
-    target.snapshot.hash === request.expectedHash
-  );
+  const retained = "op" in request && request.op === "prepare-retained";
+  const snapshot = target.snapshot;
+  if (kind !== (retained ? "retained" : "open") ||
+      !exact(target, ["snapshot"]) ||
+      !isDocumentSnapshot(snapshot, CONTENT_SEARCH_LIMITS.bytes) ||
+      snapshot.hash !== request.expectedHash)
+    return false;
+  if (!retained) return true;
+  return perfRecord(snapshot) &&
+    snapshot.handle === request.entry && snapshot.explicitStandalone === true &&
+    exact(snapshot, [
+      "handle", "documentId", "fileName", "revision", "hash", "byteLength", "text",
+      "fidelity", "writeCapability", "explicitStandalone",
+      ...["mirror", "displayPath", "locationId"].filter((key) =>
+        Object.prototype.hasOwnProperty.call(snapshot, key)),
+    ]);
 }
 const unpaired =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
@@ -269,34 +316,42 @@ export function validContentSearchRequest(
       exact(value, [...base, "targetRequestId"]) &&
       perfUuid(value.targetRequestId)
     );
-  if (value.op !== "query" && value.op !== "query-roots") return false;
-  const scopeKeys = value.op === "query" ? ["root", "generation"] : ["roots"];
+  if (value.op !== "query" && value.op !== "query-roots" && value.op !== "query-workspace")
+    return false;
+  const mixed = value.op === "query-workspace";
+  const ownFileFilters = Object.prototype.hasOwnProperty.call(value, "fileFilters");
+  const ownPathFilters = Object.prototype.hasOwnProperty.call(value, "pathFilters");
+  if (mixed && (("fileFilters" in value && !ownFileFilters) ||
+    ("pathFilters" in value && !ownPathFilters)))
+    return false;
+  const scopeKeys = value.op === "query" ? ["root", "generation"]
+    : mixed ? ["roots", "standaloneHandles"] : ["roots"];
   const queryKeys = [...base, ...scopeKeys, "query", "handles"];
   let filterCount = 0;
-  if (Object.prototype.hasOwnProperty.call(value, "fileFilters")) {
+  if (ownFileFilters) {
     if (!validContentSearchFileFilters(value.fileFilters)) return false;
     queryKeys.push("fileFilters");
     filterCount += value.fileFilters.length;
   }
-  if (Object.prototype.hasOwnProperty.call(value, "pathFilters")) {
+  if (ownPathFilters) {
     if (!validContentSearchPathFilters(value.pathFilters)) return false;
     queryKeys.push("pathFilters");
     filterCount += value.pathFilters.length;
   }
+  const validScope = value.op === "query"
+    ? perfUuid(value.root) && natural(value.generation)
+    : validContentSearchScopeRoots(value.roots, mixed) &&
+      (!mixed || (validHandles(value.standaloneHandles, true) &&
+        (value.roots.length > 0 || value.standaloneHandles.length > 0)));
   return (
     exact(value, queryKeys) &&
     filterCount <= CONTENT_SEARCH_FILTER_COUNT_LIMIT &&
-    (value.op === "query"
-      ? perfUuid(value.root) && natural(value.generation)
-      : validContentSearchScopeRoots(value.roots)) &&
+    validScope &&
     typeof value.query === "string" &&
     value.query.length <= CONTENT_SEARCH_LIMITS.query &&
     value.query.trim().length > 0 &&
     !unpaired.test(value.query) &&
-    Array.isArray(value.handles) &&
-    value.handles.length <= CONTENT_SEARCH_LIMITS.documents &&
-    Array.from(value.handles).every(perfUuid) &&
-    new Set(value.handles).size === value.handles.length
+    validHandles(value.handles, mixed)
   );
 }
 
@@ -326,16 +381,22 @@ export function validContentSearchResponse(
       value.generation !== request.generation
     )
       return false;
-  } else if (
-    !exact(value, [...queryKeys, "roots"]) ||
-    !validContentSearchScopeRoots(value.roots) ||
-    value.roots.length !== request.roots.length ||
-    value.roots.some((root, index) =>
-      root.handle !== request.roots[index].handle ||
-      root.generation !== request.roots[index].generation
+  } else {
+    const mixed = request.op === "query-workspace";
+    if (
+      !exact(value, [...queryKeys, "roots", ...(mixed ? ["standaloneHandles"] : [])]) ||
+      !validContentSearchScopeRoots(value.roots, mixed) ||
+      value.roots.length !== request.roots.length ||
+      value.roots.some((root, index) =>
+        root.handle !== request.roots[index].handle ||
+        root.generation !== request.roots[index].generation
+      ) ||
+      (mixed && (!validHandles(value.standaloneHandles, true) ||
+        value.standaloneHandles.length !== request.standaloneHandles.length ||
+        value.standaloneHandles.some((handle, index) => handle !== request.standaloneHandles[index])))
     )
-  )
-    return false;
+      return false;
+  }
   if (
     !Array.isArray(value.coverage) ||
     value.coverage.length > CONTENT_SEARCH_LIMITS.documents ||
@@ -350,6 +411,8 @@ export function validContentSearchResponse(
       !perfRecord(row) ||
       !perfUuid(row.entry) ||
       entries.has(row.entry) ||
+      (request.op === "query-workspace" && !request.roots.length &&
+        !request.standaloneHandles.includes(row.entry)) ||
       !digest(row.hash) ||
       !natural(row.bytes)
     )

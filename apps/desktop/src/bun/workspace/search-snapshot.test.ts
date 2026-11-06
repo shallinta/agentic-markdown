@@ -17,7 +17,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { validContentSearchResponse, type ContentSearchInput } from "../../shared/content-search";
+import {
+  validContentSearchPrepareResponse,
+  validContentSearchResponse,
+  type ContentSearchInput,
+} from "../../shared/content-search";
 import { createDocumentService } from "../documents";
 import { verifySingleFileAuthorization } from "../documents/path-authorization";
 import { validRequest, type IndexRequest, type IndexResult } from "../index/protocol";
@@ -980,6 +984,36 @@ test.skipIf(childScenario !== "mixed")(
         { handle: hidden.handle, kind: "matched", entry: hidden.handle, documentId: hidden.documentId, revision: hidden.revision, hash: hidden.hash },
         { handle, kind: "matched", entry: handle, documentId, revision, hash },
       ]);
+      const rpc = createContentSearchRPC(workspace);
+      rpc.setReady(true);
+      const wire = {
+        ...env(), ...all, op: "query-workspace" as const,
+        fileFilters: [".hidden.md"], handles: [hidden.handle],
+      };
+      const receipt = await rpc.run(wire);
+      expect(validContentSearchResponse(receipt, wire)).toBe(true);
+      if (!receipt.ok || receipt.op !== "query-workspace") throw Error("Missing mixed transport receipt");
+      expect(receipt).toMatchObject({
+        roots: mixed.roots, standaloneHandles: all.standaloneHandles,
+        coverage: [evidence(hidden.handle, hiddenRaw)], mappings: [selected.mappings[1]],
+      });
+      expect(receipt.coverage).toHaveLength(1);
+      const prepare = {
+        ...env(), op: "prepare-retained" as const, roots: mixed.roots,
+        entry: hidden.handle, expectedHash: receipt.coverage[0].hash,
+      };
+      const locations = documents.locations();
+      const prepared = await rpc.prepare(prepare);
+      expect(validContentSearchPrepareResponse(prepared, prepare)).toBe(true);
+      expect(prepared).toMatchObject({
+        ok: true,
+        target: { kind: "retained", snapshot: {
+          handle: hidden.handle, locationId: hidden.locationId, documentId: hidden.documentId,
+          revision: hidden.revision, explicitStandalone: true, text: hiddenRaw,
+        } },
+      });
+      expect(documents.locations()).toEqual(locations);
+      await rpc.drain();
       expect(await search(mixed)).toMatchObject({ ok: true });
       expect(await search({ ...mixed, standaloneHandles: [sharedBudget.handle] }))
         .toEqual({ ok: false, error: "LIMIT" });

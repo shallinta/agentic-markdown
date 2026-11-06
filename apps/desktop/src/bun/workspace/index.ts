@@ -5,12 +5,14 @@ import { basename, dirname, join, relative } from "node:path";
 
 import type {
   ContentSearchCandidates,
-  ContentSearchDocumentBinding,
   ContentSearchInput,
   ContentSearchPrepareInput,
   ContentSearchPrepared,
+  ContentSearchRetainedPrepareInput,
+  ContentSearchRetainedPrepared,
   ContentSearchRootSetInput,
   ContentSearchScopeRoot,
+  ContentSearchWorkspaceInput,
   SearchMapping,
 } from "../../shared/content-search";
 import {
@@ -29,7 +31,6 @@ import {
 } from "../../shared/content-search-filters";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
-import type { DocumentSnapshot } from "../../shared/documents";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
 import { perfUuid } from "../../shared/perf-lab";
 import { hashPattern } from "../../shared/save-content";
@@ -112,21 +113,6 @@ interface Root {
 interface Owner extends DocumentScope {
   root: Root;
 }
-interface ContentSearchRetainedPrepareInput {
-  roots: readonly ContentSearchScopeRoot[];
-  entry: string;
-  expectedHash: string;
-  binding?: ContentSearchDocumentBinding;
-}
-export type ContentSearchRetainedPrepared =
-  | Extract<ContentSearchPrepared, { ok: false }>
-  | {
-      ok: true;
-      target:
-        | { kind: "retained"; snapshot: DocumentSnapshot }
-        | ({ kind: "reuse" } & ContentSearchDocumentBinding);
-    };
-
 export interface TrustedWorkspaceService extends WorkspaceService {
   searchSnapshot(
     root: string,
@@ -143,7 +129,7 @@ export interface TrustedWorkspaceService extends WorkspaceService {
     signal?: AbortSignal
   ): Promise<ContentSearchCandidates>;
   searchContentCandidatesForWorkspace(
-    input: ContentSearchRootSetInput & { standaloneHandles: readonly string[] },
+    input: ContentSearchWorkspaceInput,
     signal?: AbortSignal
   ): Promise<ContentSearchCandidates>;
   prepareContentSearchDocument(

@@ -205,3 +205,53 @@ static napi_value remove_empty_retired_index_directory(napi_env env, napi_callba
         return unknown;
     return success;
 }
+
+static bool finalizing_record(int profile_fd, const char *leaf, const struct stat *profile, struct stat *value) {
+    return fstatat(profile_fd, leaf, value, AT_SYMLINK_NOFOLLOW) == 0 &&
+        S_ISREG(value->st_mode) && value->st_uid == profile->st_uid &&
+        value->st_dev == profile->st_dev && value->st_nlink == 1 &&
+        value->st_size > 0 && (value->st_mode & 077) == 0;
+}
+
+/* Fixed selection only. Both descriptors remain owned by the caller. */
+static napi_value remove_finalizing_sidecar(napi_env env, napi_callback_info info) {
+    napi_value argv[3];
+    int profile_fd, file_fd, selector;
+    if (!args(env, info, argv, 3) || !integer(env, argv[0], &profile_fd) ||
+        !integer(env, argv[1], &file_fd) || !integer(env, argv[2], &selector) ||
+        profile_fd == file_fd || selector > 1)
+        return reclaim_receipt(env, "INPUT");
+
+    napi_value success = reclaim_receipt(env, NULL);
+    napi_value precondition = reclaim_receipt(env, "PRECONDITION");
+    napi_value unknown = reclaim_receipt(env, "UNKNOWN");
+    if (!success || !precondition || !unknown) return NULL;
+
+    const char *roster = ".reclaim-purge.json";
+    const char *completion = ".reclaim-complete.json";
+    const char *leaf = selector == 0 ? roster : completion;
+    struct stat profile, catalog, companion, before, named;
+    if (fstat(profile_fd, &profile) != 0 || !reclaim_owned_directory(&profile, geteuid(), 0) ||
+        (profile.st_mode & 07777) != 0700 || !reclaim_source_absent(profile_fd) ||
+        !absent_reclaim_member(profile_fd, reclaim_destination_name) ||
+        !finalizing_record(profile_fd, "catalog.json", &profile, &catalog) ||
+        (selector == 0 ? !finalizing_record(profile_fd, completion, &profile, &companion) :
+            !absent_reclaim_member(profile_fd, roster)) ||
+        fstat(file_fd, &before) != 0 ||
+        !finalizing_record(profile_fd, leaf, &profile, &named) || !reclaim_same_inventory(&before, &named))
+        return precondition;
+    if (unlinkat(profile_fd, leaf, 0) != 0) return unknown;
+
+    struct stat profile_after, catalog_after, companion_after, after;
+    if (fstat(profile_fd, &profile_after) != 0 || !reclaim_same_identity(&profile, &profile_after) ||
+        !reclaim_source_absent(profile_fd) || !absent_reclaim_member(profile_fd, reclaim_destination_name) ||
+        !finalizing_record(profile_fd, "catalog.json", &profile, &catalog_after) ||
+        !reclaim_same_inventory(&catalog, &catalog_after) ||
+        (selector == 0 ? (!finalizing_record(profile_fd, completion, &profile, &companion_after) ||
+            !reclaim_same_inventory(&companion, &companion_after)) : !absent_reclaim_member(profile_fd, roster)) ||
+        fstat(file_fd, &after) != 0 || !reclaim_same_identity(&before, &after) ||
+        after.st_nlink != 0 || after.st_size != before.st_size ||
+        !reclaim_same_time(after.st_mtimespec, before.st_mtimespec) || !absent_reclaim_member(profile_fd, leaf))
+        return unknown;
+    return success;
+}

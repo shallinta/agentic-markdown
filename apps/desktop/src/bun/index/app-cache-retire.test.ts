@@ -8,7 +8,8 @@ import { basename, join } from "node:path";
 import {
   inspectAppIndexCacheFootprint, inspectRetiredIndexReclaim, inspectStagedIndexPurgeProgress, reopenAppIndexCache,
   prepareEmptyStagedIndexCompletion, prepareRetiredIndexReclaim, prepareStagedIndexFinalization, prepareStagedIndexPurge,
-  removeEmptyStagedIndexDirectory, removeStagedIndexPurgeMember, retireAppIndexCache, searchAppIndexCache,
+  removeEmptyStagedIndexDirectory, removeStagedIndexFinalizationSidecar, removeStagedIndexPurgeMember,
+  retireAppIndexCache, searchAppIndexCache,
   stageRetiredIndexReclaim,
 } from "./app-cache";
 import { record } from "./protocol";
@@ -108,7 +109,8 @@ async function runFixture(
   childMode: "owner" | "sealed" | "reopen" | "preflight" | "preflight-reopen" | "intent" | "intent-reopen"
     | "stage" | "stage-reopen" | "purge" | "purge-reopen" | "progress" | "progress-reopen"
     | "remove-member" | "remove-member-reopen" | "empty-completion" | "empty-completion-reopen"
-    | "remove-empty-directory" | "remove-empty-directory-reopen" | "finalization" | "finalization-reopen",
+    | "remove-empty-directory" | "remove-empty-directory-reopen" | "finalization" | "finalization-reopen"
+    | "remove-sidecar" | "remove-sidecar-reopen",
   entry = import.meta.path
 ) {
   const child = Bun.spawn([process.execPath, "test", entry], {
@@ -245,6 +247,8 @@ test.skipIf(mode !== undefined)("isolated cache retirement and reopen leave no f
     await runFixture(scratch, "remove-empty-directory");
     expect(await readdir(scratch)).toEqual([]);
     await runFixture(scratch, "finalization");
+    expect(await readdir(scratch)).toEqual([]);
+    await runFixture(scratch, "remove-sidecar");
     expect(await readdir(scratch)).toEqual([]);
   } finally {
     await rm(scratch, { recursive: true, force: true });
@@ -2251,6 +2255,210 @@ test.skipIf(mode !== "finalization-reopen")("fresh process confirms v4 without r
     expect(await Promise.all(markers.map(f.fingerprint))).toEqual(before);
     expect(f.workers()).toBe(0);
     expect((await readdir(f.profile)).sort()).toEqual([".reclaim-complete.json", ".reclaim-purge.json", "catalog.json"]);
+  } finally {
+    f.stopRecording();
+  }
+});
+
+test.skipIf(mode !== "remove-sidecar")("one sidecar is removed in order without rewriting the v4 catalog", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual([]);
+  const pending = join(f.profile, ".reclaim-pending");
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const completion = join(f.profile, ".reclaim-complete.json");
+  const unavailable = failed("UNAVAILABLE");
+  const mismatch = failed("MISMATCH");
+  const unknown = { ok: false, error: "UNKNOWN", accepted: true } as const;
+  f.startRecording();
+  async function seed() {
+    await mkdir(f.home, { mode: 0o700 });
+    expect(await searchAppIndexCache(input, current)).toMatchObject({ ok: true, generation: 1, applied: 1 });
+    expect(await retireAppIndexCache(retirement, current, true)).toEqual({ ok: true, alreadyRetired: false });
+    const preflight = await inspectRetiredIndexReclaim(retirement, current);
+    if (!preflight.ok) throw Error("Sidecar fixture preflight refused: " + preflight.error);
+    const target = { ...retirement, inventoryDigest: preflight.inventoryDigest };
+    const remove = (record: "roster" | "completion", guard = current) => removeStagedIndexFinalizationSidecar({ ...target, record }, guard);
+    expect(await prepareRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await stageRetiredIndexReclaim(target, current)).toEqual({ ok: true, alreadyStaged: false });
+    expect(await prepareStagedIndexPurge(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    const expected = (await f.nativeFiles(pending)).length;
+    for (let ordinal = 0; ordinal < expected; ordinal++)
+      expect(await removeStagedIndexPurgeMember({ ...target, ordinal }, current)).toMatchObject({ ok: true, alreadyMissing: false });
+    expect(await prepareEmptyStagedIndexCompletion(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    expect(await removeEmptyStagedIndexDirectory(target, current)).toEqual({ ok: true, alreadyAbsent: false });
+    expect(await remove("roster")).toEqual(failed("SCHEMA"));
+    expect(await prepareStagedIndexFinalization(target, current)).toEqual({ ok: true, alreadyPrepared: false });
+    return {
+      target, remove, workers: f.workers(), catalog: await f.fingerprint(f.catalog),
+      roster: await f.fingerprint(roster), completion: await f.fingerprint(completion),
+    };
+  }
+  async function absent(path: string) {
+    expect(await lstat(path).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+  }
+  async function intact(snapshot: Awaited<ReturnType<typeof seed>>) {
+    expect(await f.fingerprint(f.catalog)).toEqual(snapshot.catalog);
+    expect(await f.fingerprint(roster)).toEqual(snapshot.roster);
+    expect(await f.fingerprint(completion)).toEqual(snapshot.completion);
+    expect(f.workers()).toBe(snapshot.workers);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-complete.json", ".reclaim-purge.json", "catalog.json"]);
+  }
+  try {
+    const first = await seed();
+    const request = { ...first.target, record: "roster" as const };
+    expect(await removeStagedIndexFinalizationSidecar({ ...request, ...wrongScope }, current)).toEqual(failed("SCHEMA"));
+    expect(await removeStagedIndexFinalizationSidecar({ ...request, ...wrongGeneration }, current)).toEqual(mismatch);
+    expect(await removeStagedIndexFinalizationSidecar({ ...request, inventoryDigest: sha("wrong sidecar target") }, current))
+      .toEqual(mismatch);
+    expect(await removeStagedIndexFinalizationSidecar({ ...request, record: "../catalog.json" as unknown as "roster" }, current))
+      .toEqual(failed("INPUT"));
+    expect(await first.remove("roster", () => false)).toEqual(failed("CANCELLED"));
+    expect(await first.remove("completion")).toEqual(mismatch);
+    await mkdir(f.lease, { mode: 0o700 });
+    const occupied = join(f.lease, "keep");
+    await writeFile(occupied, "busy", { mode: 0o600 });
+    expect(await first.remove("roster")).toEqual(failed("BUSY"));
+    expect(await readFile(occupied, "utf8")).toBe("busy");
+    await rm(occupied);
+    await rmdir(f.lease);
+    const foreign = join(f.profile, "extra");
+    await writeFile(foreign, "extra", { mode: 0o600 });
+    expect(await first.remove("roster")).toEqual(unavailable);
+    expect(await readFile(foreign, "utf8")).toBe("extra");
+    await rm(foreign);
+    for (const path of [f.index, pending]) {
+      await mkdir(path, { mode: 0o700 });
+      expect(await first.remove("roster")).toEqual(unavailable);
+      expect(await readdir(path)).toEqual([]);
+      await rmdir(path);
+    }
+    await intact(first);
+
+    const held = await open(roster, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let beforeUnlink = 0;
+    try {
+      const original = await held.stat({ bigint: true });
+      expect(await first.remove("roster", () => {
+        if (existsSync(roster)) beforeUnlink++;
+        return true;
+      })).toEqual({ ok: true, alreadyAbsent: false });
+      const after = await held.stat({ bigint: true });
+      expect({ dev: after.dev, ino: after.ino, birth: after.birthtimeNs, links: after.nlink })
+        .toEqual({ dev: original.dev, ino: original.ino, birth: original.birthtimeNs, links: 0n });
+    } finally {
+      await held.close();
+    }
+    expect(beforeUnlink).toBeGreaterThan(1);
+    await absent(roster);
+    expect(await f.fingerprint(completion)).toEqual(first.completion);
+    expect(await f.fingerprint(f.catalog)).toEqual(first.catalog);
+    await runFixture(f.scratch, "remove-sidecar-reopen");
+    await absent(roster);
+    await absent(completion);
+    expect(await f.fingerprint(f.catalog)).toEqual(first.catalog);
+    expect((await readdir(f.profile)).sort()).toEqual(["catalog.json"]);
+    expect(f.workers()).toBe(first.workers);
+    await rm(f.home, { recursive: true, force: true });
+
+    const second = await seed();
+    let checks = 0;
+    expect(await second.remove("roster", () => ++checks < beforeUnlink)).toEqual(failed("CANCELLED"));
+    expect(checks).toBe(beforeUnlink);
+    await intact(second);
+    const parkedLease = join(f.profile, "parked-lease");
+    const lateLease = join(f.lease, "late-lease");
+    checks = 0;
+    expect(await second.remove("roster", () => {
+      if (++checks === beforeUnlink) {
+        renameSync(f.lease, parkedLease);
+        mkdirSync(f.lease, { mode: 0o700 });
+        writeFileSync(lateLease, "preserve", { mode: 0o600 });
+      }
+      return true;
+    })).toEqual(unknown);
+    expect(await readFile(lateLease, "utf8")).toBe("preserve");
+    expect(await readdir(parkedLease)).toEqual([]);
+    await rm(lateLease);
+    await rmdir(f.lease);
+    await rmdir(parkedLease);
+    await intact(second);
+
+    const failedSync = await refuseDirectorySync(f.profile, () => Promise.resolve(!existsSync(roster)), () => second.remove("roster"));
+    expect(failedSync).toEqual(unknown);
+    await absent(roster);
+    expect(await f.fingerprint(completion)).toEqual(second.completion);
+    expect(await second.remove("roster")).toEqual({ ok: true, alreadyAbsent: true });
+    expect(await f.fingerprint(completion)).toEqual(second.completion);
+    expect(await f.fingerprint(f.catalog)).toEqual(second.catalog);
+    expect((await readdir(f.profile)).sort()).toEqual([".reclaim-complete.json", "catalog.json"]);
+
+    const savedCompletion = join(f.scratch, "parked-completion");
+    const contents = await readFile(completion);
+    await rename(completion, savedCompletion);
+    try {
+      await writeFile(completion, contents, { flag: "wx", mode: 0o600 });
+      const replaced = await f.fingerprint(completion);
+      expect(await second.remove("completion")).toEqual(mismatch);
+      expect(await f.fingerprint(completion)).toEqual(replaced);
+      await rm(completion);
+      await symlink(savedCompletion, completion);
+      expect(await second.remove("completion")).toEqual(unavailable);
+      expect(await readlink(completion)).toBe(savedCompletion);
+      expect(await readFile(savedCompletion)).toEqual(contents);
+      await rm(completion);
+    } finally {
+      await rename(savedCompletion, completion);
+    }
+    expect(await f.fingerprint(f.catalog)).toEqual(second.catalog);
+    expect(f.workers()).toBe(second.workers);
+    await rm(f.home, { recursive: true, force: true });
+
+    const invalid = await seed();
+    const orphanedCompletion = join(f.scratch, "orphaned-completion");
+    await rename(completion, orphanedCompletion);
+    try {
+      expect(await invalid.remove("roster")).toEqual(mismatch);
+      expect(await invalid.remove("completion")).toEqual(mismatch);
+      expect(await f.fingerprint(roster)).toEqual(invalid.roster);
+      expect(await f.fingerprint(f.catalog)).toEqual(invalid.catalog);
+      expect((await readdir(f.profile)).sort()).toEqual([".reclaim-purge.json", "catalog.json"]);
+      expect(f.workers()).toBe(invalid.workers);
+    } finally {
+      await rename(orphanedCompletion, completion);
+    }
+  } finally {
+    f.stopRecording();
+    await rm(f.home, { recursive: true, force: true });
+  }
+}, 10_000);
+
+test.skipIf(mode !== "remove-sidecar-reopen")("a fresh process retries roster removal before explicitly removing completion", async () => {
+  const f = await fixture();
+  expect(await readdir(f.scratch)).toEqual(["home"]);
+  const roster = join(f.profile, ".reclaim-purge.json");
+  const completion = join(f.profile, ".reclaim-complete.json");
+  const catalog: unknown = JSON.parse(await readFile(f.catalog, "utf8"));
+  if (!record(catalog) || catalog.version !== 4 || typeof catalog.inventoryDigest !== "string")
+    throw Error("Sidecar fixture missing v4");
+  const target = { ...retirement, inventoryDigest: catalog.inventoryDigest };
+  const v4 = await f.fingerprint(f.catalog);
+  const confirmation = await f.fingerprint(completion);
+  f.startRecording();
+  try {
+    expect(await removeStagedIndexFinalizationSidecar({ ...target, record: "roster" }, current))
+      .toEqual({ ok: true, alreadyAbsent: true });
+    expect(await lstat(roster).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+    expect(await f.fingerprint(completion)).toEqual(confirmation);
+    expect(await removeStagedIndexFinalizationSidecar({ ...target, record: "completion" }, current))
+      .toEqual({ ok: true, alreadyAbsent: false });
+    expect(await lstat(completion).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+    for (const record of ["roster", "completion"] as const)
+      expect(await removeStagedIndexFinalizationSidecar({ ...target, record }, current)).toEqual({ ok: true, alreadyAbsent: true });
+    expect(await searchAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await reopenAppIndexCache(input, current)).toEqual(failed("SCHEMA"));
+    expect(await f.fingerprint(f.catalog)).toEqual(v4);
+    expect((await readdir(f.profile)).sort()).toEqual(["catalog.json"]);
+    expect(f.workers()).toBe(0);
   } finally {
     f.stopRecording();
   }

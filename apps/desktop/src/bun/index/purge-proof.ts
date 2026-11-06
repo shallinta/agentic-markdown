@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 import type { BigIntStats } from "node:fs";
 
 import {
-  reclaimDirectoryStamp, reclaimFileStamp, sameIndexInventoryMetadata, type captureCompletedPlacement, type captureIndexFootprint,
+  reclaimDirectoryStamp, reclaimFileStamp, sameIndexInventoryMetadata, type captureCompletedPlacement,
+  type captureFinalizingPlacement, type captureIndexFootprint,
 } from "./cache-footprint";
 import { record } from "./protocol";
-import { decodePurgeRoster, encodeFinalizingCatalog, encodePurgeCompletion, reclaimStagingDigest } from "./purge-roster";
+import {
+  decodeFinalizingCatalog, decodePurgeRoster, encodeFinalizingCatalog, encodePurgeCompletion, reclaimStagingDigest,
+} from "./purge-roster";
 import {
   readPinnedPurgeCompletion, readPinnedPurgeRoster, readPinnedReclaimCatalog, readPreparedReclaimCatalog,
 } from "./reclaim-layout";
@@ -143,4 +146,30 @@ export async function verifyFinalizationPlacement(
   if (contents.length > INDEX_REUSE_CATALOG_BYTES) return fail("UNAVAILABLE");
   if (alreadyPrepared && !catalog.bytes.equals(contents)) return fail("MISMATCH");
   return { ok: true as const, alreadyPrepared, contents, rosterBytes, completion };
+}
+
+type FinalizingPlacement = Awaited<ReturnType<typeof captureFinalizingPlacement>>;
+export async function verifyFinalizingSidecars(
+  profile: string, placement: FinalizingPlacement, target: IndexReclaimIntentTarget, owner: bigint
+) {
+  const { catalogStat, roster, completion, recheck } = placement;
+  if (roster && !completion) return fail("MISMATCH");
+  const catalog = await readPinnedReclaimCatalog(profile, catalogStat, recheck);
+  recheck();
+  if (!catalog) return fail("SCHEMA");
+  const marker = decodeFinalizingCatalog(catalog.bytes, catalog.value, owner);
+  if (marker?.scopeKey !== target.scopeKey) return fail("SCHEMA");
+  if (marker.generation !== target.generation || marker.inventoryDigest !== target.inventoryDigest)
+    return fail("MISMATCH");
+  for (const [pinned, expected, read] of [
+    [roster, marker.roster, readPinnedPurgeRoster], [completion, marker.completion, readPinnedPurgeCompletion],
+  ] as const) {
+    if (!pinned) continue;
+    if (!samePurgeStamp(reclaimFileStamp(pinned), expected.stamp)) return fail("MISMATCH");
+    const bytes = await read(profile, pinned, recheck);
+    recheck();
+    if (!bytes || createHash("sha256").update(bytes).digest("hex") !== expected.sha256)
+      return fail("MISMATCH");
+  }
+  return { ok: true as const, catalogBytes: catalog.bytes };
 }

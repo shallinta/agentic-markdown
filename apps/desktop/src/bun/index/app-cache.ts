@@ -12,11 +12,13 @@ import { readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout }
 import {
   inspectRetiredIndexReuse, prepareRetiredIndexReuse, reopenWithIndexReuse, retireIndexReuse, searchWithIndexReuse,
   prepareEmptyStagedIndexReuseCompletion, prepareStagedIndexReusePurge, removeStagedIndexReuseMember,
-  prepareStagedIndexReuseFinalization, removeEmptyStagedIndexReuseDirectory, stageRetiredIndexReuse, type IndexReuseInput,
+  prepareStagedIndexReuseFinalization, removeEmptyStagedIndexReuseDirectory, removeStagedIndexReuseFinalizationSidecar,
+  stageRetiredIndexReuse, type IndexReuseInput,
 } from "./reuse";
 import {
-  IndexReuseCleanupError, reclaimDirectoryName, readIndexPurgeMemberTarget, readIndexReclaimIntentTarget,
-  readIndexRetirementTarget, type IndexPurgeMemberTarget, type IndexReclaimIntentTarget, type IndexRetirementTarget,
+  IndexReuseCleanupError, reclaimDirectoryName, readIndexFinalizationSidecarTarget, readIndexPurgeMemberTarget,
+  readIndexReclaimIntentTarget, readIndexRetirementTarget, type IndexFinalizationSidecarTarget,
+  type IndexPurgeMemberTarget, type IndexReclaimIntentTarget, type IndexRetirementTarget,
 } from "./reuse-catalog";
 
 type BoundaryError = "CANCELLED" | "UNAVAILABLE";
@@ -145,6 +147,10 @@ export function removeEmptyStagedIndexDirectory(input: IndexReclaimIntentTarget,
 
 export function prepareStagedIndexFinalization(input: IndexReclaimIntentTarget, current: () => boolean) {
   return useRetiredAppProfile(readIndexReclaimIntentTarget(input), current, prepareStagedIndexReuseFinalization);
+}
+
+export function removeStagedIndexFinalizationSidecar(input: IndexFinalizationSidecarTarget, current: () => boolean) {
+  return useRetiredAppProfile(readIndexFinalizationSidecarTarget(input), current, removeStagedIndexReuseFinalizationSidecar);
 }
 
 async function useRetiredAppProfile<

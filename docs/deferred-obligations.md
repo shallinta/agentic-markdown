@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064be 按序清理索引收尾旁车（2026-11-06）
+
+alpha.242 已验证按序清理单份旁车及同选择重试。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接最后释放、槽位复用、遗留租约、自动配额及最终离线。见[F-064be 迭代](iterations/F-064be-index-reclaim-remove-sidecar.md)。
+
 ## F-064bd 持久记录索引槽收尾状态（2026-11-06）
 
 alpha.241 已验证固定 v4 收尾清单及跨进程复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。待承接旁车清理、槽位最终释放、遗留租约、自动配额及最终离线。见[F-064bd 迭代](iterations/F-064bd-index-reclaim-finalizing-catalog.md)。

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 
 import { keys, natural, record } from "./protocol";
-import { INDEX_RECLAIM_RECORD_NAMES, type ReclaimRecord } from "./purge-roster";
+import { INDEX_RECLAIM_RECORD_NAMES, type FinalizationRecord, type ReclaimRecord } from "./purge-roster";
 
 type StageResult = "staged" | "BUSY" | "UNAVAILABLE" | "UNKNOWN";
 interface ReclaimStage {
@@ -126,5 +126,30 @@ export function loadEmptyPendingRemover() {
     } catch {
       return "UNKNOWN" as const;
     }
+  };
+}
+
+export function loadFinalizationSidecarRemover() {
+  const native = loadSaveNative();
+  if (typeof native?.openFileAt !== "function" || typeof native.removeFinalizingSidecar !== "function") return;
+  const { openFileAt, removeFinalizingSidecar } = native;
+  return {
+    open(profileFd: number, selected: FinalizationRecord) {
+      const leaf = selected === "roster" ? INDEX_RECLAIM_RECORD_NAMES.purge : INDEX_RECLAIM_RECORD_NAMES.complete;
+      const fd: unknown = Reflect.apply(openFileAt, native, [profileFd, leaf]);
+      if (!natural(fd) || fd > 0x7fff_ffff) throw Error("Finalization sidecar descriptor unavailable");
+      return fd;
+    },
+    remove(profileFd: number, fileFd: number, selected: FinalizationRecord) {
+      try {
+        const result: unknown = Reflect.apply(removeFinalizingSidecar, native, [profileFd, fileFd, selected === "roster" ? 0 : 1]);
+        if (record(result) && result.ok === true && keys(result, "ok")) return "removed" as const;
+        if (record(result) && result.ok === false && keys(result, "error,ok") &&
+            (result.error === "PRECONDITION" || result.error === "INPUT")) return "UNAVAILABLE" as const;
+        return "UNKNOWN" as const;
+      } catch {
+        return "UNKNOWN" as const;
+      }
+    },
   };
 }

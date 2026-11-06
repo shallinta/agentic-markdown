@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064be 的 alpha.242 已在隔离夹具验证内部按序清理名册和确认记录。每次只清理指定的一份，v4 继续保留。见[F-064be 迭代](iterations/F-064be-index-reclaim-remove-sidecar.md)。
+
 F-064bd 的 alpha.241 已验证固定 v4 收尾清单可记录两份旁车的身份。此时两份旁车仍保留，槽位继续拒绝重新启用。见[F-064bd 迭代](iterations/F-064bd-index-reclaim-finalizing-catalog.md)。
 
 F-064bc 的 alpha.240 已在隔离夹具验证内部移除已确认的空待回收目录。私有槽和三份控制记录继续保留。见[F-064bc 迭代](iterations/F-064bc-remove-confirmed-empty-index-directory.md)。

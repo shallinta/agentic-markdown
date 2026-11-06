@@ -12,6 +12,7 @@ export const INDEX_RECLAIM_RECORD_NAMES = {
   complete: INDEX_PURGE_COMPLETE_NAME,
 } as const;
 export type ReclaimRecord = keyof typeof INDEX_RECLAIM_RECORD_NAMES;
+export type FinalizationRecord = "roster" | "completion";
 export const INDEX_SEGMENT_EXTENSIONS = ["idx", "pos", "term", "store", "fast", "fieldnorm"];
 export const INDEX_UNMANAGED_CONTROLS = [".managed.json", "bridge.schema", ".tantivy-meta.lock", ".tantivy-writer.lock"];
 
@@ -28,6 +29,28 @@ interface PurgeRoster extends PurgeRosterSource {
   catalogSha256: string;
   directory: readonly string[];
   files: readonly FileStamp[];
+}
+interface FinalizingSidecar {
+  sha256: string;
+  stamp: readonly string[];
+}
+interface FinalizingCatalog extends PurgeRosterSource {
+  catalogSha256: string;
+  directory: readonly string[];
+  expectedFiles: number;
+  roster: FinalizingSidecar;
+  completion: FinalizingSidecar;
+}
+
+function finalizingCatalogBytes({
+  scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, expectedFiles, roster, completion,
+}: FinalizingCatalog) {
+  return Buffer.from(JSON.stringify({
+    version: 4, profile: "limited-v1", state: "reclaim-finalizing",
+    scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, expectedFiles,
+    roster: { sha256: roster.sha256, stamp: roster.stamp },
+    completion: { sha256: completion.sha256, stamp: completion.stamp },
+  }));
 }
 
 export function reclaimStagingDigest(
@@ -77,11 +100,10 @@ export function encodeFinalizingCatalog(
   const record = (bytes: Buffer, stamp: readonly string[]) => ({
     sha256: createHash("sha256").update(bytes).digest("hex"), stamp,
   });
-  return Buffer.from(JSON.stringify({
-    version: 4, profile: "limited-v1", state: "reclaim-finalizing",
+  return finalizingCatalogBytes({
     scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, expectedFiles: files.length,
     roster: record(rosterBytes, rosterStamp), completion: record(completionBytes, completionStamp),
-  }));
+  });
 }
 
 const digest = /^[a-f0-9]{64}$/;
@@ -115,6 +137,33 @@ function validStamp(value: unknown, kind: "directory" | "file", owner: string): 
   return directory
     ? stamp[3] === owner && (mode & 0o170022n) === 0o040000n
     : stamp[4] === owner && stamp[5] === "1" && (mode & 0o170000n) === 0o100000n;
+}
+
+function validSidecar(value: unknown, owner: string, maxBytes: number): value is FinalizingSidecar {
+  if (!record(value) || typeof value.sha256 !== "string" || !digest.test(value.sha256) ||
+      !validStamp(value.stamp, "file", owner)) return false;
+  const size = BigInt(value.stamp[6]);
+  return (BigInt(value.stamp[3]) & 0o077n) === 0n && size >= 1n && size <= BigInt(maxBytes);
+}
+
+export function decodeFinalizingCatalog(bytes: Buffer, value: unknown, owner: bigint): FinalizingCatalog | undefined {
+  if (bytes.length > 4 * 1024 || !record(value) || value.version !== 4 ||
+      value.profile !== "limited-v1" || value.state !== "reclaim-finalizing")
+    return;
+  const { scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, expectedFiles, roster, completion } = value;
+  const ownerString = String(owner);
+  if (typeof scopeKey !== "string" || !digest.test(scopeKey) || !natural(generation) ||
+      typeof inventoryDigest !== "string" || !digest.test(inventoryDigest) ||
+      typeof stagingDigest !== "string" || !digest.test(stagingDigest) ||
+      typeof catalogSha256 !== "string" || !digest.test(catalogSha256) ||
+      !validStamp(directory, "directory", ownerString) ||
+      !natural(expectedFiles) || expectedFiles < controls.size || expectedFiles > INDEX_PURGE_ROSTER_FILES ||
+      (generation === 0 && expectedFiles !== controls.size) ||
+      !validSidecar(roster, ownerString, INDEX_PURGE_ROSTER_BYTES) ||
+      !validSidecar(completion, ownerString, INDEX_PURGE_COMPLETE_BYTES))
+    return;
+  const catalog = { scopeKey, generation, inventoryDigest, stagingDigest, catalogSha256, directory, expectedFiles, roster, completion };
+  if (finalizingCatalogBytes(catalog).equals(bytes)) return catalog;
 }
 
 function validFiles(value: unknown, owner: string): value is FileStamp[] {

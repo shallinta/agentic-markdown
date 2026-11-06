@@ -224,6 +224,7 @@ static napi_value init(napi_env env,napi_value exports) {
     {"stageRetiredIndex",NULL,stage_retired_index,NULL,NULL,NULL,napi_default,NULL},
     {"removeRetiredIndexMember",NULL,remove_retired_index_member,NULL,NULL,NULL,napi_default,NULL},
     {"removeEmptyRetiredIndexDirectory",NULL,remove_empty_retired_index_directory,NULL,NULL,NULL,napi_default,NULL},
+    {"removeFinalizingSidecar",NULL,remove_finalizing_sidecar,NULL,NULL,NULL,napi_default,NULL},
     {"createTemp",NULL,create,NULL,NULL,NULL,napi_default,NULL},
     {"copyMetadata",NULL,metadata,NULL,NULL,NULL,napi_default,NULL},
     {"fullSync",NULL,sync_full,NULL,NULL,NULL,napi_default,NULL},

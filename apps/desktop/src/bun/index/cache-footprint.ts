@@ -178,6 +178,15 @@ function assertAbsent(path: string) {
   throw Error("Index cache path appeared");
 }
 
+function privateRecord(profile: string, name: string, owner: bigint) {
+  const path = join(profile, name);
+  const stat = lstatSync(path, { bigint: true });
+  if (!stat.isFile() || stat.uid !== owner || stat.nlink !== 1n ||
+      (stat.mode & 0o077n) !== 0n || stat.size < 1n)
+    throw Error("Index completion record unavailable");
+  return { path, stat };
+}
+
 /** The completion record outlives the optional empty pending directory. */
 export async function captureCompletedPlacement(
   profile: string, profileStat: BigIntStats, owner: bigint, check: () => void, checkLease: () => void
@@ -193,18 +202,10 @@ export async function captureCompletedPlacement(
     throw Error("Index completion layout unavailable");
 
   const inventory = [{ path: profile, stat: profileStat }];
-  const privateRecord = (name: string) => {
-    const path = join(profile, name);
-    const stat = lstatSync(path, { bigint: true });
-    if (!stat.isFile() || stat.uid !== owner || stat.nlink !== 1n ||
-        (stat.mode & 0o077n) !== 0n || stat.size < 1n)
-      throw Error("Index completion record unavailable");
-    inventory.push({ path, stat });
-    return stat;
-  };
-  const catalogStat = privateRecord("catalog.json");
-  const purgeStat = privateRecord(INDEX_PURGE_ROSTER_NAME);
-  const completionStat = privateRecord(INDEX_PURGE_COMPLETE_NAME);
+  const catalog = privateRecord(profile, "catalog.json", owner);
+  const purge = privateRecord(profile, INDEX_PURGE_ROSTER_NAME, owner);
+  const completion = privateRecord(profile, INDEX_PURGE_COMPLETE_NAME, owner);
+  inventory.push(catalog, purge, completion);
   const pendingStat = hasPending ? lstatSync(pendingPath, { bigint: true }) : undefined;
   if (pendingStat) {
     if (!pendingStat.isDirectory() || pendingStat.uid !== owner || (pendingStat.mode & 0o022n) !== 0n)
@@ -235,7 +236,36 @@ export async function captureCompletedPlacement(
   }
   recheck();
   return {
-    catalogStat, purgeStat, completionStat, pendingStat, empty, recheck,
+    catalogStat: catalog.stat, purgeStat: purge.stat, completionStat: completion.stat, pendingStat, empty, recheck,
     recheckAfterStaging: () => recheckInventory(1),
   };
+}
+
+export async function captureFinalizingPlacement(
+  profile: string, profileStat: BigIntStats, owner: bigint, check: () => void, checkLease: () => void
+) {
+  const guard = () => { check(); checkLease(); };
+  const names = await readMembers(profile, 4, guard);
+  guard();
+  if (!names.delete(".lease") || !names.delete("catalog.json"))
+    throw Error("Index finalizing layout unavailable");
+  const purge = names.delete(INDEX_PURGE_ROSTER_NAME)
+    ? privateRecord(profile, INDEX_PURGE_ROSTER_NAME, owner) : undefined;
+  const completion = names.delete(INDEX_PURGE_COMPLETE_NAME)
+    ? privateRecord(profile, INDEX_PURGE_COMPLETE_NAME, owner) : undefined;
+  if (names.size) throw Error("Index finalizing layout unavailable");
+  const catalog = privateRecord(profile, "catalog.json", owner);
+  const recheck = () => {
+    guard();
+    for (const member of [{ path: profile, stat: profileStat }, catalog, purge, completion])
+      if (member && !sameIndexInventoryMetadata(member.stat, lstatSync(member.path, { bigint: true })))
+        throw Error("Index finalizing layout changed");
+    assertAbsent(join(profile, reclaimDirectoryName("original")));
+    assertAbsent(join(profile, reclaimDirectoryName("pending")));
+    if (!purge) assertAbsent(join(profile, INDEX_PURGE_ROSTER_NAME));
+    if (!completion) assertAbsent(join(profile, INDEX_PURGE_COMPLETE_NAME));
+    checkLease();
+  };
+  recheck();
+  return { catalogStat: catalog.stat, roster: purge?.stat, completion: completion?.stat, recheck };
 }

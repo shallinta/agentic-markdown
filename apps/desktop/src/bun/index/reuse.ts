@@ -3,7 +3,9 @@ import type { Dir } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { captureCompletedPlacement, captureIndexFootprint, sameIndexInventoryMetadata } from "./cache-footprint";
+import {
+  captureCompletedPlacement, captureFinalizingPlacement, captureIndexFootprint, sameIndexInventoryMetadata,
+} from "./cache-footprint";
 import {
   INDEX_LIMITS,
   encodeChanges,
@@ -16,10 +18,11 @@ import {
   type IndexResult,
 } from "./protocol";
 import {
-  sameCompletedRecords, samePurgeRecords, samePurgeStamp, verifyCompletedPlacement, verifyFinalizationPlacement, verifyPurgeSubset,
+  sameCompletedRecords, samePurgeRecords, samePurgeStamp, verifyCompletedPlacement, verifyFinalizationPlacement,
+  verifyFinalizingSidecars, verifyPurgeSubset,
 } from "./purge-proof";
 import { publishReclaimRecord, replaceReclaimCatalog } from "./purge-publish";
-import { unlinkPurgeMember } from "./purge-remove";
+import { unlinkFinalizationSidecar, unlinkPurgeMember } from "./purge-remove";
 import { encodePurgeCompletion, encodePurgeRoster, purgeMemberOrder } from "./purge-roster";
 import { readPinnedPurgeCompletion, readPinnedPurgeRoster, readPreparedReclaimCatalog, validReclaimLayout } from "./reclaim-layout";
 import { loadEmptyPendingRemover, loadReclaimStage } from "./reclaim-stage";
@@ -27,6 +30,7 @@ import {
   acquireIndexReuseSlot,
   IndexReuseCleanupError,
   reclaimDirectoryName,
+  type IndexFinalizationSidecarTarget,
   type IndexPurgeMemberTarget,
   type IndexReclaimIntentTarget,
   type IndexRetirementTarget,
@@ -540,6 +544,51 @@ export function prepareStagedIndexReuseFinalization(
         return { ok: true, alreadyPrepared: proof.alreadyPrepared };
       } catch {
         throw new IndexReuseCleanupError("Index finalization publication unconfirmed");
+      }
+    });
+  });
+}
+
+export function removeStagedIndexReuseFinalizationSidecar(
+  directory: string, target: IndexFinalizationSidecarTarget, current: () => boolean
+) {
+  return useRetirementLease<{ ok: true; alreadyAbsent: boolean }>(directory, current, async (slot, check) => {
+    check();
+    const { assertInventoryLease } = slot;
+    const profile = assertInventoryLease();
+    const placement = await captureFinalizingPlacement(directory, profile, profile.uid, check, assertInventoryLease);
+    const proof = await verifyFinalizingSidecars(directory, placement, target, profile.uid);
+    if (!proof.ok) return proof;
+    const { record: selected } = target;
+    if (selected === "completion" && placement.roster) return fail("MISMATCH");
+    const pinned = placement[selected];
+
+    return slot.withCompletionPlacement(undefined, async (held) => {
+      placement.recheck();
+      held.checkAbsent();
+      if (pinned) {
+        const result = unlinkFinalizationSidecar(held, selected, pinned, placement.recheck);
+        if (result !== "removed") return fail(result);
+      }
+      try {
+        held.checkAbsent();
+        await held.sync();
+        const final = await captureFinalizingPlacement(
+          directory, assertInventoryLease(), profile.uid, held.checkAbsent, assertInventoryLease
+        );
+        const terminal = await verifyFinalizingSidecars(directory, final, target, profile.uid);
+        const companion = selected === "roster" ? "completion" : "roster";
+        const retained = placement[companion];
+        const survivor = final[companion];
+        if (!terminal.ok || !terminal.catalogBytes.equals(proof.catalogBytes) ||
+            !sameIndexInventoryMetadata(placement.catalogStat, final.catalogStat) || final[selected] ||
+            (retained ? !survivor || !sameIndexInventoryMetadata(retained, survivor) : survivor !== undefined))
+          throw Error("Index finalization sidecar removal changed");
+        final.recheck();
+        held.checkAbsent();
+        return { ok: true, alreadyAbsent: !pinned };
+      } catch {
+        throw new IndexReuseCleanupError("Index finalization sidecar removal unconfirmed");
       }
     });
   });

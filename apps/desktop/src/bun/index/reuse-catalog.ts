@@ -12,7 +12,7 @@ import { lstat, mkdir, open, rmdir, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { INDEX_LIMITS, keys, natural, record } from "./protocol";
-import { INDEX_PURGE_ROSTER_FILES, INDEX_RECLAIM_RECORD_NAMES, type ReclaimRecord } from "./purge-roster";
+import { INDEX_PURGE_ROSTER_FILES, INDEX_RECLAIM_RECORD_NAMES, type FinalizationRecord, type ReclaimRecord } from "./purge-roster";
 
 export const INDEX_REUSE_CATALOG_BYTES = 4096;
 const digest = /^[a-f0-9]{64}$/;
@@ -31,6 +31,7 @@ export interface IndexReuseCatalog {
 export interface IndexRetirementTarget { scopeKey: string; generation: number }
 export interface IndexReclaimIntentTarget extends IndexRetirementTarget { inventoryDigest: string }
 export interface IndexPurgeMemberTarget extends IndexReclaimIntentTarget { ordinal: number }
+export interface IndexFinalizationSidecarTarget extends IndexReclaimIntentTarget { record: FinalizationRecord }
 export interface PreparedReclaimCatalog extends IndexReclaimIntentTarget {
   version: 3;
   profile: "limited-v1";
@@ -164,6 +165,13 @@ export function readIndexPurgeMemberTarget(value: unknown): IndexPurgeMemberTarg
   const target = readIndexReclaimIntentTarget({ scopeKey, generation, inventoryDigest });
   if (target && natural(ordinal) && ordinal < INDEX_PURGE_ROSTER_FILES)
     return { ...target, ordinal };
+}
+
+export function readIndexFinalizationSidecarTarget(value: unknown): IndexFinalizationSidecarTarget | undefined {
+  if (!record(value) || !keys(value, "generation,inventoryDigest,record,scopeKey")) return;
+  const { scopeKey, generation, inventoryDigest, record: selected } = value;
+  const target = readIndexReclaimIntentTarget({ scopeKey, generation, inventoryDigest });
+  if (target && (selected === "roster" || selected === "completion")) return { ...target, record: selected };
 }
 
 export function validPreparedCatalog(value: unknown): value is PreparedReclaimCatalog {

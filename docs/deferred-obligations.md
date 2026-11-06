@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ac 私有索引缓存槽（2026-11-06）
+
+alpha.216 已验证隔离 App 数据中的私有槽和原生复用。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。容量观测、配额、授权撤销、正式接入及最终离线继续承接。见[F-064ac 迭代](iterations/F-064ac-private-app-index-cache-slot.md)。
+
 ## F-064ab 窗口流式正文片段（2026-11-06）
 
 alpha.215 已验证有界流式展示、取消和终态定位。OBL-006、OBL-018、OBL-026、OBL-035 继续开放，持久增量、容量与虚拟化及最终离线继续承接。见[F-064ab 迭代](iterations/F-064ab-stream-window-search-previews.md)。

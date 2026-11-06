@@ -2,6 +2,8 @@
 
 ## 窗口正文搜索与索引（F-064）
 
+F-064ac 的 alpha.216 在隔离 App 数据目录验证私有索引槽。合成快照热重开保持代数并跳过写入。普通窗口继续使用直接搜索。见[F-064ac 迭代](iterations/F-064ac-private-app-index-cache-slot.md)。
+
 F-064ab 的 alpha.215 会在查询中显示已核对的篇数和暂定片段，查询完成后才提供定位。已打开文档的磁盘片段在暂定阶段遮蔽，最终采用核验后的正文和未保存覆盖。取消或范围变化会清除暂定片段。见[F-064ab 迭代](iterations/F-064ab-stream-window-search-previews.md)。
 
 F-064aa 的 alpha.213 已验证逐篇进度的窗口消息协议，进度只属于当前查询。窗口流式显示由下一片接入。见[F-064aa 迭代](iterations/F-064aa-window-search-progress-transport.md)。

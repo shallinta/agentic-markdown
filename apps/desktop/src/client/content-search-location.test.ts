@@ -277,16 +277,16 @@ test("a fresh read-only grant opens as a persistent tab and allows only selectio
 const retainedLocation: ContentSearchLocation = {
   query: "😀中文", from: 4, to: 8, source: "disk", diskHash: hash,
 };
-function retainedFixture(): DocumentSnapshot {
+function retainedFixture(explicitStandalone = true): DocumentSnapshot {
   return {
     ...fixture("\uFEFFa\r\n😀中文\r\n"),
     displayPath: "/fixtures/retained.md",
-    explicitStandalone: true,
+    explicitStandalone,
   };
 }
 
-test("closed standalone search hit reuses the retained entry and selects once without taking focus", async () => {
-  const initial = retainedFixture();
+test.each([true, false])("closed search hit (standalone: %s) reuses the retained entry and selects once", async (explicitStandalone) => {
+  const initial = retainedFixture(explicitStandalone);
   const reopened = { ...initial, revision: 2 };
   const { documents, released } = setup([initial]);
   try {
@@ -314,8 +314,8 @@ test("closed standalone search hit reuses the retained entry and selects once wi
   }
 });
 
-test("late standalone receipts cannot replace a reopened dirty tab or release its grant", async () => {
-  const initial = retainedFixture();
+test.each([true, false])("late receipts (standalone: %s) cannot replace a reopened dirty tab or release its grant", async (explicitStandalone) => {
+  const initial = retainedFixture(explicitStandalone);
   const { documents, released } = setup([initial, initial]);
   try {
     await documents.select();
@@ -343,8 +343,8 @@ test("late standalone receipts cannot replace a reopened dirty tab or release it
   }
 });
 
-test("cancelled or invalid standalone receipts do not adopt a snapshot or release any grant", async () => {
-  const initial = retainedFixture();
+test.each([true, false])("cancelled or invalid receipts (standalone: %s) cannot adopt a snapshot or release a grant", async (explicitStandalone) => {
+  const initial = retainedFixture(explicitStandalone);
   const { documents, released } = setup([initial]);
   try {
     await documents.select();
@@ -356,7 +356,8 @@ test("cancelled or invalid standalone receipts do not adopt a snapshot or releas
       { ...initial, locationId: crypto.randomUUID() },
       { ...initial, fileName: "changed.md" },
       { ...initial, displayPath: "/fixtures/changed.md" },
-      { ...initial, explicitStandalone: false },
+      { ...initial, explicitStandalone: !explicitStandalone },
+      { ...initial, explicitStandalone: undefined },
       { ...initial, hash: "c".repeat(64) },
     ]) {
       expect(await documents.openRetainedContentSearchLocation(

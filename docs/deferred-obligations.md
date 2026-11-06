@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064x 目录命中重开（2026-11-06）
+
+alpha.210 已验证关闭的目录文档从命中重开。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。按文件显示上下文、流式结果及持久增量由后续承接。见[F-064x 迭代](iterations/F-064x-reopen-retained-directory-search-result.md)。
+
 ## F-064w 当前窗口正文搜索（2026-11-06）
 
 alpha.209 已验证窗口混合查询、未保存覆盖和独立文件定位。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。普通目录派生标签关闭后的定位由 F-064x 承接，持久增量、流式结果与最终离线继续登记。见[F-064w 迭代](iterations/F-064w-window-content-search-with-standalone.md)。

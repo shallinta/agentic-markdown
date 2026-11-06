@@ -99,8 +99,9 @@ export interface SaveViewStatus {
 }
 const locationKey = (snapshot: DocumentEntry) =>
   snapshot.locationId ?? snapshot.documentId;
-const sameRetainedIdentity = (entry: DocumentEntry, peer: DocumentEntry) =>
-  peer.explicitStandalone === true &&
+export const sameRetainedIdentity = (entry: DocumentEntry, peer: DocumentEntry) =>
+  typeof entry.explicitStandalone === "boolean" &&
+  peer.explicitStandalone === entry.explicitStandalone &&
   peer.handle === entry.handle &&
   peer.documentId === entry.documentId &&
   peer.locationId === entry.locationId &&
@@ -694,7 +695,7 @@ export function createDocumentController(
     }
   }
   function retainedContentSearchEntryCurrent(entry: DocumentEntry) {
-    if (entry.explicitStandalone !== true || !entry.locationId || !entry.displayPath)
+    if (typeof entry.explicitStandalone !== "boolean" || !entry.locationId || !entry.displayPath)
       return false;
     const peers = state.entries.filter((peer) => sharesDocumentLocation(entry, peer));
     return peers.length === 1 &&

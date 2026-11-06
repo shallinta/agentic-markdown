@@ -1624,11 +1624,15 @@ export function createWorkspaceService({
       const admission = documents.captureContentSearchBindings([entry]);
       if (!admission) return { ok: false, error: "BUSY" };
       const retained = admission.bindings[0];
-      if (!retained?.readStandalone || !retained.prepareStandaloneSnapshot)
+      if (!retained?.prepareRetainedSnapshot)
         return { ok: false, error: "STALE" };
-      const { path, fingerprint, documentId, revision, hash, readStandalone, prepareStandaloneSnapshot } = retained;
+      const { path, fingerprint, documentId, revision, hash, scope, readStandalone, prepareRetainedSnapshot } = retained;
       const anchor = rootEntry ? captures[0] : undefined;
       const anchorFile = rootEntry ? anchor?.entries.get(rootEntry) : undefined;
+      const owner = scope && anchor
+        ? [...anchor.root.scopes].find((owner) => owner === scope && owner.root === anchor.root)
+        : undefined;
+      if (scope ? !owner : !readStandalone) return { ok: false, error: "STALE" };
       if (anchored && (anchorFile?.path !== path ||
           anchorFile.fingerprint !== fingerprint || anchor?.root.byPath.get(path)?.handle !== rootEntry))
         return { ok: false, error: "STALE" };
@@ -1643,6 +1647,7 @@ export function createWorkspaceService({
       const check = () => {
         if (signal?.aborted) throw new DocumentPathError("CANCELLED");
         if (!roster.current() || captures.some((captured) => !captured.current()) ||
+            (owner && (owner.root !== anchor?.root || !owner.root.scopes.has(owner))) ||
             (anchored ? anchor?.root.byPath.get(path)?.handle !== rootEntry : visible()))
           throw new DocumentPathError("FILE_CHANGED");
       };
@@ -1676,12 +1681,13 @@ export function createWorkspaceService({
       });
       const task = Promise.resolve().then(async (): Promise<ContentSearchRetainedPrepared> => {
         if (!binding) {
-          const prepared = await prepareStandaloneSnapshot(requestId, expectedHash, check, verifyScope);
+          const prepared = await prepareRetainedSnapshot(requestId, expectedHash, check, verifyScope, owner);
           if (!prepared.ok) return failRetained(prepared.error);
           return prepared.snapshot
             ? { ok: true, target: { kind: "retained", snapshot: prepared.snapshot } }
             : { ok: false, error: "UNAVAILABLE" };
         }
+        if (!readStandalone) return { ok: false, error: "STALE" };
         const current = () => {
           check();
           if (!admission.current()) throw new DocumentPathError("FILE_CHANGED");

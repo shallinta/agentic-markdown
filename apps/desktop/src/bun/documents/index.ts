@@ -93,15 +93,17 @@ interface ContentSearchBinding {
   documentId: string;
   revision: number;
   hash: string;
+  scope?: DocumentScope;
   verify(check: () => void): Promise<void>;
   readStandalone?(this: void, maxBytes: number, check: () => void): Promise<Buffer>;
   verifyStandalone?(this: void, check: () => void): Promise<void>;
-  prepareStandaloneSnapshot?(
+  prepareRetainedSnapshot?(
     this: void,
     requestId: string,
     expectedHash: string,
     check: () => void,
-    verifyScope: (check: () => void) => Promise<void>
+    verifyScope: (check: () => void) => Promise<void>,
+    owner?: DocumentScope
   ): Promise<DocumentResponse>;
 }
 export interface TrustedDocumentService extends DocumentService {
@@ -766,7 +768,7 @@ export function createDocumentService({
         let binding: ContentSearchBinding | undefined;
         if (grant && path !== undefined && fingerprint !== undefined && identity && !isUncertain) {
           binding = {
-            handle, path, fingerprint, ...identity,
+            handle, path, fingerprint, ...identity, scope,
             async verify(check) {
               check();
               const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -781,10 +783,12 @@ export function createDocumentService({
               check();
             },
           };
-          if (grant.explicitStandalone === true && !scope) {
+          const explicit = grant.explicitStandalone;
+          const standalone = explicit === true && !scope;
+          if (standalone || (explicit === false && scope)) {
             const directories = grant.directories;
             const checkBinding = () => {
-              if (!current() || grant.explicitStandalone !== true || grant.directories !== directories)
+              if (!current() || grant.explicitStandalone !== explicit || grant.directories !== directories)
                 throw new DocumentFailure("INVALID_HANDLE");
             };
             const checkTrash = () => {
@@ -800,7 +804,7 @@ export function createDocumentService({
               if (!admissionCurrent()) throw new DocumentFailure("CANCELLED");
               checkTrash();
             };
-            const withStandalone = async <T>(
+            const withRetained = async <T>(
               check: () => void,
               action: (opened: Grant) => Promise<T>
             ) => {
@@ -822,18 +826,22 @@ export function createDocumentService({
                 throw new DocumentFailure(codeOf(error));
               }
             };
-            binding.readStandalone = async (maxBytes, check) => {
-              if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.bytes)
-                throw new DocumentFailure("INVALID_REQUEST");
-              const current = checkRead(check);
-              return withStandalone(current, (opened) => stableBytes(opened, current, maxBytes));
-            };
-            binding.verifyStandalone = (check) =>
-              withStandalone(checkRead(check), async (opened) => { await verify(opened); });
-            binding.prepareStandaloneSnapshot = async (requestId, expectedHash, callerCheck, verifyScope) => {
+            if (standalone) {
+              binding.readStandalone = async (maxBytes, check) => {
+                if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > CONTENT_SEARCH_LIMITS.bytes)
+                  throw new DocumentFailure("INVALID_REQUEST");
+                const current = checkRead(check);
+                return withRetained(current, (opened) => stableBytes(opened, current, maxBytes));
+              };
+              binding.verifyStandalone = (check) =>
+                withRetained(checkRead(check), async (opened) => { await verify(opened); });
+            }
+            binding.prepareRetainedSnapshot = async (requestId, expectedHash, callerCheck, verifyScope, owner) => {
               if (!validate({ protocolVersion: 1, requestId, handle }, true) ||
                   !/^[a-f0-9]{64}$/.test(expectedHash))
                 return failure(requestId, "INVALID_REQUEST");
+              // A scoped grant may only reopen through a proof from its exact owner.
+              if (owner !== scope) return failure(requestId, "INVALID_HANDLE");
               if (!admissionCurrent()) return failure(requestId, "CANCELLED");
               const isObserved = () => observations.get(handle)?.documentId === identity.documentId;
               if (isObserved()) return failure(requestId, "BUSY");
@@ -863,7 +871,7 @@ export function createDocumentService({
                 try {
                   check();
                   await verifyScope(check);
-                  const next = await withStandalone(check, async (opened) => {
+                  const next = await withRetained(check, async (opened) => {
                     const snapshotValue = await snapshot(opened, generation, task, CONTENT_SEARCH_LIMITS.bytes, check);
                     if (snapshotValue.hash !== expectedHash) throw new DocumentFailure("FILE_CHANGED");
                     await verifyScope(check);

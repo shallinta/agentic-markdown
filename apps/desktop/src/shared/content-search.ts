@@ -295,7 +295,9 @@ export function validContentSearchPrepareResponse(
     return false;
   if (!retained) return true;
   return perfRecord(snapshot) &&
-    snapshot.handle === request.entry && snapshot.explicitStandalone === true &&
+    snapshot.handle === request.entry &&
+    (snapshot.explicitStandalone === true ||
+      (request.rootEntry !== undefined && snapshot.explicitStandalone === false)) &&
     exact(snapshot, [
       "handle", "documentId", "fileName", "revision", "hash", "byteLength", "text",
       "fidelity", "writeCapability", "explicitStandalone",

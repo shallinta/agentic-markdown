@@ -7,10 +7,9 @@ import {
   createContentSearchStandaloneProjection,
   projectContentSearchStandalone,
   resolveContentSearchScope,
-  sameContentSearchStandalone,
   type ContentSearchScopeMode,
 } from "@/client/content-search-scope";
-import type { DocumentEntry, createDocumentController } from "@/client/documents";
+import { sameRetainedIdentity, type DocumentEntry, type createDocumentController } from "@/client/documents";
 import type { FolderState, createFolderWorkspace } from "@/client/workspace";
 import { electrobun } from "@/lib/electrobun";
 import {
@@ -461,8 +460,10 @@ export function ContentSearchPanel({
         fileNameCounts.set(name, (fileNameCounts.get(name) ?? 0) + 1);
       const retainedByPath = new Map<string, DocumentEntry | null>();
       for (const entry of controller.getSnapshot().entries) {
-        if (entry.explicitStandalone !== true || !entry.displayPath) continue;
-        retainedByPath.set(entry.displayPath, retainedByPath.has(entry.displayPath) ? null : entry);
+        if (!entry.displayPath) continue;
+        retainedByPath.set(entry.displayPath,
+          retainedByPath.has(entry.displayPath) || typeof entry.explicitStandalone !== "boolean" || !entry.locationId
+            ? null : entry);
       }
       for (const hit of merged.hits) {
         const file = files.get(hit.entry);
@@ -513,9 +514,9 @@ export function ContentSearchPanel({
     const retainedCurrent = () => {
       if (!retained) return true;
       const peers = controller.getSnapshot().entries.filter((entry) =>
-        entry.explicitStandalone === true && entry.displayPath === retained.displayPath
+        entry.displayPath === retained.displayPath
       );
-      return peers.length === 1 && sameContentSearchStandalone(retained, peers[0]);
+      return peers.length === 1 && sameRetainedIdentity(retained, peers[0]);
     };
     let awaitingPrepare = true;
     const intent: LocationIntent = {

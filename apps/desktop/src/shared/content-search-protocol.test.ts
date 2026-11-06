@@ -229,6 +229,14 @@ test("retained prepare wire distinguishes original handles from directory open r
   const anchored = { ...request, roots: [queryRoots().roots[0]], rootEntry: crypto.randomUUID() };
   expect(validContentSearchPrepareRequest(anchored)).toBe(true);
   expect(validContentSearchPrepareResponse(response, anchored)).toBe(true);
+  const scoped = { ...response, target: {
+    kind: "retained", snapshot: { ...snapshot, explicitStandalone: false },
+  } };
+  expect(validContentSearchPrepareResponse(scoped, anchored)).toBe(true);
+  expect(validContentSearchPrepareResponse(scoped, request)).toBe(false);
+  expect(validContentSearchPrepareResponse({ ...scoped, target: {
+    ...scoped.target, snapshot: { ...scoped.target.snapshot, explicitStandalone: undefined },
+  } }, anchored)).toBe(false);
   expect(validContentSearchPrepareRequest({ ...anchored, roots: [] })).toBe(false);
   expect(validContentSearchPrepareRequest({ ...anchored, roots: queryRoots().roots })).toBe(false);
   expect(validContentSearchPrepareRequest({ ...anchored, rootEntry: "/tmp/file.md" })).toBe(false);

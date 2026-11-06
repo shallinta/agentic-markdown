@@ -1,6 +1,6 @@
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
-import { dirname, extname, isAbsolute } from "node:path";
+import { basename, dirname, extname, isAbsolute, join } from "node:path";
 
 import type { DocumentErrorCode } from "../../shared/documents";
 
@@ -84,19 +84,30 @@ export async function canonicalizeSelectedPath(
 }
 
 /** Check only explicitly selected paths and ancestors, never directory contents. */
-export async function verifySingleFileAuthorization(
+export function verifySingleFileAuthorization(
   grant: SingleFileAuthorization,
   check: () => void = () => undefined
 ): Promise<BigIntStats> {
+  return verifyFileAuthorization(grant, check, true);
+}
+
+async function verifyFileAuthorization(
+  grant: SingleFileAuthorization,
+  check: () => void,
+  allowEstablishedHardlink: boolean
+): Promise<BigIntStats> {
   try {
+    const observedPath = await canonicalizeSelectedPath(grant.selectedPath, undefined, check);
+    const differs = observedPath !== grant.path;
+    if (differs && !allowEstablishedHardlink)
+      throw new DocumentPathError("FILE_CHANGED");
+    const selectedParent = await canonicalizeSelectedPath(dirname(grant.selectedPath), undefined, check);
+    // A rewritten hardlink can resolve to another name in the same directory.
+    // Only recheck the exact selected name already recorded by this grant.
     if (
-      (await canonicalizeSelectedPath(grant.selectedPath, undefined, check)) !==
-        grant.path ||
-      (await canonicalizeSelectedPath(
-        dirname(grant.selectedPath),
-        undefined,
-        check
-      )) !== grant.selectedParent
+      selectedParent !== grant.selectedParent ||
+      (differs && (dirname(observedPath) !== selectedParent ||
+        join(selectedParent, basename(grant.selectedPath)) !== grant.path))
     )
       throw new DocumentPathError("FILE_CHANGED");
     for (const directory of grant.directories) {
@@ -116,6 +127,7 @@ export async function verifySingleFileAuthorization(
     if (
       !current.isFile() ||
       !opened.isFile() ||
+      (differs && (current.isSymbolicLink() || current.nlink <= 1n)) ||
       fileFingerprint(current) !== grant.fingerprint ||
       fileFingerprint(opened) !== grant.fingerprint
     )
@@ -172,7 +184,7 @@ export async function authorizeSingleFile(
       directories: [...directories.values()],
       file,
     };
-    await verifySingleFileAuthorization(grant, check);
+    await verifyFileAuthorization(grant, check, false);
     check();
     return grant;
   } catch (error) {

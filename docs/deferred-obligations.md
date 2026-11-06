@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ab 窗口流式正文片段（2026-11-06）
+
+alpha.215 已验证有界流式展示、取消和终态定位。OBL-006、OBL-018、OBL-026、OBL-035 继续开放，持久增量、容量与虚拟化及最终离线继续承接。见[F-064ab 迭代](iterations/F-064ab-stream-window-search-previews.md)。
+
 ## F-064aa 窗口正文搜索进度协议（2026-11-06）
 
 alpha.213 已验证逐篇进度的传输与取消。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。暂定结果展示、持久增量及最终离线继续承接。见[F-064aa 迭代](iterations/F-064aa-window-search-progress-transport.md)。

@@ -2,6 +2,7 @@ import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "
 
 import { mergeContentSearch, type ContentSearchHitGroup } from "@/client/content-search";
 import type { ContentSearchLocation } from "@/client/content-search-location";
+import { createContentSearchPreview } from "@/client/content-search-preview";
 import {
   captureContentSearchScope,
   createContentSearchStandaloneProjection,
@@ -20,6 +21,7 @@ import {
   type ContentSearchDocumentBinding,
   type ContentSearchError,
   type ContentSearchPrepareRequest,
+  type ContentSearchProgress,
   type ContentSearchRequest,
 } from "@/shared/content-search";
 import {
@@ -30,6 +32,7 @@ import {
   relativeContentSearchPath,
   selectContentSearchRootFilter,
 } from "@/shared/content-search-filters";
+import type { ContentSearchFragments } from "@/shared/content-search-fragments";
 import type { DocumentRequest } from "@/shared/documents";
 import type { WorkspaceRoot } from "@/shared/workspace";
 
@@ -76,12 +79,14 @@ const fieldClass =
 
 type Query = Extract<ContentSearchRequest, { op: "query" | "query-workspace" }>;
 type SearchMatch = ContentSearchHitGroup["matches"][number];
-type PresentedGroup = ContentSearchHitGroup & {
+interface GroupLabel {
   name: string;
-  root: WorkspaceRoot | null;
-  retained?: DocumentEntry;
   rootLabel: string;
   relativePath?: string;
+}
+type PresentedGroup = ContentSearchHitGroup & GroupLabel & {
+  root: WorkspaceRoot | null;
+  retained?: DocumentEntry;
   location: Omit<ContentSearchLocation, "from" | "to">;
   binding?: ContentSearchDocumentBinding;
 };
@@ -91,11 +96,18 @@ interface Presented {
   search: SearchLifetime;
 }
 type FocusedHit = Pick<PresentedGroup, "entry" | "name" | "rootLabel" | "relativePath" | "matches">;
+interface PresentedPreview {
+  query: string;
+  processed: number;
+  expected: number;
+  groups: (GroupLabel & ContentSearchFragments & { entry: string })[];
+}
 interface SearchLifetime {
   request: Query;
   scopeCurrent(): boolean;
   current(): boolean;
   pending: boolean;
+  stopProgress?: () => void;
 }
 interface LocationIntent {
   current: () => boolean;
@@ -108,6 +120,34 @@ function envelope() {
 
 function matchKey(entry: string, { from, to }: SearchMatch) {
   return `${entry}:${from}:${to}`;
+}
+
+function stopSearchProgress(search: SearchLifetime) {
+  const stop = search.stopProgress;
+  search.stopProgress = undefined;
+  stop?.();
+}
+
+function ResultGroupLabel({ name, rootLabel, relativePath }: GroupLabel) {
+  return (
+    <>
+      <span className="font-medium">{name}</span>
+      <span className="text-muted-foreground block">{rootLabel}</span>
+      {relativePath && <span className="text-muted-foreground block">{relativePath}</span>}
+    </>
+  );
+}
+
+function ResultSnippet({ query, match }: { query: string; match: SearchMatch }) {
+  return (
+    <span className="block whitespace-pre-wrap break-all">
+      {match.before}
+      <mark className="rounded-sm bg-yellow-200 px-0.5 font-semibold text-neutral-900 dark:bg-yellow-300">
+        {query}
+      </mark>
+      {match.after}
+    </span>
+  );
 }
 
 function cancel(requestId: string) {
@@ -181,6 +221,7 @@ export function ContentSearchPanel({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(initialStatus);
   const [result, setResult] = useState<Presented | null>(null);
+  const [preview, setPreview] = useState<PresentedPreview | null>(null);
   // Retain the clicked DOM button when the document load invalidates its results.
   const [focusedHit, setFocusedHit] = useState<FocusedHit | null>(null);
   const filters = useMemo(() => parseContentSearchFilters(filterText), [filterText]);
@@ -255,7 +296,9 @@ export function ContentSearchPanel({
   const retire = useCallback(() => {
     const previous = active.current;
     active.current = null;
-    if (previous?.pending) cancel(previous.request.requestId);
+    if (!previous) return;
+    stopSearchProgress(previous);
+    if (previous.pending) cancel(previous.request.requestId);
   }, []);
 
   const retireLocation = useCallback(() => {
@@ -276,6 +319,7 @@ export function ContentSearchPanel({
   const reset = useCallback(
     (message: string) => {
       retire();
+      setPreview(null);
       setResult(null);
       setBusy(false);
       if (!location.current) setStatus(message);
@@ -382,6 +426,7 @@ export function ContentSearchPanel({
       ...envelope(),
       query,
       fragments: true as const,
+      stream: true as const,
       handles: capture.documents.map(({ handle }) => handle),
       ...(filters.fileFilters.length ? { fileFilters: filters.fileFilters } : {}),
       ...(filters.pathFilters.length ? { pathFilters: filters.pathFilters } : {}),
@@ -392,6 +437,21 @@ export function ContentSearchPanel({
     if (!validContentSearchRequest(request)) {
       setStatus(errors.INVALID);
       return;
+    }
+    const rootNameCounts = new Map<string, number>();
+    const fileNameCounts = new Map<string, number>();
+    for (const item of scope.roots)
+      rootNameCounts.set(item.name, (rootNameCounts.get(item.name) ?? 0) + 1);
+    for (const { name } of files.values())
+      fileNameCounts.set(name, (fileNameCounts.get(name) ?? 0) + 1);
+    const labels = new Map<string, GroupLabel>();
+    for (const [entry, file] of files) {
+      const rootLabel = file.root
+        ? (rootNameCounts.get(file.root.name) ?? 0) > 1
+          ? `${file.root.name} · ${file.root.displayPath}`
+          : file.root.name
+        : (fileNameCounts.get(file.name) ?? 0) > 1 ? `独立文件 · ${file.displayPath}` : "独立文件";
+      labels.set(entry, { name: file.name, rootLabel, relativePath: file.relativePath });
     }
     const projectStandalone = createContentSearchStandaloneProjection();
     const search: SearchLifetime = {
@@ -417,12 +477,44 @@ export function ContentSearchPanel({
       setStatus(changed);
       return;
     }
+    const receiver = createContentSearchPreview(request, files, controller.getSnapshot().tabs.map(({ displayPath }) => displayPath));
+    const showPreview = (value: ContentSearchProgress) => {
+      if (active.current !== search || !search.pending) return;
+      if (!search.current()) {
+        reset(changed);
+        return;
+      }
+      const update = receiver.accept(value);
+      if (update.kind === "discard") {
+        stopSearchProgress(search);
+        setPreview(null);
+      } else if (update.kind === "update") {
+        setPreview({
+          query,
+          expected: files.size,
+          processed: update.snapshot.processed,
+          groups: update.snapshot.groups.flatMap(({ entry, fragments }) => {
+            const label = labels.get(entry);
+            return label ? [{ entry, ...label, ...fragments }] : [];
+          }),
+        });
+      }
+    };
     active.current = search;
+    setPreview({ query, processed: 0, expected: files.size, groups: [] });
     setBusy(true);
     setStatus("正在查询正文…");
     try {
-      const response: unknown = await electrobun.rpc?.request.contentSearchRequest(request);
+      const rpc = electrobun.rpc;
+      if (rpc) {
+        search.stopProgress = () => rpc.removeMessageListener("contentSearchProgress", showPreview);
+        rpc.addMessageListener("contentSearchProgress", showPreview);
+      }
+      const response: unknown = await rpc?.request.contentSearchRequest(request);
       if (active.current !== search) return;
+      search.pending = false;
+      stopSearchProgress(search);
+      setPreview(null);
       if (!search.current()) {
         reset(changed);
         return;
@@ -431,7 +523,6 @@ export function ContentSearchPanel({
         reset("无法确认查询响应，请重试。");
         return;
       }
-      search.pending = false;
       if (!response.ok) {
         reset(errors[response.error]);
         return;
@@ -458,12 +549,6 @@ export function ContentSearchPanel({
         bindings.set(mapping.entry, { handle, documentId, revision, hash });
       }
       const groups: PresentedGroup[] = [];
-      const rootNameCounts = new Map<string, number>();
-      const fileNameCounts = new Map<string, number>();
-      for (const item of scope.roots)
-        rootNameCounts.set(item.name, (rootNameCounts.get(item.name) ?? 0) + 1);
-      for (const { name } of files.values())
-        fileNameCounts.set(name, (fileNameCounts.get(name) ?? 0) + 1);
       const retainedByPath = new Map<string, DocumentEntry | null>();
       for (const entry of controller.getSnapshot().entries) {
         if (!entry.displayPath) continue;
@@ -474,28 +559,22 @@ export function ContentSearchPanel({
       let visibleMatches = 0;
       for (const group of merged.groups) {
         const file = files.get(group.entry);
+        const label = labels.get(group.entry);
         const diskHash = coverage.get(group.entry)?.hash;
         const binding = bindings.get(group.entry);
         const version = binding && versions.get(binding.handle);
-        if (!file?.name || !diskHash || ((binding || group.source === "memory") && !version) ||
+        if (!file || !label?.name || !diskHash || ((binding || group.source === "memory") && !version) ||
             (!file.root && binding && binding.handle !== file.standalone.handle) ||
             (file.root && !binding && retainedByPath.get(file.displayPath) === null)) {
           reset(incomplete);
           return;
         }
         const retained = file.standalone ?? (!binding ? retainedByPath.get(file.displayPath) ?? undefined : undefined);
-        const rootLabel = file.root
-          ? (rootNameCounts.get(file.root.name) ?? 0) > 1
-            ? `${file.root.name} · ${file.root.displayPath}`
-            : file.root.name
-          : (fileNameCounts.get(file.name) ?? 0) > 1 ? `独立文件 · ${file.displayPath}` : "独立文件";
         groups.push({
           ...group,
-          name: file.name,
+          ...label,
           root: file.root,
           retained,
-          rootLabel,
-          relativePath: file.relativePath,
           binding,
           location: { query, source: group.source, diskHash, version },
         });
@@ -764,6 +843,31 @@ export function ContentSearchPanel({
             </div>
           </form>
           <p role="status" className="break-words text-xs">{status}</p>
+          {busy && preview && (
+            <section aria-label="搜索进度" className="space-y-1 rounded border border-dashed p-2 text-xs">
+              <h3 className="font-medium">暂定命中</h3>
+              <p aria-live="polite" className="text-muted-foreground">
+                已核对 {preview.processed} / {preview.expected} 篇文档。
+              </p>
+              {preview.groups.length > 0 && (
+                <ul aria-label="暂定命中片段" className="max-h-32 space-y-2 overflow-y-auto">
+                  {preview.groups.map((group) => (
+                    <li key={group.entry} className="break-words">
+                      <ResultGroupLabel {...group} />
+                      <ul className="my-1 space-y-1">
+                        {group.matches.map((match) => (
+                          <li key={matchKey(group.entry, match)} className="rounded border px-2 py-1">
+                            <ResultSnippet query={preview.query} match={match} />
+                          </li>
+                        ))}
+                      </ul>
+                      {group.more && <p className="text-muted-foreground">此文件还有更多命中。</p>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
           {result && <p className="text-muted-foreground text-xs">本次覆盖 {result.covered} 篇文档。</p>}
           {groups.length > 0 && (
             <ul aria-label="正文搜索命中" className="max-h-32 space-y-2 overflow-y-auto text-xs">
@@ -771,11 +875,7 @@ export function ContentSearchPanel({
                 const current = "location" in group ? group : null;
                 return (
                   <li key={group.entry} className="break-words">
-                    <span className="font-medium">{group.name}</span>
-                    <span className="text-muted-foreground block">{group.rootLabel}</span>
-                    {group.relativePath && (
-                      <span className="text-muted-foreground block">{group.relativePath}</span>
-                    )}
+                    <ResultGroupLabel {...group} />
                     <ul aria-label={`${group.name}的正文命中`} className="my-1 space-y-1">
                       {group.matches.map((match) => {
                         const key = matchKey(group.entry, match);
@@ -796,13 +896,7 @@ export function ContentSearchPanel({
                             >
                               {current ? (
                                 <>
-                                  <span className="block whitespace-pre-wrap break-all">
-                                    {match.before}
-                                    <mark className="rounded-sm bg-yellow-200 px-0.5 font-semibold text-neutral-900 dark:bg-yellow-300">
-                                      {current.location.query}
-                                    </mark>
-                                    {match.after}
-                                  </span>
+                                  <ResultSnippet query={current.location.query} match={match} />
                                   <span className="text-muted-foreground block">
                                     {current.source === "memory" ? "未保存正文" : "磁盘正文"} · UTF-16 [{match.from}, {match.to})
                                   </span>

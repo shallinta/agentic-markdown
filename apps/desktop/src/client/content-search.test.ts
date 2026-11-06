@@ -144,7 +144,8 @@ test("fragment mode refuses legacy shapes and applies the same disk and dirty li
   const evidence = {
     coverage: [
       { entry: "matched", hash, bytes: 1, fragments },
-      { entry: "disk", hash, bytes: 65_530, fragments },
+      { entry: "disk", hash, bytes: CONTENT_SEARCH_LIMITS.fileBytes, fragments },
+      { entry: "other", hash, bytes: CONTENT_SEARCH_LIMITS.aggregateBytes - CONTENT_SEARCH_LIMITS.fileBytes - 7, fragments },
     ],
     mappings: [mapping],
   };
@@ -186,26 +187,31 @@ test("unresolved, risky or different disk baselines cannot yield complete hits",
   ).toEqual({ ok: true, covered: 1, hits: [] });
 });
 
-test("memory overrides count UTF-8 bytes and reject invalid Unicode", () => {
-  const evidence = {
+test("memory overrides count UTF-8 bytes at the aggregate boundary and reject invalid Unicode", () => {
+  const exact = {
     coverage: [
       { entry: "matched", hash, bytes: 1 },
-      { entry: "other", hash, bytes: 65_530 },
+      { entry: "disk", hash, bytes: CONTENT_SEARCH_LIMITS.fileBytes },
+      { entry: "other", hash, bytes: CONTENT_SEARCH_LIMITS.aggregateBytes - CONTENT_SEARCH_LIMITS.fileBytes - 8 },
     ],
     mappings: [mapping],
   };
+  const dirty: ContentSearchDocument = { ...document, status: "dirty", raw: "😀😀" };
+  expect(mergeContentSearch("😀", [dirty], exact)).toEqual({
+    ok: true, covered: 3, hits: [{ entry: "matched", from: 0, to: 2, source: "memory" }],
+  });
+  const over = {
+    ...exact,
+    coverage: exact.coverage.map((row) => row.entry === "other" ? { ...row, bytes: row.bytes + 1 } : row),
+  };
   expect(
-    mergeContentSearch(
-      "😀",
-      [{ ...document, status: "dirty", raw: "😀😀" }],
-      evidence
-    )
+    mergeContentSearch("😀", [dirty], over)
   ).toEqual({ ok: false, reason: "limit" });
   expect(
     mergeContentSearch(
       "😀",
       [{ ...document, status: "dirty", raw: "\ud800" }],
-      evidence
+      over
     )
   ).toEqual({ ok: false, reason: "incomplete" });
 });
@@ -214,6 +220,8 @@ test("dirty file budget uses UTF-8 and preserves incomplete evidence precedence"
   const raw = "😀".repeat(CONTENT_SEARCH_LIMITS.fileBytes / 4);
   const exact: ContentSearchDocument = { ...document, status: "dirty", raw };
   const oversized = { ...exact, raw: raw + "x" };
+  expect(Buffer.byteLength(oversized.raw)).toBe(CONTENT_SEARCH_LIMITS.fileBytes + 1);
+  expect(Buffer.byteLength(oversized.raw)).toBeLessThan(CONTENT_SEARCH_LIMITS.aggregateBytes);
   const evidence = {
     coverage: [{ entry: "matched", hash, bytes: 1 }],
     mappings: [mapping],

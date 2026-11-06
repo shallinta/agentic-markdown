@@ -744,7 +744,7 @@ test.skipIf(childScenario !== "direct")(
           ...env(), op: "query", root: scope.second.root.handle, generation: scope.second.root.generation,
           handles: scope.scope.handles, query: literal, fileFilters: ["同名"],
         })).toMatchObject({ ok: true, coverage: matched.coverage.slice(1), mappings: [scope.mapping] });
-        return matched.coverage.map(({ bytes, hash, hit }) => ({ bytes, hash, hit }));
+        return matched.coverage.flatMap(({ bytes, hash, hit }) => hit ? [{ bytes, hash, hit }] : []);
       }
 
       // Direct must succeed even while another owner occupies the native slot.
@@ -754,11 +754,20 @@ test.skipIf(childScenario !== "direct")(
       const directEvidence = await runCases(direct, directScope);
       expect(await readFile(marker, "utf8")).toBe("keep");
       const budget = { ...env(), ...directScope.scope, op: "query-roots" as const, query: literal };
-      expect(await direct.rpc.run(budget)).toEqual({
-        protocolVersion: 1, requestId: budget.requestId, ok: false, error: "LIMIT",
-      });
+      const directBudget = await direct.rpc.run(budget);
+      expect(validContentSearchResponse(directBudget, budget)).toBe(true);
+      if (!directBudget.ok || directBudget.op !== "query-roots") throw Error("Missing direct byte coverage");
+      expect(directBudget.coverage.flatMap(({ bytes, hash, hit }) => hit ? [{ bytes, hash, hit }] : []))
+        .toEqual(directEvidence);
+      expect(directBudget.coverage.map(({ bytes }) => bytes).sort((a, b) => a - b))
+        .toEqual([...raw.map((text) => Buffer.byteLength(text)).sort((a, b) => a - b), 33_000, 33_000]);
       expect(indexOperations).toEqual([]);
       await rm(slot, { recursive: true });
+      const nativeBudget = { ...budget, ...env(), ...nativeScope.scope };
+      expect(await native.rpc.run(nativeBudget)).toEqual({
+        protocolVersion: 1, requestId: nativeBudget.requestId, ok: false, error: "LIMIT",
+      });
+      expect(indexOperations).toEqual([]);
       expect(await runCases(native, nativeScope)).toEqual(directEvidence);
       expect(indexOperations).toContain("apply");
       expect(await lstat(slot).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
@@ -829,7 +838,7 @@ test.skipIf(childScenario !== "direct")(
 );
 
 test.skipIf(childScenario !== "coverage")(
-  "direct search streams and locates the 32nd entry while native still caps coverage at 16",
+  "direct search locates the last covered file at the count and byte boundaries",
   async () => {
     const fixture = await mkdtemp(join(tmpdir(), "workspace-coverage-"));
     let selected: string | null = null;
@@ -845,12 +854,8 @@ test.skipIf(childScenario !== "coverage")(
     );
     rpc.setReady(true);
 
-    async function joinFixture(count: number) {
-      const path = join(fixture, String(count));
-      const files = new Map(Array.from({ length: count }, (_, index) => {
-        const name = `note-${String(index + 1).padStart(2, "0")}.md`;
-        return [name, `\uFEFF😀target\r\n${name}`];
-      }));
+    async function joinFixture(label: string, files: ReadonlyMap<string, string>) {
+      const path = join(fixture, label);
       await mkdir(path);
       for (const [name, raw] of files) await writeFile(join(path, name), raw);
       selected = path;
@@ -865,9 +870,26 @@ test.skipIf(childScenario !== "coverage")(
       }
       throw Error("Fixture scan did not complete");
     }
+    function joinNumberedFixture(count: number) {
+      const files = new Map(Array.from({ length: count }, (_, index) => {
+        const name = `note-${String(index + 1).padStart(2, "0")}.md`;
+        return [name, `\uFEFF😀target\r\n${name}`];
+      }));
+      return joinFixture(String(count), files);
+    }
+    async function entryRaw(root: { handle: string; generation: number }, files: ReadonlyMap<string, string>, entry: string) {
+      const page = await workspace.request({
+        ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0,
+      });
+      const node = page.ok && page.nodes?.find(({ handle }) => handle === entry);
+      if (!node || node.kind !== "file") throw Error("Missing last scan entry");
+      const raw = files.get(node.name);
+      if (raw === undefined) throw Error("Missing last fixture file");
+      return raw;
+    }
 
     try {
-      const { root, files } = await joinFixture(32);
+      const { root, files } = await joinNumberedFixture(32);
       const request = {
         ...env(), op: "query" as const, root: root.handle, generation: root.generation,
         query: "target", handles: [], fragments: true as const, stream: true as const,
@@ -884,13 +906,7 @@ test.skipIf(childScenario !== "coverage")(
         entry: last.entry, sequence: 32, kind: "fragments",
         fragments: { matches: [{ from: 3, to: 9 }], more: false },
       });
-      const page = await workspace.request({
-        ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0,
-      });
-      const node = page.ok && page.nodes?.find(({ handle }) => handle === last.entry);
-      if (!node || node.kind !== "file") throw Error("Missing last scan entry");
-      const raw = files.get(node.name);
-      if (raw === undefined) throw Error("Missing last fixture file");
+      const raw = await entryRaw(root, files, last.entry);
       expect(last.hash).toBe(createHash("sha256").update(raw).digest("hex"));
       const prepare = {
         ...env(), root: root.handle, generation: root.generation, entry: last.entry, expectedHash: last.hash,
@@ -913,7 +929,7 @@ test.skipIf(childScenario !== "coverage")(
         } },
       });
 
-      const over = await joinFixture(33);
+      const over = await joinNumberedFixture(33);
       const filtered = {
         ...request, ...env(), root: over.root.handle, generation: over.root.generation,
         fileFilters: ["note-01.md"],
@@ -923,9 +939,54 @@ test.skipIf(childScenario !== "coverage")(
       });
       expect(progress).toHaveLength(32);
       expect(await documents.release({ ...env(), handle: snapshot.handle })).toMatchObject({ ok: true });
-      const native = await joinFixture(17);
+      const native = await joinNumberedFixture(17);
       expect(await workspace.searchSnapshot(native.root.handle, native.root.generation, "target"))
         .toEqual({ ok: false, error: "LIMIT", accepted: false });
+
+      const budgetFiles = new Map(["first.md", "second.md"].map((name) => {
+        const prefix = `\uFEFF😀target\r\n${name}\n`;
+        return [name, prefix + "x".repeat(65_536 - Buffer.byteLength(prefix))];
+      }));
+      const boundary = await joinFixture("exact-byte-budget", budgetFiles);
+      const exact = { ...request, ...env(), root: boundary.root.handle, generation: boundary.root.generation };
+      const started = performance.now();
+      const exactReceipt = await rpc.run(exact);
+      const elapsed = performance.now() - started;
+      expect(validContentSearchResponse(exactReceipt, exact)).toBe(true);
+      if (!exactReceipt.ok || exactReceipt.op !== "query") throw Error("Missing exact byte coverage");
+      console.info(`Direct 128 KiB query observed ${elapsed.toFixed(2)} ms`);
+      expect(exactReceipt.coverage.map(({ bytes }) => bytes)).toEqual([65_536, 65_536]);
+      expect(exactReceipt.coverage.map(({ fragments }) => fragments?.matches.map(({ from, to }) => ({ from, to }))))
+        .toEqual([[{ from: 3, to: 9 }], [{ from: 3, to: 9 }]]);
+      const second = exactReceipt.coverage[1];
+      const secondRaw = await entryRaw(boundary.root, budgetFiles, second.entry);
+      expect(second.hash).toBe(createHash("sha256").update(secondRaw).digest("hex"));
+      const locateSecond = {
+        ...env(), root: exact.root, generation: exact.generation, entry: second.entry, expectedHash: second.hash,
+      };
+      const exactOpened = await rpc.prepare(locateSecond);
+      expect(validContentSearchPrepareResponse(exactOpened, locateSecond)).toBe(true);
+      if (!exactOpened.ok || exactOpened.target.kind !== "open") throw Error("Missing exact-budget second snapshot");
+      expect(exactOpened.target.snapshot.text).toBe(secondRaw);
+      expect(progress.slice(32).map(({ requestId, sequence }) => ({ requestId, sequence }))).toEqual([
+        { requestId: exact.requestId, sequence: 1 }, { requestId: exact.requestId, sequence: 2 },
+      ]);
+
+      const overflow = await joinFixture("overflow-by-one", new Map([...budgetFiles, ["extra.md", "x"]]));
+      const excess = { ...request, ...env(), root: overflow.root.handle, generation: overflow.root.generation };
+      expect(await rpc.run(excess)).toEqual({
+        protocolVersion: 1, requestId: excess.requestId, ok: false, error: "LIMIT",
+      });
+      expect(progress.slice(34).map(({ requestId, sequence }) => ({ requestId, sequence }))).toEqual([
+        { requestId: excess.requestId, sequence: 1 }, { requestId: excess.requestId, sequence: 2 },
+      ]);
+
+      const oversized = await joinFixture("oversized-single-file", new Map([["single.md", "x".repeat(65_537)]]));
+      const tooLarge = { ...request, ...env(), root: oversized.root.handle, generation: oversized.root.generation };
+      expect(await rpc.run(tooLarge)).toEqual({
+        protocolVersion: 1, requestId: tooLarge.requestId, ok: false, error: "LIMIT",
+      });
+      expect(progress).toHaveLength(36);
     } finally {
       rpc.setReady(false);
       await rpc.drain();
@@ -1027,7 +1088,7 @@ test.skipIf(childScenario !== "mixed")(
       await writeFile(peerPath, peerRaw);
       await writeFile(oversizedPath, "x".repeat(65_537));
       await writeFile(sharedBudgetPath, "x".repeat(27_000));
-      for (const rootPath of [firstPath, secondPath]) await writeFile(join(rootPath, "budget.md"), "x".repeat(20_000));
+      for (const rootPath of [firstPath, secondPath]) await writeFile(join(rootPath, "budget.md"), "x".repeat(53_000));
       for (let i = 0; i < 8; i++) await writeFile(join(firstPath, `pad-${i}.md`), "");
       for (let i = 0; i < 16; i++) await writeFile(join(firstPath, `pad-7-extra-${i}.md`), "");
 

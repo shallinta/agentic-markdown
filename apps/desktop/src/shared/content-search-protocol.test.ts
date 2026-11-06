@@ -387,6 +387,18 @@ test("retained prepare wire distinguishes original handles from directory open r
     target: { kind: "retained", snapshot },
   };
   expect(validContentSearchPrepareResponse(response, request)).toBe(true);
+  const fullText = text + "x".repeat(CONTENT_SEARCH_LIMITS.fileBytes - Buffer.byteLength(text));
+  for (const [candidate, expected] of [[fullText, true], [fullText + "x", false]] as const) {
+    expect(validContentSearchPrepareResponse({
+      ...response,
+      target: { kind: "retained", snapshot: {
+        ...snapshot,
+        text: candidate,
+        byteLength: Buffer.byteLength(candidate),
+        fidelity: analyzeTextFidelity(candidate),
+      } },
+    }, request)).toBe(expected);
+  }
   expect(validContentSearchPrepareResponse({ ...response, op: request.op }, request)).toBe(false);
   for (const change of [
     { explicitStandalone: false }, { explicitStandalone: undefined },

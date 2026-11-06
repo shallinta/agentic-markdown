@@ -19,7 +19,7 @@ export const CONTENT_SEARCH_LIMITS = {
   coverageDocuments: 32,
   openHandles: 16,
   standaloneHandles: 16,
-  aggregateBytes: 65_536,
+  aggregateBytes: 131_072,
   fileBytes: 65_536,
   query: 4096,
 } as const;

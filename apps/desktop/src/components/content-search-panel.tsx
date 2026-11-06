@@ -2,9 +2,13 @@ import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "
 
 import { mergeContentSearch } from "@/client/content-search";
 import type { ContentSearchLocation } from "@/client/content-search-location";
-import { resolveContentSearchRoot } from "@/client/content-search-root";
+import {
+  captureContentSearchScope,
+  resolveContentSearchScope,
+  type ContentSearchScopeMode,
+} from "@/client/content-search-scope";
 import type { createDocumentController } from "@/client/documents";
-import type { createFolderWorkspace } from "@/client/workspace";
+import type { FolderState, createFolderWorkspace } from "@/client/workspace";
 import { electrobun } from "@/lib/electrobun";
 import {
   CONTENT_SEARCH_LIMITS,
@@ -20,25 +24,23 @@ import {
   CONTENT_SEARCH_FILTER_COUNT_LIMIT,
   CONTENT_SEARCH_FILTER_TEXT_LIMIT,
   formatContentSearchFilter,
-  matchesContentSearchFileFilters,
-  matchesContentSearchPathFilters,
   parseContentSearchFilters,
   relativeContentSearchPath,
   selectContentSearchRootFilter,
 } from "@/shared/content-search-filters";
 import type { DocumentRequest } from "@/shared/documents";
-import type { WorkspaceNode, WorkspaceRoot } from "@/shared/workspace";
+import type { WorkspaceRoot } from "@/shared/workspace";
 
 const errors: Record<ContentSearchError, string> = {
   DISABLED: "此窗口暂不提供正文搜索。",
   INVALID: "查询无效，请检查搜索词。",
   STALE: "文件夹或文档状态已变更，请重新查询。",
-  NOT_READY: "此文件夹的扫描尚未完成。",
-  LIMIT: "查询超出文档数量或正文大小上限。",
+  NOT_READY: "搜索范围尚未准备好，请等待文件夹扫描完成。",
+  LIMIT: "查询超出文件夹数量、文档数量或正文大小上限。",
   BUSY: "上一项查询仍在收尾，请稍后重试。",
   CANCELLED: "查询已取消。",
   UNKNOWN: "索引状态尚未确认。",
-  UNAVAILABLE: "暂时无法完整查询此文件夹。",
+  UNAVAILABLE: "暂时无法完整查询此范围。",
 };
 const incomplete = "查询范围不完整，部分文档的内容版本无法确认。";
 const changed = "文件夹或文档状态已变更，请重新查询。";
@@ -53,6 +55,12 @@ const rootErrors = {
   unknown: "当前窗口没有加入此文件夹。",
   selection: "请在文件树选中顶层文件夹，或添加 root: 筛选条件。",
 };
+const scopeErrors = {
+  ...rootErrors,
+  "not-ready": errors.NOT_READY,
+  limit: errors.LIMIT,
+  incomplete,
+};
 const filterGroups = [
   { kind: "file", label: "文件名" },
   { kind: "path", label: "包含路径" },
@@ -63,10 +71,12 @@ const buttonClass =
 const fieldClass =
   "bg-background focus-visible:outline-ring w-full min-w-0 rounded border px-2 py-1 text-xs focus-visible:outline-2 disabled:opacity-50";
 
-type Query = Extract<ContentSearchRequest, { op: "query" }>;
+type Query = Extract<ContentSearchRequest, { op: "query" | "query-roots" }>;
 type Merged = Extract<ReturnType<typeof mergeContentSearch>, { ok: true }>;
 type PresentedHit = Merged["hits"][number] & {
   name: string;
+  root: WorkspaceRoot;
+  rootLabel: string;
   relativePath?: string;
   location: ContentSearchLocation;
   binding?: ContentSearchDocumentBinding;
@@ -102,20 +112,21 @@ function cancel(requestId: string) {
 }
 
 function pickableFilters(
-  nodes: readonly WorkspaceNode[] | undefined,
-  entries: number | undefined,
-  rootPath: string | undefined
+  roots: readonly WorkspaceRoot[] | undefined,
+  nodes: FolderState["nodes"]
 ) {
-  if (!nodes || nodes.length !== entries) return [];
+  if (!roots || roots.length > CONTENT_SEARCH_LIMITS.roots) return [];
   let count = 0;
   const names = new Set<string>();
   const paths = new Set<string>();
-  for (const node of nodes) {
-    if (node.kind !== "file") continue;
-    if (++count > CONTENT_SEARCH_LIMITS.documents) return [];
-    names.add(node.name);
-    if (rootPath) {
-      const path = relativeContentSearchPath(rootPath, node.displayPath);
+  for (const root of roots) {
+    const entries = nodes[root.handle] ?? [];
+    if (entries.length !== root.entries || root.status !== "complete") return [];
+    for (const node of entries) {
+      if (node.kind !== "file") continue;
+      if (++count > CONTENT_SEARCH_LIMITS.documents) return [];
+      names.add(node.name);
+      const path = relativeContentSearchPath(root.displayPath, node.displayPath);
       if (path) paths.add(path);
     }
   }
@@ -143,6 +154,7 @@ export function ContentSearchPanel({
   folders: ReturnType<typeof createFolderWorkspace>;
 }) {
   const inputId = useId();
+  const scopeId = useId();
   const filterId = useId();
   const filterErrorId = useId();
   const pickerId = useId();
@@ -153,6 +165,7 @@ export function ContentSearchPanel({
   const location = useRef<LocationIntent | null>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [scopeMode, setScopeMode] = useState<ContentSearchScopeMode>("selected");
   const [filterText, setFilterText] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(initialStatus);
@@ -161,17 +174,22 @@ export function ContentSearchPanel({
   const [focusedHit, setFocusedHit] = useState<Pick<PresentedHit, "entry" | "name"> | null>(null);
   const filters = useMemo(() => parseContentSearchFilters(filterText), [filterText]);
   const workspace = folders.getSnapshot();
-  const resolution = filters.ok
-    ? resolveContentSearchRoot(workspace.roots, filters.root?.alias, selectedRoot?.handle ?? null)
-    : undefined;
-  const searchRoot = resolution?.ok ? resolution.root : undefined;
-  const ready = searchRoot?.status === "complete";
+  const { roots, nodes } = workspace;
+  const selectedHandle = selectedRoot?.handle ?? null;
+  const canResolve = filters.ok;
+  const rootAlias = filters.ok ? filters.root?.alias : undefined;
+  const resolution = useMemo(() => canResolve
+    ? resolveContentSearchScope(roots, scopeMode, rootAlias, selectedHandle)
+    : undefined, [canResolve, roots, scopeMode, rootAlias, selectedHandle]);
+  const effectiveRoots = resolution?.ok ? resolution.roots : undefined;
+  const effectiveKind = resolution?.ok ? resolution.kind : undefined;
+  const searchRoot = effectiveKind === "single" ? effectiveRoots?.[0] : undefined;
+  const ready = !!effectiveRoots?.length && !workspace.busy && !workspace.error &&
+    effectiveRoots.every((root) => root.status === "complete" &&
+      (nodes[root.handle]?.length ?? 0) === root.entries);
   const filterError = filters.ok
     ? resolution?.ok === false && resolution.error !== "selection" ? rootErrors[resolution.error] : undefined
     : filterErrors[filters.error];
-  const rootNodes = open && ready ? workspace.nodes[searchRoot.handle] : undefined;
-  const entryCount = searchRoot?.entries;
-  const rootPath = searchRoot?.displayPath;
   const rootChoices = useMemo(() => workspace.roots.flatMap((root) => {
     const token = formatContentSearchFilter("root", root.displayPath);
     return parseContentSearchFilters(token).ok
@@ -192,8 +210,8 @@ export function ContentSearchPanel({
     }));
   }, [filterText, filters, rootChoices]);
   const pickerGroups = useMemo(
-    () => pickableFilters(rootNodes, entryCount, rootPath),
-    [rootNodes, entryCount, rootPath]
+    () => open && ready ? pickableFilters(effectiveRoots, nodes) : [],
+    [open, ready, effectiveRoots, nodes]
   );
   const pickerOptions = useMemo(() => {
     const previous = filterText.trimEnd();
@@ -296,6 +314,14 @@ export function ContentSearchPanel({
     reset(initialStatus);
   }
 
+  function changeScope(value: ContentSearchScopeMode) {
+    if (value === scopeMode) return;
+    cancelLocation("已取消定位。");
+    setFocusedHit(null);
+    setScopeMode(value);
+    reset(initialStatus);
+  }
+
   async function search() {
     if (!ready || busy) return;
     cancelLocation("已取消定位。");
@@ -304,63 +330,38 @@ export function ContentSearchPanel({
     if (!filters.ok) return;
     const selection = getSelection();
     const workspace = folders.getSnapshot();
-    const rootAlias = filters.root?.alias;
-    const resolution = resolveContentSearchRoot(workspace.roots, rootAlias, selection.handle);
-    if (!resolution.ok) {
-      setStatus(rootErrors[resolution.error]);
+    const scope = captureContentSearchScope(
+      workspace, scopeMode, filters.root?.alias, selection, filters.fileFilters, filters.pathFilters
+    );
+    if (!scope.ok) {
+      setStatus(scopeErrors[scope.error]);
       return;
     }
-    const root = resolution.root;
-    if (
-      root.handle !== searchRoot.handle ||
-      root.status !== "complete" ||
-      workspace.busy ||
-      workspace.error
+    const root = scope.roots[0];
+    if (!root || scope.kind !== effectiveKind ||
+      scope.roots.length !== effectiveRoots?.length ||
+      !scope.roots.every(({ handle, generation }, index) =>
+        handle === effectiveRoots[index].handle && generation === effectiveRoots[index].generation)
     ) {
-      setStatus(errors.NOT_READY);
+      setStatus(changed);
       return;
     }
-    const nodes = workspace.nodes[root.handle] ?? [];
-    if (nodes.length !== root.entries) {
-      setStatus(errors.NOT_READY);
-      return;
-    }
-    const files = new Map<string, { name: string; path: string | undefined }>();
-    const nameCounts = new Map<string, number>();
-    let rootFileCount = 0;
-    for (const node of nodes) {
-      if (node.kind !== "file") continue;
-      if (++rootFileCount > CONTENT_SEARCH_LIMITS.documents) {
-        setStatus(errors.LIMIT);
-        return;
-      }
-      const path = relativeContentSearchPath(root.displayPath, node.displayPath);
-      nameCounts.set(node.name, (nameCounts.get(node.name) ?? 0) + 1);
-      if (filters.pathFilters.length) {
-        if (!path) {
-          setStatus("查询范围不完整，无法确认文件的相对路径。");
-          return;
-        }
-        if (!matchesContentSearchPathFilters(path, filters.pathFilters)) continue;
-      }
-      if (matchesContentSearchFileFilters(node.name, filters.fileFilters))
-        files.set(node.handle, { name: node.name, path });
-    }
+    const files = scope.entries;
     const capture = controller.captureContentSearch();
     if (!capture.ok) {
       setStatus(capture.reason === "limit" ? errors.LIMIT : incomplete);
       return;
     }
-    const request: Query = {
+    const params = {
       ...envelope(),
-      op: "query",
-      root: root.handle,
-      generation: root.generation,
       query,
       handles: capture.documents.map(({ handle }) => handle),
       ...(filters.fileFilters.length ? { fileFilters: filters.fileFilters } : {}),
       ...(filters.pathFilters.length ? { pathFilters: filters.pathFilters } : {}),
     };
+    const request: Query = scope.kind === "all"
+      ? { ...params, op: "query-roots", roots: scope.roots.map(({ handle, generation }) => ({ handle, generation })) }
+      : { ...params, op: "query", root: root.handle, generation: root.generation };
     if (!validContentSearchRequest(request)) {
       setStatus(errors.INVALID);
       return;
@@ -369,24 +370,7 @@ export function ContentSearchPanel({
       request,
       pending: true,
       scopeCurrent() {
-        const latest = folders.getSnapshot();
-        const latestSelection = getSelection();
-        const resolved = resolveContentSearchRoot(latest.roots, rootAlias, latestSelection.handle);
-        if (!resolved.ok || resolved.root.handle !== root.handle) return false;
-        const latestRoot = resolved.root;
-        return (
-          (rootAlias !== undefined || latestSelection.revision === selection.revision) &&
-          latestRoot.generation === root.generation &&
-          latestRoot.displayPath === root.displayPath &&
-          latestRoot.status === "complete" &&
-          latestRoot.showHidden === root.showHidden &&
-          latestRoot.observation === root.observation &&
-          latestRoot.entries === root.entries &&
-          latestRoot.errors === root.errors &&
-          latest.nodes[root.handle] === workspace.nodes[root.handle] &&
-          !latest.busy &&
-          !latest.error
-        );
+        return scope.current(folders.getSnapshot(), getSelection());
       },
       current() {
         return this.scopeCurrent() && capture.current();
@@ -416,7 +400,7 @@ export function ContentSearchPanel({
         return;
       }
       if (
-        response.op !== "query" ||
+        response.op !== request.op ||
         response.coverage.length !== files.size ||
         response.coverage.some(({ entry }) => !files.has(entry))
       ) {
@@ -437,6 +421,9 @@ export function ContentSearchPanel({
         bindings.set(mapping.entry, { handle, documentId, revision, hash });
       }
       const hits: PresentedHit[] = [];
+      const rootNameCounts = new Map<string, number>();
+      for (const item of scope.roots)
+        rootNameCounts.set(item.name, (rootNameCounts.get(item.name) ?? 0) + 1);
       for (const hit of merged.hits) {
         const file = files.get(hit.entry);
         const diskHash = coverage.get(hit.entry)?.hash;
@@ -450,7 +437,11 @@ export function ContentSearchPanel({
         hits.push({
           ...hit,
           name: file.name,
-          relativePath: (nameCounts.get(file.name) ?? 0) > 1 ? file.path : undefined,
+          root: file.root,
+          rootLabel: (rootNameCounts.get(file.root.name) ?? 0) > 1
+            ? `${file.root.name} · ${file.root.displayPath}`
+            : file.root.name,
+          relativePath: file.relativePath,
           binding,
           location: { query, from, to, source, diskHash, version },
         });
@@ -493,8 +484,8 @@ export function ContentSearchPanel({
       const request: ContentSearchPrepareRequest = {
         protocolVersion,
         requestId,
-        root: search.request.root,
-        generation: search.request.generation,
+        root: hit.root.handle,
+        generation: hit.root.generation,
         entry: hit.entry,
         expectedHash: hit.location.diskHash,
         ...(hit.binding ? { binding: hit.binding } : {}),
@@ -572,23 +563,37 @@ export function ContentSearchPanel({
           setOpen(!open);
         }}
       >
-        搜索单个文件夹正文
+        搜索文件夹正文
       </button>
-      {searchRoot && !ready && !open && (
+      {effectiveRoots?.length && !ready && !open ? (
         <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p>
-      )}
+      ) : null}
       {open && (
         <section id={resultId} aria-label="文件夹正文搜索" className="mt-2 max-h-[40vh] space-y-2 overflow-auto rounded border p-2">
           <p className="text-muted-foreground break-words text-xs">
             {searchRoot
               ? `搜索范围：${searchRoot.name} · ${searchRoot.displayPath}`
-              : resolution?.ok === false && resolution.error === "selection" ? rootErrors.selection : "请确认搜索范围。"}
+              : effectiveKind === "all"
+                ? `搜索范围：所有已加入的文件夹（${effectiveRoots?.length ?? 0} 个）`
+                : resolution?.ok === false && resolution.error === "selection" ? rootErrors.selection : "请确认搜索范围。"}
           </p>
-          {searchRoot && !ready && <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p>}
+          {effectiveRoots?.length && !ready ? <p className="text-muted-foreground text-xs">{errors.NOT_READY}</p> : null}
           <p className="text-muted-foreground text-xs">
-            区分大小写，每篇显示首个匹配。文件夹最多 16 篇，查询正文合计 64 KiB。
+            区分大小写，每篇显示首个匹配。最多 16 个文件夹，筛选前合计 16 篇，查询正文合计 64 KiB。
           </p>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); void search(); }}>
+            <div className="flex items-center gap-2">
+              <label className="shrink-0 text-xs" htmlFor={scopeId}>搜索范围</label>
+              <select
+                id={scopeId}
+                className={fieldClass}
+                value={scopeMode}
+                onChange={(event) => changeScope(event.target.value === "all" ? "all" : "selected")}
+              >
+                <option value="selected">选中的文件夹</option>
+                <option value="all">所有已加入的文件夹</option>
+              </select>
+            </div>
             <label className="block text-xs" htmlFor={inputId}>字面量查询</label>
             <input
               id={inputId}
@@ -686,6 +691,7 @@ export function ContentSearchPanel({
                       }}
                     >
                       <span className="font-medium">{hit.name}</span>
+                      {match && <span className="text-muted-foreground block">{match.rootLabel}</span>}
                       {match?.relativePath && (
                         <span className="text-muted-foreground block">{match.relativePath}</span>
                       )}

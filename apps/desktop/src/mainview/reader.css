@@ -1,0 +1,31 @@
+.reader-theme-controls {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 0.5rem;
+  padding-block: 0.5rem;
+  background: var(--reading-background);
+  font: 14px/1.4 system-ui, sans-serif;
+}
+
+.reader-theme-controls button {
+  min-width: 44px;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--reading-border);
+  border-radius: 0.25rem;
+  color: var(--reading-foreground);
+  background: var(--reading-background);
+  font: inherit;
+}
+
+.reader-theme-controls button[aria-pressed="true"] {
+  border-color: var(--reading-foreground);
+  background: var(--reading-muted);
+  font-weight: 600;
+}
+
+.reader-theme-controls button:focus-visible {
+  outline: 2px solid var(--reading-foreground);
+  outline-offset: 2px;
+}

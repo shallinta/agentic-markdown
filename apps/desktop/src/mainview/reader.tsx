@@ -1,9 +1,12 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { createCurrentCanonical } from "../client/current-canonical";
 import ReaderWorker from "../client/current-canonical.worker?worker&inline";
+import { firstReadingBlock } from "../client/reading-position";
+import { READING_THEMES, type ReadingThemeId } from "../client/reading-theme";
 import "../reading-themes/content.css";
+import "../reading-themes/ink/theme.css";
 import "../reading-themes/paper/theme.css";
 import {
   auditReadingContent,
@@ -11,6 +14,8 @@ import {
   isControlledReadingElement,
 } from "../security/commonmark-content";
 import { decodeReaderSnapshot, READER_SNAPSHOT_EVENT } from "../shared/reader-snapshot";
+
+import "./reader.css";
 
 const fixture = {
   documentId: "reader-lab-fixture",
@@ -67,7 +72,11 @@ function Reader({ content, label, experimental }: {
   experimental: boolean;
 }) {
   const [auditResult, setAuditResult] = useState<{ safe: boolean; details: string }>();
+  const [theme, setTheme] = useState<ReadingThemeId>("paper");
+  const article = useRef<HTMLElement>(null);
+  const themeControls = useRef<HTMLDivElement>(null);
   const audit = useCallback((element: HTMLElement | null) => {
+    article.current = element;
     if (!element) return;
     const domSafe = auditReadingContent(element).safe;
     const executed = "__readerFixtureExecuted" in globalThis;
@@ -90,6 +99,29 @@ function Reader({ content, label, experimental }: {
       ].join(" "),
     });
   }, []);
+  const selectTheme = (id: string) => {
+    if ((id !== "paper" && id !== "ink") || document.body.dataset.readingTheme === id) return;
+    const scroller = document.scrollingElement;
+    const scrollTop = scroller?.scrollTop ?? 0;
+    const viewportTop = () => Math.max(0, themeControls.current?.getBoundingClientRect().bottom ?? 0);
+    const top = viewportTop();
+    const blocks = article.current?.children;
+    const block = blocks?.item(firstReadingBlock(blocks.length, (index) =>
+      (blocks.item(index)?.getBoundingClientRect().bottom ?? 0) > top
+    ));
+    const offset = block?.hasAttribute("data-reading-from")
+      ? block.getBoundingClientRect().top - top
+      : undefined;
+    const ratio = scroller ? scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight) : 0;
+
+    document.body.setAttribute("data-reading-theme", id);
+    setTheme(id);
+    if (!scroller || scrollTop <= 0) return;
+    const nextTop = block && offset !== undefined
+      ? scroller.scrollTop + block.getBoundingClientRect().top - viewportTop() - offset
+      : ratio * Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    scroller.scrollTo(scroller.scrollLeft, nextTop);
+  };
   if (auditResult?.safe === false && !experimental) {
     return <main><p role="alert">无法安全显示已保存版本。</p></main>;
   }
@@ -103,6 +135,21 @@ function Reader({ content, label, experimental }: {
             : `${label} · 安全检查失败`}
       </p>
       {auditResult && !auditResult.safe && <p>{auditResult.details}</p>}
+      {!experimental && auditResult?.safe && (
+        <div ref={themeControls} className="reader-theme-controls" role="group" aria-label="阅读主题">
+          {READING_THEMES.map(({ id, name }) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={id === theme}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectTheme(id)}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
       <article ref={audit} hidden={!experimental && !auditResult?.safe}>{content}</article>
     </main>
   );

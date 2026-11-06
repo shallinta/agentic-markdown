@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 独立阅读窗复制代码（F-048d）
+
+在独立阅读窗的代码块上使用「复制代码正文」。剪贴板只包含显示的代码正文，不包含 Markdown 围栏或语言标签。按钮可用键盘聚焦并激活。见[F-048d 迭代](iterations/F-048d-independent-reading-code-copy.md)。
+
 ## 独立阅读窗主题（F-021g）
 
 打开已保存版本后，可在阅读窗上方选择纸页或墨夜。主题作用于当前阅读窗，重开默认纸页。切换时按原可见内容块保留位置。见[F-021g 迭代](iterations/F-021g-independent-reading-themes.md)。

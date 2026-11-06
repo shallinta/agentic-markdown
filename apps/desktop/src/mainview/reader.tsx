@@ -66,10 +66,11 @@ function checkBridge(name: string, handlerName: string) {
   }
 }
 
-function Reader({ content, label, experimental }: {
+function Reader({ content, label, experimental, retainVerifiedArticle }: {
   content: ReactNode;
   label: string;
   experimental: boolean;
+  retainVerifiedArticle?: (element: HTMLElement | null) => void;
 }) {
   const [auditResult, setAuditResult] = useState<{ safe: boolean; details: string }>();
   const [theme, setTheme] = useState<ReadingThemeId>("paper");
@@ -77,6 +78,7 @@ function Reader({ content, label, experimental }: {
   const themeControls = useRef<HTMLDivElement>(null);
   const audit = useCallback((element: HTMLElement | null) => {
     article.current = element;
+    retainVerifiedArticle?.(null);
     if (!element) return;
     const domSafe = auditReadingContent(element).safe;
     const executed = "__readerFixtureExecuted" in globalThis;
@@ -84,6 +86,7 @@ function Reader({ content, label, experimental }: {
     const host = checkBridge("__electrobunHostBridge", "hostBridge");
     const legacy = checkBridge("__electrobunBunBridge", "bunBridge");
     const safe = domSafe && !executed && internal.clear && host.clear && legacy.clear;
+    if (safe) retainVerifiedArticle?.(element);
     const unexpected = domSafe ? undefined : [...element.querySelectorAll("*")]
       .find((node) => !isControlledReadingElement(node));
     const first = unexpected
@@ -98,7 +101,7 @@ function Reader({ content, label, experimental }: {
         `legacy=${legacy.details}`,
       ].join(" "),
     });
-  }, []);
+  }, [retainVerifiedArticle]);
   const selectTheme = (id: string) => {
     if ((id !== "paper" && id !== "ink") || document.body.dataset.readingTheme === id) return;
     const scroller = document.scrollingElement;
@@ -173,7 +176,20 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
       root.render(<p role="alert">无法解析{label}。</p>);
       return;
     }
-    root.render(<Reader content={commonmarkContent(result.tree, source.text)} label={label} experimental={experimental} />);
+    let verifiedArticle: HTMLElement | null = null;
+    const retainVerifiedArticle = experimental ? undefined : (element: HTMLElement | null) => {
+      verifiedArticle = element;
+    };
+    const codeCurrent = experimental ? undefined : () =>
+      !closed && verifiedArticle?.isConnected === true && canonical.isCurrent(result);
+    root.render(
+      <Reader
+        content={commonmarkContent(result.tree, source.text, undefined, codeCurrent)}
+        label={label}
+        experimental={experimental}
+        retainVerifiedArticle={retainVerifiedArticle}
+      />
+    );
   });
 }
 

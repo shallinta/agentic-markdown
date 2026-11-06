@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-048d 独立阅读窗复制代码（2026-11-07）
+
+已验独立窗代码正文复制，沿用 F-048a 的语义。父项围栏折叠、高亮与行号、最终离线继续跟踪。见[F-048d 迭代](iterations/F-048d-independent-reading-code-copy.md)。
+
 ## F-021g 独立阅读窗主题（2026-11-07）
 
 已验独立窗内置主题切换与正文位置。OBL-029 的 App 外观组合、恢复和最终离线继续跟踪。见[F-021g 迭代](iterations/F-021g-independent-reading-themes.md)。

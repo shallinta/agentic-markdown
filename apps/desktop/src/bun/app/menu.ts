@@ -24,6 +24,7 @@ const REPOSITORY_URL = "https://github.com/shallinta/agentic-markdown";
 let currentUpdateMode: UpdateMode = "automatic";
 let currentUpdateReady = false;
 let nativeFormat: NativeFormatMenu | null = null;
+let readerCloseAvailable = false;
 let commandAvailability: CommandAvailability = {
   selectFolder: false,
   undoDocument: false,
@@ -35,6 +36,17 @@ let commandAvailability: CommandAvailability = {
   clearDocument: false,
   closeDocument: false,
 };
+
+function documentCommandEnabled(type: DocumentCommandType): boolean {
+  return commandAvailability[type] || (type === "closeDocument" && readerCloseAvailable);
+}
+
+export function setReaderCloseAvailabilityInMenu(available: boolean): void {
+  if (readerCloseAvailable === available) return;
+  readerCloseAvailable = available;
+  if (!commandAvailability.closeDocument)
+    ApplicationMenu.setApplicationMenu(buildMenu(currentUpdateReady, currentUpdateMode));
+}
 
 export function setCommandAvailabilityInMenu(value: unknown): void {
   if (!isCommandAvailabilityMessage(value)) return;
@@ -114,7 +126,7 @@ function buildMenu(
         ...DOCUMENT_COMMAND_TYPES.map((type) => ({
           label: PRODUCT_COMMANDS[type]!.label,
           action: type,
-          enabled: commandAvailability[type],
+          enabled: documentCommandEnabled(type),
           ...(PRODUCT_COMMANDS[type]!.accelerator
             ? { accelerator: PRODUCT_COMMANDS[type]!.accelerator }
             : {}),
@@ -280,6 +292,7 @@ export function registerMenuActions(
 ) {
   currentUpdateReady = false;
   nativeFormat = null;
+  readerCloseAvailable = false;
   commandAvailability = {
     selectFolder: false,
     undoDocument: false,
@@ -330,7 +343,7 @@ export function registerMenuActions(
       return;
     if (
       DOCUMENT_COMMAND_TYPES.includes(action as DocumentCommandType) &&
-      !commandAvailability[action as DocumentCommandType]
+      !documentCommandEnabled(action as DocumentCommandType)
     )
       return;
     if (command) executeCommand(command, window);

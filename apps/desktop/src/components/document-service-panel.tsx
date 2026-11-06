@@ -609,46 +609,55 @@ export function StandaloneFileList({ workspace, visible }: { workspace: Workspac
   );
 }
 
-function ReadingSnapshotLab({ controller, buttonClass }: {
+function SavedReadingWindowAction({ controller, snapshot, buttonClass }: {
   controller: Workspace["controller"];
+  snapshot: Workspace["state"]["snapshot"];
   buttonClass: string;
 }) {
   const pending = useRef(false);
-  const [status, setStatus] = useState<"idle" | "pending" | "submitted" | "error">("idle");
+  const [feedback, setFeedback] = useState<{ handle: string; revision: number; text: string }>();
+  const { executeCommand, isCommandEnabled } = useCommands();
+  const canOpen = () => !pending.current && !!electrobun.rpc && !!controller.captureReadingSnapshotSource();
   const open = async () => {
     if (pending.current) return;
     const source = controller.captureReadingSnapshotSource();
     const rpc = electrobun.rpc;
-    if (!source || !rpc) {
-      setStatus("error");
-      return;
-    }
+    if (!source || !rpc) return;
+    const report = (text: string) => setFeedback({ handle: source.handle, revision: source.expectedRevision, text });
     pending.current = true;
-    setStatus("pending");
+    report("正在提交已保存版本…");
+    notify();
     try {
       const result = await rpc.request.openReadingSnapshot(source, { maxRequestTime: 12000 });
-      setStatus(result?.ok === true && result.submitted === true ? "submitted" : "error");
+      if (result?.ok === true && result.submitted === true)
+        report("已提交打开请求，请在阅读窗口核对。");
+      else if (result?.ok === false && result.error === "BUSY")
+        report("请先关闭已打开的阅读窗口，或等当前操作结束后重试。");
+      else report("未能确认打开请求，请核对当前文档和阅读窗口。");
     } catch {
-      setStatus("error");
+      report("未能确认打开请求，请核对当前文档和阅读窗口。");
     } finally {
       pending.current = false;
+      notify();
     }
   };
+  const notify = useRegisterCommands({ openReadingSnapshot: open }, true, { openReadingSnapshot: canOpen });
+  if (!snapshot) return null;
+  const message = controller.isDirty(snapshot.documentId)
+    ? "请先手动保存当前文档。"
+    : feedback?.handle === snapshot.handle && feedback.revision === snapshot.revision
+      ? feedback.text
+      : undefined;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button
         className={buttonClass}
-        disabled={status === "pending" || !controller.captureReadingSnapshotSource()}
-        onClick={() => void open()}
+        disabled={!isCommandEnabled("openReadingSnapshot")}
+        onClick={() => executeCommand({ type: "openReadingSnapshot", args: {} })}
       >
-        实验：打开已保存阅读快照
+        {PRODUCT_COMMANDS.openReadingSnapshot?.label}
       </button>
-      <span className="text-muted-foreground text-sm" role="status">
-        {status === "pending" ? "正在提交已保存快照…" :
-          status === "submitted" ? "快照已提交，请在阅读窗口核对。" :
-            status === "error" ? "未能确认快照已提交，请核对当前文档和阅读窗口。" :
-              "仅支持当前已保存、且不超过 1 MiB 的文档。"}
-      </span>
+      <span className="text-muted-foreground text-sm" role="status">{message}</span>
     </div>
   );
 }
@@ -730,10 +739,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       </div>
       {(
         globalThis as typeof globalThis & {
-          __AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB__?: boolean;
+          __AGENTIC_MARKDOWN_READER_SNAPSHOT_ENABLED__?: boolean;
         }
-      ).__AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB__ === true && (
-        <ReadingSnapshotLab controller={controller} buttonClass={buttonClass} />
+      ).__AGENTIC_MARKDOWN_READER_SNAPSHOT_ENABLED__ === true && (
+        <SavedReadingWindowAction controller={controller} snapshot={snapshot} buttonClass={buttonClass} />
       )}
       {!snapshot &&
         !workspace.folderState.roots.length &&

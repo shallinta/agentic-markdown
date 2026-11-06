@@ -73,6 +73,7 @@ export function CommandPalette({
     if (
       type === "readingThemePaper" ||
       type === "readingThemeInk" ||
+      type === "openReadingSnapshot" ||
       type === "toggleHeadingFold" ||
       type === "toggleCodeFold" ||
       type === "toggleFrontmatterFold" ||

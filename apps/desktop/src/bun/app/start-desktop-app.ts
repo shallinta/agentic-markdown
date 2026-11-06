@@ -10,6 +10,7 @@ import {
   PACKAGED_READER_URL,
   readerNavigationRules,
 } from "../../security/reader-policy";
+import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
 import { isReloadCommitResponse } from "../../shared/discard";
 import { MRU_EXIT_MS } from "../../shared/document-mru";
@@ -31,7 +32,7 @@ import { createHiddenPreferences } from "../workspace/preferences";
 
 import { createDiscardCoordinator } from "./discard-coordinator";
 import { createLifecycleGuard } from "./lifecycle-guard";
-import { setLocaleInMenu } from "./menu";
+import { setLocaleInMenu, setReaderCloseAvailabilityInMenu } from "./menu";
 import { createReaderLab } from "./reader-lab";
 import { createMainWindow, type ManagedMainWindow } from "./window";
 
@@ -44,11 +45,12 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   let browserWindow: BrowserWindow | null = null;
   let rpc: MainWindowRPC | null = null;
   const syntheticReader = process.env.AGENTIC_MARKDOWN_READER_LAB === "1";
-  const snapshotRequested = process.env.AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB === "1";
-  const snapshotReader = snapshotRequested && !syntheticReader;
+  const perfLabEnabled = process.env.AGENTIC_MARKDOWN_PERF_LAB === "1";
+  const searchLabEnabled = process.env.AGENTIC_MARKDOWN_SEARCH_LAB === "1";
+  const readerSnapshotEnabled = !syntheticReader && !perfLabEnabled && !searchLabEnabled;
   const openReaderWindow = (url: typeof PACKAGED_READER_URL | typeof PACKAGED_READER_SNAPSHOT_URL) =>
     new BrowserWindow({
-      title: "独立阅读窗口实验",
+      title: url === PACKAGED_READER_URL ? "独立阅读窗口实验" : "独立阅读窗口",
       url,
       renderer: "native",
       sandbox: true,
@@ -75,13 +77,13 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     onCapabilityChanged: (handle) =>
       rpc?.send.documentCapabilityChanged({ handle }),
   });
-  const readerLab = snapshotReader
+  const readerLab = readerSnapshotEnabled
     ? createReaderLab(undefined, {
         capture: (source, current) => documents.captureReadingSnapshot(source, current),
         open: () => openReaderWindow(PACKAGED_READER_SNAPSHOT_URL),
-      })
-    : syntheticReader && !snapshotRequested
-      ? createReaderLab(() => openReaderWindow(PACKAGED_READER_URL))
+      }, setReaderCloseAvailabilityInMenu)
+    : syntheticReader
+      ? createReaderLab(() => openReaderWindow(PACKAGED_READER_URL), undefined, setReaderCloseAvailabilityInMenu)
       : undefined;
   const workspace = createWorkspaceService({
     preferences: createHiddenPreferences(getSettingsDir()),
@@ -89,10 +91,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     documents,
     contentSearchStrategy: "direct",
   });
-  const searchLab = process.env.AGENTIC_MARKDOWN_SEARCH_LAB === "1"
+  const searchLab = searchLabEnabled
     ? (await import("../perf-lab/search")).createSearchLab()
     : undefined;
-  const contentSearch = !searchLab && process.env.AGENTIC_MARKDOWN_PERF_LAB !== "1"
+  const contentSearch = !searchLab && !perfLabEnabled
     ? createContentSearchRPC(workspace, async (handle) => {
         const result = await documents.release({
           protocolVersion: 1, requestId: crypto.randomUUID(), handle,
@@ -125,7 +127,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const lifecycle = createLifecycleGuard({
     guard: async (reason, execute) => {
       const resumeSearch = contentSearch?.suspend();
-      const resumeSnapshots = snapshotReader ? readerLab?.suspendSnapshots() : undefined;
+      const resumeSnapshots = readerSnapshotEnabled && browserWindow?.url === PACKAGED_VIEW_URL
+        ? readerLab?.suspendSnapshots() : undefined;
       workspace.trashLifecycle.beforeExit();
       try {
         // A canceled search may still need to release an unclaimed grant.
@@ -235,8 +238,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       workspace,
       searchLab,
       contentSearch,
-      openReadingSnapshot: snapshotReader && readerLab
-        ? async (input) => browserWindow
+      openReadingSnapshot: readerSnapshotEnabled && readerLab
+        ? async (input) => browserWindow?.url === PACKAGED_VIEW_URL
           ? readerLab.openReadingSnapshot(input, browserWindow)
           : { ok: false, error: "UNAVAILABLE" }
         : undefined,
@@ -247,15 +250,15 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     });
     mainWindow = await createMainWindow({
       rpc,
-      readerSnapshotLab: snapshotReader,
+      readerSnapshotEnabled,
       executeCommand: (command, window) => {
         if (!readerLab?.interceptMenu(command)) executeCommand(command, window);
       },
       onWindowCreated: (window) => {
         browserWindow = window;
-        readerLab?.bindMain(window);
+        if (window.url === PACKAGED_VIEW_URL) readerLab?.bindMain(window);
         mru.bindWindow();
-        if (snapshotReader)
+        if (readerSnapshotEnabled && window.url === PACKAGED_VIEW_URL)
           window.webview.on("did-commit-navigation", () => readerLab?.retireMainReady(window));
         window.webview.on("dom-ready",(event)=>{
           mru.domReady();

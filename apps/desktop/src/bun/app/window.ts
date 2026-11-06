@@ -51,13 +51,13 @@ export interface ManagedMainWindow {
 
 export async function createMainWindow({
   rpc,
-  readerSnapshotLab,
+  readerSnapshotEnabled,
   executeCommand,
   onWindowCreated,
   onFullScreenChange,
 }: {
   rpc: MainWindowRPC;
-  readerSnapshotLab?: boolean;
+  readerSnapshotEnabled?: boolean;
   executeCommand: (command: Command, window: BrowserWindow) => void;
   onWindowCreated?: (window: BrowserWindow) => void;
   onFullScreenChange?: (isFullScreen: boolean) => void;
@@ -84,8 +84,8 @@ export async function createMainWindow({
       (process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB === "1"
         ? ";globalThis.__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__ = true;"
         : "") +
-      (readerSnapshotLab === true && url === PACKAGED_VIEW_URL
-        ? ";globalThis.__AGENTIC_MARKDOWN_READER_SNAPSHOT_LAB__ = true;"
+      (readerSnapshotEnabled === true && url === PACKAGED_VIEW_URL
+        ? ";globalThis.__AGENTIC_MARKDOWN_READER_SNAPSHOT_ENABLED__ = true;"
         : ""),
     titleBarStyle: "hiddenInset",
     rpc,

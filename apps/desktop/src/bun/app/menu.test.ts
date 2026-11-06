@@ -1,9 +1,12 @@
 import { expect, mock, test } from "bun:test";
 
+import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import {
   applicationMenus as menus,
   electrobunBunMock,
 } from "../test-electrobun-mock";
+
+import { createReaderLab } from "./reader-lab";
 
 let applicationMenuListener:
   ((event: { data: { action: string; data?: unknown } }) => void) | undefined;
@@ -340,6 +343,51 @@ test("guards disabled document menu dispatch and resets on registration", () => 
   menuModule.registerMenuActions(window, execute);
   applicationMenuListener?.({ data: { action: "selectDocument" } });
   expect(execute).toHaveBeenCalledTimes(3);
+});
+
+test("reader focus enables only its close command when the main window has no closable tab", () => {
+  const events = new Map<string, () => void>();
+  const requestClose = mock(() => undefined);
+  const executeMain = mock(() => undefined);
+  const lab = createReaderLab(() => ({
+    on: (event, callback) => events.set(event, callback),
+    show: () => undefined,
+    requestClose,
+    close: () => events.get("close")?.(),
+  }), undefined, menuModule.setReaderCloseAvailabilityInMenu);
+  menuModule.registerMenuActions({} as never, (command) => {
+    if (!lab.interceptMenu(command)) executeMain();
+  });
+  const fileItem = (action: string) => {
+    const menu = menus[menus.length - 1] as { submenu: { action?: string; enabled?: boolean }[] }[];
+    return menu[1].submenu.find((item) => item.action === action)?.enabled;
+  };
+  const dispatchClose = () => applicationMenuListener?.({ data: { action: "closeDocument" } });
+
+  lab.openAfterMainReady({ url: PACKAGED_VIEW_URL, on: () => undefined, activate: () => undefined });
+  expect(fileItem("closeDocument")).toBe(false);
+  dispatchClose();
+  expect(requestClose).not.toHaveBeenCalled();
+  const before = menus.length;
+  events.get("focus")?.();
+  events.get("focus")?.();
+  expect(menus).toHaveLength(before + 1);
+  expect(fileItem("closeDocument")).toBe(true);
+  expect(fileItem("saveDocument")).toBe(false);
+  dispatchClose();
+  expect(requestClose).toHaveBeenCalledTimes(1);
+
+  events.get("blur")?.();
+  expect(fileItem("closeDocument")).toBe(false);
+  dispatchClose();
+  expect(requestClose).toHaveBeenCalledTimes(1);
+  events.get("focus")?.();
+  events.get("close")?.();
+  events.get("focus")?.();
+  expect(fileItem("closeDocument")).toBe(false);
+  dispatchClose();
+  expect(requestClose).toHaveBeenCalledTimes(1);
+  expect(executeMain).not.toHaveBeenCalled();
 });
 
 test("dispatches the Toggle Sidebar menu action", () => {

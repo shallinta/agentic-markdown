@@ -72,7 +72,11 @@ function isReadyAt(event: unknown, url: string): boolean {
   return perfRecord(event) && perfRecord(event.data) && event.data.detail === url;
 }
 
-export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDependencies) {
+export function createReaderLab(
+  open?: () => ReaderWindow,
+  snapshot?: SnapshotDependencies,
+  onReaderCloseAvailability?: (available: boolean) => void,
+) {
   let reader: ReaderWindow | undefined;
   let pending: PendingSnapshot | undefined;
   let capturing: PendingSnapshot | undefined;
@@ -81,6 +85,17 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
   let disposed = false;
   let suspensions = 0;
   let owner: "main" | "opening" | "reader" | "unknown" = "main";
+  let closeAvailable = false;
+  const syncCloseAvailability = () => {
+    const available = !disposed && owner === "reader" && reader !== undefined;
+    if (available === closeAvailable) return;
+    closeAvailable = available;
+    onReaderCloseAvailability?.(available);
+  };
+  const setOwner = (next: typeof owner) => {
+    owner = next;
+    syncCloseAvailability();
+  };
   const requestReaderClose = () => {
     try {
       reader?.requestClose();
@@ -93,14 +108,14 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
     child.on("close", () => {
       if (reader !== child) return;
       reader = undefined;
-      owner = "main";
+      setOwner("main");
       onClose?.();
     });
     child.on("focus", () => {
-      if (reader === child) owner = "reader";
+      if (reader === child) setOwner("reader");
     });
     child.on("blur", () => {
-      if (reader === child && owner === "reader") owner = "unknown";
+      if (reader === child && owner === "reader") setOwner("unknown");
     });
   };
   const cancelPending = (): void =>
@@ -109,10 +124,10 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
   return {
     bindMain(main: MainWindow): void {
       main.on("focus", () => {
-        if (owner !== "opening") owner = "main";
+        if (owner !== "opening") setOwner("main");
       });
       main.on("blur", () => {
-        if (reader && owner === "main") owner = "unknown";
+        if (reader && owner === "main") setOwner("unknown");
       });
     },
     openAfterMainReady(main: MainWindow, event?: unknown): void {
@@ -120,7 +135,7 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
       if (snapshot && isReadyAt(event, PACKAGED_VIEW_URL)) readyMain = main;
       if (!open || attempted) return;
       attempted = true;
-      owner = "opening";
+      setOwner("opening");
       try {
         const child = open();
         attachReader(child);
@@ -128,7 +143,7 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
       } catch {
         console.warn("Reader lab window could not open");
         if (reader) requestReaderClose();
-        else owner = "main";
+        else setOwner("main");
       }
     },
     retireMainReady(main: MainWindow): void {
@@ -192,7 +207,7 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
           return;
         }
         token.receipt = { script, current: capture.current };
-        owner = "opening";
+        setOwner("opening");
         const child = snapshot.open();
         token.child = child;
         attachReader(child, () => token.settle({ ok: false, error: "CANCELLED" }));
@@ -220,14 +235,14 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
         });
       }).catch(() => {
         finishCapture();
-        if (!reader) owner = "main";
+        if (!reader) setOwner("main");
         token.settle({ ok: false, error: "UNAVAILABLE" });
       });
       return completion.promise;
     },
     interceptMenu(command: Command): boolean {
       if (owner === "main") return false;
-      if (owner === "reader" && command.type === "closeDocument")
+      if (closeAvailable && command.type === "closeDocument")
         requestReaderClose();
       return true;
     },
@@ -243,6 +258,7 @@ export function createReaderLab(open?: () => ReaderWindow, snapshot?: SnapshotDe
     },
     dispose(): void {
       disposed = true;
+      syncCloseAvailability();
       attempted = true;
       readyMain = undefined;
       cancelPending();

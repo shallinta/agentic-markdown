@@ -579,6 +579,182 @@ test("unconfirmed watcher shutdown terminates the Worker and reports restart ins
   ).toMatchObject({ ok: false, error: "UNAVAILABLE" });
 }, 10000);
 
+test("content search preparation checks the disk version and reuses only the matching live grant", async () => {
+  const raw = "\ufeff# 标题\r\n🎯 target\r\n";
+  const file = join(directory, "hit.md");
+  await writeFile(file, raw);
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const entry = (await nodes(root))[0].handle;
+  const expectedHash = createHash("sha256").update(raw).digest("hex");
+  const input = { root: root.handle, generation: root.generation, entry, expectedHash };
+  const prepare = (change: Partial<typeof input> = {}) =>
+    workspace.prepareContentSearchDocument({ ...input, ...change }, crypto.randomUUID());
+  expect(await prepare({ generation: root.generation + 1 })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare({ entry: crypto.randomUUID() })).toEqual({ ok: false, error: "STALE" });
+  expect(await prepare({ expectedHash: "0".repeat(64) })).toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations()).toEqual([]);
+  const opened = await prepare();
+  if (!opened.ok || opened.target.kind !== "open") throw Error(JSON.stringify(opened));
+  expect(opened.target.snapshot).toMatchObject({ text: raw, hash: expectedHash });
+  const { handle, documentId, revision, hash } = opened.target.snapshot;
+  const binding = { handle, documentId, revision, hash };
+  const reuse = (change: Partial<typeof binding> = {}) =>
+    workspace.prepareContentSearchDocument(
+      { ...input, binding: { ...binding, ...change } }, crypto.randomUUID()
+    );
+  expect(await prepare()).toEqual({ ok: false, error: "STALE" });
+  expect(await reuse({ handle: crypto.randomUUID() })).toEqual({ ok: false, error: "STALE" });
+  expect(await reuse({ revision: revision + 1 })).toEqual({ ok: false, error: "STALE" });
+  expect(await reuse()).toEqual({ ok: true, target: { kind: "reuse", ...binding } });
+  expect(documents.locations()).toMatchObject([{ handle, documentId }]);
+  await writeFile(file, raw.replace("target", "change"));
+  expect(await reuse()).toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations()).toMatchObject([{ handle, documentId }]);
+});
+
+test("content search preparation cannot publish a snapshot invalidated at the commit boundary", async () => {
+  await workspace.dispose();
+  const file = join(directory, "hit.md");
+  const controller = new AbortController();
+  let scenario: "disk" | "cancel" = "disk";
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents: {
+      ...documents,
+      openAuthorized(envelope, authorize, scope, proof) {
+        if (!proof) throw Error("expected search proof");
+        return documents.openAuthorized(envelope, authorize, scope, {
+          ...proof,
+          async verify(...args) {
+            if (scenario === "disk") await writeFile(file, "moved!");
+            await proof.verify(...args);
+            if (scenario === "cancel") controller.abort();
+          },
+        });
+      },
+    },
+  });
+  await writeFile(file, "target");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const entry = (await nodes(root))[0].handle;
+  const input = { root: root.handle, generation: root.generation, entry };
+  const prepare = (raw: string) => workspace.prepareContentSearchDocument(
+    { ...input, expectedHash: createHash("sha256").update(raw).digest("hex") },
+    crypto.randomUUID(), controller.signal
+  );
+  expect(await prepare("target")).toEqual({ ok: false, error: "STALE" });
+  expect(documents.locations()).toEqual([]);
+  scenario = "cancel";
+  expect(await prepare("moved!")).toEqual({ ok: false, error: "CANCELLED" });
+  expect(documents.locations()).toEqual([]);
+});
+
+test("content search reuse respects a Trash receipt left quarantined after its lease", async () => {
+  await workspace.dispose();
+  workspace = createWorkspaceService({
+    pickDirectory: () => Promise.resolve(selected),
+    documents,
+    trashRun: () => Promise.resolve({ status: "unknown", platformSucceeded: false }),
+  });
+  await writeFile(join(directory, "hit.md"), "target");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const target = { kind: "root", root: root.handle, generation: root.generation, entry: (await nodes(root))[0].handle };
+  const opened = await workspace.open({
+    protocolVersion: 1, requestId: crypto.randomUUID(), root: target.root, entry: target.entry,
+  });
+  if (!opened.ok || !opened.snapshot) throw Error(JSON.stringify(opened));
+  const { handle, documentId, revision, hash } = opened.snapshot;
+  const { root: rootHandle, generation, entry } = target;
+  const reuse = () => workspace.prepareContentSearchDocument(
+    { root: rootHandle, generation, entry, expectedHash: hash, binding: { handle, documentId, revision, hash } },
+    crypto.randomUUID()
+  );
+  expect((await reuse()).ok).toBe(true);
+  const state = await workspace.trashDocument(request("state", { requestId: crypto.randomUUID() }));
+  if (state.status !== "state") throw Error(JSON.stringify(state));
+  const ticket = { session: state.session, sequence: state.sequence };
+  const prepared = await workspace.trashDocument(request("prepare", {
+    requestId: crypto.randomUUID(), ...ticket, target,
+  }));
+  if (prepared.status !== "prepared") throw Error(JSON.stringify(prepared));
+  const receipt = await workspace.trashDocument(request("commit", {
+    requestId: crypto.randomUUID(), ...ticket, confirmationToken: prepared.confirmationToken,
+  }));
+  expect(receipt.status).toBe("unknown");
+  expect(await reuse()).toEqual({ ok: false, error: "BUSY" });
+  expect(documents.locations()).toMatchObject([{ handle, documentId }]);
+});
+
+test("a late search grant waits through an unrelated save and write barrier before release", async () => {
+  await workspace.dispose();
+  await documents.dispose();
+  const writing = Promise.withResolvers<void>();
+  const writeResult = Promise.withResolvers<{ ok: false; error: "SAVE_FAILED" }>();
+  const barrierEntered = Promise.withResolvers<void>();
+  const barrierResume = Promise.withResolvers<boolean>();
+  documents = createDocumentService({
+    pickFile: () => Promise.resolve(selected),
+    write: () => {
+      writing.resolve();
+      return writeResult.promise;
+    },
+  });
+  workspace = createWorkspaceService({ documents, pickDirectory: () => Promise.resolve(directory) });
+  await writeFile(join(directory, "hit.md"), "hit");
+  await writeFile(join(directory, "other.md"), "other");
+  await workspace.request(request("select"));
+  const root = (await settle()).roots[0];
+  const entries = await nodes(root);
+  const hit = entries.find((node) => node.name === "hit.md")!;
+  const other = entries.find((node) => node.name === "other.md")!;
+  const regular = await workspace.open({
+    protocolVersion: 1, requestId: crypto.randomUUID(), root: root.handle, entry: other.handle,
+  });
+  const prepared = await workspace.prepareContentSearchDocument(
+    { root: root.handle, generation: root.generation, entry: hit.handle, expectedHash: createHash("sha256").update("hit").digest("hex") },
+    crypto.randomUUID()
+  );
+  if (!regular.ok || !regular.snapshot || !prepared.ok || prepared.target.kind !== "open")
+    throw Error("Expected both grants");
+  const { handle, documentId, hash, revision, mirror, text } = regular.snapshot;
+  const searchHandle = prepared.target.snapshot.handle;
+  const release = (handle: string) => documents.release({ protocolVersion: 1, requestId: crypto.randomUUID(), handle });
+  const saving = documents.save({
+    protocolVersion: 1, requestId: crypto.randomUUID(), handle, documentId, mirror,
+    expectedHash: hash, expectedRevision: revision, bufferRevision: 1,
+    content: {
+      kind: "patch", from: 0, to: text.length, insert: "edited",
+      targetHash: createHash("sha256").update("edited").digest("hex"),
+    },
+  });
+  try {
+    await Promise.race([writing.promise, saving.then(() => { throw Error("Save ended before reaching writer"); })]);
+    let released = false;
+    const pending = release(searchHandle).then((value) => { released = true; return value; });
+    expect(await release(handle)).toMatchObject({ ok: false, error: "BUSY" });
+    expect(released).toBe(false);
+    const barrier = documents.withWriteBarrier(() => {
+      barrierEntered.resolve();
+      return barrierResume.promise;
+    });
+    writeResult.resolve({ ok: false, error: "SAVE_FAILED" });
+    expect(await saving).toMatchObject({ ok: false, error: "SAVE_FAILED" });
+    await barrierEntered.promise;
+    expect(released).toBe(false);
+    expect(documents.locations()).toHaveLength(2);
+    barrierResume.resolve(true);
+    expect(await barrier).toBe(true);
+    expect(await pending).toMatchObject({ ok: true });
+    expect(documents.locations()).toMatchObject([{ handle, documentId }]);
+  } finally {
+    writeResult.resolve({ ok: false, error: "SAVE_FAILED" });
+    barrierResume.resolve(true);
+  }
+});
+
 test("root-local open barrier includes committed document late receipt and always releases on throw", async () => {
   await workspace.dispose();
   await mkdir(join(directory, "one"));

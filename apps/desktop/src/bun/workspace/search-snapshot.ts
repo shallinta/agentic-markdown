@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SearchCoverage } from "../../shared/content-search";
-import { verifySingleFileAuthorization } from "../documents/path-authorization";
+import {
+  DocumentPathError,
+  verifySingleFileAuthorization,
+  type SingleFileAuthorization,
+} from "../documents/path-authorization";
 import { encodeChanges, INDEX_LIMITS, scalar } from "../index/protocol";
 import type { IndexChange, IndexResult } from "../index/protocol";
 import { createIndexSession } from "../index/session";
@@ -29,6 +33,32 @@ const fail = (error: Failure["error"], accepted = false): Failure => ({
 // Bound the number of open snapshots and any cache left by an uncertain close.
 let busy = false;
 let quarantined = false;
+
+export async function readStableSearchBytes(
+  grant: SingleFileAuthorization,
+  limit: number,
+  check: () => void
+): Promise<Buffer | null> {
+  const before = await verifySingleFileAuthorization(grant, check);
+  if (before.size > BigInt(limit)) return null;
+  const bytes = Buffer.alloc(Number(before.size) + 1);
+  let length = 0;
+  while (length < bytes.length) {
+    check();
+    const { bytesRead } = await grant.file.read(bytes, length, bytes.length - length, length);
+    check();
+    if (!bytesRead) break;
+    length += bytesRead;
+  }
+  const after = await verifySingleFileAuthorization(grant, check);
+  if (
+    after.size !== before.size ||
+    BigInt(length) !== before.size ||
+    before.mtimeNs !== after.mtimeNs ||
+    before.ctimeNs !== after.ctimeNs
+  ) throw new DocumentPathError("FILE_CHANGED");
+  return bytes.subarray(0, length);
+}
 
 export async function searchSnapshot(
   authorization: RootAuthorization,
@@ -102,40 +132,17 @@ export async function searchSnapshotEvidence(
         check
       );
       try {
-        const before = await verifySingleFileAuthorization(grant, check);
-        if (before.size > BigInt(remaining)) return fail("LIMIT");
-        const bytes = Buffer.alloc(Number(before.size) + 1);
-        let length = 0;
-        while (length < bytes.length) {
-          check();
-          const { bytesRead } = await grant.file.read(
-            bytes,
-            length,
-            bytes.length - length,
-            length
-          );
-          check();
-          if (!bytesRead) break;
-          length += bytesRead;
-        }
-        const after = await verifySingleFileAuthorization(grant, check);
-        if (
-          after.size !== before.size ||
-          BigInt(length) !== before.size ||
-          before.mtimeNs !== after.mtimeNs ||
-          before.ctimeNs !== after.ctimeNs
-        )
-          return fail("UNAVAILABLE");
-        const contents = bytes.subarray(0, length);
+        const contents = await readStableSearchBytes(grant, remaining, check);
+        if (!contents) return fail("LIMIT");
         const raw = new TextDecoder("utf-8", {
           fatal: true,
           ignoreBOM: true,
         }).decode(contents);
         const id = randomUUID().replaceAll("-", "");
-        const evidence = { entry, bytes: length, hash: createHash("sha256").update(contents).digest("hex") };
+        const evidence = { entry, bytes: contents.length, hash: createHash("sha256").update(contents).digest("hex") };
         indexed.set(id, { evidence, length: raw.length });
         changes.push({ kind: "put", id, path: id, raw });
-        remaining -= length;
+        remaining -= contents.length;
       } finally {
         await grant.file.close();
       }

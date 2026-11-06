@@ -3,9 +3,12 @@ import { expect, test } from "bun:test";
 import {
   validContentSearchRequest,
   validContentSearchResponse,
+  validContentSearchPrepareRequest,
   type ContentSearchCandidates,
+  type ContentSearchPrepared,
   type ContentSearchRequest,
 } from "../../shared/content-search";
+import { analyzeTextFidelity } from "../../shared/text-fidelity";
 
 import { createContentSearchRPC } from "./content-search";
 
@@ -122,3 +125,61 @@ test("cancellation cannot hide an uncertain accepted native result", async () =>
   gate.resolve({ ok: false, error: "UNKNOWN" });
   expect(await pending).toMatchObject({ error: "UNKNOWN" });
 });
+
+test.each([
+  { ready: false, revision: 1, error: "CANCELLED" },
+  { ready: true, revision: 0, error: "UNAVAILABLE" },
+])(
+  "retired or invalid prepare releases a newly published grant before draining (%j)",
+  async ({ ready, revision, error }) => {
+    const gate = Promise.withResolvers<ContentSearchPrepared>();
+    const released: string[] = [];
+    const rpc = createContentSearchRPC(
+      {
+        searchContentCandidates: () =>
+          Promise.resolve({ ok: true, coverage: [], mappings: [] }),
+        prepareContentSearchDocument: () => gate.promise,
+      },
+      (handle) => {
+        released.push(handle);
+        return Promise.resolve(true);
+      }
+    );
+    const hash = "a".repeat(64);
+    const input = {
+      ...envelope(),
+      root: id(),
+      generation: 1,
+      entry: id(),
+      expectedHash: hash,
+    };
+    expect(validContentSearchPrepareRequest(input)).toBe(true);
+    expect(
+      validContentSearchPrepareRequest({ ...input, path: "/forged" })
+    ).toBe(false);
+    rpc.setReady(true);
+    const pending = rpc.prepare(input);
+    if (!ready) rpc.setReady(false);
+    const handle = id();
+    gate.resolve({
+      ok: true,
+      target: {
+        kind: "open",
+        snapshot: {
+          handle,
+          documentId: id(),
+          revision,
+          hash,
+          text: "sample",
+          byteLength: 6,
+          fileName: "sample.md",
+          fidelity: analyzeTextFidelity("sample"),
+          writeCapability: { writable: true, reason: "writable" },
+        },
+      },
+    });
+    await rpc.drain();
+    expect(await pending).toMatchObject({ error });
+    expect(released).toEqual([handle]);
+  }
+);

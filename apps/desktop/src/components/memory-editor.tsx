@@ -4,7 +4,7 @@ import {
   simplifySelection,
   isolateHistory,
 } from "@codemirror/commands";
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -456,10 +456,33 @@ export function MemoryEditor({
               );
           wrappingReady = true;
           scheduleWrapping();
+          controller.notifyContentSearchTargetReady();
         },
       });
     }
-    view.focus();
+    if (controller.shouldAutoFocusEditor(documentId)) view.focus();
+    const releaseContentSearch = controller.registerContentSearchTarget({
+      documentId,
+      ready: () =>
+        currentView() &&
+        wrappingReady &&
+        !controller.needsSourceWrapping(documentId) &&
+        view.contentDOM.isConnected &&
+        !view.compositionStarted &&
+        !view.composing &&
+        controller.getEditor(documentId)?.state === view.state,
+      select: ({ from, to }, state) => {
+        if (view.state !== state) return false;
+        const selection = EditorSelection.single(from, to);
+        const transaction = state.update({
+          selection,
+          effects: EditorView.scrollIntoView(selection.main, { y: "center" }),
+          annotations: Transaction.addToHistory.of(false),
+        });
+        view.dispatch(transaction);
+        return view.state === transaction.state;
+      },
+    });
     const releaseQuickFocus = controller.registerQuickFocusTarget({
       documentId,
       ready: () => currentView() && view.contentDOM.isConnected && !view.compositionStarted && !view.composing && controller.getEditor(documentId)?.state === view.state,
@@ -651,6 +674,7 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      releaseContentSearch();
       releaseQuickFocus();
       removeEmojiCompletion();
       removeCallout();
@@ -742,6 +766,7 @@ export function MemoryEditor({
           : { view, session: fault }
         : null
     );
+    controller.notifyContentSearchTargetReady();
   }, [controller, documentId, editor, frozen, readOnly, inputBlocked]);
   return (
     <>

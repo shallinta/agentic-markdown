@@ -8,6 +8,7 @@ import {
 
 import { CONTENT_SEARCH_LIMITS } from "../shared/content-search";
 import type { DuplicateSource } from "../shared/create-markdown";
+import { isDocumentSnapshot } from "../shared/document-snapshot";
 import {
   MAX_DOCUMENT_BYTES,
   isWriteCapability,
@@ -20,9 +21,7 @@ import {
   type SaveDocumentRequest,
 } from "../shared/documents";
 import type { FolderRemovalPublication, FolderRemovalDocument } from "../shared/folder-removal";
-import { validMirror } from "../shared/save-content";
 import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
-import { isTextFidelity } from "../shared/text-fidelity";
 import type { TrashAffected, TrashPublication } from "../shared/trash-document";
 import type { WorkspaceOpenRequest } from "../shared/workspace";
 
@@ -30,6 +29,10 @@ import type {
   ContentSearchCapture,
   ContentSearchDocument,
 } from "./content-search";
+import {
+  contentSearchEditorRange,
+  type ContentSearchLocation,
+} from "./content-search-location";
 import { createDocumentObservation } from "./document-observation";
 import {
   editorFaultSession,
@@ -122,8 +125,6 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-
 /** Validate the trust boundary in both directions, not just TS call sites. */
 export function isDocumentResponse(
   value: unknown,
@@ -141,39 +142,7 @@ export function isDocumentResponse(
       Object.prototype.hasOwnProperty.call(ERROR_TEXT, value.error)
     );
   if (value.ok !== true) return false;
-  if (value.snapshot === null) return true;
-  const s = value.snapshot;
-  return (
-    record(s) &&
-    (s.mirror === undefined || validMirror(s.mirror)) &&
-    typeof s.handle === "string" &&
-    UUID.test(s.handle) &&
-    typeof s.documentId === "string" &&
-    UUID.test(s.documentId) &&
-    typeof s.fileName === "string" &&
-    s.fileName.length > 0 &&
-    s.fileName.length <= 4096 &&
-    (s.explicitStandalone === undefined ||
-      typeof s.explicitStandalone === "boolean") &&
-    (s.displayPath === undefined ||
-      (typeof s.displayPath === "string" && s.displayPath.length <= 32768)) &&
-    (s.locationId === undefined ||
-      (typeof s.locationId === "string" && UUID.test(s.locationId))) &&
-    typeof s.revision === "number" &&
-    Number.isSafeInteger(s.revision) &&
-    s.revision > 0 &&
-    typeof s.hash === "string" &&
-    /^[a-f0-9]{64}$/.test(s.hash) &&
-    typeof s.byteLength === "number" &&
-    Number.isInteger(s.byteLength) &&
-    s.byteLength >= 0 &&
-    s.byteLength <= MAX_DOCUMENT_BYTES &&
-    typeof s.text === "string" &&
-    s.text.length <= MAX_DOCUMENT_BYTES &&
-    new TextEncoder().encode(s.text).length === s.byteLength &&
-    isTextFidelity(s.fidelity, s.text) &&
-    isWriteCapability(s.writeCapability)
-  );
+  return value.snapshot === null || isDocumentSnapshot(value.snapshot);
 }
 
 /** Small external store keeps request ordering independently testable from React. */
@@ -351,6 +320,15 @@ export function createDocumentController(
   let canLeaveEditor = () => true;
   let quickFocusTarget: { documentId: string; ready(): boolean; focus(): void } | undefined;
   const quickFocusListeners = new Set<() => void>();
+  let preserveSearchFocus: { documentId: string; handle: string } | undefined;
+  let contentSearchTarget: {
+    documentId: string;
+    ready(): boolean;
+    select(range: { from: number; to: number }, state: EditorState): boolean;
+  } | undefined;
+  let tryContentSearchLocation: (() => void) | undefined;
+  let cancelContentSearchLocation: (() => void) | undefined;
+  let contentSearchPreparation = 0;
   const activationListeners = new Set<(target: { handle: string; documentId: string }) => void>();
   const recordActivation = (target: { handle: string; documentId: string }) => {
     for (const listener of activationListeners) {
@@ -465,13 +443,14 @@ export function createDocumentController(
         revision: tab.revision,
         hash: tab.hash,
         bufferRevision: editor?.revision,
+        incarnation: editor?.state.field(editorFaultSession),
       };
       const status = searchDocumentStatus(tab, editor);
       const document: ContentSearchDocument =
         status === "dirty" && editor
           ? { ...version, status, raw: editor.state.field(rawText) }
           : { ...version, status: status === "dirty" ? "risky" : status };
-      return { document, incarnation: editor?.state.field(editorFaultSession) };
+      return document;
     });
     // The registered check is consumed at the first relevant publication, even
     // when an undo or refresh restores the previous values before the RPC ends.
@@ -483,7 +462,7 @@ export function createDocumentController(
         !state.frozen &&
         !editorInputBlocked &&
         state.tabs.length === captured.length &&
-        captured.every(({ document, incarnation }, index) => {
+        captured.every((document, index) => {
           const tab = state.tabs[index];
           const editor = editors.get(tab.documentId);
           return (
@@ -492,7 +471,7 @@ export function createDocumentController(
             tab.revision === document.revision &&
             tab.hash === document.hash &&
             editor?.revision === document.bufferRevision &&
-            editor?.state.field(editorFaultSession) === incarnation &&
+            editor?.state.field(editorFaultSession) === document.incarnation &&
             searchDocumentStatus(tab, editor) === document.status
           );
         });
@@ -500,7 +479,99 @@ export function createDocumentController(
       return valid;
     };
     checkContentSearch = current;
-    return { ok: true, documents: captured.map(({ document }) => document), current };
+    return { ok: true, documents: captured, current };
+  }
+  function contentSearchLocationValid(
+    snapshot: DocumentSnapshot,
+    location: ContentSearchLocation
+  ) {
+    const editor = editors.get(snapshot.documentId);
+    const version = location.version;
+    if (
+      metadataDisposed ||
+      state.busy ||
+      state.frozen ||
+      editorInputBlocked ||
+      saving.size ||
+      !canLeaveEditor() ||
+      !editor ||
+      isSafeSource(editor.state) ||
+      reading.has(snapshot.documentId) ||
+      snapshot.hash !== location.diskHash ||
+      searchDocumentStatus(snapshot, editor) !==
+        (location.source === "disk" ? "clean" : "dirty")
+    )
+      return false;
+    return version
+      ? version.handle === snapshot.handle &&
+          version.documentId === snapshot.documentId &&
+          version.revision === snapshot.revision &&
+          version.hash === snapshot.hash &&
+          version.bufferRevision === editor.revision &&
+          version.incarnation === editor.state.field(editorFaultSession)
+      : location.source === "disk";
+  }
+  function locateContentSearch(
+    snapshot: DocumentSnapshot,
+    location: ContentSearchLocation,
+    current: () => boolean,
+    activation: number
+  ) {
+    cancelContentSearchLocation?.();
+    const editor = editors.get(snapshot.documentId);
+    const revision = editor?.revision;
+    const incarnation = editor?.state.field(editorFaultSession);
+    return new Promise<boolean>((resolve) => {
+      const detach = () => {
+        clearTimeout(timeout);
+        if (tryContentSearchLocation === schedule) {
+          tryContentSearchLocation = undefined;
+          cancelContentSearchLocation = undefined;
+        }
+      };
+      const finish = (accepted: boolean) => {
+        detach();
+        resolve(accepted);
+      };
+      const eligible = () => {
+        const editor = editors.get(snapshot.documentId);
+        return current() &&
+          generation === activation &&
+          state.snapshot === snapshot &&
+          editor &&
+          editor.revision === revision &&
+          editor.state.field(editorFaultSession) === incarnation &&
+          contentSearchLocationValid(snapshot, location)
+          ? editor : undefined;
+      };
+      const attempt = () => {
+        if (tryContentSearchLocation !== schedule) return;
+        const editor = eligible();
+        if (!editor) {
+          finish(false);
+          return;
+        }
+        const target = contentSearchTarget;
+        if (target?.documentId !== snapshot.documentId || !target.ready()) return;
+        const range = contentSearchEditorRange(editor.state, location);
+        detach();
+        try {
+          resolve(!!range && target.select(range, editor.state));
+        } catch {
+          resolve(false);
+        }
+      };
+      const schedule = () => {
+        // A transient invalidation must consume the ticket before it can recover.
+        if (!eligible()) finish(false);
+        // View registration and restoration can run during a CodeMirror update.
+        else queueMicrotask(attempt);
+      };
+      const timeout = setTimeout(() => finish(false), 2_000);
+      tryContentSearchLocation = schedule;
+      cancelContentSearchLocation = () => finish(false);
+      schedule();
+    });
   }
   const needsDiscard = (documentId: string) => isDirty(documentId) || observation.atRisk(documentId);
   function beginDiscard() {
@@ -599,6 +670,7 @@ export function createDocumentController(
     state = next;
     if (previousTabs !== next.tabs) observation.sync(next.tabs);
     checkContentSearch?.();
+    tryContentSearchLocation?.();
     listeners.forEach((listener) => listener());
     if (recoveryUnblocked) scheduleFaultRecovery();
   }
@@ -614,7 +686,12 @@ export function createDocumentController(
     entry?: DocumentEntry,
     open?: (request: DocumentRequest) => Promise<unknown>,
     createdIntent?: () => boolean,
-    purpose: "user" | "background" = "background"
+    purpose: "user" | "background" = "background",
+    searchOpen?: {
+      current(): boolean;
+      hash: string;
+      adopt(snapshot: DocumentSnapshot, generation: number): void;
+    }
   ) {
     const previous = state.snapshot;
     const target = entry ?? previous;
@@ -636,7 +713,7 @@ export function createDocumentController(
           select &&
           response.ok &&
           response.snapshot &&
-          !createdIntent && !state.entries.some(
+          !createdIntent && !searchOpen && !state.entries.some(
             (value) => value.handle === response.snapshot?.handle
           )
         )
@@ -644,6 +721,11 @@ export function createDocumentController(
         return;
       }
       if (!response.ok) {
+        if (searchOpen) {
+          // The search panel owns preparation errors, including intent cancellation.
+          publish({ ...state, busy: false });
+          return;
+        }
         if (!select && target?.documentId === state.snapshot?.documentId)
           staleDocuments.add(target!.documentId);
         publish({
@@ -667,6 +749,24 @@ export function createDocumentController(
       // not use the ordinary best-effort release path for a cancelled intent.
       if (createdIntent && (!createdIntent() || metadataDisposed || state.frozen || !canLeaveEditor() || state.entries.some(value => locationKey(value) === locationKey(snapshot) && value.documentId !== snapshot.documentId))) {
         publish({ ...state, busy: false });
+        return;
+      }
+      if (
+        searchOpen &&
+        (!searchOpen.current() ||
+          metadataDisposed ||
+          (state.frozen && !discardActive) ||
+          editorInputBlocked ||
+          !canLeaveEditor() ||
+          snapshot.hash !== searchOpen.hash ||
+          state.entries.some(
+            (value) =>
+              value.handle === snapshot.handle ||
+              value.documentId === snapshot.documentId ||
+              locationKey(value) === locationKey(snapshot)
+          ))
+      ) {
+        if (current === generation) publish({ ...state, busy: false });
         return;
       }
       if (
@@ -775,6 +875,9 @@ export function createDocumentController(
               : tab
           )
         : [...state.tabs, active];
+      preserveSearchFocus = searchOpen
+        ? { documentId: active.documentId, handle: active.handle }
+        : undefined;
       publish({
         tabs,
         entries: state.entries.some(
@@ -812,6 +915,7 @@ export function createDocumentController(
         elapsedMs: performance.now() - start,
         frozen: state.frozen,
       });
+      searchOpen?.adopt(active, current);
       if (purpose === "user" && current === generation && state.snapshot?.handle === active.handle)
         recordActivation(active);
       if (previousEntry && previousEntry.handle !== snapshot.handle)
@@ -867,13 +971,16 @@ export function createDocumentController(
     });
     for (const entry of previous) void release(entry.handle);
   }
-  function activateTab(documentId: string) {
+  function activateTab(documentId: string, preserveFocus = false) {
     if (state.frozen || !canLeaveEditor()) return;
     const snapshot = state.tabs.find((tab) => tab.documentId === documentId);
     if (!snapshot) return;
     captureCurrentViewport();
-    ++generation;
+    const activation = ++generation;
     cancelPending();
+    preserveSearchFocus = preserveFocus
+      ? { documentId, handle: snapshot.handle }
+      : undefined;
     publish({
       ...state,
       snapshot,
@@ -883,6 +990,7 @@ export function createDocumentController(
       elapsedMs: null,
     });
     if (state.snapshot === snapshot) recordActivation(snapshot);
+    return activation;
   }
   function closeTab(documentId: string, removeHandle?: string) {
     const index = state.tabs.findIndex((tab) => tab.documentId === documentId);
@@ -1012,6 +1120,99 @@ export function createDocumentController(
   };
   const controller = {
     captureContentSearch,
+    getContentSearchActivation: () => generation,
+    shouldAutoFocusEditor(documentId: string) {
+      return (
+        preserveSearchFocus?.documentId !== documentId ||
+        state.snapshot?.handle !== preserveSearchFocus.handle
+      );
+    },
+    registerContentSearchTarget(target: NonNullable<typeof contentSearchTarget>) {
+      contentSearchTarget = target;
+      tryContentSearchLocation?.();
+      return () => {
+        if (contentSearchTarget === target) contentSearchTarget = undefined;
+      };
+    },
+    notifyContentSearchTargetReady() {
+      tryContentSearchLocation?.();
+    },
+    async activateContentSearchLocation(
+      location: ContentSearchLocation,
+      current: () => boolean
+    ) {
+      contentSearchPreparation++;
+      cancelContentSearchLocation?.();
+      const version = location.version;
+      if (!version || !current()) return false;
+      const target = state.tabs.find(
+        (tab) => tab.documentId === version.documentId && tab.handle === version.handle
+      );
+      if (!target || !contentSearchLocationValid(target, location)) return false;
+      const activation = activateTab(target.documentId, true);
+      return activation === undefined
+        ? false
+        : locateContentSearch(target, location, current, activation);
+    },
+    async openContentSearchLocation(
+      open: (request: DocumentRequest) => Promise<unknown>,
+      location: ContentSearchLocation,
+      current: () => boolean
+    ) {
+      const preparation = ++contentSearchPreparation;
+      cancelContentSearchLocation?.();
+      if (
+        location.source !== "disk" ||
+        location.version ||
+        !current() ||
+        metadataDisposed ||
+        editorInputBlocked ||
+        !controller.canSelectFolder()
+      )
+        return false;
+      const expectedActivation = generation;
+      const intentCurrent = () =>
+        preparation === contentSearchPreparation && current() && !metadataDisposed;
+      const params = request();
+      let prepared: DocumentSnapshot | null = null;
+      let adopted: { snapshot: DocumentSnapshot; generation: number } | undefined;
+      try {
+        // Preparing a hit reads through Bun without making the current editor busy.
+        const response = await open(params);
+        if (!isDocumentResponse(response, params.requestId) || !response.ok) return false;
+        prepared = response.snapshot;
+        if (
+          !prepared ||
+          !intentCurrent() ||
+          expectedActivation !== generation ||
+          editorInputBlocked ||
+          !controller.canSelectFolder()
+        )
+          return false;
+        const snapshot = prepared;
+        await protect([], () => {
+          if (!intentCurrent() || expectedActivation !== generation || state.busy ||
+              editorInputBlocked || !canLeaveEditor()) return;
+          return load(true, undefined, (params) => Promise.resolve({
+            ...params, ok: true, snapshot,
+          }), undefined, "user", {
+            current: intentCurrent,
+            hash: location.diskHash,
+            adopt: (snapshot, generation) => {
+              adopted = { snapshot, generation };
+            },
+          });
+        });
+      } catch {
+        return false;
+      } finally {
+        if (prepared && !adopted && !state.entries.some((entry) => entry.handle === prepared?.handle))
+          await release(prepared.handle);
+      }
+      return adopted && intentCurrent()
+        ? locateContentSearch(adopted.snapshot, location, intentCurrent, adopted.generation)
+        : false;
+    },
     acquireCreationGate: (): string | null => {
       if (metadataDisposed || editorInputBlocked || !controller.canSelectFolder()) return null;
       const token = crypto.randomUUID();
@@ -1546,7 +1747,9 @@ export function createDocumentController(
       else if (state.entries.some((value) => value.handle === entry.handle))
         await protect([], () => current() ? load(false, entry, undefined, undefined, "user") : undefined);
     },
-    activateTab,
+    activateTab(documentId: string) {
+      activateTab(documentId);
+    },
     subscribeActivation(listener: (target: { handle: string; documentId: string }) => void) {
       activationListeners.add(listener);
       return () => { activationListeners.delete(listener); };
@@ -1608,6 +1811,9 @@ export function createDocumentController(
         }
       ),
     dispose: () => {
+      cancelContentSearchLocation?.();
+      contentSearchTarget = undefined;
+      preserveSearchFocus = undefined;
       if (creationGate) creationGate.cancelled = true;
       if (duplicateGate) duplicateGate.cancelled = true;
       if (revealPending) {

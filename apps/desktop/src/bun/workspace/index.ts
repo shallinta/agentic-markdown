@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
@@ -6,8 +6,11 @@ import { basename, dirname, join, relative } from "node:path";
 import type {
   ContentSearchCandidates,
   ContentSearchInput,
+  ContentSearchPrepareInput,
+  ContentSearchPrepared,
   SearchMapping,
 } from "../../shared/content-search";
+import { validContentSearchPrepareRequest } from "../../shared/content-search";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
@@ -61,7 +64,7 @@ import {
   type ScanDirectory,
 } from "./scan";
 import { validScanBatch } from "./scan-protocol";
-import { searchSnapshot, searchSnapshotEvidence } from "./search-snapshot";
+import { readStableSearchBytes, searchSnapshot, searchSnapshotEvidence } from "./search-snapshot";
 import { createTrashService } from "./trash-document";
 import { createScanWorker } from "./worker";
 
@@ -95,6 +98,11 @@ export interface TrustedWorkspaceService extends WorkspaceService {
     input: ContentSearchInput,
     signal?: AbortSignal
   ): Promise<ContentSearchCandidates>;
+  prepareContentSearchDocument(
+    input: ContentSearchPrepareInput,
+    requestId: string,
+    signal?: AbortSignal
+  ): Promise<ContentSearchPrepared>;
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
@@ -255,6 +263,60 @@ export function createWorkspaceService({
       return true;
     };
     return { ok: true as const, root, entries, showHidden, current };
+  }
+  async function openWorkspaceFile(
+    root: Root,
+    entry: string,
+    file: ScanFile,
+    envelope: { protocolVersion: 1; requestId: string },
+    proof?: Parameters<TrustedDocumentService["openAuthorized"]>[3]
+  ) {
+    const generation = root.meta.generation;
+    openingRoots.set(root, (openingRoots.get(root) ?? 0) + 1);
+    const owner: Owner = {
+      root,
+      release() {
+        this.root.scopes.delete(this);
+      },
+      async verify() {
+        if (disposed || !this.root.live || !roots.includes(this.root))
+          throw new DocumentPathError("INVALID_HANDLE");
+        await verifyRoot(this.root.authorization);
+        if (!this.root.live) throw new DocumentPathError("INVALID_HANDLE");
+      },
+    };
+    root.scopes.add(owner);
+    try {
+      const response = await documents.openAuthorized(
+        envelope,
+        async () => {
+          if (!live(root, generation) || root.files.get(entry) !== file)
+            throw new DocumentPathError("INVALID_HANDLE");
+          const candidate = await authorizeEntry(
+            root.authorization,
+            file.path,
+            file.fingerprint,
+            file.chain,
+            root.meta.showHidden,
+            proof?.check
+          );
+          if (!live(root, generation)) {
+            await candidate.file.close();
+            throw new DocumentPathError("INVALID_HANDLE");
+          }
+          return candidate;
+        },
+        owner,
+        proof
+      );
+      if (response.ok && response.snapshot) bindAssets(response.snapshot.handle, owner.root);
+      else owner.root.scopes.delete(owner);
+      return response;
+    } finally {
+      const count = openingRoots.get(root)! - 1;
+      if (count) openingRoots.set(root, count);
+      else openingRoots.delete(root);
+    }
   }
   const manualCandidates = new Map<
     string,
@@ -1209,6 +1271,94 @@ export function createWorkspaceService({
         indexTask = undefined;
       }
     },
+    async prepareContentSearchDocument(input, requestId, signal) {
+      if (signal?.aborted) return { ok: false, error: "CANCELLED" };
+      if (!validContentSearchPrepareRequest({ ...input, protocolVersion: 1, requestId }))
+        return { ok: false, error: "INVALID" };
+      const { root: handle, generation, entry, expectedHash, binding } = input;
+      const captured = captureIndexRoot(handle, generation, signal);
+      if (!captured.ok) return captured;
+      const { root, entries, showHidden } = captured;
+      const file = entries.get(entry);
+      if (!file) return { ok: false, error: "STALE" };
+      const check = () => {
+        if (signal?.aborted) throw new DocumentPathError("CANCELLED");
+        if (!captured.current()) throw new DocumentPathError("FILE_CHANGED");
+      };
+      const checkTrash = (authorization: Parameters<typeof readStableSearchBytes>[0]) => {
+        if (documents.trashBlocked(authorization.path, authorization.fingerprint, authorization.directories))
+          throw new DocumentPathError("BUSY");
+      };
+      const verifyVersion = async (
+        authorization: Parameters<typeof readStableSearchBytes>[0],
+        current: () => void
+      ) => {
+        checkTrash(authorization);
+        const bytes = await readStableSearchBytes(authorization, INDEX_LIMITS.bytes, current);
+        current();
+        checkTrash(authorization);
+        if (!bytes) throw new DocumentPathError("TOO_LARGE");
+        if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
+          throw new DocumentPathError("FILE_CHANGED");
+      };
+      const failure = (error: string): ContentSearchPrepared => ({
+        ok: false,
+        error: signal?.aborted || error === "CANCELLED" ? "CANCELLED"
+          : error === "BUSY" ? "BUSY"
+          : error === "TOO_LARGE" ? "LIMIT"
+          : !captured.current() || ["FILE_CHANGED", "INVALID_HANDLE", "INVALID_UTF8"].includes(error)
+            ? "STALE" : "UNAVAILABLE",
+      });
+      try {
+        if (!binding) {
+          const opened = await openWorkspaceFile(root, entry, file, { protocolVersion: 1, requestId }, {
+            maxBytes: INDEX_LIMITS.bytes,
+            check,
+            async verify(authorization, snapshot, current) {
+              if (snapshot.hash !== expectedHash) throw new DocumentPathError("FILE_CHANGED");
+              await verifyVersion(authorization, current);
+            },
+          });
+          if (!opened.ok) return failure(opened.error);
+          return opened.snapshot
+            ? { ok: true, target: { kind: "open", snapshot: opened.snapshot } }
+            : { ok: false, error: "UNAVAILABLE" };
+        }
+        const admission = documents.captureContentSearchBindings([binding.handle]);
+        if (!admission) return { ok: false, error: "BUSY" };
+        const grant = admission.bindings[0];
+        const peers = documents.locations().filter((item) => item.path === file.path);
+        if (!grant || peers.length !== 1 ||
+            grant.path !== file.path || grant.fingerprint !== file.fingerprint ||
+            grant.documentId !== binding.documentId ||
+            grant.revision !== binding.revision || grant.hash !== binding.hash)
+          return { ok: false, error: "STALE" };
+        const current = () => {
+          check();
+          if (!admission.current()) throw new DocumentPathError("FILE_CHANGED");
+        };
+        await grant.verify(current);
+        const authorization = await authorizeEntry(
+          root.authorization, file.path, file.fingerprint, file.chain, showHidden, current
+        );
+        try {
+          await verifyVersion(authorization, current);
+        } finally {
+          await authorization.file.close();
+        }
+        current();
+        checkTrash(authorization);
+        return {
+          ok: true,
+          target: {
+            kind: "reuse", handle: grant.handle, documentId: grant.documentId,
+            revision: grant.revision, hash: grant.hash,
+          },
+        };
+      } catch (error) {
+        return failure(error instanceof DocumentPathError ? error.code : "UNAVAILABLE");
+      }
+    },
     createFolder:(value)=>folders.request(value),
     trashDocument:(value)=>trash.request(value),
     trashLifecycle:trash,
@@ -1468,50 +1618,7 @@ export function createWorkspaceService({
         file = root?.files.get(value.entry);
       if (disposed || !root || !file)
         return { ...envelope, ok: false, error: "INVALID_HANDLE" };
-      const generation = root.meta.generation;
-      openingRoots.set(root, (openingRoots.get(root) ?? 0) + 1);
-      try {
-        const owner: Owner = {
-          root,
-          release() {
-            this.root.scopes.delete(this);
-          },
-          async verify() {
-            if (disposed || !this.root.live || !roots.includes(this.root))
-              throw new DocumentPathError("INVALID_HANDLE");
-            await verifyRoot(this.root.authorization);
-            if (!this.root.live) throw new DocumentPathError("INVALID_HANDLE");
-          },
-        };
-        root.scopes.add(owner);
-        const response = await documents.openAuthorized(
-          envelope,
-          async () => {
-            if (!live(root, generation) || root.files.get(value.entry) !== file)
-              throw new DocumentPathError("INVALID_HANDLE");
-            const candidate = await authorizeEntry(
-              root.authorization,
-              file.path,
-              file.fingerprint,
-              file.chain,
-              root.meta.showHidden
-            );
-            if (!live(root, generation)) {
-              await candidate.file.close();
-              throw new DocumentPathError("INVALID_HANDLE");
-            }
-            return candidate;
-          },
-          owner
-        );
-        if (!response.ok || !response.snapshot) owner.root.scopes.delete(owner);
-        else bindAssets(response.snapshot.handle, owner.root);
-        return response;
-      } finally {
-        const count = openingRoots.get(root)! - 1;
-        if (count) openingRoots.set(root, count);
-        else openingRoots.delete(root);
-      }
+      return openWorkspaceFile(root, value.entry, file, envelope);
     },
     async dispose() {
       indexDisposing = true;

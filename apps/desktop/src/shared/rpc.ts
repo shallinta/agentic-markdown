@@ -107,6 +107,10 @@ export interface DesktopRPCType {
         params: import("./content-search").ContentSearchRequest;
         response: import("./content-search").ContentSearchResponse;
       };
+      prepareContentSearchDocument: {
+        params: import("./content-search").ContentSearchPrepareRequest;
+        response: import("./content-search").ContentSearchPrepareResponse;
+      };
       checkDocumentWriteCapability: {
         params: DocumentHandleRequest;
         response: WriteCapabilityResponse;

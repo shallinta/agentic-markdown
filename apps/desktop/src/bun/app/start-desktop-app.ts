@@ -63,7 +63,12 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     ? (await import("../perf-lab/search")).createSearchLab()
     : undefined;
   const contentSearch = !searchLab && process.env.AGENTIC_MARKDOWN_PERF_LAB !== "1"
-    ? createContentSearchRPC(workspace)
+    ? createContentSearchRPC(workspace, async (handle) => {
+        const result = await documents.release({
+          protocolVersion: 1, requestId: crypto.randomUUID(), handle,
+        });
+        return result.ok;
+      })
     : undefined;
 
   const getRpc = (): MainWindowRPC => {
@@ -89,16 +94,19 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     guard: async (reason, execute) => {
       const resumeSearch = contentSearch?.suspend();
       workspace.trashLifecycle.beforeExit();
-      try { return await documents.withWriteBarrier(() =>
-        guard(reason, async (requestId) => {
-          await contentSearch?.drain();
-          const settled=await workspace.trashLifecycle.finishExit(Date.now()+2_000);
-          if(!settled){console.warn("Trash operation result remains unknown during exit");try{getRpc().send.trashNotice({reason:"exit-pending"});}catch{/* Exit notice is best effort; never restart the receipt deadline. */}}
-          await recent.drain();
-          await mru.drainUntil(mruDeadline);
-          return execute(requestId);
-        })
-      ); } finally { workspace.trashLifecycle.cancelExit(); resumeSearch?.(); }
+      try {
+        // A canceled search may still need to release an unclaimed grant.
+        await contentSearch?.drain();
+        return await documents.withWriteBarrier(() =>
+          guard(reason, async (requestId) => {
+            const settled=await workspace.trashLifecycle.finishExit(Date.now()+2_000);
+            if(!settled){console.warn("Trash operation result remains unknown during exit");try{getRpc().send.trashNotice({reason:"exit-pending"});}catch{/* Exit notice is best effort; never restart the receipt deadline. */}}
+            await recent.drain();
+            await mru.drainUntil(mruDeadline);
+            return execute(requestId);
+          })
+        );
+      } finally { workspace.trashLifecycle.cancelExit(); resumeSearch?.(); }
     },
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.

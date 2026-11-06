@@ -10,6 +10,7 @@ interface ContentSearchDocumentVersion {
   revision: number;
   hash: string;
   bufferRevision: number | undefined;
+  incarnation?: object;
 }
 
 export type ContentSearchDocument = ContentSearchDocumentVersion &

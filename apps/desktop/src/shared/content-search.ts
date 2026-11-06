@@ -1,3 +1,5 @@
+import { isDocumentSnapshot } from "./document-snapshot";
+import type { DocumentSnapshot } from "./documents";
 import { perfRecord, perfUuid } from "./perf-lab";
 
 export const CONTENT_SEARCH_LIMITS = {
@@ -12,6 +14,30 @@ export interface ContentSearchInput {
   query: string;
   handles: readonly string[];
 }
+
+export interface ContentSearchDocumentBinding {
+  handle: string;
+  documentId: string;
+  revision: number;
+  hash: string;
+}
+
+export interface ContentSearchPrepareInput {
+  root: string;
+  generation: number;
+  entry: string;
+  expectedHash: string;
+  binding?: ContentSearchDocumentBinding;
+}
+
+export type ContentSearchPrepared =
+  | {
+      ok: true;
+      target:
+        | { kind: "open"; snapshot: DocumentSnapshot }
+        | ({ kind: "reuse" } & ContentSearchDocumentBinding);
+    }
+  | { ok: false; error: ContentSearchError };
 
 export interface SearchCoverage {
   entry: string;
@@ -56,6 +82,11 @@ export type ContentSearchRequest = Envelope &
     | (ContentSearchInput & { op: "query" })
     | { op: "cancel"; targetRequestId: string }
   );
+export type ContentSearchPrepareRequest = Envelope & ContentSearchPrepareInput;
+export type ContentSearchPrepareResponse = {
+  protocolVersion: 1;
+  requestId: string | null;
+} & ContentSearchPrepared;
 export type ContentSearchResponse =
   | {
       protocolVersion: 1;
@@ -84,6 +115,88 @@ function natural(value: unknown): value is number {
 }
 function digest(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+function validBinding(value: unknown): value is ContentSearchDocumentBinding {
+  return (
+    perfRecord(value) &&
+    exact(value, ["handle", "documentId", "revision", "hash"]) &&
+    perfUuid(value.handle) &&
+    perfUuid(value.documentId) &&
+    natural(value.revision) &&
+    digest(value.hash)
+  );
+}
+
+export function validContentSearchPrepareRequest(
+  value: unknown
+): value is ContentSearchPrepareRequest {
+  if (
+    !perfRecord(value) ||
+    value.protocolVersion !== 1 ||
+    !perfUuid(value.requestId)
+  )
+    return false;
+  const keys = [
+    "protocolVersion",
+    "requestId",
+    "root",
+    "generation",
+    "entry",
+    "expectedHash",
+  ];
+  return (
+    perfUuid(value.root) &&
+    natural(value.generation) &&
+    perfUuid(value.entry) &&
+    digest(value.expectedHash) &&
+    (exact(value, keys) ||
+      (exact(value, [...keys, "binding"]) &&
+        validBinding(value.binding) &&
+        value.binding.hash === value.expectedHash))
+  );
+}
+
+export function validContentSearchPrepareResponse(
+  value: unknown,
+  request: ContentSearchPrepareRequest
+): value is ContentSearchPrepareResponse {
+  if (
+    !perfRecord(value) ||
+    value.protocolVersion !== 1 ||
+    value.requestId !== request.requestId
+  )
+    return false;
+  const base = ["protocolVersion", "requestId", "ok"];
+  if (value.ok === false)
+    return (
+      exact(value, [...base, "error"]) &&
+      errors.some((error) => error === value.error)
+    );
+  if (
+    value.ok !== true ||
+    !exact(value, [...base, "target"]) ||
+    !perfRecord(value.target)
+  )
+    return false;
+  const { kind, ...target } = value.target;
+  const binding = request.binding;
+  if (binding) {
+    return (
+      kind === "reuse" &&
+      validBinding(target) &&
+      target.handle === binding.handle &&
+      target.documentId === binding.documentId &&
+      target.revision === binding.revision &&
+      target.hash === binding.hash
+    );
+  }
+  return (
+    kind === "open" &&
+    exact(target, ["snapshot"]) &&
+    isDocumentSnapshot(target.snapshot, CONTENT_SEARCH_LIMITS.bytes) &&
+    target.snapshot.hash === request.expectedHash
+  );
 }
 const unpaired =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;

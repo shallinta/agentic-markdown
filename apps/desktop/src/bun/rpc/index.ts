@@ -5,7 +5,7 @@ import {
 import { BrowserView, Utils, type BrowserWindow } from "electrobun/bun";
 
 import type { Command } from "../../shared/commands";
-import type { ContentSearchResponse } from "../../shared/content-search";
+import type { ContentSearchPrepareResponse, ContentSearchResponse } from "../../shared/content-search";
 import type { DocumentService } from "../../shared/documents";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
 import type { DesktopRPCType } from "../../shared/rpc";
@@ -22,7 +22,10 @@ export type MainWindowRPC = ReturnType<
 
 export interface MainWindowRPCDependencies {
   searchLab?: { run(input: unknown): Promise<SearchLabResponse> };
-  contentSearch?: { run(input: unknown): Promise<ContentSearchResponse> };
+  contentSearch?: {
+    run(input: unknown): Promise<ContentSearchResponse>;
+    prepare?(input: unknown): Promise<ContentSearchPrepareResponse>;
+  };
   documentMRU?: {
     begin(input: unknown): Promise<import("../../shared/document-mru").MRUSessionResponse>;
     record(input: unknown): Promise<import("../../shared/document-mru").MRUAck>;
@@ -200,6 +203,15 @@ export function createMainWindowRPC({
         perfLabStatus: () => ({ enabled, autorun }),
         contentSearchRequest: (request) => {
           if (contentSearch && !searchLab) return contentSearch.run(request);
+          return {
+            protocolVersion: 1 as const,
+            requestId: perfRecord(request) && perfUuid(request.requestId) ? request.requestId : null,
+            ok: false as const,
+            error: "DISABLED" as const,
+          };
+        },
+        prepareContentSearchDocument: (request) => {
+          if (contentSearch?.prepare && !searchLab) return contentSearch.prepare(request);
           return {
             protocolVersion: 1 as const,
             requestId: perfRecord(request) && perfUuid(request.requestId) ? request.requestId : null,

@@ -46,6 +46,7 @@ interface Identity {
 }
 interface Grant extends SingleFileAuthorization {
   explicitStandalone?: boolean;
+  searchPrepared?: boolean;
   handle: string;
   path: string;
   identityKey: string;
@@ -136,7 +137,16 @@ export interface TrustedDocumentService extends DocumentService {
   openAuthorized(
     request: unknown,
     authorize: () => Promise<SingleFileAuthorization>,
-    scope: DocumentScope
+    scope: DocumentScope,
+    proof?: {
+      maxBytes: number;
+      check(this: void): void;
+      verify(
+        authorization: SingleFileAuthorization,
+        snapshot: DocumentSnapshot,
+        check: () => void
+      ): Promise<void>;
+    }
   ): Promise<DocumentResponse>;
   locations(): {
     handle: string;
@@ -383,6 +393,12 @@ export function createDocumentService({
   let saving = 0;
   const acceptance = createRefreshAcceptanceLedger();
   let writeBarrier = false;
+  let releaseBarrier: ReturnType<typeof Promise.withResolvers<void>> | undefined;
+  const wakeSearchReleases = () => {
+    const waiting = releaseBarrier;
+    releaseBarrier = undefined;
+    waiting?.resolve();
+  };
   let folderMutationLease: object | null = null;
   let selectBarrierGeneration = 0;
   let searchAdmissionGeneration = 0;
@@ -484,15 +500,15 @@ export function createDocumentService({
       throw new DocumentFailure("INVALID_HANDLE");
   };
 
-  async function stableBytes(grant: Grant, check: () => void) {
+  async function stableBytes(grant: Grant, check: () => void, maxBytes = MAX_DOCUMENT_BYTES) {
     const readStart = onTiming ? performance.now() : 0;
     check();
     const before = await verify(grant);
     check();
-    if (before.size > BigInt(MAX_DOCUMENT_BYTES))
+    if (before.size > BigInt(maxBytes))
       throw new DocumentFailure("TOO_LARGE");
     const bytes = Buffer.alloc(
-      Math.min(Number(before.size) + 1, MAX_DOCUMENT_BYTES + 1)
+      Math.min(Number(before.size) + 1, maxBytes + 1)
     );
     let length = 0;
     while (length < bytes.length) {
@@ -519,14 +535,14 @@ export function createDocumentService({
     ) {
       throw new DocumentFailure("FILE_CHANGED");
     }
-    if (length > MAX_DOCUMENT_BYTES) throw new DocumentFailure("TOO_LARGE");
+    if (length > maxBytes) throw new DocumentFailure("TOO_LARGE");
     const content = bytes.subarray(0, length);
     onTiming?.("diskReadMs", performance.now() - readStart);
     return content;
   }
-  async function snapshot(grant: Grant, generation: number, task: Task): Promise<DocumentSnapshot> {
+  async function snapshot(grant: Grant, generation: number, task: Task, maxBytes?: number): Promise<DocumentSnapshot> {
     if (trashGuard(grant.path, grant.fingerprint, grant.directories)) throw new DocumentFailure("BUSY");
-    const content = await stableBytes(grant, () => checkTask(task, generation));
+    const content = await stableBytes(grant, () => checkTask(task, generation), maxBytes);
     const length = content.length;
     const decodeStart = onTiming ? performance.now() : 0;
     let text: string;
@@ -783,7 +799,7 @@ export function createDocumentService({
       const current = () => !disposed && folderMutationLease === token;
       const release = () => {
         if (folderMutationLease !== token) return;
-        folderMutationLease = null; writeBarrier = false; candidates.wake();
+        folderMutationLease = null; writeBarrier = false; wakeSearchReleases(); candidates.wake();
       };
       try {
         await saveTail;
@@ -1078,7 +1094,7 @@ export function createDocumentService({
         if (disposed || disposing || createAdmissionOwner !== owner || running || pending || selecting || revealing || folderMutationLease) return false;
         await action(); return true;
       } finally {
-        if (createAdmissionOwner === owner && !disposing) { createAdmissionOwner = null; writeBarrier = false; candidates.wake(); }
+        if (createAdmissionOwner === owner && !disposing) { createAdmissionOwner = null; writeBarrier = false; wakeSearchReleases(); candidates.wake(); }
       }
     },
     async openCreatedAuthorized(request, getAuthorization, scope, sink) {
@@ -1104,18 +1120,26 @@ export function createDocumentService({
       }, owner);
       return promise;
     },
-    async openAuthorized(request, getAuthorization, scope) {
+    async openAuthorized(request, getAuthorization, scope, proof) {
       if (!validate(request, false)) return failure("", "INVALID_REQUEST");
       if (disposed) return failure(request.requestId, "INVALID_HANDLE");
       if (saving || writeBarrier || acceptance.busy() || selecting || duplicate(request.requestId))
         return failure(request.requestId, "BUSY");
+      if (proof && !searchIdle()) return failure(request.requestId, "BUSY");
       const { task, promise } = taskFor(request.requestId),
         generation = epoch;
+      const barrier = selectBarrierGeneration;
       searchAdmissionGeneration++;
       enqueue(task, async () => {
         let candidate: Grant | null = null;
         try {
-          checkTask(task, generation);
+          const check = () => {
+            checkTask(task, generation);
+            if (proof && (writeBarrier || barrier !== selectBarrierGeneration))
+              throw new DocumentFailure("BUSY");
+            proof?.check();
+          };
+          check();
           await scope.verify();
           const authorization = await getAuthorization();
           candidate = {
@@ -1128,17 +1152,28 @@ export function createDocumentService({
                   `${authorization.path}:${authorization.fingerprint}` &&
                 existing.explicitStandalone
             ),
+            ...(proof ? { searchPrepared: true } : {}),
             assetEpoch: randomUUID(),
             scope,
           };
           // Reopening through a tree must not replace prior explicit authority
           // with a root-dependent grant when the old handle is released.
           if (candidate.explicitStandalone) candidate.scope = undefined;
-          checkTask(task, generation);
+          const checkFreshTarget = (path: string) => {
+            if ([...grants.values()].some((grant) => grant.path === path))
+              throw new DocumentFailure("FILE_CHANGED");
+          };
+          if (proof) checkFreshTarget(candidate.path);
+          check();
           await scope.verify();
-          const next = await snapshot(candidate, generation, task);
+          const next = await snapshot(candidate, generation, task, proof?.maxBytes);
           await scope.verify();
-          checkTask(task, generation);
+          check();
+          if (proof) {
+            await proof.verify(candidate, next, check);
+            check();
+            checkFreshTarget(candidate.path);
+          }
           commit(candidate, next, task, generation);
           grants.set(candidate.handle, candidate);
           if (candidate.explicitStandalone) scope.release?.();
@@ -1465,6 +1500,7 @@ export function createDocumentService({
         return await action();
       } finally {
         writeBarrier = false;
+        wakeSearchReleases();
         candidates.wake();
       }
     },
@@ -1598,14 +1634,26 @@ export function createDocumentService({
       if (pending?.task.cancelled) pending = null;
       return Promise.resolve(result(request.requestId, null));
     },
-    release(request) {
+    async release(request) {
       if (!validate(request, true))
-        return Promise.resolve(failure("", "INVALID_REQUEST"));
+        return failure("", "INVALID_REQUEST");
+      const grant = grants.get(request.handle);
+      // A late search receipt may need cleanup after another operation began.
+      // Keep the ordinary release barrier and wait only for these exact grants.
+      while (grant?.searchPrepared && (saving || writeBarrier) && !disposing &&
+             grants.get(request.handle) === grant) {
+        if (writeBarrier) {
+          releaseBarrier ??= Promise.withResolvers<void>();
+          await releaseBarrier.promise;
+        } else {
+          await saveTail;
+        }
+      }
       if (saving || writeBarrier)
-        return Promise.resolve(failure(request.requestId, "BUSY"));
-      if (disposed || !grants.has(request.handle))
-        return Promise.resolve(failure(request.requestId, "INVALID_HANDLE"));
-      grants.get(request.handle)?.scope?.release?.();
+        return failure(request.requestId, "BUSY");
+      if (disposed || !grant || grants.get(request.handle) !== grant)
+        return failure(request.requestId, "INVALID_HANDLE");
+      grant.scope?.release?.();
       grants.delete(request.handle);
       if (revealing?.handle === request.handle) cancel(revealing);
       releaseObservation(request.handle);
@@ -1616,10 +1664,11 @@ export function createDocumentService({
         cancel(pending.task);
         pending = null;
       }
-      return Promise.resolve(result(request.requestId, null));
+      return result(request.requestId, null);
     },
     async dispose() {
       disposing = true;
+      wakeSearchReleases();
       createAdmissionOwner = null;
       writeBarrier = true;
       cancel(revealing);

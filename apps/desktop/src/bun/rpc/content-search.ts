@@ -1,7 +1,10 @@
 import {
   validContentSearchRequest,
   validContentSearchResponse,
+  validContentSearchPrepareRequest,
+  validContentSearchPrepareResponse,
   type ContentSearchError,
+  type ContentSearchPrepareResponse,
   type ContentSearchResponse,
 } from "../../shared/content-search";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
@@ -9,13 +12,31 @@ import type { TrustedWorkspaceService } from "../workspace";
 
 /** Owned by one native window and its workspace. A stale view cannot publish a reply. */
 export function createContentSearchRPC(
-  workspace: Pick<TrustedWorkspaceService, "searchContentCandidates">
+  workspace: Pick<TrustedWorkspaceService, "searchContentCandidates"> &
+    Partial<Pick<TrustedWorkspaceService, "prepareContentSearchDocument">>,
+  release?: (handle: string) => Promise<boolean>
 ) {
   let ready = false;
   let suspended = 0;
   let active:
     { id: string; abort: AbortController; settled: Promise<void> } | undefined;
   const cancel = () => active?.abort.abort();
+  function begin(id: string) {
+    const completion = Promise.withResolvers<void>();
+    const request = {
+      id,
+      abort: new AbortController(),
+      settled: completion.promise,
+    };
+    active = request;
+    return {
+      signal: request.abort.signal,
+      finish() {
+        active = undefined;
+        completion.resolve();
+      },
+    };
+  }
   return {
     setReady(value: boolean) {
       cancel();
@@ -32,6 +53,51 @@ export function createContentSearchRPC(
     },
     async drain() {
       await active?.settled;
+    },
+    async prepare(input: unknown): Promise<ContentSearchPrepareResponse> {
+      const requestId =
+        perfRecord(input) && perfUuid(input.requestId) ? input.requestId : null;
+      const fail = (
+        error: ContentSearchError
+      ): ContentSearchPrepareResponse => ({
+        protocolVersion: 1,
+        requestId,
+        ok: false,
+        error,
+      });
+      if (!validContentSearchPrepareRequest(input)) return fail("INVALID");
+      if (!ready || suspended) return fail("NOT_READY");
+      if (!workspace.prepareContentSearchDocument || !release)
+        return fail("UNAVAILABLE");
+      if (active) return fail("BUSY");
+      const request = begin(input.requestId);
+      try {
+        const result = await workspace.prepareContentSearchDocument(
+          input,
+          input.requestId,
+          request.signal
+        );
+        if (!result.ok && result.error === "UNKNOWN") return fail("UNKNOWN");
+        const cancelled = request.signal.aborted || !ready || suspended;
+        const response = {
+          protocolVersion: 1 as const,
+          requestId: input.requestId,
+          ...result,
+        };
+        if (!cancelled && validContentSearchPrepareResponse(response, input))
+          return response;
+        if (result.ok && result.target.kind === "open") {
+          const released = await release(result.target.snapshot.handle).catch(
+            () => false
+          );
+          if (!released) return fail("UNKNOWN");
+        }
+        return fail(cancelled ? "CANCELLED" : "UNAVAILABLE");
+      } catch {
+        return fail(request.signal.aborted ? "CANCELLED" : "UNAVAILABLE");
+      } finally {
+        request.finish();
+      }
     },
     async run(input: unknown): Promise<ContentSearchResponse> {
       const requestId =
@@ -54,20 +120,14 @@ export function createContentSearchRPC(
         return { ...envelope, ok: true, op: "cancel" };
       }
       if (active) return fail("BUSY");
-      const completion = Promise.withResolvers<void>();
-      const request = {
-        id: input.requestId,
-        abort: new AbortController(),
-        settled: completion.promise,
-      };
-      active = request;
+      const request = begin(input.requestId);
       try {
         const result = await workspace.searchContentCandidates(
           input,
-          request.abort.signal
+          request.signal
         );
         if (!result.ok && result.error === "UNKNOWN") return fail("UNKNOWN");
-        if (request.abort.signal.aborted || !ready || suspended)
+        if (request.signal.aborted || !ready || suspended)
           return fail("CANCELLED");
         if (!result.ok) return fail(result.error);
         const response = {
@@ -81,10 +141,9 @@ export function createContentSearchRPC(
           ? response
           : fail("UNAVAILABLE");
       } catch {
-        return fail(request.abort.signal.aborted ? "CANCELLED" : "UNAVAILABLE");
+        return fail(request.signal.aborted ? "CANCELLED" : "UNAVAILABLE");
       } finally {
-        active = undefined;
-        completion.resolve();
+        request.finish();
       }
     },
   };

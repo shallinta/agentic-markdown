@@ -3,6 +3,11 @@ import { closeSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 
+import type {
+  ContentSearchCandidates,
+  ContentSearchInput,
+  SearchMapping,
+} from "../../shared/content-search";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
@@ -30,7 +35,7 @@ import type {
 import { resolveSaveWorkerEntry } from "../documents/atomic-save";
 import { DocumentPathError, authorizeSingleFile } from "../documents/path-authorization";
 import { createStandaloneRemoval } from "../documents/standalone-removal";
-import { INDEX_LIMITS } from "../index/protocol";
+import { INDEX_LIMITS, scalar } from "../index/protocol";
 
 import {
   authorizeRoot,
@@ -56,7 +61,7 @@ import {
   type ScanDirectory,
 } from "./scan";
 import { validScanBatch } from "./scan-protocol";
-import { searchSnapshot } from "./search-snapshot";
+import { searchSnapshot, searchSnapshotEvidence } from "./search-snapshot";
 import { createTrashService } from "./trash-document";
 import { createScanWorker } from "./worker";
 
@@ -86,6 +91,10 @@ export interface TrustedWorkspaceService extends WorkspaceService {
     query: string,
     signal?: AbortSignal
   ): ReturnType<typeof searchSnapshot>;
+  searchContentCandidates(
+    input: ContentSearchInput,
+    signal?: AbortSignal
+  ): Promise<ContentSearchCandidates>;
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
@@ -217,8 +226,36 @@ export function createWorkspaceService({
     root.meta.generation === generation &&
     roots.includes(root);
   const openingRoots = new Map<Root, number>();
-  let indexTask: ReturnType<typeof searchSnapshot> | undefined;
+  let indexTask: Promise<unknown> | undefined;
   let indexDisposing = false;
+  function captureIndexRoot(handle: string, generation: number, signal?: AbortSignal) {
+    const root = roots.find((candidate) => candidate.meta.handle === handle);
+    if (!root || !live(root, generation)) return { ok: false, error: "STALE" } as const;
+    if (root.meta.status !== "complete") return { ok: false, error: "NOT_READY" } as const;
+    const eligible = () =>
+      live(root, generation) &&
+      root.meta.status === "complete" &&
+      !removalAdmission &&
+      !scanParked &&
+      !preferencePending &&
+      !indexDisposing &&
+      !signal?.aborted;
+    if (!eligible()) return { ok: false, error: "UNAVAILABLE" } as const;
+    const files = root.files;
+    if (files.size > INDEX_LIMITS.documents) return { ok: false, error: "LIMIT" } as const;
+    const entries = new Map(files);
+    const showHidden = root.meta.showHidden ?? false;
+    const scanVersion = root.registry.version();
+    const current = () => {
+      if (!eligible() || root.files !== files || files.size !== entries.size ||
+          (root.meta.showHidden ?? false) !== showHidden ||
+          root.registry.version() !== scanVersion) return false;
+      for (const [entry, file] of entries)
+        if (files.get(entry) !== file) return false;
+      return true;
+    };
+    return { ok: true as const, root, entries, showHidden, current };
+  }
   const manualCandidates = new Map<
     string,
     { operation?: DirectoryOperation; token?: string; expires: number }
@@ -1063,45 +1100,111 @@ export function createWorkspaceService({
     async searchSnapshot(handle, generation, query, signal) {
       if (signal?.aborted) return { ok: false, error: "CANCELLED", accepted: false };
       if (indexTask) return { ok: false, error: "BUSY", accepted: false };
-      const root = roots.find((candidate) => candidate.meta.handle === handle);
-      if (!root) return { ok: false, error: "UNAVAILABLE", accepted: false };
-      const eligible = () =>
-        live(root, generation) &&
-        root.meta.status === "complete" &&
-        !removalAdmission &&
-        !scanParked &&
-        !preferencePending &&
-        !indexDisposing &&
-        !signal?.aborted;
-      if (!eligible()) return { ok: false, error: "UNAVAILABLE", accepted: false };
+      const snapshot = captureIndexRoot(handle, generation, signal);
+      if (!snapshot.ok)
+        return { ok: false, error: snapshot.error === "LIMIT" && documents.beginSearchAdmission() ? "LIMIT" : "UNAVAILABLE", accepted: false };
       const admission = documents.beginSearchAdmission();
       if (!admission) return { ok: false, error: "UNAVAILABLE", accepted: false };
-      const files = root.files;
-      if (files.size > INDEX_LIMITS.documents)
-        return { ok: false, error: "LIMIT", accepted: false };
-      const entries = new Map(files);
-      const showHidden = root.meta.showHidden ?? false;
-      const scanVersion = root.registry.version();
-      const current = () => {
-        if (!admission.current() || !eligible() || root.files !== files || files.size !== entries.size ||
-            (root.meta.showHidden ?? false) !== showHidden ||
-            root.registry.version() !== scanVersion) return false;
-        for (const [entry, file] of entries)
-          if (files.get(entry) !== file) return false;
-        return true;
-      };
-      indexTask = searchSnapshot(
-        root.authorization,
-        entries,
-        showHidden,
+      const current = () => admission.current() && snapshot.current();
+      const task = searchSnapshot(
+        snapshot.root.authorization,
+        snapshot.entries,
+        snapshot.showHidden,
         query,
         current
       );
+      indexTask = task;
       try {
-        const result = await indexTask;
+        const result = await task;
         return result.ok && !current()
           ? { ok: false, error: "CANCELLED", accepted: false }
           : result;
+      } finally {
+        indexTask = undefined;
+      }
+    },
+    async searchContentCandidates(input, signal) {
+      if (signal?.aborted) return { ok: false, error: "CANCELLED" };
+      if (indexTask) return { ok: false, error: "BUSY" };
+      if (!scalar(input.query, INDEX_LIMITS.query) || !input.query.trim() ||
+          new Set(input.handles).size !== input.handles.length)
+        return { ok: false, error: "INVALID" };
+      if (input.handles.length > INDEX_LIMITS.documents)
+        return { ok: false, error: "LIMIT" };
+      const snapshot = captureIndexRoot(input.root, input.generation, signal);
+      if (!snapshot.ok) return snapshot;
+      const handles = [...input.handles];
+      const admission = documents.captureContentSearchBindings(handles);
+      if (!admission) return { ok: false, error: "UNAVAILABLE" };
+      const { root, entries, showHidden } = snapshot;
+      const current = () => admission.current() && snapshot.current();
+      const check = () => {
+        if (!current()) throw Error("Content search invalidated");
+      };
+      const task = (async (): Promise<ContentSearchCandidates> => {
+        const result = await searchSnapshotEvidence(root.authorization, entries, showHidden, input.query, current);
+        if (!result.ok) {
+          const error = result.error;
+          if (error === "INPUT") return { ok: false, error: "INVALID" };
+          return {
+            ok: false,
+            error: error === "LIMIT" || error === "BUSY" || error === "CANCELLED" || error === "UNKNOWN"
+              ? error
+              : "UNAVAILABLE",
+          };
+        }
+        const mappings: SearchMapping[] = [];
+        const matchedCounts = new Map<string, number>();
+        try {
+          for (const [index, handle] of handles.entries()) {
+            check();
+            const binding = admission.bindings[index];
+            if (!binding) {
+              mappings.push({ handle, kind: "unresolved" });
+              continue;
+            }
+            try {
+              await binding.verify(check);
+            } catch {
+              mappings.push({ handle, kind: "unresolved" });
+              continue;
+            }
+            check();
+            if (!containsPath(root.authorization.path, binding.path)) {
+              mappings.push({ handle, kind: "outside" });
+              continue;
+            }
+            const node = root.byPath.get(binding.path);
+            const file = node && entries.get(node.handle);
+            if (!node || file?.fingerprint !== binding.fingerprint) {
+              mappings.push({ handle, kind: "unresolved" });
+              continue;
+            }
+            matchedCounts.set(node.handle, (matchedCounts.get(node.handle) ?? 0) + 1);
+            mappings.push({
+              handle, kind: "matched", entry: node.handle,
+              documentId: binding.documentId, revision: binding.revision, hash: binding.hash,
+            });
+          }
+          await verifyRoot(root.authorization, check);
+          check();
+        } catch {
+          return { ok: false, error: current() ? "UNAVAILABLE" : "CANCELLED" };
+        }
+        return {
+          ok: true,
+          coverage: result.coverage,
+          mappings: mappings.map((mapping) =>
+            mapping.kind === "matched" && matchedCounts.get(mapping.entry) !== 1
+              ? { handle: mapping.handle, kind: "unresolved" }
+              : mapping
+          ),
+        };
+      })();
+      indexTask = task;
+      try {
+        const result = await task;
+        return result.ok && !current() ? { ok: false, error: "CANCELLED" } : result;
       } finally {
         indexTask = undefined;
       }

@@ -6,6 +6,7 @@ import {
   type Extension,
 } from "@codemirror/state";
 
+import { CONTENT_SEARCH_LIMITS } from "../shared/content-search";
 import type { DuplicateSource } from "../shared/create-markdown";
 import {
   MAX_DOCUMENT_BYTES,
@@ -25,6 +26,10 @@ import { isTextFidelity } from "../shared/text-fidelity";
 import type { TrashAffected, TrashPublication } from "../shared/trash-document";
 import type { WorkspaceOpenRequest } from "../shared/workspace";
 
+import type {
+  ContentSearchCapture,
+  ContentSearchDocument,
+} from "./content-search";
 import { createDocumentObservation } from "./document-observation";
 import {
   editorFaultSession,
@@ -424,6 +429,79 @@ export function createDocumentController(
     );
   }
   const observation = createDocumentObservation(transport.observeDocument ? request => transport.observeDocument!(request) : undefined, () => publish({ ...state }));
+  let checkContentSearch: (() => boolean) | undefined;
+  function searchDocumentStatus(
+    tab: DocumentSnapshot,
+    editor: { state: EditorState; revision: number } | undefined
+  ): ContentSearchDocument["status"] {
+    const id = tab.documentId;
+    const observed = observation.status(id);
+    if (
+      !editor ||
+      editor.state.field(editorFaultSession).fault ||
+      staleDocuments.has(id) ||
+      observation.atRisk(id) ||
+      (observed && observed !== "unchanged") ||
+      saving.has(id) ||
+      uncertain.has(id) ||
+      trashUncertain.has(id) ||
+      saveResults.get(id)?.status === "failed" ||
+      saveResults.get(id)?.status === "uncertain"
+    )
+      return "risky";
+    return editor.state.field(rawText) === tab.text ? "clean" : "dirty";
+  }
+  function captureContentSearch(): ContentSearchCapture {
+    checkContentSearch = undefined;
+    if (metadataDisposed || state.busy || state.frozen || editorInputBlocked)
+      return { ok: false, reason: "incomplete" };
+    if (state.tabs.length > CONTENT_SEARCH_LIMITS.documents)
+      return { ok: false, reason: "limit" };
+    const captured = state.tabs.map((tab) => {
+      const editor = editors.get(tab.documentId);
+      const version = {
+        handle: tab.handle,
+        documentId: tab.documentId,
+        revision: tab.revision,
+        hash: tab.hash,
+        bufferRevision: editor?.revision,
+      };
+      const status = searchDocumentStatus(tab, editor);
+      const document: ContentSearchDocument =
+        status === "dirty" && editor
+          ? { ...version, status, raw: editor.state.field(rawText) }
+          : { ...version, status: status === "dirty" ? "risky" : status };
+      return { document, incarnation: editor?.state.field(editorFaultSession) };
+    });
+    // The registered check is consumed at the first relevant publication, even
+    // when an undo or refresh restores the previous values before the RPC ends.
+    const current = () => {
+      if (checkContentSearch !== current) return false;
+      const valid =
+        !metadataDisposed &&
+        !state.busy &&
+        !state.frozen &&
+        !editorInputBlocked &&
+        state.tabs.length === captured.length &&
+        captured.every(({ document, incarnation }, index) => {
+          const tab = state.tabs[index];
+          const editor = editors.get(tab.documentId);
+          return (
+            tab.handle === document.handle &&
+            tab.documentId === document.documentId &&
+            tab.revision === document.revision &&
+            tab.hash === document.hash &&
+            editor?.revision === document.bufferRevision &&
+            editor?.state.field(editorFaultSession) === incarnation &&
+            searchDocumentStatus(tab, editor) === document.status
+          );
+        });
+      if (!valid) checkContentSearch = undefined;
+      return valid;
+    };
+    checkContentSearch = current;
+    return { ok: true, documents: captured.map(({ document }) => document), current };
+  }
   const needsDiscard = (documentId: string) => isDirty(documentId) || observation.atRisk(documentId);
   function beginDiscard() {
     if (state.frozen || state.busy || !canLeaveEditor()) return false;
@@ -520,6 +598,7 @@ export function createDocumentController(
     }
     state = next;
     if (previousTabs !== next.tabs) observation.sync(next.tabs);
+    checkContentSearch?.();
     listeners.forEach((listener) => listener());
     if (recoveryUnblocked) scheduleFaultRecovery();
   }
@@ -932,6 +1011,7 @@ export function createDocumentController(
     );
   };
   const controller = {
+    captureContentSearch,
     acquireCreationGate: (): string | null => {
       if (metadataDisposed || editorInputBlocked || !controller.canSelectFolder()) return null;
       const token = crypto.randomUUID();

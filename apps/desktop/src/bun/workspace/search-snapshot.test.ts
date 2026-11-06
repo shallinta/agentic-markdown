@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -120,7 +121,105 @@ test.skipIf(childScenario !== "native")(
   15_000
 );
 
-for (const scenario of ["native", "transport"] as const)
+test.skipIf(childScenario !== "candidates")(
+  "covers zero-hit entries and classifies only live candidate grants",
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "workspace-candidates-"));
+    const directory = join(fixture, "root");
+    const outside = join(fixture, "outside.md");
+    const sample = "\uFEFF😀target\r\n";
+    const noMatch = "另一个文档";
+    const documents = createDocumentService({ pickFile: () => Promise.resolve(outside) });
+    const workspace = createWorkspaceService({
+      documents,
+      pickDirectory: () => Promise.resolve(directory),
+    });
+    try {
+      await mkdir(directory);
+      await writeFile(join(directory, "sample.md"), sample);
+      await writeFile(join(directory, "zero.md"), noMatch);
+      const selected = await workspace.request({ ...env(), op: "select" });
+      if (!selected.ok || !selected.roots[0]) throw Error("Missing root");
+      const root = selected.roots[0];
+      for (let i = 0; i < 1000; i++) {
+        const state = await workspace.request({ ...env(), op: "state" });
+        if (state.ok && state.roots[0]?.status === "complete") break;
+        await Bun.sleep(2);
+      }
+      const page = await workspace.request({
+        ...env(), op: "page", root: root.handle, generation: root.generation, cursor: 0,
+      });
+      if (!page.ok || !("nodes" in page) || !page.nodes) throw Error("Missing page");
+      const entry = page.nodes.find((node) => node.name === "sample.md")?.handle;
+      const zeroEntry = page.nodes.find((node) => node.name === "zero.md")?.handle;
+      if (!entry || !zeroEntry) throw Error("Missing scan entries");
+      const opened = await workspace.open({
+        ...env(), root: root.handle, entry,
+      });
+      if (!opened.ok || !opened.snapshot) throw Error("Missing root grant");
+      const { handle, documentId, revision, hash } = opened.snapshot;
+      await writeFile(outside, "target");
+      const outsideResponse = await documents.select(env());
+      if (!outsideResponse.ok || !outsideResponse.snapshot) throw Error("Missing outside grant");
+      const outsideHandle = outsideResponse.snapshot.handle;
+      const unknownHandle = crypto.randomUUID();
+      const input = {
+        root: root.handle, generation: root.generation, query: "target",
+        handles: [handle, outsideHandle, unknownHandle],
+      };
+      const result = await workspace.searchContentCandidates(input);
+      if (!result.ok) throw Error("Missing result");
+      expect(result.coverage).toHaveLength(2);
+      expect(result.coverage.find((row) => row.entry === entry)).toEqual({
+        entry, hash, bytes: Buffer.byteLength(sample), hit: { from: 3, to: 9 },
+      });
+      expect(result.coverage.find((row) => row.entry === zeroEntry)).toEqual({
+        entry: zeroEntry,
+        hash: createHash("sha256").update(noMatch).digest("hex"),
+        bytes: Buffer.byteLength(noMatch),
+      });
+      expect(result.mappings).toEqual([
+        { handle, kind: "matched", entry, documentId, revision, hash },
+        { handle: outsideHandle, kind: "outside" },
+        { handle: unknownHandle, kind: "unresolved" },
+      ]);
+      expect(await workspace.searchContentCandidates({ ...input, root: crypto.randomUUID() }))
+        .toEqual({ ok: false, error: "STALE" });
+      expect(await workspace.searchContentCandidates({ ...input, handles: [handle, handle] }))
+        .toEqual({ ok: false, error: "INVALID" });
+      const duplicate = await workspace.open({ ...env(), root: root.handle, entry });
+      if (!duplicate.ok || !duplicate.snapshot) throw Error("Missing duplicate grant");
+      const duplicateHandle = duplicate.snapshot.handle;
+      expect(await workspace.searchContentCandidates({ ...input, handles: [handle, duplicateHandle] }))
+        .toMatchObject({ ok: true, mappings: [
+          { handle, kind: "unresolved" },
+          { handle: duplicateHandle, kind: "unresolved" },
+        ] });
+      await documents.release({ ...env(), handle: duplicateHandle });
+      await rename(outside, join(fixture, "moved.md"));
+      expect(await workspace.searchContentCandidates(input)).toMatchObject({
+        ok: true,
+        mappings: [
+          { handle, kind: "matched" },
+          { handle: outsideHandle, kind: "unresolved" },
+          { handle: unknownHandle, kind: "unresolved" },
+        ],
+      });
+      await documents.release({ ...env(), handle });
+      expect(await workspace.searchContentCandidates(input)).toMatchObject({
+        ok: true,
+        mappings: input.handles.map((candidate) => ({ handle: candidate, kind: "unresolved" })),
+      });
+    } finally {
+      await workspace.dispose();
+      await documents.dispose();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+  15_000
+);
+
+for (const scenario of ["native", "transport", "candidates"] as const)
   test.skipIf(!!childScenario)(
     `isolated workspace index ${scenario} checks`,
     async () => {
@@ -187,7 +286,7 @@ test.skipIf(childScenario !== "transport")(
         expect(documents.locations()).toEqual([]);
       }
 
-      for (const scenario of ["apply", "query", "unknown"] as const) {
+      for (const scenario of ["apply", "query", "product", "unknown"] as const) {
         let generation = 0;
         let hitId = "";
         const operations: string[] = [];
@@ -253,7 +352,9 @@ test.skipIf(childScenario !== "transport")(
           value: Transport,
           configurable: true,
         });
-        const result = await search();
+        const result = scenario === "product"
+          ? await workspace.searchContentCandidates({ root: root.handle, generation: root.generation, query: "target", handles: [] })
+          : await search();
         if (scenario === "unknown") {
           expect(result).toEqual({
             ok: false,
@@ -266,11 +367,9 @@ test.skipIf(childScenario !== "transport")(
             error: "UNAVAILABLE",
           });
         } else {
-          expect(result).toEqual({
-            ok: false,
-            error: "CANCELLED",
-            accepted: false,
-          });
+          expect(result).toEqual(scenario === "product"
+            ? { ok: false, error: "CANCELLED" }
+            : { ok: false, error: "CANCELLED", accepted: false });
           expect(
             await lstat(slot).catch((error: unknown) => error)
           ).toMatchObject({
@@ -278,7 +377,7 @@ test.skipIf(childScenario !== "transport")(
           });
         }
         expect(operations).toEqual(
-          scenario === "query"
+          scenario === "query" || scenario === "product"
             ? ["open", "apply", "query", "close"]
             : ["open", "apply", "close"]
         );

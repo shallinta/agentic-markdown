@@ -50,6 +50,7 @@ import { analyzeTextFidelity } from "@/shared/text-fidelity";
 import type { TrashTarget } from "@/shared/trash-document";
 import type { WorkspaceRevealTarget } from "@/shared/workspace";
 
+import { ContentSearchPanel } from "./content-search-panel";
 import { CreateMarkdownDialog } from "./create-markdown-dialog";
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
@@ -474,10 +475,12 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
 }
 type Workspace = ReturnType<typeof useDocumentWorkspace>;
 
-export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
+export function StandaloneFileList({ workspace, visible }: { workspace: Workspace; visible: boolean }) {
   const { state, controller, executeCommand, isCommandEnabled, folders, setCreationTarget } = workspace;
   const [removalHandle, setRemovalHandle] = useState<string | null>(null);
-  const [folderRemovalHandle, setFolderRemovalHandle] = useState<string | null>(null);
+  const contentSearchSelection = useRef<{ handle: string | null; revision: number }>({ handle: null, revision: 0 });
+  const getContentSearchSelection = useCallback(() => contentSearchSelection.current, []);
+  const [{ handle: folderRemovalHandle, revision: contentSearchSelectionRevision }, setSelectedFolder] = useState({ handle: null as string | null, revision: 0 });
   const [trashTarget, setTrashTarget] = useState<TrashTarget | null>(null);
   const [orderActions, setOrderActions] = useState<RootOrderActions | null>(null);
   const notifyOrder = useRegisterCommands({ moveWorkspaceRootUp: () => orderActions?.up(), moveWorkspaceRootDown: () => orderActions?.down() }, true, { moveWorkspaceRootUp: () => orderActions?.canUp() ?? false, moveWorkspaceRootDown: () => orderActions?.canDown() ?? false });
@@ -492,7 +495,11 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
   const selectTreeItem = useCallback((target: WorkspaceRevealTarget | null, isFile: boolean) => {
     reveal.setTarget(target, isFile);
     setRemovalHandle(target?.type === "document" && isFile ? target.handle : null);
-    setFolderRemovalHandle(target?.type === "workspace" && !target.entry ? target.root : null);
+    const selectedRoot = target?.type === "workspace" && !target.entry ? target.root : null;
+    if (contentSearchSelection.current.handle !== selectedRoot) {
+      contentSearchSelection.current = { handle: selectedRoot, revision: contentSearchSelection.current.revision + 1 };
+      setSelectedFolder(contentSearchSelection.current);
+    }
     const entry = target?.type === "document" ? controller.getSnapshot().entries.find(entry => entry.handle === target.handle) : undefined;
     const fileRoot = target?.type === "workspace" ? folders.getSnapshot().roots.find(root => root.handle === target.root) : undefined;
     setTrashTarget(!isFile && target?.type === "workspace" && fileRoot ? { kind: "directory", root: fileRoot.handle, generation: fileRoot.generation, ...(target.entry ? { entry: target.entry } : {}) } : isFile && entry ? { kind: "standalone", handle: entry.handle, documentId: entry.documentId } : isFile && target?.type === "workspace" && target.entry && fileRoot ? { kind: "root", root: fileRoot.handle, entry: target.entry, generation: fileRoot.generation } : null);
@@ -565,6 +572,15 @@ export function StandaloneFileList({ workspace }: { workspace: Workspace }) {
           else void controller.openWorkspaceEntry(root, node.handle);
         }}
       />
+      {visible && (
+        <ContentSearchPanel
+          controller={controller}
+          folders={folders}
+          getSelection={getContentSearchSelection}
+          selectionRevision={contentSearchSelectionRevision}
+          selectedRoot={workspace.folderState.roots.find((root) => root.handle === folderRemovalHandle)}
+        />
+      )}
       <div className="flex flex-wrap gap-2">
         <button type="button" className="text-destructive hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("trashDocument")} onClick={() => executeCommand({ type: "trashDocument", args: {} })}>移入废纸篓</button>
         <button type="button" className="hover:bg-muted rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={!isCommandEnabled("createMarkdown")} onClick={() => executeCommand({ type: "createMarkdown", args: {} })}>新建 Markdown 文件</button>

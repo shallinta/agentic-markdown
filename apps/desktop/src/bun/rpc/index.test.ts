@@ -44,6 +44,25 @@ test("search lab RPC is disabled without the trusted startup service", async () 
   });
 });
 
+test("content search RPC cannot run in a search lab window", async () => {
+  const run = mock(() => Promise.reject(Error("Unexpected content query")));
+  const rpc = createMainWindowRPC({
+    ...(createDependencies() as object),
+    searchLab: { run: () => Promise.reject(Error("Unexpected lab query")) },
+    contentSearch: { run },
+  } as never) as unknown as {
+    handlers: { requests: { contentSearchRequest(input: unknown): unknown } };
+  };
+  const requestId = crypto.randomUUID();
+  expect(await rpc.handlers.requests.contentSearchRequest({ requestId })).toEqual({
+    protocolVersion: 1,
+    requestId,
+    ok: false,
+    error: "DISABLED",
+  });
+  expect(run).not.toHaveBeenCalled();
+});
+
 test("source wrapping RPC requires exact boolean metadata and acknowledged persistence", async () => {
   let enabled = true;
   const rpc = createMainWindowRPC({

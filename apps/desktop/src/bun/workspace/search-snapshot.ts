@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { SearchCoverage } from "../../shared/content-search";
 import { verifySingleFileAuthorization } from "../documents/path-authorization";
 import { encodeChanges, INDEX_LIMITS, scalar } from "../index/protocol";
 import type { IndexChange, IndexResult } from "../index/protocol";
@@ -13,11 +14,11 @@ import type { RootAuthorization } from "./authorization";
 import type { ScanFile } from "./scan";
 
 type Failure = Extract<IndexResult, { ok: false }>;
-type Result =
+type EvidenceResult =
   | Failure
   | {
       ok: true;
-      hits: { entry: string; from: number; to: number }[];
+      coverage: SearchCoverage[];
     };
 const fail = (error: Failure["error"], accepted = false): Failure => ({
   ok: false,
@@ -35,7 +36,22 @@ export async function searchSnapshot(
   showHidden: boolean,
   query: string,
   current: () => boolean
-): Promise<Result> {
+) {
+  const result = await searchSnapshotEvidence(authorization, files, showHidden, query, current);
+  if (!result.ok) return result;
+  return {
+    ok: true as const,
+    hits: result.coverage.flatMap(({ entry, hit }) => hit ? [{ entry, ...hit }] : []),
+  };
+}
+
+export async function searchSnapshotEvidence(
+  authorization: RootAuthorization,
+  files: ReadonlyMap<string, ScanFile>,
+  showHidden: boolean,
+  query: string,
+  current: () => boolean
+): Promise<EvidenceResult> {
   if (!scalar(query, INDEX_LIMITS.query)) return fail("INPUT");
   if (quarantined) return fail("UNAVAILABLE");
   if (busy) return fail("BUSY");
@@ -43,7 +59,7 @@ export async function searchSnapshot(
   busy = true;
   let directory: string | undefined;
   let session: ReturnType<typeof createIndexSession> | undefined;
-  let result: Result;
+  let result: EvidenceResult;
   const check = () => {
     if (!current()) throw Error("CANCELLED");
   };
@@ -69,11 +85,11 @@ export async function searchSnapshot(
   }
   return !current() && result.ok ? fail("CANCELLED") : result;
 
-  async function run(): Promise<Result> {
+  async function run(): Promise<EvidenceResult> {
     check();
     await verifyRoot(authorization, check);
     const changes: IndexChange[] = [];
-    const handles = new Map<string, string>();
+    const indexed = new Map<string, { evidence: SearchCoverage; length: number }>();
     let remaining: number = INDEX_LIMITS.bytes;
     for (const [entry, file] of files) {
       check();
@@ -110,12 +126,14 @@ export async function searchSnapshot(
           before.ctimeNs !== after.ctimeNs
         )
           return fail("UNAVAILABLE");
+        const contents = bytes.subarray(0, length);
         const raw = new TextDecoder("utf-8", {
           fatal: true,
           ignoreBOM: true,
-        }).decode(bytes.subarray(0, length));
+        }).decode(contents);
         const id = randomUUID().replaceAll("-", "");
-        handles.set(id, entry);
+        const evidence = { entry, bytes: length, hash: createHash("sha256").update(contents).digest("hex") };
+        indexed.set(id, { evidence, length: raw.length });
         changes.push({ kind: "put", id, path: id, raw });
         remaining -= length;
       } finally {
@@ -123,7 +141,7 @@ export async function searchSnapshot(
       }
     }
     check();
-    if (!changes.length) return { ok: true, hits: [] };
+    if (!changes.length) return { ok: true, coverage: [] };
     try {
       encodeChanges(changes);
     } catch {
@@ -145,12 +163,12 @@ export async function searchSnapshot(
     if (!queried.ok) return queried;
     check();
     await verifyRoot(authorization, check);
-    const hits = [];
     for (const { id, from, to } of queried.hits ?? []) {
-      const entry = handles.get(id);
-      if (!entry) return fail("UNKNOWN", true);
-      hits.push({ entry, from, to });
+      const row = indexed.get(id);
+      if (!row || row.evidence.hit || to > row.length || to - from !== query.length)
+        return fail("UNKNOWN", true);
+      row.evidence.hit = { from, to };
     }
-    return { ok: true, hits };
+    return { ok: true, coverage: [...indexed.values()].map(({ evidence }) => evidence) };
   }
 }

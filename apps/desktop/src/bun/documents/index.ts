@@ -84,9 +84,23 @@ export interface FolderMutationLease {
   prepare(changes: readonly FolderGrantChange[]): Promise<{ assetEpochs: Record<string, string>; commit(markCommitted: () => void): void }>;
   release(): void;
 }
+interface ContentSearchBinding {
+  handle: string;
+  path: string;
+  fingerprint: string;
+  documentId: string;
+  revision: number;
+  hash: string;
+  verify(check: () => void): Promise<void>;
+}
 export interface TrustedDocumentService extends DocumentService {
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
   beginSearchAdmission(): { current(): boolean } | undefined;
+  /** Captures only grants owned by this service. Missing or uncertain grants remain unresolved. */
+  captureContentSearchBindings(handles: readonly string[]): {
+    bindings: readonly (ContentSearchBinding | undefined)[];
+    current(): boolean;
+  } | undefined;
   setTrashGuard(guard: (path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]) => boolean): void;
   trashBlocked(path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]): boolean;
   inspectTrash(handle: string, documentId: string): Omit<SingleFileAuthorization,"file"> | null;
@@ -375,10 +389,9 @@ export function createDocumentService({
   let saveStartGeneration = 0;
   const uncertain = new Set<string>();
   const savingRequests = new Set<string>();
-  const searchAdmissible = () =>
+  const searchIdle = () =>
     !disposed &&
     !disposing &&
-    grants.size === 0 &&
     !selecting &&
     !revealing &&
     !running &&
@@ -388,6 +401,7 @@ export function createDocumentService({
     !writeBarrier &&
     !createAdmissionOwner &&
     !folderMutationLease;
+  const searchAdmissible = () => grants.size === 0 && searchIdle();
   const result = (
     requestId: string,
     snapshot: DocumentSnapshot | null
@@ -693,6 +707,62 @@ export function createDocumentService({
           authorization === searchAdmissionGeneration &&
           barrier === selectBarrierGeneration &&
           searchAdmissible(),
+      };
+    },
+    captureContentSearchBindings(handles) {
+      if (!searchIdle()) return;
+      const authorization = searchAdmissionGeneration;
+      const barrier = selectBarrierGeneration;
+      const save = saveStartGeneration;
+      const grantCount = grants.size;
+      const captured = handles.map((handle) => {
+        const grant = grants.get(handle);
+        const identityKey = grant?.identityKey;
+        const identity = identityKey === undefined
+          ? undefined
+          : identities.get(identityKey);
+        const scope = grant?.scope;
+        const path = grant?.path;
+        const fingerprint = grant?.fingerprint;
+        const isUncertain = identity !== undefined && uncertain.has(identity.documentId);
+        const current = () =>
+          grants.get(handle) === grant &&
+          grant?.identityKey === identityKey &&
+          grant?.scope === scope &&
+          grant?.path === path &&
+          grant?.fingerprint === fingerprint &&
+          (identityKey === undefined || identities.get(identityKey) === identity) &&
+          (identity === undefined || uncertain.has(identity.documentId) === isUncertain);
+        let binding: ContentSearchBinding | undefined;
+        if (grant && path !== undefined && fingerprint !== undefined && identity && !isUncertain) {
+          binding = {
+            handle, path, fingerprint, ...identity,
+            async verify(check) {
+              check();
+              const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+              try {
+                check();
+                await scope?.verify();
+                check();
+                await verifySingleFileAuthorization({ ...grant, file }, check);
+              } finally {
+                await file.close();
+              }
+              check();
+            },
+          };
+        }
+        return { binding, current };
+      });
+      return {
+        bindings: captured.map(({ binding }) => binding),
+        current: () =>
+          searchIdle() &&
+          authorization === searchAdmissionGeneration &&
+          barrier === selectBarrierGeneration &&
+          save === saveStartGeneration &&
+          grantCount === grants.size &&
+          captured.every((binding) => binding.current()),
       };
     },
     setTrashGuard(guard) { trashGuard = guard; },

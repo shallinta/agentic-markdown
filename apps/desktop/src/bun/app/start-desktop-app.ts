@@ -19,6 +19,7 @@ import { createNativeFileCapabilities } from "../native-files";
 import { createRecentFiles } from "../recent-files";
 import { createRecentReopener } from "../reopen-recent-file";
 import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
+import { createContentSearchRPC } from "../rpc/content-search";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
 import { createHiddenPreferences } from "../workspace/preferences";
@@ -61,6 +62,9 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const searchLab = process.env.AGENTIC_MARKDOWN_SEARCH_LAB === "1"
     ? (await import("../perf-lab/search")).createSearchLab()
     : undefined;
+  const contentSearch = !searchLab && process.env.AGENTIC_MARKDOWN_PERF_LAB !== "1"
+    ? createContentSearchRPC(workspace)
+    : undefined;
 
   const getRpc = (): MainWindowRPC => {
     if (!rpc) throw new Error("Main window RPC is not ready.");
@@ -83,16 +87,18 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   });
   const lifecycle = createLifecycleGuard({
     guard: async (reason, execute) => {
+      const resumeSearch = contentSearch?.suspend();
       workspace.trashLifecycle.beforeExit();
       try { return await documents.withWriteBarrier(() =>
         guard(reason, async (requestId) => {
+          await contentSearch?.drain();
           const settled=await workspace.trashLifecycle.finishExit(Date.now()+2_000);
           if(!settled){console.warn("Trash operation result remains unknown during exit");try{getRpc().send.trashNotice({reason:"exit-pending"});}catch{/* Exit notice is best effort; never restart the receipt deadline. */}}
           await recent.drain();
           await mru.drainUntil(mruDeadline);
           return execute(requestId);
         })
-      ); } finally { workspace.trashLifecycle.cancelExit(); }
+      ); } finally { workspace.trashLifecycle.cancelExit(); resumeSearch?.(); }
     },
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.
@@ -104,11 +110,15 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     reload: async (requestId) => {
       await searchLab?.close();
       const transition=mru.beginTransition();
+      contentSearch?.setReady(false);
       const response: unknown = await getRpc().request.commitReload({
         protocolVersion: 1,
         requestId,
       });
-      if(isReloadCommitResponse(response, requestId)&&!response.committed)mru.cancelTransition(transition);
+      if(isReloadCommitResponse(response, requestId)&&!response.committed){
+        mru.cancelTransition(transition);
+        contentSearch?.setReady(true);
+      }
       return isReloadCommitResponse(response, requestId)&&response.committed;
     },
     update: () => updater.applyUpdateAndRestart(),
@@ -131,6 +141,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const runtime: DesktopAppRuntime = {
     stop() {
       stopPromise ??= stopDesktopApp([
+        ["content search", async () => {
+          contentSearch?.setReady(false);
+          await contentSearch?.drain();
+        }],
         ["search lab", () => searchLab?.dispose()],
         ["workspace", () => workspace.dispose()],
         ["documents", () => documents.dispose()],
@@ -178,6 +192,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       },
       workspace,
       searchLab,
+      contentSearch,
       executeCommand: (command) => executeCommand(command, getMainWindow()),
       getMainWindow,
       locale,
@@ -189,7 +204,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       onWindowCreated: (window) => {
         browserWindow = window;
         mru.bindWindow();
-        window.webview.on("dom-ready",()=>mru.domReady());
+        window.webview.on("dom-ready",()=>{
+          mru.domReady();
+          contentSearch?.setReady(true);
+        });
         window.on("will-close", (event) =>
           lifecycle.beforeClose(
             event as ElectrobunEvent<{}, { allow: boolean }>

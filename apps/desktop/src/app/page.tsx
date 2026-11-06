@@ -339,7 +339,7 @@ function PageInner() {
               inert={!visible}
               aria-hidden={!visible}
             >
-              <StandaloneFileList workspace={workspace} />
+              <StandaloneFileList workspace={workspace} visible={visible} />
             </div>
           </ResizablePanel>
           <ResizableHandle

@@ -115,6 +115,10 @@ export interface DesktopRPCType {
         response: { enabled: boolean; autorun: boolean };
       };
       perfLabRequest: { params: PerfRequest; response: PerfResponse };
+      rasterPasteLab: {
+        params: import("./raster-paste-lab").RasterPasteLabRequest;
+        response: import("./raster-paste-lab").RasterPasteLabResponse;
+      };
       searchLabRequest: {
         params: import("./search-lab").SearchLabRequest;
         response: import("./search-lab").SearchLabResponse;

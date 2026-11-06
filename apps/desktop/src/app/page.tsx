@@ -65,6 +65,11 @@ const LayoutLab = lazy(() =>
     default: module.LayoutLab,
   }))
 );
+const RasterPasteLab = lazy(() =>
+  import("@/components/raster-paste-lab").then((module) => ({
+    default: module.RasterPasteLab,
+  }))
+);
 const SearchLab = lazy(() =>
   import("@/components/search-lab").then((module) => ({
     default: module.SearchLab,
@@ -109,13 +114,16 @@ export function Page() {
         canonicalProbe?: boolean;
         securityProbe?: boolean;
         layoutProbe?: boolean;
+        rasterPasteProbe?: boolean;
       };
     }
   ).__AGENTIC_MARKDOWN_PERF_LAB__;
   if (lab?.enabled)
     return (
       <Suspense fallback={<p>正在加载合成数据实验…</p>}>
-        {lab.securityProbe ? (
+        {lab.rasterPasteProbe ? (
+          <RasterPasteLab />
+        ) : lab.securityProbe ? (
           <SecurityLab />
         ) : lab.canonicalProbe ? (
           <CanonicalLab />

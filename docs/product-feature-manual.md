@@ -1,5 +1,13 @@
 # 产品功能手册
 
+## 独立阅读窗复制选区（F-056a）
+
+在独立阅读窗选中正文后按 ⌘C，剪贴板提供纯文本和保留基本排版的安全 HTML。复制包含可见链接名和代码正文，排除链接目标及应用按钮。富文本超限时复制完整纯文本并提示。若正文选区本身超限，请缩小选区后重试。见[F-056a 迭代](iterations/F-056a-copy-independent-reading-selection.md)。
+
+## 图片粘贴（F-053a）
+
+alpha.273 的隔离实验台已验证系统 PNG 可进入主窗并传到 Bun。普通窗口尚未提供粘贴图片、写入资产或插入链接。见[F-053a 迭代](iterations/F-053a-paste-single-raster-image.md)。
+
 ## 按最近使用顺序切换主区标签（F-036b）
 
 短按 Control+Tab 在当前标签和最近使用的另一标签之间往返。按住 Control 连按 Tab 可轮换候选，松开 Control 才激活，Esc 可取消。固定分组、视觉顺序和文件树保持原样。仅作用于当前窗口主区。见[F-036b 迭代](iterations/F-036b-recent-primary-tab-switch.md)。

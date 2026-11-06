@@ -1,10 +1,11 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { createCurrentCanonical } from "../client/current-canonical";
 import ReaderWorker from "../client/current-canonical.worker?worker&inline";
 import { firstReadingBlock } from "../client/reading-position";
 import { createReadingSearchRegistry, type ReadingSearchRegistry } from "../client/reading-search-registry";
+import { copyReadingSelection } from "../client/reading-selection-copy";
 import { READING_THEMES, type ReadingThemeId } from "../client/reading-theme";
 import "../reading-themes/content.css";
 import "../reading-themes/ink/theme.css";
@@ -79,6 +80,7 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
 }) {
   const [auditResult, setAuditResult] = useState<{ safe: boolean; details: string }>();
   const [theme, setTheme] = useState<ReadingThemeId>("paper");
+  const [copyNotice, setCopyNotice] = useState("");
   const article = useRef<HTMLElement>(null);
   const themeControls = useRef<HTMLDivElement>(null);
   const audit = useCallback((element: HTMLElement | null) => {
@@ -107,6 +109,25 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
       ].join(" "),
     });
   }, [retainVerifiedArticle]);
+  const safe = auditResult?.safe;
+  useLayoutEffect(() => {
+    const element = article.current;
+    if (!element || experimental || !safe || !current) return;
+    const onCopy = (event: ClipboardEvent) => {
+      if (!current()) return;
+      const result = copyReadingSelection(event, element, searchRegistry);
+      if (result === "ignored") return;
+      setCopyNotice(result === "plain" ? "富文本不可用，已复制纯文本。" :
+        result === "failed" ? "无法完整复制选区，请缩小选区后重试。" : "");
+    };
+    const dispose = () => {
+      document.removeEventListener("copy", onCopy, true);
+      window.removeEventListener("pagehide", dispose);
+    };
+    document.addEventListener("copy", onCopy, true);
+    window.addEventListener("pagehide", dispose, { once: true });
+    return dispose;
+  }, [current, experimental, safe, searchRegistry]);
   const selectTheme = (id: string) => {
     if ((id !== "paper" && id !== "ink") || document.body.dataset.readingTheme === id) return;
     const scroller = document.scrollingElement;
@@ -142,6 +163,7 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
             ? experimental ? `${label} · 安全检查通过` : label
             : `${label} · 安全检查失败`}
       </p>
+      {copyNotice && <p role="status">{copyNotice}</p>}
       {auditResult && !auditResult.safe && <p>{auditResult.details}</p>}
       {!experimental && auditResult?.safe && (
         <div ref={themeControls} className="reader-theme-controls">

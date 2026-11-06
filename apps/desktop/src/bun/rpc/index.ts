@@ -4,6 +4,7 @@ import {
 } from "@agentic-markdown/shared/sidebar-layout";
 import { BrowserView, Utils, type BrowserWindow } from "electrobun/bun";
 
+import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
 import type { ContentSearchPrepareResponse, ContentSearchResponse } from "../../shared/content-search";
 import type { DocumentService } from "../../shared/documents";
@@ -15,6 +16,8 @@ import type { WorkspaceService } from "../../shared/workspace";
 import { setCommandAvailabilityInMenu } from "../app/menu";
 import type { LocaleController } from "../i18n/controller";
 import type { UpdaterService } from "../updates";
+
+import { inspectRasterPaste, rasterPasteLabEnabled } from "./raster-paste-lab";
 
 export type MainWindowRPC = ReturnType<
   typeof BrowserView.defineRPC<DesktopRPCType>
@@ -75,6 +78,7 @@ export function createMainWindowRPC({
 }: MainWindowRPCDependencies): MainWindowRPC {
   const enabled = process.env.AGENTIC_MARKDOWN_PERF_LAB === "1";
   const autorun = enabled && process.env.AGENTIC_MARKDOWN_PERF_AUTO === "1";
+  const rasterPaste = rasterPasteLabEnabled();
   let lab:
     | Promise<
         ReturnType<(typeof import("../perf-lab"))["createPerfLabService"]>
@@ -205,6 +209,7 @@ export function createMainWindowRPC({
           return workspace.removeStandalone(request);
         },
         perfLabStatus: () => ({ enabled, autorun }),
+        rasterPasteLab: (input) => inspectRasterPaste(input, rasterPaste && getMainWindow().url === PACKAGED_VIEW_URL),
         contentSearchRequest: (request) => {
           if (contentSearch && !searchLab) return contentSearch.run(request);
           return {

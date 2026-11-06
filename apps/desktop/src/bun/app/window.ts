@@ -16,6 +16,7 @@ import {
 import type { Command } from "../../shared/commands";
 import { logEvent } from "../logging";
 import type { MainWindowRPC } from "../rpc";
+import { rasterPasteLabEnabled } from "../rpc/raster-paste-lab";
 
 import { registerMenuActions } from "./menu";
 import {
@@ -78,6 +79,9 @@ export async function createMainWindow({
     preload:
       SHELL_PRELOAD +
       labPreload +
+      (url === PACKAGED_VIEW_URL && rasterPasteLabEnabled()
+        ? ";globalThis.__AGENTIC_MARKDOWN_PERF_LAB__.rasterPasteProbe = true;"
+        : "") +
       (process.env.AGENTIC_MARKDOWN_SEARCH_LAB === "1"
         ? ";globalThis.__AGENTIC_MARKDOWN_SEARCH_LAB__ = true;"
         : "") +

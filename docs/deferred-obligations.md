@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-056a / F-053a 剪贴板（2026-11-07）
+
+独立阅读选区已验，编辑与源码模式复制边界继续跟踪。位图已验隔离入站，正式授权、排他写入、编辑事务和拖入保持开放。见[F-056a 迭代](iterations/F-056a-copy-independent-reading-selection.md)和[F-053a 迭代](iterations/F-053a-paste-single-raster-image.md)。
+
 ## F-036b 最近主区标签切换（2026-11-07）
 
 当前主区的 Control+Tab 已验。OBL-053 仍跟踪标签排序及其他消费者的键盘路径，最近使用顺序跨重启恢复由 F-037 承接。见[F-036b 迭代](iterations/F-036b-recent-primary-tab-switch.md)。

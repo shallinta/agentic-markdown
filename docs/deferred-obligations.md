@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064ak 授权查询成本对照（2026-11-06）
+
+沿用 alpha.222 的两批有界成本对照通过。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。直接容量扩展、正式持久接入、配额、撤权处置及最终离线继续承接。见[F-064ak 迭代](iterations/F-064ak-authorized-search-cost-comparison.md)。
+
 ## F-064aj 内部工作区严格只读查询（2026-11-06）
 
 alpha.222 已验有界内部授权查询、取消和终态复核。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。成本、正式接入、撤权处置、配额及最终离线继续承接。见[F-064aj 迭代](iterations/F-064aj-trusted-workspace-readonly-index.md)。

@@ -2,6 +2,8 @@
 
 ## 文件夹正文搜索与索引（F-064）
 
+F-064r 的 alpha.204 在普通窗口有界查询中直接查找已授权读取的正文，省去每次临时建索引。单根、多根、筛选、未保存覆盖和定位使用相同入口。现有范围仍是 16 个根、筛选前 16 篇、正文合计 64 KiB。见[F-064r 迭代](iterations/F-064r-direct-bounded-window-search.md)。
+
 F-064q 用同一组已读取的 64 KiB 合成正文对照临时重建、热重开和直接匹配。直接匹配在当前有界样本中的成本最低，产品接入由后续切片验证。见[F-064q 迭代](iterations/F-064q-bounded-search-cost-comparison.md)。
 
 F-064p 的 alpha.203 验证了隔离持久索引复用。同内容重开跳过索引写入，单篇变更提交一次增量。默认窗口沿用现有临时索引，复用成本和产品接入另行验证。见[F-064p 迭代](iterations/F-064p-bounded-index-reuse.md)。

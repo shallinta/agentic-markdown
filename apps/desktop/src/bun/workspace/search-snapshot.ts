@@ -18,6 +18,7 @@ import type { RootAuthorization } from "./authorization";
 import type { ScanFile } from "./scan";
 
 export const SEARCH_SNAPSHOT_ROOT_LIMIT = 16;
+export type SearchSnapshotStrategy = "native" | "direct";
 export interface SearchSnapshotRoot {
   authorization: RootAuthorization;
   files: ReadonlyMap<string, ScanFile>;
@@ -95,10 +96,12 @@ export function searchSnapshotEvidence(
 export async function searchSnapshotEvidenceAcrossRoots(
   roots: readonly SearchSnapshotRoot[],
   query: string,
-  current: () => boolean
+  current: () => boolean,
+  strategy: SearchSnapshotStrategy = "native"
 ): Promise<EvidenceResult> {
   if (!scalar(query, INDEX_LIMITS.query)) return fail("INPUT");
-  if (quarantined) return fail("UNAVAILABLE");
+  const direct = strategy === "direct";
+  if (!direct && quarantined) return fail("UNAVAILABLE");
   if (busy) return fail("BUSY");
   if (!roots.length) return fail("INPUT");
   if (roots.length > SEARCH_SNAPSHOT_ROOT_LIMIT) return fail("LIMIT");
@@ -147,7 +150,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
     } finally {
       try {
         // Every root remains required through cleanup, including empty roots.
-        if (result.ok && roots.length > 1) await verifyRoots();
+        if (result.ok && (direct || roots.length > 1)) await verifyRoots();
       } catch {
         result = fail(current() ? "UNAVAILABLE" : "CANCELLED");
       } finally {
@@ -159,6 +162,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
 
   async function run(): Promise<EvidenceResult> {
     await verifyRoots();
+    const coverage: SearchCoverage[] = [];
     const changes: IndexChange[] = [];
     const indexed = new Map<string, { evidence: SearchCoverage; length: number }>();
     let remaining: number = INDEX_LIMITS.bytes;
@@ -180,10 +184,18 @@ export async function searchSnapshotEvidenceAcrossRoots(
             fatal: true,
             ignoreBOM: true,
           }).decode(contents);
-          const id = randomUUID().replaceAll("-", "");
-          const evidence = { entry, bytes: contents.length, hash: createHash("sha256").update(contents).digest("hex") };
-          indexed.set(id, { evidence, length: raw.length });
-          changes.push({ kind: "put", id, path: id, raw });
+          const evidence: SearchCoverage = {
+            entry, bytes: contents.length, hash: createHash("sha256").update(contents).digest("hex"),
+          };
+          if (direct) {
+            const from = query ? raw.indexOf(query) : -1;
+            if (from >= 0) evidence.hit = { from, to: from + query.length };
+          } else {
+            const id = randomUUID().replaceAll("-", "");
+            indexed.set(id, { evidence, length: raw.length });
+            changes.push({ kind: "put", id, path: id, raw });
+          }
+          coverage.push(evidence);
           remaining -= contents.length;
         } finally {
           await grant.file.close();
@@ -191,7 +203,7 @@ export async function searchSnapshotEvidenceAcrossRoots(
       }
     }
     check();
-    if (!changes.length) return { ok: true, coverage: [] };
+    if (direct || !changes.length) return { ok: true, coverage };
     try {
       encodeChanges(changes);
     } catch {
@@ -218,6 +230,6 @@ export async function searchSnapshotEvidenceAcrossRoots(
         return fail("UNKNOWN", true);
       row.evidence.hit = { from, to };
     }
-    return { ok: true, coverage: [...indexed.values()].map(({ evidence }) => evidence) };
+    return { ok: true, coverage };
   }
 }

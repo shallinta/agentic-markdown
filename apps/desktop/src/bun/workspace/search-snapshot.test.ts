@@ -4,19 +4,21 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   realpath,
   rename,
   rm,
   symlink,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { validContentSearchResponse, type ContentSearchInput } from "../../shared/content-search";
 import { createDocumentService } from "../documents";
-import type { IndexRequest, IndexResult } from "../index/protocol";
+import { validRequest, type IndexRequest, type IndexResult } from "../index/protocol";
 import { createContentSearchRPC } from "../rpc/content-search";
 
 import { createWorkspaceService } from ".";
@@ -624,7 +626,201 @@ test.skipIf(childScenario !== "multi-root")(
   15_000
 );
 
-for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters", "multi-root"] as const)
+test.skipIf(childScenario !== "direct")(
+  "direct RPC matches native evidence without opening an index and fails closed on root changes",
+  async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "workspace-direct-"));
+    const directories = [join(fixture, "first"), join(fixture, "second")];
+    const paths = [join(directories[0], "项目 甲", "同名.md"), join(directories[1], "项目 乙", "同名.md")];
+    const raw = ["\uFEFF😀中文 target\r\n😀中文 TARGET", "乙\r\n😀中文 target"];
+    const OriginalWorker = globalThis.Worker;
+    const indexOperations: string[] = [];
+    class RecordingWorker extends OriginalWorker {
+      override postMessage(message: unknown) {
+        if (validRequest(message)) indexOperations.push(message.op);
+        super.postMessage(message);
+      }
+    }
+
+    function createHarness(contentSearchStrategy: "native" | "direct") {
+      let selected: string | null = null;
+      const documents = createDocumentService({ pickFile: () => Promise.resolve(null) });
+      const workspace = createWorkspaceService({
+        documents, contentSearchStrategy, pickDirectory: () => Promise.resolve(selected),
+      });
+      const rpc = createContentSearchRPC(workspace);
+      rpc.setReady(true);
+      async function addRoot(path: string) {
+        selected = path;
+        const canonical = await realpath(path);
+        if (!(await workspace.request({ ...env(), op: "select" })).ok)
+          throw Error("Fixture root could not be added");
+        for (let index = 0; index < 1000; index++) {
+          const state = await workspace.request({ ...env(), op: "state" });
+          const root = state.ok && state.roots.find(({ displayPath }) => displayPath === canonical);
+          if (root && root.status === "complete") {
+            const { handle, generation } = root;
+            const page = await workspace.request({ ...env(), op: "page", root: handle, generation, cursor: 0 });
+            const entry = page.ok && page.nodes?.find(({ name }) => name === "同名.md");
+            if (!entry) throw Error("Fixture file was not scanned");
+            return { root: { handle, generation }, entry: entry.handle };
+          }
+          await Bun.sleep(2);
+        }
+        throw Error("Fixture scan incomplete");
+      }
+      async function setup() {
+        const first = await addRoot(directories[0]);
+        const second = await addRoot(directories[1]);
+        const opened = await workspace.open({ ...env(), root: second.root.handle, entry: second.entry });
+        if (!opened.ok || !opened.snapshot) throw Error("Second-root document not opened");
+        const { handle, documentId, revision, hash } = opened.snapshot;
+        return {
+          first,
+          second,
+          scope: { roots: [first.root, second.root], handles: [handle] },
+          mapping: { handle, kind: "matched" as const, entry: second.entry, documentId, revision, hash },
+        };
+      }
+      return {
+        rpc, setup,
+        async close() {
+          rpc.setReady(false);
+          await rpc.drain();
+          await workspace.dispose();
+          await documents.dispose();
+        },
+      };
+    }
+
+    const native = createHarness("native");
+    const direct = createHarness("direct");
+    try {
+      for (const [index, path] of paths.entries()) {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, raw[index]);
+        await writeFile(join(directories[index], "budget.md"), "x".repeat(33_000));
+      }
+      const nativeScope = await native.setup();
+      const directScope = await direct.setup();
+      Object.defineProperty(globalThis, "Worker", { value: RecordingWorker, configurable: true });
+      const literal = "😀中文";
+      const onlyFirst = [{ kind: "path", value: "项目 甲/" }] as const;
+      const queryRoots = (scope: typeof directScope.scope) => ({
+        ...env(), ...scope, op: "query-roots" as const, query: literal, fileFilters: ["同名"],
+      });
+      async function runCases(harness: typeof direct, scope: typeof directScope) {
+        const request = queryRoots(scope.scope);
+        const matched = await harness.rpc.run(request);
+        expect(validContentSearchResponse(matched, request)).toBe(true);
+        if (!matched.ok || matched.op !== "query-roots") throw Error("Search returned no verified coverage");
+        expect(matched.coverage).toEqual([scope.first.entry, scope.second.entry].map((entry, index) => ({
+          entry,
+          bytes: Buffer.byteLength(raw[index]),
+          hash: createHash("sha256").update(raw[index]).digest("hex"),
+          hit: index === 0 ? { from: 1, to: 5 } : { from: 3, to: 7 },
+        })));
+        expect(matched.mappings).toEqual([scope.mapping]);
+        const noHit = { ...request, ...env(), query: "Target" };
+        const noHitResult = await harness.rpc.run(noHit);
+        if (!noHitResult.ok || noHitResult.op !== "query-roots") throw Error("Missing zero-hit coverage");
+        expect(noHitResult.coverage).toEqual(matched.coverage.map(({ entry, bytes, hash }) => ({ entry, bytes, hash })));
+        const filtered = await harness.rpc.run({ ...request, ...env(), pathFilters: onlyFirst });
+        expect(filtered).toMatchObject({
+          ok: true, coverage: matched.coverage.slice(0, 1),
+          mappings: [{ handle: scope.mapping.handle, kind: "outside" }],
+        });
+        if (!filtered.ok || filtered.op !== "query-roots") throw Error("Missing filtered coverage");
+        expect(filtered.coverage).toHaveLength(1);
+        expect(await harness.rpc.run({
+          ...env(), op: "query", root: scope.second.root.handle, generation: scope.second.root.generation,
+          handles: scope.scope.handles, query: literal, fileFilters: ["同名"],
+        })).toMatchObject({ ok: true, coverage: matched.coverage.slice(1), mappings: [scope.mapping] });
+        return matched.coverage.map(({ bytes, hash, hit }) => ({ bytes, hash, hit }));
+      }
+
+      // Direct must succeed even while another owner occupies the native slot.
+      await mkdir(slot, { mode: 0o700 });
+      const marker = join(slot, "fixture-owned-marker");
+      await writeFile(marker, "keep");
+      const directEvidence = await runCases(direct, directScope);
+      expect(await readFile(marker, "utf8")).toBe("keep");
+      const budget = { ...env(), ...directScope.scope, op: "query-roots" as const, query: literal };
+      expect(await direct.rpc.run(budget)).toEqual({
+        protocolVersion: 1, requestId: budget.requestId, ok: false, error: "LIMIT",
+      });
+      expect(indexOperations).toEqual([]);
+      await rm(slot, { recursive: true });
+      expect(await runCases(native, nativeScope)).toEqual(directEvidence);
+      expect(indexOperations).toContain("apply");
+      expect(await lstat(slot).catch((error: unknown) => error)).toMatchObject({ code: "ENOENT" });
+      indexOperations.length = 0;
+
+      const cancelled = queryRoots(directScope.scope);
+      const pending = direct.rpc.run(cancelled);
+      const cancel = { ...env(), op: "cancel", targetRequestId: cancelled.requestId };
+      expect(await direct.rpc.run(cancel)).toEqual({ protocolVersion: 1, requestId: cancel.requestId, ok: true, op: "cancel" });
+      expect(await pending).toEqual({ protocolVersion: 1, requestId: cancelled.requestId, ok: false, error: "CANCELLED" });
+      const stale = { ...queryRoots(directScope.scope), roots: [
+        directScope.first.root, { ...directScope.second.root, generation: directScope.second.root.generation + 1 },
+      ] };
+      expect(await direct.rpc.run(stale)).toEqual({ protocolVersion: 1, requestId: stale.requestId, ok: false, error: "STALE" });
+
+      const probe = await open(paths[0], "r");
+      const identity = await probe.stat({ bigint: true });
+      const prototype = Object.getPrototypeOf(probe) as Pick<FileHandle, "read">;
+      const originalRead = Object.getOwnPropertyDescriptor(prototype, "read");
+      await probe.close();
+      if (!originalRead) throw Error("Missing file read method");
+      const read = prototype.read;
+      const entered = Promise.withResolvers<void>();
+      const resume = Promise.withResolvers<void>();
+      let seen = false;
+      Object.defineProperty(prototype, "read", {
+        ...originalRead,
+        value: async function (this: FileHandle, ...args: unknown[]) {
+          const result: unknown = await Reflect.apply(read, this, args);
+          if (!seen) {
+            const stat = await this.stat({ bigint: true });
+            if (stat.dev === identity.dev && stat.ino === identity.ino) {
+              seen = true;
+              entered.resolve();
+              await resume.promise;
+            }
+          }
+          return result;
+        },
+      });
+      try {
+        const request = { ...queryRoots(directScope.scope), pathFilters: onlyFirst };
+        const pending = direct.rpc.run(request);
+        try {
+          await Promise.race([entered.promise, pending.then(() => { throw Error("Expected held descriptor read"); })]);
+          // The second root contributed no candidate and was valid at query admission.
+          await rename(directories[1], join(fixture, "replaced"));
+          await mkdir(directories[1]);
+        } finally {
+          resume.resolve();
+        }
+        const invalidated = await pending;
+        if (invalidated.ok) throw Error("Returned partial coverage after replacing a zero-candidate root");
+        expect(["CANCELLED", "UNAVAILABLE"]).toContain(invalidated.error);
+        expect(Object.keys(invalidated).sort()).toEqual(["error", "ok", "protocolVersion", "requestId"]);
+        expect(indexOperations).toEqual([]);
+      } finally {
+        Object.defineProperty(prototype, "read", originalRead);
+      }
+    } finally {
+      Object.defineProperty(globalThis, "Worker", { value: OriginalWorker, configurable: true });
+      await direct.close();
+      await native.close();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  },
+  15_000
+);
+
+for (const scenario of ["native", "transport", "candidates", "file-filters", "path-filters", "multi-root", "direct"] as const)
   test.skipIf(!!childScenario)(
     `isolated workspace index ${scenario} checks`,
     async () => {

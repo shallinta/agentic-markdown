@@ -81,6 +81,7 @@ import {
   readStableSearchBytes,
   searchSnapshot,
   searchSnapshotEvidenceAcrossRoots,
+  type SearchSnapshotStrategy,
 } from "./search-snapshot";
 import { createTrashService } from "./trash-document";
 import { createScanWorker } from "./worker";
@@ -141,6 +142,7 @@ export function createWorkspaceService({
   worker = createScanWorker(),
   cacheLimit = WORKSPACE_CACHE_BYTES,
   manualLeaseMs = 30_000,
+  contentSearchStrategy = "native",
   directoryNative,
   trashRun,
   preferences = {
@@ -153,6 +155,7 @@ export function createWorkspaceService({
   documents: TrustedDocumentService;
   worker?: ReturnType<typeof createScanWorker>;
   cacheLimit?: number;
+  contentSearchStrategy?: SearchSnapshotStrategy;
   /** Bounded lifetime for an issued but never accepted manual operation. */
   manualLeaseMs?: number;
   directoryNative?: DirectoryNative;
@@ -1220,7 +1223,8 @@ export function createWorkspaceService({
           authorization: root.authorization, files: searched, showHidden,
         })),
         input.query,
-        current
+        current,
+        contentSearchStrategy
       );
       if (!result.ok) {
         const error = result.error;

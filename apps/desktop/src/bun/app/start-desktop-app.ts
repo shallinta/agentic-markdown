@@ -58,6 +58,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     preferences: createHiddenPreferences(getSettingsDir()),
     pickDirectory: () => nativeFiles.pickDirectory(),
     documents,
+    contentSearchStrategy: "direct",
   });
   const searchLab = process.env.AGENTIC_MARKDOWN_SEARCH_LAB === "1"
     ? (await import("../perf-lab/search")).createSearchLab()

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-064r 有界直接匹配（2026-11-06）
+
+alpha.204 已验证普通窗口直接匹配和原生同义性。OBL-006、OBL-018、OBL-026、OBL-035 继续开放。原生持久增量路线、顶层独立文件和最终离线继续承接。见[F-064r 迭代](iterations/F-064r-direct-bounded-window-search.md)。
+
 ## F-064q 有界成本对照（2026-11-06）
 
 alpha.203 资源上的两批对照已核验同义命中。OBL-006、OBL-018、OBL-026、OBL-035 均继续开放。此次性能对照只覆盖已读取的固定小快照。见[F-064q 迭代](iterations/F-064q-bounded-search-cost-comparison.md)。

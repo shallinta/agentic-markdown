@@ -94,7 +94,12 @@ const source = {
 };
 const readyEvent = (url: string) => ({ data: { detail: url } });
 
-function snapshotFixture(timeoutMs?: number, candidate?: (base64: string, signal: AbortSignal) => Promise<readonly string[]>, imageTimeoutMs?: number) {
+function snapshotFixture(
+  timeoutMs?: number,
+  candidate?: (base64: string, signal: AbortSignal) => Promise<readonly string[]>,
+  imageTimeoutMs?: number,
+  captureImageProof?: (source: unknown, current: () => boolean) => Promise<ReadingSnapshotImageRead | undefined>,
+) {
   const captured = Promise.withResolvers<{ ok: true; base64: string; current(): boolean; readImage?: ReadingSnapshotImageRead }>();
   const callers: (() => boolean)[] = [];
   const sources: unknown[] = [];
@@ -108,7 +113,7 @@ function snapshotFixture(timeoutMs?: number, candidate?: (base64: string, signal
     return {
       url: PACKAGED_READER_SNAPSHOT_URL,
       webview: {
-        url: PACKAGED_READER_SNAPSHOT_URL,
+        url: PACKAGED_READER_SNAPSHOT_URL as string | null,
         isRemoved: false,
         on: (name: string, callback: (event: unknown) => void) => {
           webviewEvents.set(name, callback);
@@ -141,7 +146,7 @@ function snapshotFixture(timeoutMs?: number, candidate?: (base64: string, signal
       opened = true;
       return child;
     },
-    timeoutMs, candidate, imageTimeoutMs,
+    timeoutMs, candidate, imageTimeoutMs, captureImageProof,
   });
   lab.bindMain(main);
   return {
@@ -598,6 +603,133 @@ test("unsaved pending body retires before exact DOM readiness on navigation, clo
       expect(f.child.scripts).toHaveLength(0);
       expect(f.sources).toEqual([]);
     } finally {
+      f.lab.dispose();
+    }
+  }
+});
+
+const draftText = "# 未保存\n![越界](../outside.png)\n![本地](raster.png)";
+const draftWithImages = { kind: "buffer", data: Buffer.from(draftText).toString("base64"), source };
+
+test("draft image proof starts at admission while body and exact draft candidates remain independent", async () => {
+  const proof = Promise.withResolvers<ReadingSnapshotImageRead | undefined>();
+  const verify = Promise.withResolvers<void>();
+  const verified = Promise.withResolvers<boolean>();
+  const candidate = Promise.withResolvers<void>();
+  let check: (() => boolean) | undefined;
+  const f = snapshotFixture(undefined, (data) => {
+    expect(data).toBe(draftWithImages.data);
+    candidate.resolve();
+    return Promise.resolve(["../outside.png", "raster.png"]);
+  }, undefined, async (proofSource, current) => {
+    expect(proofSource).toEqual(source);
+    check = current;
+    await verify.promise;
+    verified.resolve(current());
+    return proof.promise;
+  });
+  try {
+    f.ready();
+    const open = (input: unknown) => f.lab.openReadingSnapshot(input, f.main);
+    let accessed = false;
+    for (const malformed of [
+      { ...draftWithImages, source: undefined }, { ...draftWithImages, source: { ...source, path: "private" } },
+      { ...draftWithImages, source: { ...source, expectedRevision: 0 } },
+      { ...draftWithImages, source: { ...source, get expectedHash() { accessed = true; return source.expectedHash; } } },
+      { ...draftWithImages, get source() { accessed = true; return source; } },
+    ]) expect(await open(malformed)).toEqual({ ok: false, error: "INVALID_REQUEST" });
+    expect(accessed).toBe(false);
+    expect(check).toBeUndefined();
+    const body = open(draftWithImages);
+    expect(check?.()).toBe(true);
+    await f.registered.promise;
+    f.child.webview.url = null;
+    verify.resolve();
+    expect(await verified.promise).toBe(true);
+    f.child.webview.url = PACKAGED_READER_SNAPSHOT_URL;
+    f.dom();
+    expect(await body).toEqual({ ok: true, submitted: true });
+    await candidate.promise;
+    expect(check?.()).toBe(true);
+    expect(f.child.scripts).toHaveLength(1);
+    const [event] = readDeliveryEvents(f.child.scripts);
+    const receipt = decodeReaderSnapshotDelivery(event?.detail);
+    if (!receipt?.deliveryId) throw Error("missing draft image delivery ID");
+    expect(event?.detail).toEqual({
+      protocolVersion: 1, kind: "buffer", data: draftWithImages.data, deliveryId: receipt.deliveryId,
+    });
+    expect(receipt).toEqual({ kind: "buffer", text: draftText, deliveryId: receipt.deliveryId });
+    const refs: string[] = [];
+    proof.resolve((slot, reference, current) => {
+      expect(current()).toBe(true);
+      refs.push(reference);
+      return Promise.resolve(slot === 0 ? unavailable : imageResult);
+    });
+    await Bun.sleep(0);
+    expect(refs).toEqual(["../outside.png", "raster.png"]);
+    const [, first, second] = readDeliveryEvents(f.child.scripts);
+    expect(parseReaderImageSnapshot(first?.detail, receipt.deliveryId)).toMatchObject({ slot: 0, status: "unavailable" });
+    expect(parseReaderImageSnapshot(second?.detail, receipt.deliveryId)).toMatchObject({ slot: 1, status: "image" });
+  } finally {
+    verify.resolve();
+    proof.resolve(undefined);
+    f.lab.dispose();
+  }
+});
+
+test("retired or failed draft image proof never blocks another body or admits late assets", async () => {
+  for (const cause of ["close", "navigation", "main", "timeout", "throw"] as const) {
+    const proof = Promise.withResolvers<ReadingSnapshotImageRead | undefined>();
+    let proofCalls = 0;
+    let reads = 0;
+    let check: (() => boolean) | undefined;
+    const f = snapshotFixture(undefined, () => Promise.resolve(["raster.png"]), cause === "timeout" ? 10 : undefined,
+      (_source, current) => {
+        proofCalls++;
+        check = current;
+        if (cause === "throw") throw Error("unavailable proof");
+        return proof.promise;
+      });
+    const open = () => f.lab.openReadingSnapshot(draftWithImages, f.main);
+    try {
+      f.ready();
+      const body = open();
+      await f.registered.promise;
+      f.dom();
+      expect(await body).toEqual({ ok: true, submitted: true });
+      const first = f.child;
+      if (cause === "navigation") first.webEvent("did-commit-navigation");
+      if (cause === "main") { f.lab.retireMainReady(f.main); f.ready(); }
+      if (cause === "timeout") await Bun.sleep(30);
+      if (cause === "throw") await Bun.sleep(0);
+      f.emit("close");
+      expect(check?.()).toBe(false);
+      const another = open();
+      await Bun.sleep(0);
+      f.dom();
+      expect(await another).toEqual({ ok: true, submitted: true });
+      const second = f.child;
+      expect(second).not.toBe(first);
+      expect(proofCalls).toBe(cause === "throw" ? 2 : 1);
+      if (cause !== "throw")
+        expect(decodeReaderSnapshotDelivery(readDeliveryEvents(second.scripts)[0]?.detail))
+          .toEqual({ kind: "buffer", text: draftText });
+      proof.resolve(() => {
+        reads++;
+        return Promise.resolve(imageResult);
+      });
+      await Bun.sleep(0);
+      expect(first.scripts).toHaveLength(1);
+      expect(second.scripts).toHaveLength(1);
+      expect(reads).toBe(0);
+      f.emit("close");
+      const retry = open();
+      await Bun.sleep(0);
+      f.dom();
+      expect(await retry).toEqual({ ok: true, submitted: true });
+      expect(proofCalls).toBe(cause === "throw" ? 3 : 2);
+    } finally {
+      proof.resolve(undefined);
       f.lab.dispose();
     }
   }

@@ -2,11 +2,11 @@
 
 ## 独立阅读窗显示前两张本地图片（F-022e）
 
-在已保存的阅读快照中，前两处符合条件的本地 PNG/JPEG 可分别显示。首图无法读取时仍会尝试第二张，后续图片保持占位。每张最多 8 MiB，两张共用 24 MiB 逻辑预算，按编码长度和像素数计费。超出任一上限的图片保留占位。见[F-022e 迭代](iterations/F-022e-two-authorized-images-in-independent-reader.md)和[F-022f 迭代](iterations/F-022f-larger-authorized-images-in-independent-reader.md)。
+在已保存或未保存的阅读快照中，前两处符合条件的本地 PNG/JPEG 可分别显示。首图无法读取时仍会尝试第二张，后续图片保持占位。每张最多 8 MiB，两张共用 24 MiB 逻辑预算，按编码长度和像素数计费。超出任一上限的图片保留占位。见[F-022e 迭代](iterations/F-022e-two-authorized-images-in-independent-reader.md)和[F-022f 迭代](iterations/F-022f-larger-authorized-images-in-independent-reader.md)。
 
 ## 在独立阅读窗查看未保存正文（F-021h）
 
-编辑或源码模式有未保存修改时，点击「在阅读窗口打开当前未保存内容」。子窗展示点击当时的只读正文并标记「未保存快照」，图片保留占位。主窗可以继续编辑、保存或撤销。关闭后重开可以查看更新的内容。见[F-021h 迭代](iterations/F-021h-open-current-buffer-in-independent-reader.md)。
+编辑或源码模式有未保存修改时，点击「在阅读窗口打开当前未保存内容」。子窗展示点击当时的只读正文并标记「未保存快照」。当前文档已获授权的本地 PNG/JPEG 可显示，包括草稿中新加的相对链接。授权失效、越界或超限时，该处图片保留占位。主窗可以继续编辑、保存或撤销。关闭后重开可以查看更新的内容。见[F-021h 迭代](iterations/F-021h-open-current-buffer-in-independent-reader.md)和[F-022g 迭代](iterations/F-022g-authorized-images-in-unsaved-reader.md)。
 
 ## 粘贴单张图片（F-053b）
 

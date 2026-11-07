@@ -6,7 +6,7 @@ import {
   READER_SNAPSHOT_MAX_BYTES,
   decodeReaderSnapshot,
   decodeReaderSnapshotDelivery,
-  readerBufferSnapshotDeliveryScript,
+  prepareReaderBufferSnapshotDelivery,
   readerSnapshotDeliveryScript,
 } from "./reader-snapshot";
 
@@ -27,11 +27,12 @@ test("dispatches only a fixed event with canonical base64, preserving saved UTF-
   expect(decodeReaderSnapshot("")).toBe("");
 });
 
-test("unsaved body delivery is a distinct exact one-way envelope without a picture ID", () => {
-  const text = '\uFEFF# 未保存 📖\r\n`</script> "); window.injected = true;`\r\n';
+test("unsaved body delivery allows only its exact one-way envelope and an optional picture ID", () => {
+  const text = '\uFEFF# 未保存 📖\r\n`</script> "); window.injected = true;`\r\n![图](a.png)';
   const data = Buffer.from(text).toString("base64");
+  const deliveryId = crypto.randomUUID();
   const value = { protocolVersion: 1, kind: "buffer", data };
-  const script = readerBufferSnapshotDeliveryScript(data);
+  const script = prepareReaderBufferSnapshotDelivery(data)?.script;
   if (script === undefined) throw Error("missing unsaved body script");
   const events: CustomEvent[] = [];
   const window = { dispatchEvent: (event: CustomEvent) => events.push(event) };
@@ -43,17 +44,27 @@ test("unsaved body delivery is a distinct exact one-way envelope without a pictu
   expect(decodeReaderSnapshotDelivery(events[0]?.detail)).toEqual({ kind: "buffer", text });
   expect(decodeReaderSnapshotDelivery({ ...value, data: "" })).toEqual({ kind: "buffer", text: "" });
   expect(decodeReaderSnapshotDelivery(data)).toEqual({ text });
+  const withImage = prepareReaderBufferSnapshotDelivery(data, deliveryId);
+  if (!withImage) throw Error("missing unsaved image envelope");
+  runInNewContext(withImage.script, { CustomEvent, window });
+  expect(withImage.deliveryId).toBe(deliveryId);
+  expect(events[1]?.detail).toEqual({ ...value, deliveryId });
+  expect(decodeReaderSnapshotDelivery(events[1]?.detail)).toEqual({ kind: "buffer", text, deliveryId });
+  expect(prepareReaderBufferSnapshotDelivery("", deliveryId)?.deliveryId).toBeUndefined();
   let read = false;
   for (const malformed of [
-    { ...value, deliveryId: crypto.randomUUID() }, { ...value, path: "/private/saved.md" },
+    { ...value, deliveryId, data: "" }, { ...value, deliveryId: undefined },
+    { ...value, get deliveryId() { read = true; return deliveryId; } },
+    { ...value, path: "/private/saved.md" }, { ...value, deliveryId, source: {} },
     { ...value, [Symbol("extra")]: true }, { ...value, kind: "other" }, { ...value, protocolVersion: 2 },
     { ...value, data: "AB==" }, { ...value, data: "/w==" },
     { ...value, get data() { read = true; return data; } },
   ]) expect(decodeReaderSnapshotDelivery(malformed)).toBeUndefined();
   expect(read).toBe(false);
   for (const malformed of ["AB==", "/w==", '";window.injected = true;']) {
-    expect(readerBufferSnapshotDeliveryScript(malformed)).toBeUndefined();
+    expect(prepareReaderBufferSnapshotDelivery(malformed)).toBeUndefined();
   }
+  expect(prepareReaderBufferSnapshotDelivery(data, "malformed")).toBeUndefined();
 });
 
 test("only an exact, valid body envelope carries a trusted image delivery ID", () => {

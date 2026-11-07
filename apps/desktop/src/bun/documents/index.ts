@@ -137,6 +137,8 @@ export interface TrustedDocumentService extends DocumentService {
     current?: () => boolean,
     options?: { includeImage: true }
   ): Promise<ReadingSnapshotCapture>;
+  /** Verifies the saved source for a draft image without returning disk body bytes. */
+  captureReadingImageProof(source: ReadingSnapshotSource, current: () => boolean): Promise<ReadingSnapshotImageRead | undefined>;
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
   beginSearchAdmission(): { current(): boolean } | undefined;
   /** Captures only grants owned by this service. Missing or uncertain grants remain unresolved. */
@@ -877,167 +879,179 @@ export function createDocumentService({
       request.handle
     );
   }
-  const service: TrustedDocumentService = {
-    async captureReadingSnapshot(source, callerCurrent = () => true, options) {
-      const { handle, documentId, expectedRevision, expectedHash } = source;
-      const reject = (error: DocumentErrorCode) => ({ ok: false as const, error });
-      if (
-        typeof handle !== "string" || !uuidPattern.test(handle) ||
-        typeof documentId !== "string" || !uuidPattern.test(documentId) ||
-        !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
-        typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedHash)
-      ) return reject("INVALID_REQUEST");
-      const grant = grants.get(handle);
-      if (!grant) return reject("INVALID_HANDLE");
-      const { identityKey, path, fingerprint, directories, scope, assetScope, assetEpoch } = grant;
-      const identity = identities.get(identityKey);
-      const observation = observations.get(handle);
-      if (
-        identity?.documentId !== documentId || identity.revision !== expectedRevision ||
-        identity.hash !== expectedHash || observation?.documentId !== documentId ||
-        observation.revision !== expectedRevision || observation.hash !== expectedHash
-      ) return reject("CONFLICT");
-      const generation = epoch;
-      const authorization = searchAdmissionGeneration;
-      const barrier = selectBarrierGeneration;
-      const save = saveStartGeneration;
-      const check = (isCurrent = callerCurrent) => {
-        let callerIsCurrent: boolean;
-        try {
-          callerIsCurrent = isCurrent();
-        } catch {
-          callerIsCurrent = false;
-        }
-        if (!callerIsCurrent) throw new DocumentFailure("CANCELLED");
-        if (!searchIdle()) throw new DocumentFailure("BUSY");
-        if (
-          epoch !== generation || searchAdmissionGeneration !== authorization ||
-          selectBarrierGeneration !== barrier || saveStartGeneration !== save ||
-          grants.get(handle) !== grant || grant.identityKey !== identityKey ||
-          grant.path !== path || grant.fingerprint !== fingerprint ||
-          grant.directories !== directories || grant.scope !== scope ||
-          identities.get(identityKey) !== identity || uncertain.has(documentId) ||
-          observations.get(handle) !== observation ||
-          (observation.last !== undefined && observation.last !== "unchanged")
-        ) throw new DocumentFailure("CONFLICT");
-        if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
-      };
+  async function captureReadingSource(source: ReadingSnapshotSource, callerCurrent: () => boolean, imageMode?: "saved" | "proof") {
+    const { handle, documentId, expectedRevision, expectedHash } = source;
+    const reject = (error: DocumentErrorCode) => ({ ok: false as const, error });
+    if (
+      typeof handle !== "string" || !uuidPattern.test(handle) ||
+      typeof documentId !== "string" || !uuidPattern.test(documentId) ||
+      !Number.isSafeInteger(expectedRevision) || expectedRevision < 1 ||
+      typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedHash)
+    ) return reject("INVALID_REQUEST");
+    const grant = grants.get(handle);
+    if (!grant) return reject("INVALID_HANDLE");
+    const { identityKey, path, fingerprint, directories, scope, assetScope, assetEpoch } = grant;
+    const identity = identities.get(identityKey);
+    const observation = observations.get(handle);
+    if (
+      identity?.documentId !== documentId || identity.revision !== expectedRevision ||
+      identity.hash !== expectedHash || observation?.documentId !== documentId ||
+      observation.revision !== expectedRevision || observation.hash !== expectedHash
+    ) return reject("CONFLICT");
+    const generation = epoch;
+    const authorization = searchAdmissionGeneration;
+    const barrier = selectBarrierGeneration;
+    const save = saveStartGeneration;
+    const check = (isCurrent = callerCurrent) => {
+      let callerIsCurrent: boolean;
       try {
-        check();
-        const file = await open(
-          path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
-        );
-        let bytes: Buffer;
-        let stamp: BigIntStats | undefined;
+        callerIsCurrent = isCurrent();
+      } catch {
+        callerIsCurrent = false;
+      }
+      if (!callerIsCurrent) throw new DocumentFailure("CANCELLED");
+      if (!searchIdle()) throw new DocumentFailure("BUSY");
+      if (
+        epoch !== generation || searchAdmissionGeneration !== authorization ||
+        selectBarrierGeneration !== barrier || saveStartGeneration !== save ||
+        grants.get(handle) !== grant || grant.identityKey !== identityKey ||
+        grant.path !== path || grant.fingerprint !== fingerprint ||
+        grant.directories !== directories || grant.scope !== scope ||
+        identities.get(identityKey) !== identity || uncertain.has(documentId) ||
+        observations.get(handle) !== observation ||
+        (observation.last !== undefined && observation.last !== "unchanged")
+      ) throw new DocumentFailure("CONFLICT");
+      if (imageMode === "proof" && (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch))
+        throw new DocumentFailure("CONFLICT");
+      if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
+    };
+    try {
+      check();
+      const file = await open(
+        path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+      );
+      let bytes: Buffer;
+      let stamp: BigIntStats | undefined;
+      try {
+        bytes = await stableBytes({ ...grant, file }, check, READER_SNAPSHOT_MAX_BYTES,
+          imageMode ? (observed) => { stamp = observed; } : undefined);
+      } finally {
+        await file.close();
+      }
+      check();
+      if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
+        return reject("CONFLICT");
+      try {
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        return reject("INVALID_UTF8");
+      }
+      let retired = false;
+      let nextImageSlot = 0, imageActive = false, imageTicketRetired = false;
+      const savedStamp = stamp;
+      const readImage: ReadingSnapshotImageRead = async (slot, reference, childCurrent) => {
+        const unavailable = { ok: false as const, error: "UNAVAILABLE" as const };
+        const stale = { ok: false as const, error: "STALE" as const };
+        if (!savedStamp || imageTicketRetired) return stale;
+        if (imageActive || slot !== nextImageSlot || slot >= READER_IMAGE_SNAPSHOT_MAX_SLOTS) return unavailable;
+        nextImageSlot++;
+        const checkSource = () => {
+          check(childCurrent);
+          if (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch)
+            throw new DocumentFailure("CONFLICT");
+        };
+        const sourceCurrent = () => {
+          if (imageTicketRetired) return false;
+          try {
+            checkSource();
+            if (sameReadingStamp(savedStamp, lstatSync(path, { bigint: true }))) return true;
+          } catch { /* A retired ticket cannot admit another slot. */ }
+          imageTicketRetired = true;
+          return false;
+        };
+        if (!sourceCurrent()) return stale;
+        const decoded = typeof reference === "string" ? localImageReference(reference) : null;
+        if (decoded === null || imageJobs >= 9) return unavailable;
+        const assetPath = resolve(dirname(path), decoded);
+        if (trashGuard(assetPath)) return unavailable;
+        imageActive = true;
+        imageJobs++;
         try {
-          bytes = await stableBytes({ ...grant, file }, check, READER_SNAPSHOT_MAX_BYTES,
-            options?.includeImage ? (observed) => { stamp = observed; } : undefined);
-        } finally {
-          await file.close();
-        }
-        check();
-        if (createHash("sha256").update(bytes).digest("hex") !== expectedHash)
-          return reject("CONFLICT");
-        try {
-          new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-        } catch {
-          return reject("INVALID_UTF8");
-        }
-        let retired = false;
-        let nextImageSlot = 0, imageActive = false, imageTicketRetired = false;
-        const savedStamp = stamp;
-        const readImage: ReadingSnapshotImageRead = async (slot, reference, childCurrent) => {
-          const unavailable = { ok: false as const, error: "UNAVAILABLE" as const };
-          const stale = { ok: false as const, error: "STALE" as const };
-          if (!savedStamp || imageTicketRetired) return stale;
-          if (imageActive || slot !== nextImageSlot || slot >= READER_IMAGE_SNAPSHOT_MAX_SLOTS) return unavailable;
-          nextImageSlot++;
-          const checkSource = () => {
-            check(childCurrent);
-            if (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch)
-              throw new DocumentFailure("CONFLICT");
-          };
-          const sourceCurrent = () => {
-            if (imageTicketRetired) return false;
-            try {
+          const sourceFile = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          let image: LocalImageResult;
+          try {
+            const verifySource = async () => {
               checkSource();
-              if (sameReadingStamp(savedStamp, lstatSync(path, { bigint: true }))) return true;
-            } catch { /* A retired ticket cannot admit another slot. */ }
-            imageTicketRetired = true;
+              await assetScope?.verify();
+              checkSource();
+              const observed = await verify({ ...grant, file: sourceFile });
+              checkSource();
+              if (!sameReadingStamp(savedStamp, observed) ||
+                  !sameReadingStamp(savedStamp, fstatSync(sourceFile.fd, { bigint: true })))
+                throw new DocumentFailure("FILE_CHANGED");
+            };
+            await verifySource();
+            if (trashGuard(assetPath)) return unavailable;
+            image = await images.read({
+              authorization: { selectedPath: grant.selectedPath, selectedParent: grant.selectedParent, path, fingerprint, directories },
+              reference,
+              profile: "reader-snapshot",
+              ...(assetScope ? { assetRoot: { path: assetScope.path, directories: assetScope.directories } } : {}),
+            }).catch(() => unavailable);
+            await verifySource();
+          } finally {
+            await sourceFile.close();
+          }
+          if (!sourceCurrent()) return stale;
+          if (!image.ok || trashGuard(assetPath)) return unavailable;
+          let imageRetired = false;
+          const current = () => {
+            if (imageRetired) return false;
+            try {
+              if (sourceCurrent() && !trashGuard(assetPath)) return true;
+            } catch { /* A retired result stays unavailable. */ }
+            imageRetired = true;
             return false;
           };
-          if (!sourceCurrent()) return stale;
-          const decoded = typeof reference === "string" ? localImageReference(reference) : null;
-          if (decoded === null || imageJobs >= 9) return unavailable;
-          const assetPath = resolve(dirname(path), decoded);
-          if (trashGuard(assetPath)) return unavailable;
-          imageActive = true;
-          imageJobs++;
+          const { mime, width, height, data } = image;
+          return { ok: true, mime, width, height, data, current, sourceCurrent };
+        } catch {
+          imageTicketRetired = true;
+          return stale;
+        } finally {
+          imageJobs--;
+          imageActive = false;
+        }
+      };
+      return {
+        ok: true as const,
+        bytes,
+        current() {
+          if (retired) return false;
           try {
-            const sourceFile = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-            let image: LocalImageResult;
-            try {
-              const verifySource = async () => {
-                checkSource();
-                await assetScope?.verify();
-                checkSource();
-                const observed = await verify({ ...grant, file: sourceFile });
-                checkSource();
-                if (!sameReadingStamp(savedStamp, observed) ||
-                    !sameReadingStamp(savedStamp, fstatSync(sourceFile.fd, { bigint: true })))
-                  throw new DocumentFailure("FILE_CHANGED");
-              };
-              await verifySource();
-              if (trashGuard(assetPath)) return unavailable;
-              image = await images.read({
-                authorization: { selectedPath: grant.selectedPath, selectedParent: grant.selectedParent, path, fingerprint, directories },
-                reference,
-                profile: "reader-snapshot",
-                ...(assetScope ? { assetRoot: { path: assetScope.path, directories: assetScope.directories } } : {}),
-              }).catch(() => unavailable);
-              await verifySource();
-            } finally {
-              await sourceFile.close();
-            }
-            if (!sourceCurrent()) return stale;
-            if (!image.ok || trashGuard(assetPath)) return unavailable;
-            let imageRetired = false;
-            const current = () => {
-              if (imageRetired) return false;
-              try {
-                if (sourceCurrent() && !trashGuard(assetPath)) return true;
-              } catch { /* A retired result stays unavailable. */ }
-              imageRetired = true;
-              return false;
-            };
-            const { mime, width, height, data } = image;
-            return { ok: true, mime, width, height, data, current, sourceCurrent };
+            check();
+            return true;
           } catch {
-            imageTicketRetired = true;
-            return stale;
-          } finally {
-            imageJobs--;
-            imageActive = false;
+            retired = true;
+            return false;
           }
-        };
-        return {
-          ok: true,
-          base64: bytes.toString("base64"),
-          current() {
-            if (retired) return false;
-            try {
-              check();
-              return true;
-            } catch {
-              retired = true;
-              return false;
-            }
-          },
-          ...(savedStamp && bytes.includes("![") ? { readImage } : {}),
-        };
-      } catch (error) {
-        return reject(codeOf(error));
-      }
+        },
+        ...(savedStamp && (imageMode === "proof" || bytes.includes("![")) ? { readImage } : {}),
+      };
+    } catch (error) {
+      return reject(codeOf(error));
+    }
+  }
+  const service: TrustedDocumentService = {
+    async captureReadingSnapshot(source, callerCurrent = () => true, options) {
+      const captured = await captureReadingSource(source, callerCurrent, options?.includeImage ? "saved" : undefined);
+      if (!captured.ok) return captured;
+      const { bytes, ...receipt } = captured;
+      return { ...receipt, base64: bytes.toString("base64") };
+    },
+    async captureReadingImageProof(source, current) {
+      const captured = await captureReadingSource(source, current, "proof");
+      return captured.ok ? captured.readImage : undefined;
     },
     beginSearchAdmission() {
       if (!searchAdmissible()) return undefined;

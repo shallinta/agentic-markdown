@@ -140,7 +140,7 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function encodeReadingBuffer(raw: string): BufferReadingSnapshotSource | undefined {
+function encodeReadingBuffer(raw: string, snapshot: DocumentSnapshot): BufferReadingSnapshotSource | undefined {
   const bytes = new TextEncoder().encode(raw);
   if (bytes.length > READER_SNAPSHOT_MAX_BYTES ||
       new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) !== raw)
@@ -148,7 +148,7 @@ function encodeReadingBuffer(raw: string): BufferReadingSnapshotSource | undefin
   let binary = "";
   for (let start = 0; start < bytes.length; start += 8192)
     binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
-  return { kind: "buffer", data: btoa(binary) };
+  return { kind: "buffer", data: btoa(binary), ...(raw.includes("![") ? { source: savedReadingSource(snapshot) } : {}) };
 }
 
 const savedReadingSource = (snapshot: DocumentSnapshot): ReadingSnapshotSource => ({
@@ -1362,7 +1362,7 @@ export function createDocumentController(
         origin: { handle, documentId, revision, bufferRevision: candidate.editor.revision, activation: generation },
         request: candidate.kind === "saved"
           ? savedReadingSource(candidate.snapshot)
-          : encodeReadingBuffer(candidate.raw),
+          : encodeReadingBuffer(candidate.raw, candidate.snapshot),
       };
     },
     getContentSearchActivation: () => generation,

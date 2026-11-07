@@ -74,6 +74,33 @@ const imageResult = {
 } as const satisfies LocalImageResult;
 const unavailable = { ok: false, error: "UNAVAILABLE" } as const;
 
+test("draft image proof uses the exact observed saved version even if it has no picture marker", async () => {
+  const jobs: ImageJob[] = [];
+  const f = await fixture(fixtureText, { imageReader: {
+    read(job) { jobs.push(job); return Promise.resolve(imageResult); }, dispose: () => undefined,
+  } });
+  try {
+    expect(await f.documents.captureReadingImageProof(f.source, () => true)).toBeUndefined();
+    expect((await f.documents.observe(f.observer)).ok).toBe(true);
+    expect(await f.documents.captureReadingImageProof({ ...f.source, expectedHash: "0".repeat(64) }, () => true))
+      .toBeUndefined();
+    let live = true;
+    const pending = f.documents.captureReadingImageProof(f.source, () => live);
+    live = false;
+    expect(await pending).toBeUndefined();
+    const read = await f.documents.captureReadingImageProof(f.source, () => true);
+    if (!read) throw Error("missing draft image proof");
+    expect(await read(0, "new-draft-image.png", () => true)).toMatchObject({ ok: true, mime: "image/png" });
+    expect(jobs.map(job => [job.reference, job.profile])).toEqual([["new-draft-image.png", "reader-snapshot"]]);
+    expect((await f.documents.observe({ ...f.observer, active: false })).ok).toBe(true);
+    expect(await read(1, "another.png", () => true)).toEqual({ ok: false, error: "STALE" });
+    expect(jobs).toHaveLength(1);
+    expect(await readFile(f.path, "utf8")).toBe(fixtureText);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test("reading image ticket is opt-in and independent of the settled body ticket", async () => {
   const jobs: ImageJob[] = [];
   const nativePath = join(import.meta.dir, "../../../dist-native/save-primitives.node");

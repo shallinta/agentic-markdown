@@ -4,7 +4,7 @@ import type { Command } from "../../shared/commands";
 import { MAX_IMAGE_CACHE_BYTES } from "../../shared/local-images";
 import { perfRecord, perfUuid } from "../../shared/perf-lab";
 import { readerImageSnapshotCost, readerImageSnapshotDeliveryScript } from "../../shared/reader-image-snapshot";
-import { readerBufferSnapshotDeliveryScript, readerSnapshotDeliveryScript, readerSnapshotOwnValue } from "../../shared/reader-snapshot";
+import { prepareReaderBufferSnapshotDelivery, readerSnapshotDeliveryScript, readerSnapshotOwnValue } from "../../shared/reader-snapshot";
 import type { BufferReadingSnapshotSource, OpenReadingSnapshotResponse, ReadingSnapshotSource } from "../../shared/rpc";
 import { hashPattern } from "../../shared/save-content";
 import type { ReadingSnapshotImageRead, TrustedDocumentService } from "../documents";
@@ -35,6 +35,8 @@ interface SnapshotReaderWindow extends ReaderWindow {
 interface SnapshotDependencies {
   capture(source: ReadingSnapshotSource, current: () => boolean, options?: { includeImage: true }):
     ReturnType<TrustedDocumentService["captureReadingSnapshot"]>;
+  captureImageProof?(this: void, source: ReadingSnapshotSource, current: () => boolean):
+    ReturnType<TrustedDocumentService["captureReadingImageProof"]>;
   candidate?(this: void, base64: string, signal: AbortSignal): Promise<readonly string[]>;
   open(): SnapshotReaderWindow;
   timeoutMs?: number;
@@ -78,10 +80,14 @@ function snapshotSource(input: unknown): ReadingSnapshotSource | undefined {
 
 function bufferSnapshotSource(input: unknown): BufferReadingSnapshotSource | undefined {
   try {
-    if (!perfRecord(input) || Reflect.ownKeys(input).length !== 2 ||
-        readerSnapshotOwnValue(input, "kind") !== "buffer") return undefined;
+    if (!perfRecord(input) || readerSnapshotOwnValue(input, "kind") !== "buffer") return undefined;
+    const fields = Reflect.ownKeys(input).length;
     const data = readerSnapshotOwnValue(input, "data");
-    return typeof data === "string" ? { kind: "buffer", data } : undefined;
+    if (typeof data !== "string") return undefined;
+    if (fields === 2) return { kind: "buffer", data };
+    if (fields !== 3) return undefined;
+    const source = snapshotSource(readerSnapshotOwnValue(input, "source"));
+    return source ? { kind: "buffer", data, source } : undefined;
   } catch {
     return undefined;
   }
@@ -104,6 +110,7 @@ export function createReaderLab(
   let reader: ReaderWindow | undefined;
   let pending: PendingSnapshot | undefined;
   let capturing: PendingSnapshot | undefined;
+  let provingDraftImage = false;
   let deliveringImage: { child: SnapshotReaderWindow; retire(): void } | undefined;
   let readyMain: MainWindow | undefined;
   let attempted = false;
@@ -157,6 +164,7 @@ export function createReaderLab(
         child.webview.executeJavascript(unavailable);
       }
     }).catch(() => { /* A failed image never changes the submitted body. */ }).finally(ticket.retire);
+    return current;
   };
   const syncCloseAvailability = () => {
     const available = !disposed && owner === "reader" && reader !== undefined;
@@ -256,18 +264,51 @@ export function createReaderLab(
       const timer = setTimeout(() => token.settle({ ok: false, error: "UNAVAILABLE" }),
         snapshot.timeoutMs ?? SNAPSHOT_TIMEOUT_MS);
       pending = token;
+      let proofCurrent = () => current() &&
+        (!token.child || reader === token.child);
+      let draft: SnapshotPreparation | undefined;
+      if ("kind" in source) {
+        const captureImageProof = snapshot.captureImageProof;
+        const requestedImageId = source.source && snapshot.candidate && captureImageProof && !provingDraftImage
+          ? crypto.randomUUID() : undefined;
+        const prepared = prepareReaderBufferSnapshotDelivery(source.data, requestedImageId);
+        if (!prepared) {
+          token.settle({ ok: false, error: "INVALID_REQUEST" });
+          return completion.promise;
+        }
+        let image: SnapshotReceipt["image"];
+        if (prepared.deliveryId && source.source && captureImageProof) {
+          const savedSource = source.source;
+          // Begin binding the grant before yielding and keep the seat until I/O settles.
+          const proof = (async () => {
+            provingDraftImage = true;
+            try {
+              return await captureImageProof(savedSource, () => proofCurrent());
+            } catch {
+              return undefined;
+            } finally {
+              provingDraftImage = false;
+            }
+          })();
+          image = {
+            deliveryId: prepared.deliveryId,
+            base64: source.data,
+            async read(slot, reference, childCurrent) {
+              const read = await proof;
+              if (!read || !childCurrent()) return { ok: false, error: "STALE" };
+              return read(slot, reference, childCurrent);
+            },
+          };
+        }
+        draft = { ok: true, receipt: { script: prepared.script, current, image } };
+      }
       // A timeout retires the ticket, but cannot preempt a descriptor read.
       // Keep the capture seat until that work has settled.
       capturing = token;
       const finishCapture = () => { if (capturing === token) capturing = undefined; };
       void Promise.resolve().then(async (): Promise<SnapshotPreparation | undefined> => {
         if (!current()) return;
-        if ("kind" in source) {
-          const script = readerBufferSnapshotDeliveryScript(source.data);
-          return script === undefined
-            ? { ok: false, error: "INVALID_REQUEST" }
-            : { ok: true, receipt: { script, current } };
-        }
+        if ("kind" in source) return draft;
         const capture = await snapshot.capture(source, current, snapshot.candidate ? { includeImage: true } : undefined);
         if (!current()) return;
         if (!capture.ok) return capture;
@@ -320,8 +361,11 @@ export function createReaderLab(
             bodySubmitted = true;
             child.webview.executeJavascript(receipt.script);
             child.show();
+            if (!current()) return;
             token.settle({ ok: true, submitted: true });
-            if (receipt.image) deliverImage(child, receipt.image, () => ready() && !childNavigated);
+            if (receipt.image) {
+              proofCurrent = deliverImage(child, receipt.image, () => ready() && !childNavigated) ?? (() => false);
+            }
           } catch {
             token.settle({ ok: false, error: "UNAVAILABLE" });
           }

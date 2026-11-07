@@ -250,7 +250,7 @@ function waitForSnapshot(root: Root) {
       root.render(<p role="alert">阅读快照无效。</p>);
       return;
     }
-    const imageReceiver = snapshot.kind !== "buffer" && snapshot.deliveryId
+    const imageReceiver = snapshot.deliveryId
       ? createReaderImageReceiver(window, snapshot.deliveryId) : undefined;
     const label = snapshot.kind === "buffer" ? "未保存快照" : "已保存版本";
     renderReadingContent(root, { documentId: "reader-snapshot", revision: 1, identity: {}, text: snapshot.text }, label, false, imageReceiver);

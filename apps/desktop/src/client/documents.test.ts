@@ -255,7 +255,7 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
   };
 }
 
-test("independent reading captures clean authority or only the current editing and source buffer bytes", async () => {
+test("independent reading captures exact clean authority and current editing or source buffer bytes", async () => {
   for (const mode of ["editing", "source"] as const) {
     const { controller, transport, value } = setup();
     const original = "\uFEFF# 已保存\r\n第二行\r末行";
@@ -267,10 +267,11 @@ test("independent reading captures clean authority or only the current editing a
     await controller.select();
     const clean = controller.captureIndependentReadingSnapshot();
     expect(clean?.kind).toBe("saved");
-    expect(clean?.request).toEqual({
+    const savedSource = {
       handle: value.handle, documentId: value.documentId,
       expectedRevision: value.revision, expectedHash: value.hash,
-    });
+    };
+    expect(clean?.request).toEqual(savedSource);
     expect(clean?.request).toEqual(controller.captureReadingSnapshotSource() ?? undefined);
     if (mode === "source") expect(controller.toggleSourceMode()).toBe(true);
     const editor = controller.getEditor(value.documentId)!;
@@ -297,6 +298,14 @@ test("independent reading captures clean authority or only the current editing a
     expect(controller.getMode(value.documentId)).toBe(mode);
     expect(controller.isDirty(value.documentId)).toBe(true);
     expect(saves).toBe(0);
+    const image = "\n![图](local.png)";
+    expect(controller.updateEditor(value.documentId, active!.state.update({
+      changes: { from: active!.state.doc.length, insert: image },
+    }))).toBe(true);
+    expect(controller.captureIndependentReadingSnapshot()?.request).toEqual({
+      kind: "buffer", data: Buffer.from(original + appended + "\r" + image).toString("base64"),
+      source: savedSource,
+    });
     controller.dispose();
   }
 });

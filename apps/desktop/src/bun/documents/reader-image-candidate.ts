@@ -34,7 +34,7 @@ function responseReferences(value: unknown): readonly string[] {
 }
 
 /** One pure parser worker per eligible child. No file authorization enters it. */
-export function findSavedReaderImageCandidates(
+export function findReaderImageCandidates(
   base64: string,
   signal?: AbortSignal,
   options: { createWorker?: (entry: string) => CandidateWorker; timeoutMs?: number } = {}

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-022g 独立阅读窗未保存图片（2026-11-07）
+
+编辑和源码草稿已验本地授权图片、越界占位及快照隔离。OBL-010、OBL-031 的更多图片、按视口加载和其他资源边界继续跟踪。OBL-029 的外观与恢复、主窗双模式迁移以及最终离线仍开放。见[F-022g 迭代](iterations/F-022g-authorized-images-in-unsaved-reader.md)。
+
 ## F-022f 独立阅读窗较大图片（2026-11-07）
 
 已保存快照的前两处本地图片已验每张最多 8 MiB，共用 24 MiB 逻辑预算。更多图片、按视口读取、未保存图片授权及其他资源边界继续跟踪。OBL-010、OBL-031 和最终离线仍开放。见[F-022f 迭代](iterations/F-022f-larger-authorized-images-in-independent-reader.md)。

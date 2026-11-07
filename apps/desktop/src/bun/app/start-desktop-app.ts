@@ -18,7 +18,7 @@ import { executeCommandInBun } from "../commands";
 import { createDocumentMRU } from "../document-mru";
 import { createMRUService } from "../document-mru-service";
 import { createDocumentService } from "../documents";
-import { findSavedReaderImageCandidates } from "../documents/reader-image-candidate";
+import { findReaderImageCandidates } from "../documents/reader-image-candidate";
 import { createLocaleController } from "../i18n/controller";
 import { createLocaleStateStore } from "../i18n/state";
 import { logEvent } from "../logging";
@@ -81,7 +81,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const readerLab = readerSnapshotEnabled
     ? createReaderLab(undefined, {
         capture: (source, current, options) => documents.captureReadingSnapshot(source, current, options),
-        candidate: findSavedReaderImageCandidates,
+        captureImageProof: (source, current) => documents.captureReadingImageProof(source, current),
+        candidate: findReaderImageCandidates,
         open: () => openReaderWindow(PACKAGED_READER_SNAPSHOT_URL),
       }, setReaderCloseAvailabilityInMenu)
     : syntheticReader

@@ -8,7 +8,7 @@ const uuidV4 = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]
 
 type SnapshotDelivery =
   | { text: string; deliveryId?: string; kind?: never }
-  | { text: string; kind: "buffer"; deliveryId?: never };
+  | { text: string; kind: "buffer"; deliveryId?: string };
 
 export function isReaderSnapshotDeliveryId(value: unknown): value is string {
   return typeof value === "string" && value.length === 36 && uuidV4.test(value);
@@ -42,14 +42,19 @@ export function readerSnapshotDeliveryScript(base64: string, deliveryId?: string
   return snapshotEventScript(detail);
 }
 
-export function readerBufferSnapshotDeliveryScript(base64: string): string | undefined {
-  if (decodeReaderSnapshot(base64) === undefined) return undefined;
-  return snapshotEventScript({ protocolVersion: 1, kind: "buffer", data: base64 });
+export function prepareReaderBufferSnapshotDelivery(base64: string, imageDeliveryId?: string) {
+  const text = decodeReaderSnapshot(base64);
+  if (text === undefined || (imageDeliveryId !== undefined && !isReaderSnapshotDeliveryId(imageDeliveryId)))
+    return undefined;
+  const deliveryId = text.includes("![") ? imageDeliveryId : undefined;
+  const script = snapshotEventScript({ protocolVersion: 1, kind: "buffer", data: base64,
+    ...(deliveryId ? { deliveryId } : {}) });
+  return { script, deliveryId };
 }
 
 function snapshotEventScript(detail: string | {
   protocolVersion: number; deliveryId: string; data: string;
-} | { protocolVersion: number; kind: "buffer"; data: string }): string {
+} | { protocolVersion: number; kind: "buffer"; data: string; deliveryId?: string }): string {
   return `window.dispatchEvent(new CustomEvent(${JSON.stringify(READER_SNAPSHOT_EVENT)}, {detail: ${JSON.stringify(detail)}}));`;
 }
 
@@ -72,12 +77,17 @@ export function decodeReaderSnapshotDelivery(value: unknown): SnapshotDelivery |
   }
   if (typeof value !== "object" || value === null) return undefined;
   try {
-    if (Array.isArray(value) || Reflect.ownKeys(value).length !== 3 ||
-        readerSnapshotOwnValue(value, "protocolVersion") !== 1) return undefined;
+    if (Array.isArray(value) || readerSnapshotOwnValue(value, "protocolVersion") !== 1) return undefined;
+    const fields = Reflect.ownKeys(value).length;
     if (readerSnapshotOwnValue(value, "kind") === "buffer") {
+      if (fields !== 3 && fields !== 4) return undefined;
+      const deliveryId = readerSnapshotOwnValue(value, "deliveryId");
+      if (fields === 4 && !isReaderSnapshotDeliveryId(deliveryId)) return undefined;
       const text = decodeReaderSnapshot(readerSnapshotOwnValue(value, "data"));
-      return text === undefined ? undefined : { text, kind: "buffer" };
+      if (text === undefined || (fields === 4 && !text.includes("!["))) return undefined;
+      return { text, kind: "buffer", ...(isReaderSnapshotDeliveryId(deliveryId) ? { deliveryId } : {}) };
     }
+    if (fields !== 3) return undefined;
     const deliveryId = readerSnapshotOwnValue(value, "deliveryId");
     if (!isReaderSnapshotDeliveryId(deliveryId)) return undefined;
     const text = decodeReaderSnapshot(readerSnapshotOwnValue(value, "data"));

@@ -31,6 +31,7 @@ export interface ReadingSnapshotSource {
 export interface BufferReadingSnapshotSource {
   kind: "buffer";
   data: string;
+  source?: ReadingSnapshotSource;
 }
 
 export type OpenReadingSnapshotResponse =

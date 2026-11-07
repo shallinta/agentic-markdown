@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 
-import { findSavedReaderImageCandidates } from "./reader-image-candidate";
+import { findReaderImageCandidates } from "./reader-image-candidate";
 
 const base64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
 const source = base64("![first](./assets/pixel.png)");
@@ -16,7 +16,7 @@ test("the actual parser worker chooses at most two local rasters in visible orde
       return new Worker(join(import.meta.dir, "reader-image-candidate-worker.ts"));
     },
   };
-  const read = (text: string) => findSavedReaderImageCandidates(base64(text), undefined, options);
+  const read = (text: string) => findReaderImageCandidates(base64(text), undefined, options);
   expect(await read("\uFEFF# 中文\r\n\r\n![remote](https://example.invalid/x.png)\r\n\r\n![first](./assets/a%20b.PNG) ![later](next.jpg) ![third](third.png)"))
     .toEqual(["./assets/a%20b.PNG", "next.jpg"]);
   expect(await read("[unused]: unused.png\n\n![first][r]\n\n![next](later.png)\n\n[r]: ../assets/photo.jpeg"))
@@ -27,7 +27,7 @@ test("the actual parser worker chooses at most two local rasters in visible orde
   expect(resolvedEntry?.endsWith("/dist-native/reader-image-candidate-worker.js")).toBe(true);
 });
 
-type Options = NonNullable<Parameters<typeof findSavedReaderImageCandidates>[2]>;
+type Options = NonNullable<Parameters<typeof findReaderImageCandidates>[2]>;
 type WorkerStub = ReturnType<NonNullable<Options["createWorker"]>>;
 
 function heldWorker() {
@@ -48,14 +48,14 @@ test("malformed, remote or missing worker replies settle once without a candidat
     { protocolVersion: 1, references: ["one.png", "two.jpg", "third.png"] },
   ]) {
     const f = heldWorker();
-    const pending = findSavedReaderImageCandidates(source, undefined, f.options);
+    const pending = findReaderImageCandidates(source, undefined, f.options);
     expect(f.posted()).toBe(1);
     f.worker.onmessage?.(new MessageEvent("message", { data: reply }));
     expect(await pending).toEqual([]);
     expect(f.terminated()).toBe(1);
   }
   const f = heldWorker();
-  expect(await findSavedReaderImageCandidates(source, undefined, { ...f.options, timeoutMs: 10 })).toEqual([]);
+  expect(await findReaderImageCandidates(source, undefined, { ...f.options, timeoutMs: 10 })).toEqual([]);
   expect(f.posted()).toBe(1);
   expect(f.terminated()).toBe(1);
 });
@@ -63,7 +63,7 @@ test("malformed, remote or missing worker replies settle once without a candidat
 test("abort retires a child parser even if a valid reply is already queued", async () => {
   const f = heldWorker();
   const controller = new AbortController();
-  const pending = findSavedReaderImageCandidates(source, controller.signal, f.options);
+  const pending = findReaderImageCandidates(source, controller.signal, f.options);
   const late = f.worker.onmessage;
   expect(f.posted()).toBe(1);
   controller.abort();
@@ -79,7 +79,7 @@ test("empty, oversized, noncanonical or already cancelled snapshots do not start
   let spawned = 0;
   const check = { createWorker: () => { spawned++; throw Error("unexpected worker"); } };
   for (const raw of ["", "AB==", Buffer.alloc(READER_SNAPSHOT_MAX_BYTES + 1).toString("base64")])
-    expect(await findSavedReaderImageCandidates(raw, undefined, check)).toEqual([]);
-  expect(await findSavedReaderImageCandidates(source, controller.signal, check)).toEqual([]);
+    expect(await findReaderImageCandidates(raw, undefined, check)).toEqual([]);
+  expect(await findReaderImageCandidates(source, controller.signal, check)).toEqual([]);
   expect(spawned).toBe(0);
 });

@@ -91,9 +91,14 @@ test("source mode has no command palette entry", () => {
   expect(renderPalette()).not.toContain("源码");
 });
 
-test("reading theme commands use Chinese product names without origin classification", () => {
-  expect(renderPalette()).toContain("阅读主题：纸页");
-  expect(renderPalette()).toContain("阅读主题：墨夜");
+test("main window palette omits inline reading and retains normal document commands", () => {
+  const markup = renderPalette();
+  expect(markup).not.toContain("阅读主题：");
+  expect(markup).not.toContain("切换编辑 / 阅读模式");
+  expect(markup).not.toContain("在阅读窗口打开当前版本");
+  expect(markup).not.toContain("toggleReadingMode");
+  expect(markup).not.toContain("readingTheme");
+  expect(markup).toContain("选择 Markdown 文件");
 });
 
 test("hides restart command until an update is ready", () => {

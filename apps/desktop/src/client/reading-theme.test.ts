@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
-import { isCommand, PRODUCT_COMMANDS } from "../shared/commands";
+import { COMMAND_META, isCommand, PRODUCT_COMMANDS } from "../shared/commands";
 
 import { createReadingThemeSelection, READING_THEMES } from "./reading-theme";
 
@@ -102,10 +102,11 @@ test("reading table cells use the scoped reading border token, not the app theme
   }
 });
 
-test("theme commands are fixed Chinese palette actions with no arbitrary payload", () => {
+test("legacy theme command identifiers stay hidden and reject arbitrary payloads", () => {
   for (const type of ["readingThemePaper", "readingThemeInk"] as const) {
     expect(isCommand({ type, args: {} })).toBe(true);
     expect(isCommand({ type, args: { css: "evil" } })).toBe(false);
+    expect(COMMAND_META[type].palette).toBe(false);
     expect(PRODUCT_COMMANDS[type]?.label).toMatch(/^阅读主题：/);
   }
 });

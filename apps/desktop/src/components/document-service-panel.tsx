@@ -34,7 +34,6 @@ import { createQuickOpen } from "@/client/quick-open";
 import type { RasterPasteSource } from "@/client/raster-paste-intent";
 import { captureRasterWorkspaceAuthority, createRasterPasteTransport } from "@/client/raster-paste-workspace";
 import { rawText } from "@/client/raw-buffer";
-import { createReadingThemeSelection } from "@/client/reading-theme";
 import { routeRecentTabKey } from "@/client/recent-tab-shortcut";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { createTrashDocument, type TrashChoice, type TrashDialog } from "@/client/trash-document";
@@ -58,7 +57,6 @@ import { CreateMarkdownDialog } from "./create-markdown-dialog";
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
 import { QuickOpenDialog } from "./quick-open-dialog";
-import { ReadingView } from "./reading-view";
 import { RecentFiles, recentFailureText } from "./recent-files";
 import { TextFidelityDetails } from "./text-fidelity-details";
 import { WorkspaceTree, type RootOrderActions } from "./workspace-tree";
@@ -276,20 +274,6 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       "reading-legacy"
     )
   );
-  const [readingThemes] = useState(() =>
-    createReadingThemeSelection(
-      controller.captureCurrentViewport,
-      controller.canChangeReadingTheme
-    )
-  );
-  const readingTheme = useSyncExternalStore(
-    readingThemes.subscribe,
-    readingThemes.getSnapshot
-  );
-  const chooseReadingTheme = (id: string) => {
-    const error = readingThemes.select(id);
-    if (error) toast.error(error);
-  };
   useEffect(() => {
     const unsubscribe = controller.subscribe(canonical.invalidate);
     return () => {
@@ -300,11 +284,6 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   const { executeCommand, isCommandEnabled } = useCommands();
   const notifyCommands = useRegisterCommands(
     {
-      readingThemePaper: () => chooseReadingTheme("paper"),
-      readingThemeInk: () => chooseReadingTheme("ink"),
-      toggleReadingMode: () => {
-        controller.toggleReadingMode();
-      },
       toggleSourceMode: () => {
         controller.toggleSourceMode();
       },
@@ -370,9 +349,6 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     },
     true,
     {
-      readingThemePaper: controller.canChangeReadingTheme,
-      readingThemeInk: controller.canChangeReadingTheme,
-      toggleReadingMode: controller.canToggleReadingMode,
       toggleSourceMode: () =>
         controller.canToggleSourceMode() &&
         !isExternalTextTarget(document.activeElement) &&
@@ -537,7 +513,6 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     authorizeRaster,
     state,
     canonical,
-    readingTheme,
     executeCommand,
     isCommandEnabled,
   };
@@ -814,6 +789,10 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
     discardGuard.getSnapshot
   );
   const editor = snapshot && controller.getEditor(snapshot.documentId);
+  const mode =
+    snapshot && controller.getMode(snapshot.documentId) === "source"
+      ? "source"
+      : "editing";
   const canonicalState = useSyncExternalStore(
     workspace.canonical.subscribe,
     workspace.canonical.getSnapshot
@@ -838,11 +817,9 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           {snapshot
             ? controller.isSafeSource(snapshot.documentId)
               ? "安全源码 · 解析与排版已停用 · 文内查找暂不可用 · 手动保存 ⌘S · 单文件限 1 MiB"
-              : controller.getMode(snapshot.documentId) === "source"
+              : mode === "source"
                 ? "基础源码模式 · 完整原文与基础高亮 · 手动保存 ⌘S · 单文件限 1 MiB"
-                : controller.getMode(snapshot.documentId) === "reading"
-                  ? "阅读模式 · 只读当前内存正文 · 本地静态 PNG/JPEG · 远程图片默认不加载"
-                  : "基础编辑模式 · 标题、粗体、斜体与行内代码 · 手动保存 ⌘S · 单文件限 1 MiB"
+                : "基础编辑模式 · 标题、粗体、斜体与行内代码 · 手动保存 ⌘S · 单文件限 1 MiB"
             : "打开本地 Markdown 文件或加入文件夹。侧栏单击选择，双击或按 Enter 打开文档。"}
         </p>
       </div>
@@ -867,7 +844,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         !controller.isSafeSource(snapshot.documentId) &&
         editor.state.field(longLineProtection).length > 0 && (
           <p role="status" className="text-muted-foreground text-sm">
-            {controller.getMode(snapshot.documentId) === "source"
+            {mode === "source"
               ? "部分超长行已暂停语法着色；缩短后恢复，自动折行、原文与保存不变。"
               : "部分超长行已简化行内排版，代码与引用结构保留；缩短后恢复，软换行与保存不变。"}
           </p>
@@ -1002,7 +979,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       {snapshot && (
         <p role="status" aria-live="polite" className="text-sm">
           {documentStatusLabel(
-            controller.getMode(snapshot.documentId),
+            mode,
             snapshot.writeCapability
           )}
           {
@@ -1098,57 +1075,17 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
             )}
           </details>
           <div className="relative flex min-h-0 flex-1 flex-col">
-            {controller.getMode(snapshot.documentId) !== "source" &&
-              !controller.isSafeSource(snapshot.documentId) && (
-                <button
-                  className="bg-background/60 absolute top-2 right-3 z-10 rounded border p-2 opacity-50 backdrop-blur hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-2 disabled:opacity-30"
-                  title={
-                    controller.getMode(snapshot.documentId) === "reading"
-                      ? "切换为编辑模式"
-                      : "切换为阅读模式"
-                  }
-                  aria-label={
-                    controller.getMode(snapshot.documentId) === "reading"
-                      ? "切换为编辑模式"
-                      : "切换为阅读模式"
-                  }
-                  disabled={!isCommandEnabled("toggleReadingMode")}
-                  onClick={() =>
-                    executeCommand({ type: "toggleReadingMode", args: {} })
-                  }
-                >
-                  <span aria-hidden="true">
-                    {controller.getMode(snapshot.documentId) === "reading"
-                      ? "✎"
-                      : "▤"}
-                  </span>
-                </button>
-              )}
-            {controller.getMode(snapshot.documentId) === "reading" ? (
-              <ReadingView
-                readLocalImage={readLocalImage}
-                assetEpoch={
-                  workspace.folderState.assetEpochs?.[snapshot.handle]
-                }
-                theme={workspace.readingTheme}
-                controller={controller}
-                canonical={workspace.canonical}
-                documentId={snapshot.documentId}
-                frozen={state.frozen || state.busy}
-              />
-            ) : (
-              <MemoryEditor
-                readLocalImage={readLocalImage}
-                publishRaster={workspace.publishRaster}
-                authorizeRaster={workspace.authorizeRaster}
-                assetEpoch={
-                  workspace.folderState.assetEpochs?.[snapshot.handle]
-                }
-                controller={controller}
-                documentId={snapshot.documentId}
-                frozen={state.frozen || state.busy}
-              />
-            )}
+            <MemoryEditor
+              readLocalImage={readLocalImage}
+              publishRaster={workspace.publishRaster}
+              authorizeRaster={workspace.authorizeRaster}
+              assetEpoch={
+                workspace.folderState.assetEpochs?.[snapshot.handle]
+              }
+              controller={controller}
+              documentId={snapshot.documentId}
+              frozen={state.frozen || state.busy}
+            />
           </div>
         </>
       )}

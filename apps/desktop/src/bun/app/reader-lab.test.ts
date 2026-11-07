@@ -4,7 +4,7 @@ import { runInNewContext } from "node:vm";
 import { PACKAGED_READER_SNAPSHOT_URL } from "../../security/reader-policy";
 import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
-import { parseReaderImageSnapshot, READER_IMAGE_SNAPSHOT_EVENT } from "../../shared/reader-image-snapshot";
+import { parseReaderImageSnapshot, READER_IMAGE_SNAPSHOT_EVENT, READER_IMAGE_SNAPSHOT_MAX_BYTES } from "../../shared/reader-image-snapshot";
 import { decodeReaderSnapshotDelivery, readerSnapshotDeliveryScript, READER_SNAPSHOT_EVENT, READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import type { ReadingSnapshotImageRead } from "../documents";
 
@@ -461,6 +461,34 @@ test("only the first two image slots run serially and each finishes before the n
       );
     } finally {
       release.resolve(unavailable);
+      f.lab.dispose();
+    }
+  }
+});
+
+test("one maximum-size raster leaves only the original budget remainder for slot one", async () => {
+  const data = Buffer.alloc(READER_IMAGE_SNAPSHOT_MAX_BYTES).toString("base64");
+  const large = { ...imageResult, width: 512, height: 512, data };
+  for (const second of [imageResult, large]) {
+    const f = snapshotFixture(undefined, () => Promise.resolve(["a.png", "b.png"]));
+    try {
+      f.ready();
+      const body = f.open();
+      f.captured.resolve({
+        ok: true, base64: "5Lit", current: () => true,
+        readImage: slot => Promise.resolve(slot === 0 ? large : second),
+      });
+      await f.registered.promise;
+      f.dom();
+      expect(await body).toEqual({ ok: true, submitted: true });
+      await Bun.sleep(0);
+      const [bodyEvent, first, later] = readDeliveryEvents(f.child.scripts);
+      const id = decodeReaderSnapshotDelivery(bodyEvent?.detail)?.deliveryId;
+      if (!id) throw Error("missing delivery ID");
+      const receipt = parseReaderImageSnapshot(first?.detail, id);
+      expect(receipt?.status === "image" && receipt.data === data).toBe(true);
+      expect(parseReaderImageSnapshot(later?.detail, id)?.status).toBe(second === large ? "unavailable" : "image");
+    } finally {
       f.lab.dispose();
     }
   }

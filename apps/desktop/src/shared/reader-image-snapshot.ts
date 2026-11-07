@@ -1,4 +1,4 @@
-import { MAX_IMAGE_PIXELS } from "./local-images";
+import { MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS } from "./local-images";
 import {
   isCanonicalBase64,
   isReaderSnapshotDeliveryId,
@@ -6,7 +6,7 @@ import {
 } from "./reader-snapshot";
 
 export const READER_IMAGE_SNAPSHOT_EVENT = "agentic-markdown:reader-image-snapshot";
-export const READER_IMAGE_SNAPSHOT_MAX_BYTES = 1024 * 1024;
+export const READER_IMAGE_SNAPSHOT_MAX_BYTES = MAX_IMAGE_BYTES;
 export const READER_IMAGE_SNAPSHOT_MAX_SLOTS = 2;
 export type ReaderImageSnapshotSlot = 0 | 1;
 

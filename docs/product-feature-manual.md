@@ -2,7 +2,7 @@
 
 ## 独立阅读窗显示前两张本地图片（F-022e）
 
-在已保存的阅读快照中，前两处符合条件的本地 PNG/JPEG 可分别显示。首图无法读取时仍会尝试第二张，后续图片保持占位。每张最多 1 MiB，并共用同一窗口的图片预算。见[F-022e 迭代](iterations/F-022e-two-authorized-images-in-independent-reader.md)。
+在已保存的阅读快照中，前两处符合条件的本地 PNG/JPEG 可分别显示。首图无法读取时仍会尝试第二张，后续图片保持占位。每张最多 8 MiB，两张共用 24 MiB 逻辑预算，按编码长度和像素数计费。超出任一上限的图片保留占位。见[F-022e 迭代](iterations/F-022e-two-authorized-images-in-independent-reader.md)和[F-022f 迭代](iterations/F-022f-larger-authorized-images-in-independent-reader.md)。
 
 ## 在独立阅读窗查看未保存正文（F-021h）
 

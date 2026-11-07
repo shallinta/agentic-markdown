@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { READER_IMAGE_SNAPSHOT_EVENT } from "../shared/reader-image-snapshot";
+import { READER_IMAGE_SNAPSHOT_EVENT, READER_IMAGE_SNAPSHOT_MAX_BYTES } from "../shared/reader-image-snapshot";
 
 import { createReaderImageReceiver } from "./reader-image-receiver";
 
@@ -84,20 +84,23 @@ test("one valid but too costly raster stays a placeholder and cannot be retried"
 });
 
 test("two individually affordable rasters share the original retained and presentation budget", () => {
-  const events = new EventTarget();
-  const a = {}, b = {};
-  const receiver = createReaderImageReceiver(events, deliveryId);
-  const large = { ...image, width: 1500, height: 1500 };
-  try {
-    expect(receiver.setTargets([a, b])).toBe(true);
-    dispatch(events, large);
-    dispatch(events, { ...large, slot: 1 });
-    expect(receiver.getImage(a)).toEqual(large);
-    expect(receiver.getImage(b)).toBeUndefined();
-    dispatch(events, { ...image, slot: 1 });
-    expect(receiver.getImage(b)).toBeUndefined();
-  } finally {
-    receiver.close();
+  const large = { ...image, width: 512, height: 512, data: Buffer.alloc(READER_IMAGE_SNAPSHOT_MAX_BYTES).toString("base64") };
+  for (const second of [image, large]) {
+    const events = new EventTarget();
+    const a = {}, b = {};
+    const receiver = createReaderImageReceiver(events, deliveryId);
+    try {
+      expect(receiver.setTargets([a, b])).toBe(true);
+      const later = { ...second, slot: 1 as const };
+      dispatch(events, large);
+      dispatch(events, later);
+      expect(receiver.getImage(a)).toEqual(large);
+      expect(receiver.getImage(b)).toEqual(second === large ? undefined : later);
+      dispatch(events, { ...image, slot: 1 });
+      expect(receiver.getImage(b)).toEqual(second === large ? undefined : later);
+    } finally {
+      receiver.close();
+    }
   }
 });
 

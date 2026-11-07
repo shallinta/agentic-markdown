@@ -147,6 +147,7 @@ test("reader profile opens only literal nofollow components from the authorized 
 });
 
 test("reader profile rejects post-resolution link replacement and caps actual PNG size before reading", async () => {
+  expect(READER_IMAGE_SNAPSHOT_MAX_BYTES).toBe(MAX_IMAGE_BYTES);
   const exact = (size: number) => {
     const chunk = Buffer.alloc(size - icon.length);
     chunk.writeUInt32BE(chunk.length - 12, 0);
@@ -164,7 +165,7 @@ test("reader profile rejects post-resolution link replacement and caps actual PN
     expect(Buffer.from(result.data, "base64")).toEqual(atLimit);
   }
   expect((await readSnapshot("over.png")).ok).toBe(false);
-  expect((await read("over.png")).ok).toBe(true);
+  expect((await read("over.png")).ok).toBe(false);
   expect((await readSnapshot("exact.png", false, async () => {
     await unlink(join(root, "docs/exact.png"));
     await symlink("图 像.png", join(root, "docs/exact.png"));

@@ -2,9 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExter
 
 import { discardGuard } from "@/client/discard-guard";
 import { createDocumentController } from "@/client/documents";
+import { isExternalTextTarget } from "@/client/history-target";
 import { moveRealRegionDocument, projectRealRegionDocuments, type RealRegionAllocation } from "@/client/real-document-region-lab";
 import { resizeSecondaryPaneDivider } from "@/client/secondary-pane-divider";
 import { SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
+import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
 import { CommandProvider, useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
 import { createNativeDocumentTransport } from "@/lib/native-document-transport";
@@ -17,6 +19,7 @@ const buttonClass = "electrobun-webkit-app-region-no-drag rounded border px-2 py
 const saveLabel = { saving: "保存中…", saved: "已保存", dirty: "未保存", failed: "保存失败", uncertain: "保存结果未确认" };
 const heightPresets = [65, 66, 320] as const;
 const cssPixels = (value: number) => Math.round(value * 100) / 100;
+const modalOpen = () => !!document.querySelector('[role="dialog"], [role="alertdialog"]');
 
 interface DividerDrag {
   element: HTMLDivElement;
@@ -64,6 +67,7 @@ function RealDocumentRegionViews() {
     return current.tabs.length < 3 && controller.canSelectFolder() && !controller.hasSaves();
   };
   const notifyCommands = useRegisterCommands({
+    toggleSourceMode: () => { controller.toggleSourceMode(); },
     selectDocument: controller.select,
     saveDocument: controller.save,
     closeDocument: () => {
@@ -75,6 +79,8 @@ function RealDocumentRegionViews() {
     undoDocument: ({ documentId }) => { controller.runHistory("undo", documentId); },
     redoDocument: ({ documentId }) => { controller.runHistory("redo", documentId); },
   }, true, {
+    toggleSourceMode: () => controller.canToggleSourceMode() &&
+      !isExternalTextTarget(document.activeElement) && !modalOpen(),
     selectDocument: canSelect,
     saveDocument: controller.canSave,
     closeDocument: () => !controller.getSnapshot().frozen && !!controller.getSnapshot().snapshot,
@@ -83,6 +89,13 @@ function RealDocumentRegionViews() {
   });
 
   useEffect(() => controller.subscribe(notifyCommands), [controller, notifyCommands]);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => routeSourceModeShortcut(
+      event, document.activeElement, modalOpen(), isCommandEnabled("toggleSourceMode"), executeCommand,
+    );
+    window.addEventListener("keydown", shortcut, true);
+    return () => window.removeEventListener("keydown", shortcut, true);
+  }, [executeCommand, isCommandEnabled]);
   useEffect(() => {
     const rpc = electrobun.rpc;
     rpc?.addMessageListener("executeCommand", executeCommand);
@@ -265,10 +278,13 @@ function RealDocumentRegionViews() {
     setReceipt("");
   }
 
+  const modeLabel = (documentId: string) => controller.getMode(documentId) === "source" ? "源码模式" : "编辑模式";
   const editor = (documentId: string) => (
-    <MemoryEditor key={documentId} controller={controller} documentId={documentId}
-      frozen={state.frozen || state.busy} passive={activeId !== documentId}
-      autoFocusOnMount={false} preserveViewportOnSync />
+    <div key={documentId} className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <MemoryEditor controller={controller} documentId={documentId}
+        frozen={state.frozen || state.busy} passive={activeId !== documentId}
+        autoFocusOnMount={false} preserveViewportOnSync />
+    </div>
   );
   const activeStatus = activeId ? controller.getSaveStatus(activeId) : null;
   return (
@@ -276,7 +292,7 @@ function RealDocumentRegionViews() {
       <div aria-hidden="true" className="electrobun-webkit-app-region-drag h-12 shrink-0 select-none" />
       <section className="space-y-2 px-4 pb-3 text-sm">
         <h1 className="text-lg font-semibold">真实文件移区实验</h1>
-        <p>请只选择测试文件。保存会写入磁盘，本实验最多打开三篇 Markdown，副区最多两篇。</p>
+        <p>请只选择测试文件。保存会写入磁盘，本实验最多打开三篇 Markdown，副区最多两篇。⌘⇧M 切换活动文档模式。</p>
         <div className="flex flex-wrap gap-2" role="group" aria-label="副区实验高度">
           {heightPresets.map((height) => (
             <button key={height} type="button" className={buttonClass} aria-pressed={allocation.totalHeight === height}
@@ -315,7 +331,7 @@ function RealDocumentRegionViews() {
       <div className="min-h-0 grow overflow-x-auto border-t">
         <MainSideLayout sideVisible={!!projection?.secondary.length} main={
           <section aria-label="实验主区" className="flex size-full min-w-0 flex-col gap-2 p-3">
-            <h2 className="font-medium">主区</h2>
+            <h2 className="font-medium">主区{mainCurrentId && ` · ${modeLabel(mainCurrentId)}`}</h2>
             <nav aria-label="实验主区标签" className="flex flex-wrap gap-1">
               {(projection?.main ?? state.tabs).map((document) => (
                 <button key={document.documentId} type="button" className={buttonClass}
@@ -342,15 +358,14 @@ function RealDocumentRegionViews() {
                       <button type="button" className={`${buttonClass} min-w-0 grow truncate py-0 text-left text-sm`}
                         aria-pressed={activeId === documentId} aria-label={`激活副区 ${name}`} data-secondary-document={documentId}
                         onMouseDown={(event) => event.preventDefault()} onClick={() => activate(documentId)}>{name}</button>
+                      <span className="text-muted-foreground shrink-0 text-xs">{modeLabel(documentId)}</span>
                       <button type="button" className={`${buttonClass} size-6 shrink-0 p-0`} aria-label={`关闭副区 ${fileName}`}
                         disabled={!controller.canSelectFolder() || controller.isEditorInputBlocked()}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={(event) => void closeSecondary(documentId, fileName,
                           event.currentTarget.ownerDocument.activeElement === event.currentTarget)}>×</button>
                     </div>
-                    {height > SECONDARY_MIN_HEIGHT && (
-                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{editor(documentId)}</div>
-                    )}
+                    {height > SECONDARY_MIN_HEIGHT && editor(documentId)}
                     <div ref={next ? dividerLine : undefined} aria-hidden="true" className="bg-border h-px shrink-0" />
                     {next && (
                       <div key={next.documentId} ref={dividerHit} role="separator" tabIndex={0} aria-orientation="horizontal"

@@ -54,7 +54,7 @@ export function SourceSearch({
   const conditions = useSyncExternalStore(store.subscribe, () =>
     store.get(documentId)
   );
-  useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const documentState = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const input = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const replacingComposition = useRef(false);
@@ -93,6 +93,11 @@ export function SourceSearch({
     ?.state.field(editorFaultSession);
   const mode = controller.getMode(documentId);
   const safe = controller.isSafeSource(documentId);
+  // Registration follows stable ownership. Text/DOM readiness is checked at execution,
+  // since the controller may publish a new state before the view synchronizes.
+  const ownsCommands = documentState.snapshot?.documentId === documentId &&
+    mode === "source" && !safe && !!controllerSession && !controllerSession.fault &&
+    controllerSession === view.state.field(editorFaultSession);
   const allowed = () =>
     isMounted() &&
     controller.getSnapshot().snapshot?.documentId === documentId &&
@@ -230,7 +235,7 @@ export function SourceSearch({
         allOwner.current?.start();
       },
     },
-    true,
+    ownsCommands,
     {
       openSourceSearch: () =>
         interaction() &&
@@ -543,7 +548,7 @@ export function SourceSearch({
   }, [controller, documentId, view, controllerSession]);
   useLayoutEffect(() => {
     sync.current();
-  }, [conditions, mode, safe, controllerText]);
+  }, [conditions, mode, safe, controllerText, ownsCommands]);
   useLayoutEffect(() => {
     if (conditions.open) input.current?.focus();
   }, [conditions.open]);

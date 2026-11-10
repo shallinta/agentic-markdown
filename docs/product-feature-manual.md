@@ -144,6 +144,8 @@ alpha.316 同一隔离实验可打开三篇，其中最多两篇在副区纵向�
 
 alpha.318 隔离副区分隔线可鼠标拖动，也可聚焦后用上下方向键按 8px 调整。缩到标题时仍保留草稿和选区，展开可继续编辑。见[F-035l 迭代](iterations/F-035l-real-secondary-document-divider.md)。
 
+alpha.319 隔离副区可用 ⌘⇧M 切换活动文档模式，⌘F 打开活动源码文档的查找。各篇保持自己的模式和查询，移回主区仍可继续查找。见[F-035m 迭代](iterations/F-035m-real-secondary-mode-search-ownership.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

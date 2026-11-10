@@ -5,6 +5,8 @@ import { createCurrentCanonical } from "../client/current-canonical";
 import ReaderWorker from "../client/current-canonical.worker?worker&inline";
 import { readerImageCandidates } from "../client/reader-image-candidate";
 import { createReaderImageReceiver, type ReaderImageReceiver } from "../client/reader-image-receiver";
+import { createReadingHeadingFolds, type ReadingHeadingFolds } from "../client/reading-heading-folds";
+import type { ReadingHeadingProjection } from "../client/reading-heading-structure";
 import { firstReadingBlock } from "../client/reading-position";
 import { createReadingSearchRegistry, type ReadingSearchRegistry } from "../client/reading-search-registry";
 import { copyReadingSelection } from "../client/reading-selection-copy";
@@ -72,13 +74,14 @@ function checkBridge(name: string, handlerName: string) {
   }
 }
 
-function Reader({ content, label, experimental, retainVerifiedArticle, searchRegistry, current }: {
+function Reader({ content, label, experimental, retainVerifiedArticle, searchRegistry, current, folds }: {
   content: ReactNode;
   label: string;
   experimental: boolean;
   retainVerifiedArticle?: (element: HTMLElement | null) => void;
   searchRegistry?: ReadingSearchRegistry;
   current?: () => boolean;
+  folds?: ReadingHeadingFolds;
 }) {
   const [auditResult, setAuditResult] = useState<{ safe: boolean; details: string }>();
   const [theme, setTheme] = useState<ReadingThemeId>("paper");
@@ -88,13 +91,18 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
   const audit = useCallback((element: HTMLElement | null) => {
     article.current = element;
     retainVerifiedArticle?.(null);
-    if (!element) return;
+    if (!element) {
+      folds?.bind(null);
+      return;
+    }
     const domSafe = auditReadingContent(element).safe;
     const executed = "__readerFixtureExecuted" in globalThis;
     const internal = checkBridge("__electrobunInternalBridge", "internalBridge");
     const host = checkBridge("__electrobunHostBridge", "hostBridge");
     const legacy = checkBridge("__electrobunBunBridge", "bunBridge");
-    const safe = domSafe && !executed && internal.clear && host.clear && legacy.clear;
+    const boundarySafe = domSafe && !executed && internal.clear && host.clear && legacy.clear;
+    const foldSafe = !folds || (boundarySafe && folds.bind(element));
+    const safe = boundarySafe && foldSafe;
     if (safe) retainVerifiedArticle?.(element);
     const unexpected = domSafe ? undefined : [...element.querySelectorAll("*")]
       .find((node) => !isControlledReadingElement(node));
@@ -104,13 +112,13 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
     setAuditResult({
       safe,
       details: [
-        `DOM=${Number(domSafe)} first=${first} script=${Number(executed)}`,
+        `DOM=${Number(domSafe)} first=${first} script=${Number(executed)} folds=${Number(foldSafe)}`,
         `internal=${internal.details}`,
         `host=${host.details}`,
         `legacy=${legacy.details}`,
       ].join(" "),
     });
-  }, [retainVerifiedArticle]);
+  }, [folds, retainVerifiedArticle]);
   const safe = auditResult?.safe;
   useLayoutEffect(() => {
     const element = article.current;
@@ -136,9 +144,11 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
     const scrollTop = scroller?.scrollTop ?? 0;
     const viewportTop = () => Math.max(0, themeControls.current?.getBoundingClientRect().bottom ?? 0);
     const top = viewportTop();
+    const visible = folds?.presentation().visible;
     const blocks = article.current?.children;
-    const block = blocks?.item(firstReadingBlock(blocks.length, (index) =>
-      (blocks.item(index)?.getBoundingClientRect().bottom ?? 0) > top
+    const blockAt = (index: number) => visible ? visible[index] : blocks?.item(index);
+    const block = blockAt(firstReadingBlock(visible?.length ?? blocks?.length ?? 0, (index) =>
+      (blockAt(index)?.getBoundingClientRect().bottom ?? 0) > top
     ));
     const offset = block?.hasAttribute("data-reading-from")
       ? block.getBoundingClientRect().top - top
@@ -183,7 +193,7 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
             ))}
           </div>
           {searchRegistry && current && (
-            <ReaderFind article={article} toolbar={themeControls} registry={searchRegistry} current={current} theme={theme} />
+            <ReaderFind article={article} toolbar={themeControls} registry={searchRegistry} current={current} theme={theme} folds={folds} />
           )}
         </div>
       )}
@@ -224,14 +234,24 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
       ? { nodes, receiver: imageReceiver, current }
       : undefined;
     if (!snapshotImages) imageReceiver?.close();
+    const headingProjection: ReadingHeadingProjection | undefined =
+      searchRegistry && result.tree.children.some((node) => node.type === "heading")
+        ? { blocks: [], sections: [] }
+        : undefined;
+    const folds = headingProjection && searchRegistry
+      ? createReadingHeadingFolds(headingProjection, searchRegistry)
+      : undefined;
+    const content = commonmarkContent(result.tree, source.text, undefined, current,
+      searchRegistry, snapshotImages, headingProjection, folds);
     root.render(
       <Reader
-        content={commonmarkContent(result.tree, source.text, undefined, current, searchRegistry, snapshotImages)}
+        content={content}
         label={label}
         experimental={experimental}
         retainVerifiedArticle={retainVerifiedArticle}
         searchRegistry={searchRegistry}
         current={current}
+        folds={headingProjection?.sections.length ? folds : undefined}
       />
     );
   });

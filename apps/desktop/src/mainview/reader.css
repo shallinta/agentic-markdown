@@ -80,3 +80,27 @@
   background-color: var(--reading-search-current);
   color: var(--reading-search-text);
 }
+
+.reading-heading-fold { position: relative; }
+.reading-heading-toggle {
+  position: absolute;
+  right: 100%;
+  top: 0;
+  width: 1.5rem;
+  height: 2.5rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transform: rotate(90deg);
+}
+.reading-heading-fold:hover > .reading-heading-toggle,
+.reading-heading-toggle:focus-visible,
+.reading-heading-toggle[aria-expanded="false"] { opacity: 0.7; }
+.reading-heading-toggle[aria-expanded="false"] { transform: none; }
+.reading-heading-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+@media (max-width: 52rem) {
+  article:has(.reading-heading-toggle) { padding-inline-start: 1.5rem; }
+}

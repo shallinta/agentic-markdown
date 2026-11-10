@@ -10,6 +10,7 @@ import {
   type ReadingProjection,
   type ReadingRun,
 } from "./reading-search-projection";
+import type { ReadingVisibleRangesRequest } from "./reading-search-ranges-protocol";
 import type { ReadingSearchRegistry } from "./reading-search-registry";
 import {
   validSearchResult,
@@ -29,6 +30,28 @@ export interface ReadingSearchState {
   status: "idle" | "preparing" | "running" | "ready" | "failed";
   result: SearchResult | null;
 }
+export interface ReadingSearchPresentation {
+  revision: number;
+  visible?: readonly HTMLElement[];
+}
+type ReadingRequest = SearchRequest | ReadingVisibleRangesRequest;
+type RequestBody<T = ReadingRequest> = T extends ReadingRequest
+  ? Omit<T, "epoch" | "id">
+  : never;
+type ViewportBody = Extract<RequestBody, { kind: "viewport" | "viewport-ranges" }>;
+type ReadingBlock = ReadingDomSnapshot["blocks"][number];
+
+function validReadingResult(data: unknown, request: ReadingRequest, length: number): data is SearchResult {
+  if (request.kind !== "viewport-ranges") return validSearchResult(data, request, length);
+  if (!validSearchResult(data, { kind: "viewport", epoch: request.epoch, id: request.id, from: 0, to: length }, length)) return false;
+  let interval = 0;
+  for (let i = 0; i < data.ranges.length; i += 2) {
+    const from = data.ranges[i], to = data.ranges[i + 1];
+    while (request.intervals[interval]?.[1] <= from) interval++;
+    if (request.intervals[interval] === undefined || request.intervals[interval][0] >= to) return false;
+  }
+  return true;
+}
 /** One mounted reading consumer, with its own cancellation/worker ownership. */
 export function createReadingSearchOwner(
   root: HTMLElement,
@@ -36,7 +59,8 @@ export function createReadingSearchOwner(
   current: () => boolean,
   factory: () => ReadingSearchWorker,
   notify: (state: ReadingSearchState) => void,
-  completed: (result: SearchResult) => void
+  completed: (result: SearchResult) => void,
+  presentation?: () => ReadingSearchPresentation
 ) {
   let worker: ReadingSearchWorker | undefined;
   let dom: ReadingDomSnapshot | undefined;
@@ -59,9 +83,9 @@ export function createReadingSearchOwner(
   let length = 0;
   let queuedNavigation = 0;
   let failureKey: string | undefined;
-  let queuedViewport:
-    { kind: "viewport"; from: number; to: number } | undefined;
-  const pending = new Map<number, SearchRequest>();
+  let queuedViewport: { body: ViewportBody; revision?: number } | undefined;
+  let visibleCache: { revision: number; blocks: ReadingBlock[]; runEnds: number[] } | undefined;
+  const pending = new Map<number, { request: ReadingRequest; revision?: number }>();
   const blockCache = new WeakMap<HTMLElement, ReadingBlockCache>();
   const valid = (g = generation) =>
     !disposed &&
@@ -82,6 +106,7 @@ export function createReadingSearchOwner(
     worker = undefined;
     dom = undefined;
     projection = undefined;
+    visibleCache = undefined;
     pending.clear();
     queuedNavigation = 0;
     queuedViewport = undefined;
@@ -92,16 +117,16 @@ export function createReadingSearchOwner(
     failureKey = JSON.stringify(options);
     if (!disposed) notify({ status: "failed", result: null });
   };
-  const send = (body: Omit<SearchRequest, "epoch" | "id">) => {
+  const send = (body: RequestBody, revision?: number) => {
     if (!valid() || !worker || !projection) return;
     if (pending.size) return;
     const request = {
       ...body,
       epoch: String(generation),
       id: ++requestId,
-    } as SearchRequest;
+    };
     latest = request.id;
-    pending.set(request.id, request);
+    pending.set(request.id, { request, revision });
     clearTimeout(deadline);
     deadline = setTimeout(fail, 15000);
     try {
@@ -145,7 +170,7 @@ export function createReadingSearchOwner(
       kind: "scan",
       options,
       position: at,
-    } as Omit<SearchRequest, "epoch" | "id">);
+    });
   };
   const prepare = () => {
     clear();
@@ -260,10 +285,10 @@ export function createReadingSearchOwner(
             fail();
             return;
           }
-          const request = pending.get(data.id);
+          const entry = pending.get(data.id);
           pending.delete(data.id);
-          if (!request || data.id !== latest) return;
-          if (!validSearchResult(data, request, length)) {
+          if (!entry || data.id !== latest) return;
+          if (!validReadingResult(data, entry.request, length)) {
             fail();
             return;
           }
@@ -276,17 +301,18 @@ export function createReadingSearchOwner(
           if (queuedNavigation) {
             const direction = queuedNavigation;
             queuedNavigation = 0;
-            send({ kind: "navigate", direction } as Omit<
-              SearchRequest,
-              "epoch" | "id"
-            >);
+            send({ kind: "navigate", direction });
             return;
           }
           const viewport = queuedViewport;
           queuedViewport = undefined;
-          if (viewport && request.kind === "viewport") {
-            send(viewport);
-            return;
+          if (data.kind === "viewport") {
+            const revision = presentation?.().revision;
+            if (viewport && viewport.revision === revision) {
+              send(viewport.body, viewport.revision);
+              return;
+            }
+            if (entry.revision !== revision) return;
           }
           notify({ status: "ready", result: data });
           completed(data);
@@ -348,39 +374,60 @@ export function createReadingSearchOwner(
         );
         return;
       }
-      send({ kind: "navigate", direction } as Omit<
-        SearchRequest,
-        "epoch" | "id"
-      >);
+      send({ kind: "navigate", direction });
     },
     viewport(scroller: { getBoundingClientRect(): Pick<DOMRectReadOnly, "top" | "bottom"> }) {
       if (!valid() || !projection || !dom) return;
+      const layout = presentation?.();
+      const revision = layout?.revision;
+      if (!layout?.visible) visibleCache = undefined;
+      else if (visibleCache?.revision !== layout.revision) {
+        const blocks: ReadingBlock[] = [];
+        const ordinals: number[] = [];
+        let next = 0;
+        for (const element of layout.visible) {
+          while (next < dom.blocks.length && dom.blocks[next].element !== element) next++;
+          if (next === dom.blocks.length) {
+            fail();
+            return;
+          }
+          blocks.push(dom.blocks[next]);
+          ordinals.push(next++);
+        }
+        const runEnds = new Array<number>(blocks.length);
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          runEnds[i] = ordinals[i + 1] === ordinals[i] + 1 ? runEnds[i + 1] : i + 1;
+        }
+        visibleCache = { revision: layout.revision, blocks, runEnds };
+      }
+      const visible = visibleCache;
+      const blocks = visible?.blocks ?? dom.blocks;
       const bounds = scroller.getBoundingClientRect();
       // Ordered block geometry: binary search avoids scanning the whole DOM on scroll.
       let lo = 0,
-        hi = dom.blocks.length;
+        hi = blocks.length;
       while (lo < hi) {
         const mid = (lo + hi) >>> 1;
         if (
-          dom.blocks[mid].element.getBoundingClientRect().bottom <
+          blocks[mid].element.getBoundingClientRect().bottom <
           bounds.top - 200
         )
           lo = mid + 1;
         else hi = mid;
       }
       const startBlock = lo;
-      const first = dom.blocks[lo]?.first ?? dom.leaves.length;
-      hi = dom.blocks.length;
+      const first = blocks[lo]?.first ?? dom.leaves.length;
+      hi = blocks.length;
       while (lo < hi) {
         const mid = (lo + hi) >>> 1;
         if (
-          dom.blocks[mid].element.getBoundingClientRect().top <=
+          blocks[mid].element.getBoundingClientRect().top <=
           bounds.bottom + 200
         )
           lo = mid + 1;
         else hi = mid;
       }
-      const last = lo > startBlock ? dom.blocks[lo - 1].last : first;
+      const last = lo > startBlock ? blocks[lo - 1].last : first;
       const offset = (leaf: number) => {
         let a = 0,
           b = projection!.runs.length;
@@ -431,8 +478,8 @@ export function createReadingSearchOwner(
           return null;
         };
         const refined = refineReadingViewport(
-          [from, offset(dom.blocks[startBlock].last)],
-          [offset(dom.blocks[lo - 1].first), to],
+          [from, offset(blocks[startBlock].last)],
+          [offset(blocks[lo - 1].first), to],
           bounds.top - 200,
           bounds.bottom + 200,
           (a, b, scope) => {
@@ -451,28 +498,35 @@ export function createReadingSearchOwner(
           () => valid(g),
           {
             start:
-              dom.blocks[startBlock].element.getBoundingClientRect().top <
+              blocks[startBlock].element.getBoundingClientRect().top <
               bounds.top - 200,
             end:
-              dom.blocks[lo - 1].element.getBoundingClientRect().bottom >
+              blocks[lo - 1].element.getBoundingClientRect().bottom >
               bounds.bottom + 200,
           }
         );
         from = refined.from;
         to = refined.to;
       }
-      if (!valid()) return;
-      const request = {
-        kind: "viewport" as const,
-        from,
-        to,
-      };
+      if (!valid() || revision !== presentation?.().revision) return;
+      let body: ViewportBody = { kind: "viewport", from, to };
+      if (visible) {
+        const intervals: [number, number][] = [];
+        for (let i = startBlock; i < lo;) {
+          const end = Math.min(visible.runEnds[i], lo);
+          const startOffset = i === startBlock ? from : offset(blocks[i].first);
+          const endOffset = end === lo ? to : offset(blocks[end - 1].last);
+          if (startOffset < endOffset) intervals.push([startOffset, endOffset]);
+          i = end;
+        }
+        body = { kind: "viewport-ranges", intervals };
+      }
       if (pending.size) {
-        queuedViewport = request;
+        queuedViewport = { body, revision };
         return;
       }
       queuedViewport = undefined;
-      send(request);
+      send(body, revision);
     },
     range(from: number, to: number): Range | null {
       if (!valid() || !projection || !dom) return null;

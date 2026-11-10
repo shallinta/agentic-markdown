@@ -5,6 +5,7 @@ import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
 import type { ReaderImageReceiver } from "../client/reader-image-receiver";
 import { isOwnedReadingCode } from "../client/reading-code-ownership";
+import { isOwnedReadingFoldBlock, isOwnedReadingFoldButton, type ReadingHeadingFolds } from "../client/reading-heading-folds";
 import { readingHeadingSections, type ReadingHeadingProjection, type ReadingRootBlock } from "../client/reading-heading-structure";
 import type { ReadingSearchRegistry } from "../client/reading-search-registry";
 import { ReadingCode } from "../components/reading-code";
@@ -40,7 +41,8 @@ export function commonmarkContent(
   codeCurrent?: () => boolean,
   search?: ReadingSearchRegistry,
   snapshotImages?: { nodes: readonly object[]; receiver: ReaderImageReceiver; current: () => boolean },
-  headingProjection?: ReadingHeadingProjection
+  headingProjection?: ReadingHeadingProjection,
+  folds?: ReadingHeadingFolds
 ): ReactNode {
   let work = 0;
   let definitionWork = 0;
@@ -355,35 +357,52 @@ export function commonmarkContent(
   };
   try {
     if (headingProjection) { headingProjection.blocks = []; headingProjection.sections = []; }
-    const blocks: ReadingRootBlock[] | undefined = headingProjection ? [] : undefined;
+    let sections: Set<number> | undefined;
+    if (headingProjection) {
+      const blocks: ReadingRootBlock[] = [];
+      for (const [index, node] of tree.children.entries()) {
+        if (node.type === "definition") continue;
+        if (blocks.length >= 100000) throw Error("Presentation budget");
+        blocks.push({ id: index, from: (node.position?.start.offset ?? NaN), to: (node.position?.end.offset ?? NaN),
+          ...(node.type === "heading" ? { headingDepth: node.depth } : {}) });
+      }
+      const projected = readingHeadingSections(blocks);
+      if (projected) {
+        headingProjection.blocks = blocks;
+        headingProjection.sections = projected;
+        sections = new Set(projected.map((section) => section.headingId));
+      }
+    }
     if (images) collect(tree);
     const content = tree.children.map((node, index) => {
       if (node.type === "definition") return null;
       raw(node);
-      blocks?.push({ id: index, from: node.position!.start.offset!, to: node.position!.end.offset!,
-        ...(node.type === "heading" ? { headingDepth: node.depth } : {}) });
+      const foldable = !!folds && sections?.has(index) === true;
       return (
         <div
           key={index}
-          ref={(element) =>
-            element
-              ? search?.mount(element, { kind: "block", id: index })
-              : undefined
-          }
+          ref={(element) => {
+            if (!element) return;
+            const releaseSearch = search?.mount(element, { kind: "block", id: index });
+            const releaseFold = sections?.size ? folds?.registerBlock(index, element) : undefined;
+            return () => { releaseSearch?.(); releaseFold?.(); };
+          }}
+          className={foldable ? "reading-heading-fold" : undefined}
           data-reading-from={node.position!.start.offset}
           data-reading-to={node.position!.end.offset}
         >
+          {foldable && <button
+            type="button"
+            className="reading-heading-toggle"
+            aria-label="折叠章节"
+            aria-expanded="true"
+            ref={(element) => element ? folds.registerButton(index, element) : undefined}
+            onClick={() => folds.toggle(index)}
+          >▸</button>}
           {render(node, 0, index, true)}
         </div>
       );
     });
-    if (headingProjection && blocks) {
-      const sections = readingHeadingSections(blocks);
-      if (sections) {
-        headingProjection.blocks = blocks;
-        headingProjection.sections = sections;
-      }
-    }
     return content;
   } catch {
     if (headingProjection) { headingProjection.blocks = []; headingProjection.sections = []; }
@@ -466,6 +485,13 @@ export function isControlledReadingElement(element: {
   attributes: Iterable<{ name: string; value: string }>;
 }): boolean {
   if (isCodeElement(element)) return true;
+  if (isOwnedReadingFoldButton(element)) {
+    const attrs = new Map([...element.attributes].map(({ name, value }) => [name, value]));
+    return element.namespaceURI === "http://www.w3.org/1999/xhtml" && element.localName === "button" &&
+      attrs.size === 4 && attrs.get("class") === "reading-heading-toggle" && attrs.get("type") === "button" &&
+      ((attrs.get("aria-expanded") === "true" && attrs.get("aria-label") === "折叠章节") ||
+        (attrs.get("aria-expanded") === "false" && attrs.get("aria-label") === "展开章节"));
+  }
   if (
     ["table", "thead", "tbody", "tr", "th", "td"].includes(element.localName)
   ) {
@@ -525,6 +551,10 @@ export function isControlledReadingElement(element: {
     element.namespaceURI === "http://www.w3.org/1999/xhtml" &&
     tags.has(element.localName) &&
     [...element.attributes].every((attribute) => {
+      if (attribute.name === "hidden")
+        return element.localName === "div" && isOwnedReadingFoldBlock(element) && attribute.value === "";
+      if (attribute.name === "class" && attribute.value === "reading-heading-fold")
+        return element.localName === "div" && isOwnedReadingFoldBlock(element);
       if (attribute.name === "class")
         return classes[element.localName]?.includes(attribute.value) === true;
       if (attribute.name === "title")
@@ -561,6 +591,15 @@ export function auditReadingContent(root: Element): {
   const elements = [...root.querySelectorAll("*")];
   const safe = elements.every((element) => {
     if (!isControlledReadingElement(element)) return false;
+    if (isOwnedReadingFoldBlock(element) && element.parentElement !== root) return false;
+    if (isOwnedReadingFoldButton(element)) {
+      const owner = element.parentElement;
+      return !!owner && owner.parentElement === root && isOwnedReadingFoldBlock(owner) && owner.className === "reading-heading-fold" &&
+        owner.children.length === 2 && owner.firstElementChild === element &&
+        /^h[1-6]$/.test(owner.lastElementChild?.localName ?? "") && element.childElementCount === 0 && element.textContent === "▸";
+    }
+    if (element.className === "reading-heading-fold" &&
+      (!element.firstElementChild || !isOwnedReadingFoldButton(element.firstElementChild))) return false;
     if (
       element.localName === "button" ||
       element.className.startsWith("reading-code")

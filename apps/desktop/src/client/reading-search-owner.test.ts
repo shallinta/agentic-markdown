@@ -4,6 +4,7 @@ import { READING_SEARCH_UNITS } from "./reading-search-dom";
 import { readingHighlightRanges } from "./reading-search-highlight";
 import {
   createReadingSearchOwner,
+  type ReadingSearchPresentation,
   type ReadingSearchWorker,
   type ReadingSearchState,
 } from "./reading-search-owner";
@@ -12,6 +13,7 @@ import {
   type ReadingLeaf,
   type ReadingProjection,
 } from "./reading-search-projection";
+import type { ReadingVisibleRangesRequest } from "./reading-search-ranges-protocol";
 import { createReadingSearchRegistry } from "./reading-search-registry";
 import { createSearchEngine } from "./source-search-engine";
 import type { SearchRequest, SearchResult } from "./source-search-protocol";
@@ -19,7 +21,7 @@ import { createSearchStore } from "./source-search-store";
 
 const wait = () => new Promise((resolve) => setTimeout(resolve, 25));
 const last = <T>(values: T[]) => values[values.length - 1];
-function fixture(content = "x x x", pre = false) {
+function fixture(content = "x x x", pre = false, presentation?: () => ReadingSearchPresentation) {
   let reads = 0,
     current = true;
   const text = {
@@ -45,7 +47,7 @@ function fixture(content = "x x x", pre = false) {
   } as unknown as HTMLElement;
   Object.defineProperty(text, "parentElement", { value: root });
   const registry = createReadingSearchRegistry();
-  registry.mount(root, { kind: "block", id: 0 });
+  const unregisterRoot = registry.mount(root, { kind: "block", id: 0 });
   const states: ReadingSearchState[] = [];
   let completed: (result: SearchResult) => void = () => undefined;
   class Fake implements ReadingSearchWorker {
@@ -63,9 +65,10 @@ function fixture(content = "x x x", pre = false) {
     terminate() {
       this.closed++;
     }
-    reply() {
+    reply(transform = (result: SearchResult) => result) {
       const request = this.requests.shift() as
         | SearchRequest
+        | ReadingVisibleRangesRequest
         | { kind: "prepare"; epoch: string; leaves: ReadingLeaf[] };
       if (request.kind === "prepare") {
         const job = projectReading(request.leaves, READING_SEARCH_UNITS);
@@ -80,6 +83,8 @@ function fixture(content = "x x x", pre = false) {
             runs: next.value.runs,
           },
         } as MessageEvent<unknown>);
+      } else if (request.kind === "viewport-ranges") {
+        this.onmessage?.({ data: transform(this.engine.selectRanges(request)) } as MessageEvent<unknown>);
       } else {
         const full =
           request.kind === "scan" && !this.initialized
@@ -90,7 +95,7 @@ function fixture(content = "x x x", pre = false) {
               }
             : request;
         if (request.kind === "scan") this.initialized = true;
-        this.onmessage?.({ data: this.engine(full) } as MessageEvent<unknown>);
+        this.onmessage?.({ data: transform(this.engine(full)) } as MessageEvent<unknown>);
       }
     }
   }
@@ -105,13 +110,15 @@ function fixture(content = "x x x", pre = false) {
       return w;
     },
     (s) => states.push(s),
-    (result) => completed(result)
+    (result) => completed(result),
+    presentation
   );
   const options = { query: "x", caseSensitive: false, wholeWord: false };
   return {
     root,
     text,
     registry,
+    unregisterRoot,
     workers,
     states,
     owner,
@@ -407,4 +414,74 @@ test("last scroll viewport is coalesced while an older viewport is in flight", a
   expect(worker.requests).toHaveLength(0);
   expect(last(f.states)?.result?.kind).toBe("viewport");
   f.owner.dispose();
+});
+
+test("folded viewport skips hidden geometry and dense matches without restarting search", async () => {
+  let layout: ReadingSearchPresentation = { revision: 0 };
+  let hidden = false;
+  let hiddenGeometryReads = 0;
+  const f = fixture("", false, () => layout);
+  f.unregisterRoot();
+  const blocks = ["x", "x ".repeat(2050), "x"].map((content, index) => {
+    const element = {
+      ...f.root,
+      parentElement: f.root,
+      getBoundingClientRect() {
+        if (hidden && index === 1) {
+          hiddenGeometryReads++;
+          return { top: 0, bottom: 0 };
+        }
+        return { top: 20 * index, bottom: 20 * (index + 1) };
+      },
+      firstChild: { nodeType: 3, length: content.length, data: content, nextSibling: null },
+    } as unknown as HTMLElement;
+    f.registry.mount(element, { kind: "block", id: index * 2 });
+    return element;
+  });
+  Object.assign(f.root, { firstElementChild: blocks[0] });
+  Object.assign(blocks[0], { nextElementSibling: blocks[1] });
+  Object.assign(blocks[1], { nextElementSibling: blocks[2] });
+  const sourceVersion = f.registry.version;
+  const viewport = { getBoundingClientRect: () => ({ top: 0, bottom: 100 }) };
+  try {
+    f.owner.update(f.options, null, true);
+    await wait();
+    const worker = f.workers[0];
+    worker.reply();
+    worker.reply();
+    expect(last(f.states)?.result?.count).toBe(2052);
+    f.owner.viewport(viewport);
+    expect((worker.requests[0] as SearchRequest).kind).toBe("viewport");
+    const beforeFold = f.states.length;
+    hidden = true;
+    layout = { revision: 1, visible: [blocks[0], blocks[2]] };
+    worker.reply();
+    expect(f.states).toHaveLength(beforeFold);
+    f.owner.viewport(viewport);
+    const request = worker.requests[0] as ReadingVisibleRangesRequest;
+    expect(request.kind).toBe("viewport-ranges");
+    expect(request.intervals).toHaveLength(2);
+    worker.reply();
+    expect(last(f.states)?.result).toMatchObject({ count: 2052, index: 0, limited: false });
+    expect(last(f.states)?.result?.ranges).toHaveLength(4);
+    expect(hiddenGeometryReads).toBe(0);
+    expect(f.registry.version).toBe(sourceVersion);
+    expect(f.workers).toHaveLength(1);
+    expect(worker.closed).toBe(0);
+
+    f.owner.navigate(1);
+    worker.reply();
+    const match = last(f.states)?.result?.current;
+    expect(last(f.states)?.result).toMatchObject({ kind: "navigate", index: 1 });
+    expect(match?.[0]).toBeGreaterThanOrEqual(request.intervals[0][1]);
+    expect(match?.[1]).toBeLessThanOrEqual(request.intervals[1][0]);
+    f.owner.viewport(viewport);
+    worker.reply();
+    expect(last(f.states)?.result?.current).toEqual(match);
+    f.owner.viewport(viewport);
+    worker.reply((result) => ({ ...result, ranges: match ?? [] }));
+    expect(last(f.states)?.status).toBe("failed");
+  } finally {
+    f.owner.dispose();
+  }
 });

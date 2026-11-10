@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-040d 独立阅读标题折叠（2026-11-10）
+
+普通阅读快照的顶层章节折叠、全文查找自动展开和高亮已验。嵌套容器标题、跨窗、大纲、围栏自身折叠及最终离线继续跟踪。见[F-040d 迭代](iterations/F-040d-independent-reader-heading-folds.md)。
+
 ## F-040c 阅读查找可见范围（2026-11-10）
 
 内部 Worker 可按可见区间返回高亮，全文计数保持。正式折叠、查找定位与可见位置测量由 F-040d 承接。见[F-040c 迭代](iterations/F-040c-reader-search-visible-ranges.md)。

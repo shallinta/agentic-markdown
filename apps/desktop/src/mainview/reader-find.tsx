@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { createReadingHighlights, readingHighlightRanges } from "../client/reading-search-highlight";
-import { createReadingSearchOwner, type ReadingSearchState } from "../client/reading-search-owner";
+import { createReadingSearchOwner, type ReadingSearchPresentation, type ReadingSearchState } from "../client/reading-search-owner";
 import type { ReadingSearchRegistry } from "../client/reading-search-registry";
 import ReadingWorker from "../client/reading-search.worker?worker&inline";
 import type { ReadingThemeId } from "../client/reading-theme";
@@ -10,12 +10,20 @@ import { SEARCH_LIMIT, type SearchOptions } from "../client/source-search-protoc
 const emptyOptions: SearchOptions = { query: "", caseSensitive: false, wholeWord: false };
 const idle: ReadingSearchState = { status: "idle", result: null };
 
-export function ReaderFind({ article, toolbar, registry, current, theme }: {
+interface ReaderFindFolds {
+  presentation(): ReadingSearchPresentation;
+  subscribe(listener: () => void): () => void;
+  reveal(range: Range): void;
+  visible(range: Range): boolean;
+}
+
+export function ReaderFind({ article, toolbar, registry, current, theme, folds }: {
   article: RefObject<HTMLElement | null>;
   toolbar: RefObject<HTMLDivElement | null>;
   registry: ReadingSearchRegistry;
   current: () => boolean;
   theme: ReadingThemeId;
+  folds?: ReaderFindFolds;
 }) {
   const input = useRef<HTMLTextAreaElement>(null);
   const beforeFind = useRef<HTMLElement | null>(null);
@@ -35,7 +43,7 @@ export function ReaderFind({ article, toolbar, registry, current, theme }: {
     setOptions(emptyOptions);
     const previous = beforeFind.current;
     beforeFind.current = null;
-    (previous?.isConnected ? previous : element)?.focus({ preventScroll: true });
+    (previous?.isConnected && !previous.closest("[hidden]") ? previous : element)?.focus({ preventScroll: true });
   }, [current]);
 
   useEffect(() => {
@@ -66,13 +74,16 @@ export function ReaderFind({ article, toolbar, registry, current, theme }: {
         try {
           const { selected, ranges } = readingHighlightRanges(result, (from, to) => session.range(from, to));
           if (result.kind === "viewport") {
-            if (ranges.length || selected) {
+            const visible = selected && (!folds || folds.visible(selected)) ? selected : null;
+            if (ranges.length || visible) {
               highlights ??= createReadingHighlights(element.ownerDocument, "independent");
-              highlights.paint(ranges, selected);
+              highlights.paint(ranges, visible);
             } else highlights?.clear();
             return;
           }
           if (result.kind === "navigate" && selected) {
+            folds?.reveal(selected);
+            if (folds && !folds.visible(selected)) throw Error("阅读查找目标不可见");
             const { top, bottom } = bounds.getBoundingClientRect();
             window.scrollBy(0, selected.getBoundingClientRect().top - top - Math.min(80, (bottom - top) / 3));
           }
@@ -81,7 +92,8 @@ export function ReaderFind({ article, toolbar, registry, current, theme }: {
           highlights?.clear();
           session.rejectPresentation();
         }
-      }
+      },
+      folds && (() => folds.presentation())
     );
     owner.current = session;
     const refresh = () => {
@@ -90,6 +102,10 @@ export function ReaderFind({ article, toolbar, registry, current, theme }: {
       scrollTimer = setTimeout(() => session.viewport(bounds), 30);
     };
     updateViewport.current = refresh;
+    const releaseFolds = folds?.subscribe(() => {
+      highlights?.clear();
+      refresh();
+    });
     const onKey = (event: KeyboardEvent) => {
       if (!current() || composing.current || event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape" && input.current) {
@@ -116,6 +132,7 @@ export function ReaderFind({ article, toolbar, registry, current, theme }: {
       window.removeEventListener("resize", refresh);
       window.removeEventListener("pagehide", dispose);
       session.dispose();
+      releaseFolds?.();
       highlights?.dispose();
       owner.current = null;
       updateViewport.current = undefined;
@@ -126,7 +143,7 @@ export function ReaderFind({ article, toolbar, registry, current, theme }: {
     window.addEventListener("resize", refresh);
     window.addEventListener("pagehide", dispose, { once: true });
     return dispose;
-  }, [article, toolbar, registry, current, close]);
+  }, [article, toolbar, registry, current, close, folds]);
 
   useEffect(() => {
     if (open) input.current?.focus({ preventScroll: true });

@@ -2175,3 +2175,69 @@ test("interaction exceptions and synchronous owner replacement reject the checke
   expect(c.canToggleSourceMode()).toBe(true);
   c.dispose();
 });
+
+test("grouped editor command owners route each active view and reject stale cleanup or reload", async () => {
+  const { controller: c, value: a, transport } = setup();
+  await c.select(); c.toggleSourceMode();
+  const b = snapshot("second");
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await c.select(); c.toggleSourceMode();
+  const calls: string[] = [];
+  const targets = (id: string) => ({
+    sourceSelection: { ready: () => true, run: () => { calls.push(`${id}:selection`); return true; } },
+    listInput: { ready: () => true, run: () => { calls.push(`${id}:list`); return true; } },
+    indentation: { ready: () => true, run: () => { calls.push(`${id}:indent`); return true; } },
+    scheduleWrapping: () => { calls.push(`${id}:wrap`); },
+  });
+  const oldB = c.registerEditorCommandTargets(b.documentId, targets("old"));
+  const releaseA = c.registerEditorCommandTargets(a.documentId, targets("a"));
+  const releaseB = c.registerEditorCommandTargets(b.documentId, targets("b"));
+  oldB();
+  expect(c.runSourceSelection("above", b.documentId)).toBe(true);
+  expect(c.runListInput(false, b.documentId)).toBe(true);
+  expect(c.runSourceIndentation(true, b.documentId)).toBe(true);
+  c.setSourceWrapping(false);
+  expect(calls).toEqual(["b:selection", "b:list", "b:indent", "b:wrap"]);
+  c.activateTab(a.documentId);
+  expect(c.runListInput(false, b.documentId)).toBe(false);
+  expect(c.runListInput(false, a.documentId)).toBe(true);
+  releaseB();
+  expect(c.runSourceIndentation(false, a.documentId)).toBe(true);
+  transport.readDocument = request => Promise.resolve(result(request, a));
+  await c.reload();
+  expect(c.canRunListInput()).toBe(false);
+  c.registerEditorCommandTargets(a.documentId, { listInput: targets("new").listInput });
+  releaseA();
+  expect(c.runListInput(false, a.documentId)).toBe(true);
+  expect(c.canIndentSource()).toBe(false);
+  expect(c.canRunSourceSelection()).toBe(false);
+  c.dispose();
+});
+
+for (const kind of ["sourceSelection", "listInput", "indentation"] as const) {
+  test(`command ${kind} rejects owner replacement and recursive ready before dispatch`, async () => {
+    const { controller: c, value } = setup();
+    await c.select(); c.toggleSourceMode();
+    let calls = 0;
+    const run = () => {
+      if (kind === "sourceSelection") return c.runSourceSelection("above", value.documentId);
+      if (kind === "listInput") return c.runListInput(false, value.documentId);
+      return c.runSourceIndentation(false, value.documentId);
+    };
+    c.registerEditorCommandTargets(value.documentId, { [kind]: {
+      ready: () => {
+        expect(run()).toBe(false);
+        c.registerEditorCommandTargets(value.documentId, { [kind]: { ready: () => true, run: () => { calls++; return true; } } });
+        return true;
+      },
+      run: () => { calls += 100; return true; },
+    } });
+    expect(run()).toBe(false);
+    expect(calls).toBe(0);
+    expect(run()).toBe(true);
+    expect(calls).toBe(1);
+    c.registerEditorCommandTargets(value.documentId, { [kind]: { ready: () => { throw Error("ready"); }, run: () => true } });
+    expect(run()).toBe(false);
+    c.dispose();
+  });
+}

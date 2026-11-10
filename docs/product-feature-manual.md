@@ -132,7 +132,7 @@ F-032a 已在隔离模型验证持久文档的区域路由，普通窗口的打�
 
 alpha.304 的合成路由实验台可验证双击打开、显式移区、满载回退和最后一篇移出时收起。实验只用合成文档，普通窗口无此入口。见[F-032b 迭代](iterations/F-032b-document-region-workspace-lab.md)。
 
-普通窗口仍按文档保持当前位置。alpha.305 已复验切换标签、切换编辑与源码模式，以及重新读取后返回新位置。见[F-035a 迭代](iterations/F-035a-document-viewport-ownership.md)。 alpha.306 进一步复验滚动快照和故障后的安全源码位置，正常操作入口不变。见[F-035b 迭代](iterations/F-035b-editor-scroll-ownership.md)。 alpha.307 已复验两篇文档各自的撤销、重做、选区，以及重新读取后继续编辑。见[F-035c 迭代](iterations/F-035c-editor-dispatch-ownership.md)。 alpha.308 已复验中文候选期间阻止保存、切标签和切模式，上屏或取消后恢复。见[F-035d 迭代](iterations/F-035d-editor-interaction-ownership.md)。
+普通窗口仍按文档保持当前位置。alpha.305 已复验切换标签、切换编辑与源码模式，以及重新读取后返回新位置。见[F-035a 迭代](iterations/F-035a-document-viewport-ownership.md)。 alpha.306 进一步复验滚动快照和故障后的安全源码位置，正常操作入口不变。见[F-035b 迭代](iterations/F-035b-editor-scroll-ownership.md)。 alpha.307 已复验两篇文档各自的撤销、重做、选区，以及重新读取后继续编辑。见[F-035c 迭代](iterations/F-035c-editor-dispatch-ownership.md)。 alpha.308 已复验中文候选期间阻止保存、切标签和切模式，上屏或取消后恢复。见[F-035d 迭代](iterations/F-035d-editor-interaction-ownership.md)。 alpha.309 复验普通窗口的列表续写、源码选区和缩进、自动换行。见[F-035e 迭代](iterations/F-035e-editor-command-target-ownership.md)。
 
 ## 崩溃草稿恢复（F-066）
 

@@ -224,9 +224,9 @@ test("wrapping defers hidden cache and fences measured callbacks against tab, st
   await openB();
   c.toggleSourceMode();
   let scheduled = 0;
-  c.setWrappingScheduler(() => {
-    scheduled++;
-  });
+  const scheduleWrapping = () => { scheduled++; };
+  c.registerEditorCommandTargets(b.documentId, { scheduleWrapping });
+  c.registerEditorCommandTargets(a.documentId, { scheduleWrapping });
   c.setSourceWrapping(false);
   const bBefore = c.getEditor(b.documentId)!.state;
   expect(scheduled).toBe(1);
@@ -256,10 +256,10 @@ test("wrapping defers hidden cache and fences measured callbacks against tab, st
 test("list input target fences write permission, focus, IME, freezing and lifecycle",async()=>{
  const {a,controller:c,transport,openB}=await setup();
  let ready=true,calls=0;
- c.setListInputTarget({documentId:a.documentId,ready:()=>ready,run:soft=>{
+ const releaseList = c.registerEditorCommandTargets(a.documentId, { listInput: {ready:()=>ready,run:soft=>{
   calls++;const state=c.getEditor(a.documentId)!.state;
   return c.updateEditor(a.documentId,listContinuationTransaction(state,soft));
- }});
+ }}});
  expect(c.runListInput(false,a.documentId)).toBe(true);
  ready=false;expect(c.runListInput(false,a.documentId)).toBe(false);ready=true;
  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, ()=>false);expect(c.canRunListInput()).toBe(false);c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, ()=>true);
@@ -268,14 +268,14 @@ test("list input target fences write permission, focus, IME, freezing and lifecy
  transport.checkDocumentWriteCapability=req=>Promise.resolve({...req,capability:{writable:false,reason:"readonly"}});
  await c.refreshWriteCapability();expect(c.runListInput(true,a.documentId)).toBe(false);
  await openB();expect(c.runListInput(false,a.documentId)).toBe(false);
- c.setListInputTarget(undefined);expect(c.canRunListInput()).toBe(false);
+ releaseList();expect(c.canRunListInput()).toBe(false);
  c.dispose();expect(c.canRunListInput()).toBe(false);expect(calls).toBe(1);
 });
 
 test("shared indentation admits editing/source and rejects stale, readonly, frozen and composing targets", async () => {
   const { a, controller: c, transport, openB } = await setup();
   let ready = true, calls = 0;
-  c.setIndentationTarget({ documentId: a.documentId, ready: () => ready, run: () => { calls++; return true; } });
+  const releaseIndent = c.registerEditorCommandTargets(a.documentId, { indentation: { ready: () => ready, run: () => { calls++; return true; } } });
   expect(c.canIndentSource()).toBe(true);
   c.toggleSourceMode();expect(c.runSourceIndentation(true,a.documentId)).toBe(true);
   ready=false;expect(c.canIndentSource()).toBe(false);ready=true;
@@ -285,7 +285,7 @@ test("shared indentation admits editing/source and rejects stale, readonly, froz
   transport.checkDocumentWriteCapability=req=>Promise.resolve({...req,capability:{writable:false,reason:"readonly"}});
   await c.refreshWriteCapability();expect(c.runSourceIndentation(false,a.documentId)).toBe(false);
   await openB();expect(c.runSourceIndentation(true,a.documentId)).toBe(false);
-  c.setIndentationTarget(undefined);expect(c.canIndentSource()).toBe(false);
+  releaseIndent();expect(c.canIndentSource()).toBe(false);
   c.dispose();expect(c.canIndentSource()).toBe(false);expect(calls).toBe(1);
 });
 
@@ -294,14 +294,13 @@ test("source selection commands retain read-only selection but fence nonactive, 
   c.toggleSourceMode();
   let calls = 0,
     ready = true;
-  c.setSourceSelectionTarget({
-    documentId: a.documentId,
+  c.registerEditorCommandTargets(a.documentId, { sourceSelection: {
     ready: () => ready,
     run: () => {
       calls++;
       return true;
     },
-  });
+  } });
   expect(c.runSourceSelection("above", a.documentId)).toBe(true);
   transport.checkDocumentWriteCapability = (req) =>
     Promise.resolve({

@@ -207,20 +207,6 @@ export function MemoryEditor({
     let releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
     const checkInteraction = () => !view.compositionStarted;
     let interaction = controller.registerEditorInteraction(documentId, checkInteraction);
-    const refreshSession = (nextSession: EditorFaultSession) => {
-      if (nextSession === registeredSession) return;
-      // The same EditorView can adopt a new session after a reload.
-      viewportCapture.release();
-      scrollCapture.release();
-      releaseEditorDispatch();
-      interaction.release();
-      registeredSession = nextSession;
-      viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
-      scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
-      releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
-      interaction = controller.registerEditorInteraction(documentId, checkInteraction);
-    };
-    refreshViewSession.current = refreshSession;
     const viewport = controller.getViewport(documentId);
     let wrappingReady = !viewport;
     const calloutToast = `callout-${documentId}`;
@@ -530,7 +516,103 @@ export function MemoryEditor({
         },
       });
     };
-    controller.setWrappingScheduler(scheduleWrapping);
+    type CommandTargets = Parameters<typeof controller.registerEditorCommandTargets>[1];
+    const sourceSelection: NonNullable<CommandTargets["sourceSelection"]> = {
+      ready: () => currentView() && !view.compositionStarted && view.hasFocus,
+      run: (action) => {
+        if (!currentView() || !view.hasFocus || view.compositionStarted)
+          return false;
+        return (
+          action === "above"
+            ? addCursorAbove
+            : action === "below"
+              ? addCursorBelow
+              : simplifySelection
+        )(view);
+      },
+    };
+    const listInput: NonNullable<CommandTargets["listInput"]> = {
+      ready: () =>
+        currentView() &&
+        view.hasFocus &&
+        !view.compositionStarted &&
+        !view.composing,
+      run: (soft) => {
+        if (
+          !currentView() ||
+          !view.hasFocus ||
+          view.compositionStarted ||
+          view.composing ||
+          view.state.readOnly
+        )
+          return false;
+        const completion = isCurrentFenceCompletion(
+          view.state,
+          controller.getEditor(documentId)?.state,
+          registeredSession,
+          controller.getMode(documentId) !== "reading" &&
+            !controller.isSafeSource(documentId)
+        )
+          ? fenceCompletionTransaction(view.state, soft)
+          : undefined;
+        const transaction =
+          completion ?? listContinuationTransaction(view.state, soft);
+        view.dispatch(transaction);
+        return view.state === transaction.state;
+      },
+    };
+    const currentIndentationView = () =>
+      currentView() &&
+      controller.getEditor(documentId)?.state === view.state &&
+      view.state.field(editorFaultSession) === registeredSession;
+    const indentation: NonNullable<CommandTargets["indentation"]> = {
+      ready: () =>
+        currentIndentationView() &&
+        view.hasFocus &&
+        !view.compositionStarted &&
+        !view.composing,
+      run: (more) => {
+        if (
+          !currentIndentationView() ||
+          !view.hasFocus ||
+          view.compositionStarted ||
+          view.composing ||
+          view.state.readOnly
+        )
+          return false;
+        const plan = planSourceIndentation(view.state, more);
+        if (plan.reason) {
+          toast.info(plan.reason);
+          return false;
+        }
+        if (!plan.changes?.length) return true;
+        const transaction = view.state.update({
+          changes: plan.changes,
+          annotations: isolateHistory.of("full"),
+          userEvent: "input.indent",
+        });
+        view.dispatch(transaction);
+        return view.state === transaction.state;
+      },
+    };
+    const commandTargets = { sourceSelection, listInput, indentation, scheduleWrapping };
+    let releaseCommandTargets = controller.registerEditorCommandTargets(documentId, commandTargets);
+    const refreshSession = (nextSession: EditorFaultSession) => {
+      if (nextSession === registeredSession) return;
+      // The same EditorView can adopt a new session after a reload.
+      viewportCapture.release();
+      scrollCapture.release();
+      releaseEditorDispatch();
+      interaction.release();
+      releaseCommandTargets();
+      registeredSession = nextSession;
+      viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
+      scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
+      releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
+      interaction = controller.registerEditorInteraction(documentId, checkInteraction);
+      releaseCommandTargets = controller.registerEditorCommandTargets(documentId, commandTargets);
+    };
+    refreshViewSession.current = refreshSession;
     if (viewport) {
       const position = editorOffset(editor.state.field(rawText), viewport.from);
       view.dispatch({
@@ -591,52 +673,6 @@ export function MemoryEditor({
         scrollCapture.savePosition(view.state, view.scrollDOM.scrollTop);
     };
     view.scrollDOM.addEventListener("scroll", saveScroll);
-    controller.setSourceSelectionTarget({
-      documentId,
-      ready: () => currentView() && !view.compositionStarted && view.hasFocus,
-      run: (action) => {
-        if (!currentView() || !view.hasFocus || view.compositionStarted)
-          return false;
-        return (
-          action === "above"
-            ? addCursorAbove
-            : action === "below"
-              ? addCursorBelow
-              : simplifySelection
-        )(view);
-      },
-    });
-    controller.setListInputTarget({
-      documentId,
-      ready: () =>
-        currentView() &&
-        view.hasFocus &&
-        !view.compositionStarted &&
-        !view.composing,
-      run: (soft) => {
-        if (
-          !currentView() ||
-          !view.hasFocus ||
-          view.compositionStarted ||
-          view.composing ||
-          view.state.readOnly
-        )
-          return false;
-        const completion = isCurrentFenceCompletion(
-          view.state,
-          controller.getEditor(documentId)?.state,
-          session,
-          controller.getMode(documentId) !== "reading" &&
-            !controller.isSafeSource(documentId)
-        )
-          ? fenceCompletionTransaction(view.state, soft)
-          : undefined;
-        const transaction =
-          completion ?? listContinuationTransaction(view.state, soft);
-        view.dispatch(transaction);
-        return view.state === transaction.state;
-      },
-    });
     const listKey = (event: KeyboardEvent) =>
       routeListInput(
         event,
@@ -651,41 +687,6 @@ export function MemoryEditor({
       view,
       (event) => currentView() && listKey(event)
     );
-    const currentIndentationView = () =>
-      currentView() &&
-      controller.getEditor(documentId)?.state === view.state &&
-      view.state.field(editorFaultSession) === session;
-    controller.setIndentationTarget({
-      documentId,
-      ready: () =>
-        currentIndentationView() &&
-        view.hasFocus &&
-        !view.compositionStarted &&
-        !view.composing,
-      run: (more) => {
-        if (
-          !currentIndentationView() ||
-          !view.hasFocus ||
-          view.compositionStarted ||
-          view.composing ||
-          view.state.readOnly
-        )
-          return false;
-        const plan = planSourceIndentation(view.state, more);
-        if (plan.reason) {
-          toast.info(plan.reason);
-          return false;
-        }
-        if (!plan.changes?.length) return true;
-        const transaction = view.state.update({
-          changes: plan.changes,
-          annotations: isolateHistory.of("full"),
-          userEvent: "input.indent",
-        });
-        view.dispatch(transaction);
-        return view.state === transaction.state;
-      },
-    });
     const removeIndentation = registerIndentationView(
       view,
       (event) =>
@@ -805,16 +806,13 @@ export function MemoryEditor({
       scrollCapture.release();
       interaction.release();
       releaseEditorDispatch();
-      controller.setSourceSelectionTarget(undefined);
-      controller.setListInputTarget(undefined);
-      controller.setIndentationTarget(undefined);
+      releaseCommandTargets();
       view.contentDOM.removeEventListener("keydown", sourceSelectionKey, true);
       view.contentDOM.removeEventListener(
         "mousedown",
         sourceSelectionMouse,
         true
       );
-      controller.setWrappingScheduler(undefined);
       view.contentDOM.removeEventListener("keydown", historyKey, true);
       view.contentDOM.removeEventListener("beforeinput", historyInput, true);
       view.contentDOM.removeEventListener(

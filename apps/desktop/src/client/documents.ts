@@ -1068,6 +1068,7 @@ export function createDocumentController(
         scrollCaptures.delete(replaced.documentId);
         editorDispatchers.delete(replaced.documentId);
         interactions.delete(replaced.documentId);
+        commandTargets.delete(replaced.documentId);
         transfers.delete(replaced.documentId);
         saveResults.delete(replaced.documentId);
         uncertain.delete(replaced.documentId);
@@ -1081,6 +1082,7 @@ export function createDocumentController(
         scrollCaptures.delete(active.documentId);
         editorDispatchers.delete(active.documentId);
         interactions.delete(active.documentId);
+        commandTargets.delete(active.documentId);
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
         const stateStart = onTiming ? performance.now() : 0;
@@ -1203,6 +1205,7 @@ export function createDocumentController(
     scrollCaptures.clear();
     editorDispatchers.clear();
     interactions.clear();
+    commandTargets.clear();
     transfers.clear();
     capabilityLifetimes.clear();
     saveResults.clear();
@@ -1270,6 +1273,7 @@ export function createDocumentController(
     scrollCaptures.delete(documentId);
     editorDispatchers.delete(documentId);
     interactions.delete(documentId);
+    commandTargets.delete(documentId);
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
@@ -1329,22 +1333,44 @@ export function createDocumentController(
         error: captured.phase === "ack" ? "移除结果已确认，但收据尚未确认回收。可重试；暂不能移除其他文件。" : removal ? "移除结果尚未确认，内存内容已保留并锁定。请重试确认结果，勿关闭应用。" : "无法开始移除，窗口内容完整保留。请重试。" });
     } finally { removalRunning = false; }
   }
-  let scheduleWrapping: (() => void) | undefined;
-  let sourceSelectionTarget: {
-    documentId: string;
-    ready: () => boolean;
-    run: (action: "above" | "below" | "simplify") => boolean;
-  } | undefined;
-  let listInputTarget: {
-    documentId: string;
-    ready: () => boolean;
-    run: (soft: boolean) => boolean;
-  } | undefined;
-  let indentationTarget: {
-    documentId: string;
-    ready: () => boolean;
-    run: (more: boolean) => boolean;
-  } | undefined;
+  interface CommandTargets {
+    sourceSelection?: { ready(): boolean; run(action: "above" | "below" | "simplify"): boolean };
+    listInput?: { ready(): boolean; run(soft: boolean): boolean };
+    indentation?: { ready(): boolean; run(more: boolean): boolean };
+    scheduleWrapping?: () => void;
+  }
+  const commandTargets = new Map<string, { incarnation: EditorFaultSession; targets: CommandTargets }>();
+  const activeCommandOwner = () => {
+    const id = state.snapshot?.documentId;
+    const owner = id ? commandTargets.get(id) : undefined;
+    return id && owner && !metadataDisposed && editors.get(id)?.state.field(editorFaultSession) === owner.incarnation
+      ? { id, owner } : undefined;
+  };
+  let checkingCommandTarget = false;
+  const readyCommandOwner = (kind: "sourceSelection" | "listInput" | "indentation") => {
+    if (checkingCommandTarget) return undefined;
+    const captured = activeCommandOwner();
+    if (!captured) return undefined;
+    const { id, owner } = captured;
+    const target = owner.targets[kind];
+    const before = state;
+    const editor = editors.get(id);
+    if (!target || !editor) return undefined;
+    checkingCommandTarget = true;
+    try {
+      const allowed = kind === "sourceSelection"
+        ? controller.canSelectSource(id)
+        : !reading.has(id) && !isSafeSource(editor.state) && !editor.state.field(editorFaultSession).fault &&
+          canWrite(id) && !editorInputBlocked && !state.frozen && !state.busy && canLeaveEditor();
+      const current = () => state === before && editors.get(id) === editor && activeCommandOwner()?.owner === owner;
+      if (!allowed || !current() || target.ready() !== true) return undefined;
+      return current() ? captured : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      checkingCommandTarget = false;
+    }
+  };
   const canToggleSourceMode = () =>
     !!state.snapshot &&
     editors.has(state.snapshot.documentId) &&
@@ -1735,6 +1761,7 @@ export function createDocumentController(
       for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
       for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
       for (const id of interactions.keys()) if (!editors.has(id)) interactions.delete(id);
+      for (const id of commandTargets.keys()) if (!editors.has(id)) commandTargets.delete(id);
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
@@ -1787,6 +1814,7 @@ export function createDocumentController(
       for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
       for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
       for (const id of interactions.keys()) if (!editors.has(id)) interactions.delete(id);
+      for (const id of commandTargets.keys()) if (!editors.has(id)) commandTargets.delete(id);
       folderRemovalGate = false;
       generation++;
     },
@@ -1794,7 +1822,7 @@ export function createDocumentController(
       const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
       for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
       for (const id of prepared.removedIds) {
-        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); editorDispatchers.delete(id); interactions.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); editorDispatchers.delete(id); interactions.delete(id); commandTargets.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
         safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
       }
       safely(() => observation.sync(state.tabs));
@@ -1835,31 +1863,17 @@ export function createDocumentController(
       editors.set(documentId, { state: transaction.state, revision: editor.revision });
       return transaction;
     },
-    setListInputTarget: (target?: typeof listInputTarget) => { listInputTarget = target; },
-    setIndentationTarget: (target?: typeof indentationTarget) => { indentationTarget = target; },
-    canIndentSource: () => {
-      const id = indentationTarget?.documentId, editor = id && editors.get(id);
-      return !!editor && !metadataDisposed && id === state.snapshot?.documentId &&
-        !reading.has(id) && !isSafeSource(editor.state) &&
-        !editor.state.field(editorFaultSession).fault && canWrite(id) && !editorInputBlocked &&
-        !state.frozen && !state.busy && canLeaveEditor() && !!indentationTarget?.ready();
-    },
+    canIndentSource: () => !!readyCommandOwner("indentation"),
     runSourceIndentation: (more: boolean, documentId: string) => {
-      if (indentationTarget?.documentId !== documentId || !controller.canIndentSource()) return false;
-      return indentationTarget.run(more);
+      if (state.snapshot?.documentId !== documentId) return false;
+      const captured = readyCommandOwner("indentation");
+      return captured?.owner.targets.indentation?.run(more) ?? false;
     },
-    canRunListInput: () => {
-      const id=listInputTarget?.documentId, editor=id&&editors.get(id);
-      return !!editor && !metadataDisposed && id===state.snapshot?.documentId &&
-        !reading.has(id) && !isSafeSource(editor.state) && !editor.state.field(editorFaultSession).fault &&
-        canWrite(id) && !editorInputBlocked && !state.frozen && !state.busy && canLeaveEditor() && !!listInputTarget?.ready();
-    },
-    runListInput: (soft:boolean,documentId:string) => {
-      if(listInputTarget?.documentId!==documentId || !controller.canRunListInput())return false;
-      return listInputTarget.run(soft);
-    },
-    setSourceSelectionTarget: (target?: typeof sourceSelectionTarget) => {
-      sourceSelectionTarget = target;
+    canRunListInput: () => !!readyCommandOwner("listInput"),
+    runListInput: (soft: boolean, documentId: string) => {
+      if (state.snapshot?.documentId !== documentId) return false;
+      const captured = readyCommandOwner("listInput");
+      return captured?.owner.targets.listInput?.run(soft) ?? false;
     },
     canSelectSource: (documentId = state.snapshot?.documentId) => {
       const editor = documentId && editors.get(documentId);
@@ -1869,11 +1883,11 @@ export function createDocumentController(
         !editor.state.field(editorFaultSession).fault &&
         !state.frozen && !state.busy && canLeaveEditor();
     },
-    canRunSourceSelection: () => !!sourceSelectionTarget &&
-      controller.canSelectSource(sourceSelectionTarget.documentId) && sourceSelectionTarget.ready(),
+    canRunSourceSelection: () => !!readyCommandOwner("sourceSelection"),
     runSourceSelection: (action: "above" | "below" | "simplify", documentId: string) => {
-      if (sourceSelectionTarget?.documentId !== documentId || !controller.canRunSourceSelection()) return false;
-      return sourceSelectionTarget.run(action);
+      if (state.snapshot?.documentId !== documentId) return false;
+      const captured = readyCommandOwner("sourceSelection");
+      return captured?.owner.targets.sourceSelection?.run(action) ?? false;
     },
     setSourceWrapping: (enabled: boolean) => {
       if (typeof enabled !== "boolean" || metadataDisposed) return;
@@ -1886,6 +1900,7 @@ export function createDocumentController(
         getSourceWrapping(editor.state) === enabled
       ) return;
       // Hidden cached states keep their old geometry until their view is restored.
+      const scheduleWrapping = activeCommandOwner()?.owner.targets.scheduleWrapping;
       if (scheduleWrapping) scheduleWrapping();
       else controller.applySourceWrapping(id, editor.state);
     },
@@ -2137,8 +2152,14 @@ export function createDocumentController(
         scheduleFaultRecovery();
       };
     },
-    setWrappingScheduler: (schedule?: () => void) => {
-      scheduleWrapping = schedule;
+    registerEditorCommandTargets: (documentId: string, targets: CommandTargets) => {
+      const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      if (!incarnation || metadataDisposed) return () => undefined;
+      const owner = { incarnation, targets: { ...targets } };
+      commandTargets.set(documentId, owner);
+      return () => {
+        if (commandTargets.get(documentId) === owner) commandTargets.delete(documentId);
+      };
     },
     getSnapshot: () => state,
     canRevealDocument: () => !!state.snapshot && !["missing", "replaced"].includes(observation.status(state.snapshot.documentId) ?? "") && !state.busy && !state.frozen && !saving.size && !revealPending && canLeaveEditor(),
@@ -2283,6 +2304,7 @@ export function createDocumentController(
     scrollCaptures.clear();
     editorDispatchers.clear();
     interactions.clear();
+    commandTargets.clear();
       cancelRecentTabSwitch();
       recentTabListeners.clear();
       pinnedTabs.clear();

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037e 跨进程会话候选演练（2026-11-10）
+
+已验证同名目录重新授权后仅为未替换文件生成候选。OBL-034 的正式会话保存和恢复、OBL-054 及最终离线继续跟踪。见[F-037e 迭代](iterations/F-037e-probe-main-tab-session-recovery.md)。
+
 ## F-037d 主区标签来源核对（2026-11-10）
 
 已验证已保存标签与实际目录授权的绑定。OBL-034 的跨进程恢复链路与正式会话入口、OBL-054、最终离线继续跟踪。见[F-037d 迭代](iterations/F-037d-bind-main-tab-session-metadata.md)。

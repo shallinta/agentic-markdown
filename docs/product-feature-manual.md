@@ -4,6 +4,8 @@
 
 隔离布局实验使用合成文档验证新增占位。每篇至少 33 px；空间不足时提示并保留原布局。这一能力尚未用于普通窗口的真实文档。见[F-034a 迭代](iterations/F-034a-secondary-pane-height-allocation.md)。 实验台也可拖动分隔线，或聚焦后按上下方向键调整相邻两条。见[F-034b 迭代](iterations/F-034b-secondary-pane-divider.md)。
 
+在实验台关闭一篇时，紧邻下方的一篇接收它的高度；关闭末项则交给上方。最后一篇关闭后副区收起，再展开时为空。见[F-034c 迭代](iterations/F-034c-secondary-pane-removal.md)。
+
 ## 独立阅读代码折叠（F-048e）
 
 顶层代码围栏可用箭头收起正文，语言、行数与复制入口保留。全文查找仍统计代码；跳到其中的命中会展开代码及必要的标题。折叠只影响当前阅读窗口。引用或列表内的代码保持原样。见[F-048e 迭代](iterations/F-048e-independent-reader-code-folds.md)。

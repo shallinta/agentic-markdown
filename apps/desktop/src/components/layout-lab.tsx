@@ -1,9 +1,10 @@
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@agentic-markdown/ui/ui/resizable";
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type PointerEvent, type SetStateAction } from "react";
 
 import { discardGuard } from "@/client/discard-guard";
 import { resizeSecondaryPaneDivider } from "@/client/secondary-pane-divider";
 import { allocateSecondaryPaneHeight, SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
+import { removeSecondaryPaneHeight } from "@/client/secondary-pane-removal";
 
 import { MainSideLayout, MAIN_SIDE_MINIMUM_WIDTH } from "./main-side-layout";
 
@@ -20,21 +21,39 @@ const heightFixtures = [
   { label: "99px 空副区", total: 99, heights: [] },
 ] as const;
 type HeightFixture = (typeof heightFixtures)[number];
+interface HeightAllocationState {
+  fixture: HeightFixture;
+  heights: readonly number[];
+  ids: readonly number[];
+  nextId: number;
+  notice: string;
+  closeReceipt?: { token: object; focusId: number | null };
+}
+
+function createHeightFixture(fixture: HeightFixture): HeightAllocationState {
+  return {
+    fixture,
+    heights: fixture.heights,
+    ids: fixture.heights.map((_, index) => index + 1),
+    nextId: fixture.heights.length + 1,
+    notice: "",
+  };
+}
+
 interface HeightDrag {
   element: HTMLDivElement;
   pointerId: number;
   beforeIndex: number;
   startY: number;
   heights: readonly number[];
+  ids: readonly number[];
 }
 
-function HeightAllocationLab() {
-  const [state, setState] = useState<{
-    fixture: HeightFixture;
-    heights: readonly number[];
-    notice: string;
-  }>({ fixture: heightFixtures[0], heights: heightFixtures[0].heights, notice: "" });
-  const { fixture, heights, notice } = state;
+function HeightAllocationLab({ state, setState }: {
+  state: HeightAllocationState;
+  setState: Dispatch<SetStateAction<HeightAllocationState>>;
+}) {
+  const { fixture, heights, ids, notice } = state;
   const stack = useRef<HTMLOListElement>(null);
   const drag = useRef<HeightDrag | null>(null);
   const [measured, setMeasured] = useState<{
@@ -64,7 +83,7 @@ function HeightAllocationLab() {
         below: cssPixels(hit.bottom - divider.bottom),
       } : undefined,
     });
-  }, [fixture, heights]);
+  }, [fixture, heights, ids]);
 
   function addDocument() {
     stopDrag();
@@ -77,14 +96,37 @@ function HeightAllocationLab() {
       return {
         ...previous,
         heights: result.heights,
-        notice: `已加入合成文档 ${result.heights.length}`,
+        ids: [...previous.ids, previous.nextId],
+        nextId: previous.nextId + 1,
+        notice: `已加入合成文档 ${previous.nextId}`,
       };
     });
   }
 
-  function adjust(beforeIndex: number, delta: number, basis?: readonly number[]) {
+  function closeDocument(id: number) {
+    stopDrag();
+    const token = {};
     setState((previous) => {
-      const next = resizeSecondaryPaneDivider(basis ?? previous.heights, beforeIndex, delta);
+      const index = previous.ids.indexOf(id);
+      const next = removeSecondaryPaneHeight(previous.heights, index);
+      if (!next) return previous;
+      return {
+        ...previous,
+        heights: next,
+        ids: previous.ids.filter((candidate) => candidate !== id),
+        notice: `已关闭合成文档 ${id}`,
+        closeReceipt: {
+          token,
+          focusId: previous.ids[index + 1] ?? previous.ids[index - 1] ?? null,
+        },
+      };
+    });
+  }
+
+  function adjust(beforeIndex: number, delta: number, basis?: HeightDrag) {
+    setState((previous) => {
+      if (basis && basis.ids !== previous.ids) return previous;
+      const next = resizeSecondaryPaneDivider(basis?.heights ?? previous.heights, beforeIndex, delta);
       if (!next || (next[beforeIndex] === previous.heights[beforeIndex] &&
         next[beforeIndex + 1] === previous.heights[beforeIndex + 1])) return previous;
       return { ...previous, heights: next, notice: "" };
@@ -98,7 +140,7 @@ function HeightAllocationLab() {
     const element = event.currentTarget;
     element.setPointerCapture(event.pointerId);
     const startY = event.clientY - canvas.getBoundingClientRect().top;
-    drag.current = { element, pointerId: event.pointerId, beforeIndex, startY, heights };
+    drag.current = { element, pointerId: event.pointerId, beforeIndex, startY, heights, ids };
     event.preventDefault();
     element.focus({ preventScroll: true });
   }
@@ -108,7 +150,7 @@ function HeightAllocationLab() {
     const canvas = stack.current;
     if (!canvas || active?.pointerId !== event.pointerId || active.element !== event.currentTarget) return;
     const y = event.clientY - canvas.getBoundingClientRect().top;
-    adjust(active.beforeIndex, y - active.startY, active.heights);
+    adjust(active.beforeIndex, y - active.startY, active);
   }
 
   function stopDrag(event?: PointerEvent<HTMLDivElement>) {
@@ -128,7 +170,7 @@ function HeightAllocationLab() {
             aria-pressed={preset === fixture}
             onClick={() => {
               stopDrag();
-              setState({ fixture: preset, heights: preset.heights, notice: "" });
+              setState(createHeightFixture(preset));
             }}>
             {preset.label}
           </button>
@@ -137,21 +179,24 @@ function HeightAllocationLab() {
       <button type="button" className={buttonClass} onClick={addDocument}>加入合成文档</button>
       <ol ref={stack} aria-label="副区合成文档" className="bg-background ring-border overflow-hidden rounded ring-1"
         style={{ height: fixture.total }}>
-        {heights.map((height, index) => (
-          <li key={index} id={`layout-lab-height-row-${index}`} className="relative flex flex-col" style={{ height }}>
-            <h4 className="bg-sidebar flex shrink-0 items-center px-2" style={{ height: SECONDARY_MIN_HEIGHT - 1 }}>
-              合成文档 {index + 1}
-            </h4>
+        {ids.map((id, index) => (
+          <li key={id} id={`layout-lab-height-row-${id}`} className="relative flex flex-col" style={{ height: heights[index] }}>
+            <div className="bg-sidebar flex shrink-0 items-center gap-1 px-2" style={{ height: SECONDARY_MIN_HEIGHT - 1 }}>
+              <h4 className="min-w-0 grow truncate">合成文档 {id}</h4>
+              <button type="button" aria-label={`关闭合成文档 ${id}`} data-height-close={id}
+                className="electrobun-webkit-app-region-no-drag size-6 shrink-0 rounded border focus-visible:outline-2"
+                onClick={() => closeDocument(id)}>×</button>
+            </div>
             <div aria-hidden="true" className="min-h-0 grow" />
             <div aria-hidden="true" data-height-divider="" className="bg-border h-px shrink-0" />
             {index + 1 < heights.length && (
               <div role="separator" tabIndex={0} aria-orientation="horizontal"
-                aria-label={`合成文档 ${index + 1} 和 ${index + 2} 分隔线`}
-                aria-controls={`layout-lab-height-row-${index}`}
+                aria-label={`合成文档 ${id} 和 ${ids[index + 1]} 分隔线`}
+                aria-controls={`layout-lab-height-row-${id}`}
                 aria-valuemin={SECONDARY_MIN_HEIGHT}
-                aria-valuemax={cssPixels(height + heights[index + 1] - SECONDARY_MIN_HEIGHT)}
-                aria-valuenow={cssPixels(height)}
-                aria-valuetext={`上方 ${cssPixels(height)} CSS px，下方 ${cssPixels(heights[index + 1])} CSS px`}
+                aria-valuemax={cssPixels(heights[index] + heights[index + 1] - SECONDARY_MIN_HEIGHT)}
+                aria-valuenow={cssPixels(heights[index])}
+                aria-valuetext={`上方 ${cssPixels(heights[index])} CSS px，下方 ${cssPixels(heights[index + 1])} CSS px`}
                 data-height-hit=""
                 className="electrobun-webkit-app-region-no-drag focus-visible:bg-ring absolute inset-x-0 -bottom-px z-10 h-[3px] cursor-row-resize touch-none select-none focus-visible:outline-2 focus-visible:outline-offset-1"
                 onKeyDown={(event) => {
@@ -190,6 +235,7 @@ function HeightAllocationLab() {
 export function LayoutLab() {
   const [fixture, setFixture] = useState<FixtureWidth>(null);
   const [sideVisible, setSideVisible] = useState(true);
+  const [heightState, setHeightState] = useState(() => createHeightFixture(heightFixtures[0]));
   const [treeWidth, setTreeWidth] = useState(0);
   const [mainWidth, setMainWidth] = useState(0);
   const [sideWidth, setSideWidth] = useState(0);
@@ -200,6 +246,9 @@ export function LayoutLab() {
   const separator = useRef<HTMLDivElement>(null);
   const side = useRef<HTMLDivElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
+  const lastClose = useRef<object | null>(null);
+  const { closeReceipt } = heightState;
+  const empty = heightState.ids.length === 0;
 
   useEffect(() => discardGuard.register({
     beginDiscard: () => true,
@@ -224,6 +273,18 @@ export function LayoutLab() {
     measure();
     return () => observer.disconnect();
   }, []);
+
+  useLayoutEffect(() => {
+    if (!closeReceipt || lastClose.current === closeReceipt.token) return;
+    lastClose.current = closeReceipt.token;
+    if (closeReceipt.focusId !== null) {
+      side.current?.querySelector<HTMLButtonElement>(`[data-height-close="${closeReceipt.focusId}"]`)
+        ?.focus({ preventScroll: true });
+    } else if (empty) {
+      toggle.current?.focus({ preventScroll: true });
+      setSideVisible(false);
+    }
+  }, [closeReceipt, empty]);
 
   function toggleSide() {
     const focus = document.activeElement;
@@ -285,7 +346,7 @@ export function LayoutLab() {
                   <section ref={side} aria-label="实验副区" className="bg-muted size-full space-y-2 overflow-auto p-3">
                     <h2>副区</h2>
                     <button type="button" className={buttonClass}>副区焦点样本</button>
-                    <HeightAllocationLab />
+                    <HeightAllocationLab state={heightState} setState={setHeightState} />
                   </section>
                 }
                 sideVisible={sideVisible}

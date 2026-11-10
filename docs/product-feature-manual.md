@@ -2,7 +2,7 @@
 
 ## 主区会话元数据实验（F-037a）
 
-隔离实验已验证标签顺序、固定状态、模式和活动项可以跨进程读回。实验使用合成文件，正式会话恢复入口尚待接入。见[F-037a 迭代](iterations/F-037a-main-tab-session-metadata-probe.md)。
+隔离实验已验证标签顺序、固定状态、模式和活动项可以跨进程读回。实验使用合成文件，F-037b 已验证重新授权后的目录标签候选。正式会话恢复入口尚待接入。见[F-037a 迭代](iterations/F-037a-main-tab-session-metadata-probe.md)、[F-037b 迭代](iterations/F-037b-reauthorized-main-tab-candidates.md)。
 
 ## 主窗原生全屏（F-038a）
 

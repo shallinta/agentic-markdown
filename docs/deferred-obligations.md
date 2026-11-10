@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037b 重新授权后的主区标签候选（2026-11-10）
+
+已验证当前已授权目录、扫描代际与文件身份的内部候选。OBL-034 的正式会话接入与恢复、OBL-054、最终离线继续跟踪。见[F-037b 迭代](iterations/F-037b-reauthorized-main-tab-candidates.md)。
+
 ## F-037a 主区会话元数据（2026-11-10）
 
 隔离实验已验证跨进程元数据和版本保护。OBL-034 的正式会话、身份与授权，OBL-054 的命令接入，以及最终离线继续跟踪。见[F-037a 迭代](iterations/F-037a-main-tab-session-metadata-probe.md)。

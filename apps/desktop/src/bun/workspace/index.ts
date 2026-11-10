@@ -218,6 +218,15 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   rootMutationsSuspended(): boolean;
   rootMutationGeneration(): number;
+  captureMainTabCandidates(rootHandle: string, generation: number): {
+    path: string;
+    current(): boolean;
+    resolve(
+      relativePath: string,
+      fingerprint: string,
+      check: () => void
+    ): Promise<string | undefined>;
+  } | undefined;
   suspendRootMutations(): () => void;
   captureExpansion(
     rootHandle: string,
@@ -2372,6 +2381,61 @@ export function createWorkspaceService({
     trashLifecycle:trash,
     rootMutationsSuspended: () => disposed || rootMutationSuspensions > 0,
     rootMutationGeneration: () => rootSelectionEpoch,
+    captureMainTabCandidates(rootHandle, generation) {
+      const captured = captureIndexRootState(rootHandle, generation);
+      if (!captured.ok) return;
+      const { root, files } = captured;
+      const epoch = rootSelectionEpoch;
+      const { byPath } = root;
+      const current = () =>
+        captured.current() &&
+        !rootMutationSuspensions &&
+        rootSelectionEpoch === epoch &&
+        root.byPath === byPath;
+      if (!current()) return;
+      return {
+        path: root.authorization.path,
+        current,
+        async resolve(relativePath, fingerprint, check) {
+          if (!validExpansionPath(relativePath) || !current()) return;
+          // Historical strings are lookup keys only. FS access uses the current scan proof.
+          const node = byPath.get(join(root.authorization.path, relativePath));
+          const file = node?.kind === "file" ? files.get(node.handle) : undefined;
+          if (
+            !node ||
+            file?.fingerprint !== fingerprint ||
+            !visiblePath(root.authorization.path, file.path, root.meta.showHidden)
+          ) return;
+          const verify = () => {
+            check();
+            if (
+              !current() ||
+              byPath.get(file.path) !== node ||
+              files.get(node.handle) !== file
+            )
+              throw Error("SESSION_CANDIDATE_STALE");
+          };
+          try {
+            verify();
+            const grant = await authorizeEntry(
+              root.authorization, file.path, file.fingerprint,
+              file.chain, root.meta.showHidden, verify
+            );
+            try {
+              verify();
+              if (documents.trashBlocked(grant.path, grant.fingerprint, grant.directories)) return;
+            } finally {
+              await grant.file.close();
+            }
+            verify();
+            return node.handle;
+          } catch {
+            check();
+            return;
+          }
+        },
+      };
+    },
     captureExpansion(rootHandle, generation, directoryHandle) {
       const root = roots.find((item) => item.meta.handle === rootHandle);
       if (root?.meta.generation !== generation) return;

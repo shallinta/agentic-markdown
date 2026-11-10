@@ -111,6 +111,7 @@ export function MemoryEditor({
   const checkRaster = useRef<(() => void) | undefined>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const refreshViewportCapture = useRef<((session: EditorFaultSession) => void) | null>(null);
   useLayoutEffect(() => {
     checkRaster.current?.();
     if (viewRef.current) {
@@ -166,24 +167,33 @@ export function MemoryEditor({
     view.contentDOM.setAttribute("aria-label", "Markdown 编辑区");
     if (!scrollTo)
       view.scrollDOM.scrollTop = controller.getScrollPosition(documentId);
-    const captureViewport = () => {
-      const top = view.scrollDOM.getBoundingClientRect().top;
-      const block = view.lineBlockAtHeight(Math.max(0, top - view.documentTop));
+    const collectViewport = () => {
       const current = controller.getEditor(documentId);
-      if (current)
-        controller.setViewport(documentId, {
-          from: rawOffset(current.state.field(rawText), block.from),
-          offset: view.documentTop + block.top - top,
-          ratio:
-            view.scrollDOM.scrollTop /
-            Math.max(
-              1,
-              view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight
-            ),
-          revision: current.revision,
-        });
+      const viewState = view.state;
+      if (!view.scrollDOM.isConnected || current?.state !== viewState) return;
+      const top = view.scrollDOM.getBoundingClientRect().top;
+      const documentTop = view.documentTop;
+      const block = view.lineBlockAtHeight(Math.max(0, top - documentTop));
+      if (view.state !== viewState) return;
+      return {
+        from: rawOffset(viewState.field(rawText), block.from),
+        offset: view.documentTop + block.top - top,
+        ratio:
+          view.scrollDOM.scrollTop /
+          Math.max(1, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight),
+        revision: current.revision,
+      };
     };
-    controller.setViewportCapture(captureViewport);
+    let captureSession = session;
+    let viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
+    const refreshCapture = (nextSession: EditorFaultSession) => {
+      if (nextSession === captureSession) return;
+      // The same EditorView can adopt a new session after a reload.
+      viewportCapture.release();
+      captureSession = nextSession;
+      viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
+    };
+    refreshViewportCapture.current = refreshCapture;
     const viewport = controller.getViewport(documentId);
     let wrappingReady = !viewport;
     const currentView = () =>
@@ -762,8 +772,10 @@ export function MemoryEditor({
       removeNativeFormat();
       removeListInput();
       removeIndentation();
-      captureViewport();
-      controller.setViewportCapture(undefined);
+      viewportCapture.capture();
+      viewportCapture.release();
+      if (refreshViewportCapture.current === refreshCapture)
+        refreshViewportCapture.current = null;
       saveScroll();
       controller.setScrollSnapshot(
         documentId,
@@ -803,6 +815,7 @@ export function MemoryEditor({
     const current = syncCurrentEditorState(view, controller, documentId);
     if (!current) return;
     const fault = current.field(editorFaultSession);
+    refreshViewportCapture.current?.(fault);
     if (
       view.state.facet(EditorState.readOnly) !== readOnly ||
       view.state.facet(EditorView.editable) !== !readOnly

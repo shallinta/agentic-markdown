@@ -1820,3 +1820,103 @@ test("fidelity follows selection, activation and reload atomically; malformed fa
   expect(controller.getSnapshot().snapshot).toBe(changed);
   expect(controller.getSnapshot().entries).toHaveLength(2);
 });
+
+test("viewport ownership selects active document while inactive cleanup cannot release another view", async () => {
+  const { controller, transport, value: a } = setup();
+  const b = snapshot("viewport-b");
+  await controller.select();
+  const calls: string[] = [];
+  const collect = (id: string, offset: number) => () => {
+    calls.push(id);
+    return { from: 0, offset, ratio: 0.5, revision: controller.getEditor(id)!.revision };
+  };
+  const firstA = controller.registerViewportCapture(a.documentId, collect(a.documentId, -10));
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await controller.select();
+  const firstB = controller.registerViewportCapture(b.documentId, collect(b.documentId, -20));
+  calls.length = 0;
+  controller.captureCurrentViewport();
+  expect(calls).toEqual([b.documentId]);
+  firstA.capture(); // explicit cleanup may capture its own still-live inactive document
+  expect(controller.getViewport(a.documentId)?.offset).toBe(-10);
+  expect(controller.getViewport(b.documentId)?.offset).toBe(-20);
+  const nextA = controller.registerViewportCapture(a.documentId, collect(a.documentId, -30));
+  firstA.release();
+  firstA.capture();
+  nextA.capture();
+  expect(controller.getViewport(a.documentId)?.offset).toBe(-30);
+  calls.length = 0;
+  controller.captureCurrentViewport();
+  expect(calls).toEqual([b.documentId]);
+  controller.activateTab(a.documentId);
+  const before = controller.getEditor(a.documentId)!;
+  controller.updateEditor(a.documentId, before.state.update({ changes: { from: 0, insert: "draft" } }));
+  const edited = controller.getEditor(a.documentId)!;
+  nextA.capture();
+  expect(controller.getViewport(a.documentId)?.revision).toBe(edited.revision);
+  expect(controller.getEditor(a.documentId)).toBe(edited);
+  nextA.release(); firstB.release(); controller.dispose();
+});
+
+test("viewport capture rejects stale revision, changed state during collect, errors and superseded tokens", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const id = value.documentId;
+  const good = controller.registerViewportCapture(id, () => ({ from: 0, offset: -7, ratio: 0.3, revision: 0 }));
+  good.capture();
+  const baseline = controller.getViewport(id);
+  const throwing = controller.registerViewportCapture(id, () => { throw Error("detached geometry"); });
+  expect(() => throwing.capture()).not.toThrow();
+  expect(controller.getViewport(id)).toBe(baseline);
+  const stale = controller.registerViewportCapture(id, () => ({ from: 0, offset: -99, ratio: 0.3, revision: 9 }));
+  stale.capture();
+  expect(controller.getViewport(id)).toBe(baseline);
+  const mutating = controller.registerViewportCapture(id, () => {
+    const editor = controller.getEditor(id)!;
+    controller.updateEditor(id, editor.state.update({ selection: { anchor: 1 } }));
+    return { from: 0, offset: -99, ratio: 0.3, revision: editor.revision };
+  });
+  mutating.capture();
+  expect(controller.getViewport(id)).toBe(baseline);
+  const replacing = controller.registerViewportCapture(id, () => {
+    controller.registerViewportCapture(id, () => undefined);
+    return { from: 0, offset: -99, ratio: 0.3, revision: 0 };
+  });
+  replacing.capture();
+  expect(controller.getViewport(id)).toBe(baseline);
+  controller.dispose();
+});
+
+test("viewport registration cannot revive across reload, close/reopen or disposal", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const id = value.documentId;
+  let calls = 0;
+  const old = controller.registerViewportCapture(id, () => {
+    calls++;
+    return { from: 0, offset: -9, ratio: 0.1, revision: 0 };
+  });
+  old.capture();
+  await controller.select(); // reselect preserves this editor incarnation
+  const reselectedCalls = calls;
+  old.capture();
+  expect(calls).toBe(reselectedCalls + 1);
+  await controller.reload();
+  const count = calls;
+  const stored = controller.getViewport(id);
+  expect(stored?.offset).toBe(-9); // reload retains its historic viewport data policy
+  old.capture();
+  expect(calls).toBe(count);
+  expect(controller.getViewport(id)).toBe(stored);
+  const fresh = controller.registerViewportCapture(id, () => ({ from: 0, offset: -12, ratio: 0.2, revision: 0 }));
+  old.release(); fresh.capture();
+  expect(controller.getViewport(id)?.offset).toBe(-12);
+  await controller.closeActive();
+  expect(controller.getViewport(id)).toBeUndefined();
+  await controller.select();
+  fresh.capture();
+  expect(controller.getViewport(id)).toBeUndefined();
+  const newest = controller.registerViewportCapture(id, () => ({ from: 0, offset: -15, ratio: 0.2, revision: 0 }));
+  controller.dispose(); newest.capture();
+  expect(controller.getViewport(id)).toBeUndefined();
+});

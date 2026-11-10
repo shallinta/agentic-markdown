@@ -74,6 +74,13 @@ export interface DocumentTransport {
   releaseDocument(request: DocumentHandleRequest): Promise<unknown>;
 }
 
+export interface DocumentViewport {
+  from: number;
+  offset: number;
+  ratio: number;
+  revision: number;
+}
+
 export interface DocumentViewState {
   folderRemovalPending?: "confirming" | "ack";
   removalPending?: "confirming" | "ack";
@@ -266,17 +273,11 @@ export function createDocumentController(
   const search = createSearchStore(id=>editors.has(id) && !metadataDisposed);
   const reading = new Set<string>();
   const sourceReturn = new Map<string, "editing" | "reading">();
-  const viewports = new Map<
-    string,
-    { from: number; offset: number; ratio: number; revision: number }
-  >();
-  let captureViewport: (() => void) | undefined;
+  const viewports = new Map<string, DocumentViewport>();
+  const viewportCaptures = new Map<string, { capture(): void; release(): void }>();
   const captureCurrentViewport = () => {
-    try {
-      captureViewport?.();
-    } catch {
-      /* Geometry failure must not block document operations. */
-    }
+    const id = state.snapshot?.documentId;
+    if (id) viewportCaptures.get(id)?.capture();
   };
   const transfers = new Map<
     string,
@@ -1014,6 +1015,7 @@ export function createDocumentController(
         reading.delete(replaced.documentId);
         sourceReturn.delete(replaced.documentId);
         viewports.delete(replaced.documentId);
+        viewportCaptures.delete(replaced.documentId);
         transfers.delete(replaced.documentId);
         saveResults.delete(replaced.documentId);
         uncertain.delete(replaced.documentId);
@@ -1023,6 +1025,7 @@ export function createDocumentController(
         saveResults.delete(active.documentId);
         uncertain.delete(active.documentId);
         scrollSnapshots.delete(active.documentId);
+        viewportCaptures.delete(active.documentId);
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
         const stateStart = onTiming ? performance.now() : 0;
@@ -1141,6 +1144,7 @@ export function createDocumentController(
     reading.clear();
     sourceReturn.clear();
     viewports.clear();
+    viewportCaptures.clear();
     transfers.clear();
     capabilityLifetimes.clear();
     saveResults.clear();
@@ -1204,6 +1208,7 @@ export function createDocumentController(
     reading.delete(documentId);
     sourceReturn.delete(documentId);
     viewports.delete(documentId);
+    viewportCaptures.delete(documentId);
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
@@ -1667,6 +1672,7 @@ export function createDocumentController(
     swapTrashedDocument: (prepared: { next: DocumentViewState; nextEditors: typeof editors; trashToken: string }) => {
       const previous = state;
       state = prepared.next; editors = prepared.nextEditors; generation++;
+      for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
@@ -1715,6 +1721,7 @@ export function createDocumentController(
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       editors = prepared.nextEditors;
+      for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
       folderRemovalGate = false;
       generation++;
     },
@@ -1722,7 +1729,7 @@ export function createDocumentController(
       const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
       for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
       for (const id of prepared.removedIds) {
-        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); viewportCaptures.delete(id); transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
         safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
       }
       safely(() => observation.sync(state.tabs));
@@ -1924,22 +1931,37 @@ export function createDocumentController(
           ? "reading"
           : "editing";
     },
-    setViewportCapture: (capture?: () => void) => {
-      captureViewport = capture;
+    registerViewportCapture: (documentId: string, collect: () => DocumentViewport | undefined) => {
+      const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      const registration = {
+        capture() {
+          try {
+            const before = editors.get(documentId);
+            if (metadataDisposed || !incarnation || !before ||
+              viewportCaptures.get(documentId) !== registration ||
+              before.state.field(editorFaultSession) !== incarnation) return;
+            const collected = collect();
+            if (!collected) return;
+            const { from, offset, ratio, revision } = collected;
+            const after = editors.get(documentId);
+            if (metadataDisposed || viewportCaptures.get(documentId) !== registration ||
+              after?.state !== before.state || after.revision !== before.revision ||
+              after.state.field(editorFaultSession) !== incarnation || revision !== after.revision ||
+              !Number.isSafeInteger(from) || from < 0 || from > after.state.field(rawText).length ||
+              !Number.isFinite(offset) || !Number.isFinite(ratio)) return;
+            viewports.set(documentId, { from, offset, ratio, revision });
+          } catch {
+            // Detached geometry and failed measurements must not block document operations.
+          }
+        },
+        release() {
+          if (viewportCaptures.get(documentId) === registration) viewportCaptures.delete(documentId);
+        },
+      };
+      if (incarnation && !metadataDisposed) viewportCaptures.set(documentId, registration);
+      return registration;
     },
     getViewport: (documentId: string) => viewports.get(documentId),
-    setViewport: (
-      documentId: string,
-      value: { from: number; offset: number; ratio: number; revision: number }
-    ) => {
-      if (
-        editors.has(documentId) &&
-        Number.isFinite(value.from) &&
-        Number.isFinite(value.offset) &&
-        Number.isFinite(value.ratio)
-      )
-        viewports.set(documentId, value);
-    },
     canToggleReadingMode: () =>
       canToggleSourceMode() &&
       controller.getMode(state.snapshot!.documentId) !== "source",
@@ -2171,6 +2193,7 @@ export function createDocumentController(
         revealPending = null;
       }
       metadataDisposed = true;
+      viewportCaptures.clear();
       cancelRecentTabSwitch();
       recentTabListeners.clear();
       pinnedTabs.clear();

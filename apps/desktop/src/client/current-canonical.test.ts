@@ -479,14 +479,14 @@ test("real controller captures unsaved buffer, ignores selection and cancels on 
   const selectedEditor = controller.getEditor(value.documentId);
   const documentState = controller.getSnapshot();
   let captures = 0;
-  controller.setViewportCapture(() => {
+  const viewportCapture = controller.registerViewportCapture(value.documentId, () => {
     captures++;
-    controller.setViewport(value.documentId, {
+    return {
       from: 3,
       offset: -20,
       ratio: 0.5,
       revision: 1,
-    });
+    };
   });
   const themes = createReadingThemeSelection(
     controller.captureCurrentViewport,
@@ -507,7 +507,7 @@ test("real controller captures unsaved buffer, ignores selection and cancels on 
   controller.beginDiscard();
   expect(themes.select("paper")).toContain("当前操作进行中");
   controller.endDiscard();
-  controller.setViewportCapture(undefined);
+  viewportCapture.release();
   await controller.reload();
   expect(service.getSnapshot().status).toBe("idle");
   const reload = service.request();

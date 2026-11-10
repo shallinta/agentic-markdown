@@ -149,7 +149,9 @@ async function runProfile(tabs: number) {
         selection: EditorSelection.range(2, 5),
       })), "selection or edit rejected");
       if (source(i)) check(controller.toggleSourceMode(), "source mode switch rejected");
-      controller.setViewport(documentId, expectedViewport(i));
+      const viewport = controller.registerViewportCapture(documentId, () => expectedViewport(i));
+      viewport.capture();
+      viewport.release();
       verify(i);
     }
     snapshots.length = 0;

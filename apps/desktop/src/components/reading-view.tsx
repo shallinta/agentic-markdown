@@ -175,7 +175,7 @@ export function ReadingView({
     restorePosition.current = restore;
     restore();
     scroller.focus({ preventScroll: true });
-    const capture = () => {
+    const viewportCapture = controller.registerViewportCapture(documentId, () => {
       // React may already have removed the old content before layout cleanup.
       // Detached blocks report zero geometry; never overwrite the earlier anchor.
       if (!scroller.isConnected || !blocks[0]?.isConnected) return;
@@ -187,16 +187,15 @@ export function ReadingView({
             (index) => blocks[index].getBoundingClientRect().bottom > top
           )
         ];
-      controller.setViewport(documentId, {
+      return {
         from: Number(block?.dataset.readingFrom ?? 0),
         offset: block ? block.getBoundingClientRect().top - top : 0,
         revision: editor.revision,
         ratio:
           scroller.scrollTop /
           Math.max(1, scroller.scrollHeight - scroller.clientHeight),
-      });
-    };
-    controller.setViewportCapture(capture);
+      };
+    });
     if (diagnostic && content.current) {
       const report = auditReadingContent(content.current);
       setAudit(
@@ -204,8 +203,8 @@ export function ReadingView({
       );
     }
     return () => {
-      capture();
-      controller.setViewportCapture(undefined);
+      viewportCapture.capture();
+      viewportCapture.release();
       restorePosition.current = undefined;
     };
   }, [controller, documentId, editor.revision, ready, nodes, diagnostic]);

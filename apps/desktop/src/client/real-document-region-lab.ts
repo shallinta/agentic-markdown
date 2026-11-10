@@ -141,3 +141,47 @@ export function reorderRealRegionDocuments(
   heights.splice(destination, 0, height);
   return { ok: true, allocation: { ids, heights, totalHeight: allocation.totalHeight } };
 }
+
+type ReturnController = Controller & Pick<ReturnType<typeof createDocumentController>, "activateTab" | "getEditorFault">;
+
+/** Preparation never activates or changes ownership; commit only activates after revalidation. */
+export function prepareSecondaryReturn(
+  controller: ReturnController,
+  allocation: RealRegionAllocation,
+  sourceId: string
+): { ok: false; reason: "blocked" | "invalid" | "lab-limit" } | {
+  ok: true;
+  plan: { sourceId: string; allocation: RealRegionAllocation; commit(currentAllocation: () => RealRegionAllocation | undefined): boolean };
+} {
+  const before = controller.getSnapshot();
+  const allowed = () => !controller.isEditorInputBlocked() && !controller.hasSaves() && controller.canSelectFolder();
+  if (!before.snapshot || !allowed() || controller.getSnapshot() !== before) return { ok: false, reason: "blocked" };
+  if (before.tabs.length > 3) return { ok: false, reason: "lab-limit" };
+  const session = controller.getEditorFault(sourceId);
+  const index = allocation.ids.indexOf(sourceId);
+  if (!session || index < 0 || reconcileRealRegionAllocation(before.tabs, allocation) !== allocation)
+    return { ok: false, reason: "invalid" };
+  const heights = removeSecondaryPaneHeight(allocation.heights, index);
+  if (!heights) return { ok: false, reason: "invalid" };
+  const next = { ids: allocation.ids.filter(id => id !== sourceId), heights, totalHeight: allocation.totalHeight };
+  let consumed = false;
+  return { ok: true, plan: {
+    sourceId,
+    allocation: next,
+    commit: currentAllocation => {
+      if (consumed) return false;
+      consumed = true;
+      try {
+        if (currentAllocation() !== allocation || !allowed() || currentAllocation() !== allocation || controller.getSnapshot() !== before ||
+            controller.getEditorFault(sourceId) !== session) return false;
+        if (before.snapshot?.documentId !== sourceId) controller.activateTab(sourceId);
+        const after = controller.getSnapshot();
+        if (after.snapshot?.documentId !== sourceId || after.tabs !== before.tabs ||
+            controller.getEditorFault(sourceId) !== session || currentAllocation() !== allocation || !allowed()) return false;
+        return currentAllocation() === allocation && controller.getSnapshot() === after && controller.getEditorFault(sourceId) === session;
+      } catch {
+        return false;
+      }
+    },
+  } };
+}

@@ -148,6 +148,8 @@ alpha.319 隔离副区可用 ⌘⇧M 切换活动文档模式，⌘F 打开活�
 
 alpha.320 隔离副区可拖动文件名在副区内排序；聚焦标题后也可用 Option+↑/↓。文档带着自己的高度，活动文档和草稿保持。见[F-035n 迭代](iterations/F-035n-real-secondary-document-reorder.md)。
 
+alpha.321 隔离窗口可把副区文件名拖到主区正文，原文档成为主区活动标签，保留模式、草稿和选区。最后一篇移回后副区收起。见[F-035o 迭代](iterations/F-035o-secondary-title-drop-to-main.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

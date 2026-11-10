@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { createDocumentController } from "./documents";
 import { createDualActiveEditorLab } from "./dual-readonly-editor-lab";
 import { rawText } from "./raw-buffer";
-import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, reorderRealRegionDocuments, type RealRegionAllocation } from "./real-document-region-lab";
+import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, reorderRealRegionDocuments, prepareSecondaryReturn, type RealRegionAllocation } from "./real-document-region-lab";
 
 const empty = (totalHeight = 320): RealRegionAllocation => ({ ids: [], heights: [], totalHeight });
 
@@ -134,5 +134,72 @@ test("secondary reorder carries asymmetric heights without activating or changin
     expect(reorderRealRegionDocuments(c, original, b.documentId, d.documentId, "after")).toEqual({ ok: false, reason: "invalid" });
     expect(original.ids).toEqual([b.documentId, d.documentId]);
     expect(original.heights).toEqual([100, 220]);
+  } finally { c.dispose(); }
+});
+
+test("prepared return activates a background draft without changing mode selection or history", async () => {
+  const { controller: c, documents: [a, b, d] } = await threeDocuments();
+  try {
+    c.activateTab(b.documentId); c.toggleSourceMode();
+    const state = c.getEditor(b.documentId)!.state;
+    c.updateEditor(b.documentId, state.update({ changes: { from: 0, insert: "draft" }, selection: { anchor: 2, head: 5 } }));
+    c.activateTab(a.documentId);
+    const original: RealRegionAllocation = { ids: [b.documentId, d.documentId], heights: [100, 220], totalHeight: 320 };
+    const before = c.getSnapshot();
+    const prepared = prepareSecondaryReturn(c, original, b.documentId);
+    expect(prepared.ok).toBe(true);
+    expect(c.getSnapshot()).toBe(before);
+    if (!prepared.ok) throw Error(prepared.reason);
+    expect(prepared.plan.allocation).toEqual({ ids: [d.documentId], heights: [320], totalHeight: 320 });
+    expect(prepared.plan.commit(() => original)).toBe(true);
+    expect(prepared.plan.commit(() => original)).toBe(false);
+    expect(c.getSnapshot().snapshot?.documentId).toBe(b.documentId);
+    expect(c.getMode(b.documentId)).toBe("source");
+    expect(c.getEditor(b.documentId)!.state.selection.main.from).toBe(2);
+    expect(c.getEditor(b.documentId)!.state.selection.main.to).toBe(5);
+    expect(c.getEditor(b.documentId)!.state.field(rawText)).toBe("draft" + b.text);
+    expect(c.runHistory("undo", b.documentId)).toBe(true);
+    expect(c.getEditor(b.documentId)!.state.field(rawText)).toBe(b.text);
+    expect(original.heights).toEqual([100, 220]);
+  } finally { c.dispose(); }
+});
+
+for (const invalidate of ["allocation", "close", "composition", "save", "during-activation"] as const) {
+  test(`prepared return rejects ${invalidate} without publishing region allocation`, async () => {
+    const { controller: c, documents: [a, b] } = await threeDocuments();
+    try {
+      c.activateTab(a.documentId);
+      let live: RealRegionAllocation = { ids: [b.documentId], heights: [320], totalHeight: 320 };
+      const original = live;
+      let saving = false;
+      const target = { ...c, hasSaves: () => saving || c.hasSaves() };
+      const prepared = prepareSecondaryReturn(target, original, b.documentId);
+      if (!prepared.ok) throw Error(prepared.reason);
+      let off: () => void = () => undefined;
+      if (invalidate === "allocation") live = { ...original };
+      if (invalidate === "close") await c.closeTab(b.documentId);
+      if (invalidate === "composition") c.registerEditorInteraction(a.documentId, () => false);
+      if (invalidate === "save") saving = true;
+      if (invalidate === "during-activation") off = c.subscribe(() => { live = { ...original }; });
+      expect(prepared.plan.commit(() => live)).toBe(false);
+      expect(original.ids).toEqual([b.documentId]);
+      expect(original.heights).toEqual([320]);
+      off();
+    } finally { c.dispose(); }
+  });
+}
+
+
+test("return of an already active secondary skips activation publication", async () => {
+  const { controller: c, documents: [, b] } = await threeDocuments();
+  try {
+    c.activateTab(b.documentId);
+    const allocation = { ids: [b.documentId], heights: [320], totalHeight: 320 };
+    const before = c.getSnapshot(), editor = c.getEditor(b.documentId);
+    const prepared = prepareSecondaryReturn(c, allocation, b.documentId);
+    if (!prepared.ok) throw Error(prepared.reason);
+    expect(prepared.plan.commit(() => allocation)).toBe(true);
+    expect(c.getSnapshot()).toBe(before);
+    expect(c.getEditor(b.documentId)).toBe(editor);
   } finally { c.dispose(); }
 });

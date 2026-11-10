@@ -114,6 +114,8 @@ export type WorkspaceResponse = { protocolVersion: 1; requestId: string } & (
       operation?: DirectoryOperation;
       receipt?: DirectoryReceipt;
       roots: WorkspaceRoot[];
+      /** Only the select operation that committed this new root carries this receipt. */
+      selectedRoot?: { handle: string; generation: number };
       /** Existing document handles whose visible sidebar ownership is a root. */
       coveredHandles: string[];
       /** Opaque asset-only invalidation metadata; never authorizes renderer paths. */

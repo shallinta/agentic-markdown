@@ -1,4 +1,5 @@
 import type { FolderRemovalPublication } from "../shared/folder-removal";
+import { validRootRosterId } from "../shared/root-roster";
 import type { TrashPublication } from "../shared/trash-document";
 import type {
   WorkspaceNode,
@@ -56,7 +57,8 @@ function receipt(value: unknown): DirectoryReceipt {
 }
 function validResponse(
   value: unknown,
-  requestId: string
+  requestId: string,
+  operation: WorkspaceRequest["op"]
 ): value is Extract<WorkspaceResponse, { ok: true }> {
   if (
     !object(value) ||
@@ -112,6 +114,14 @@ function validResponse(
     !value.coveredHandles.every(text)
   )
     return false;
+  if ("selectedRoot" in value) {
+    const selected = value.selectedRoot;
+    if (operation !== "select" || !object(selected) ||
+        Object.keys(selected).sort().join() !== "generation,handle" ||
+        !validRootRosterId(selected.handle) || !integer(selected.generation) || Number(selected.generation) < 1 ||
+        !value.roots.some((root: Record<string, unknown>) => root.handle === selected.handle && root.generation === selected.generation))
+      return false;
+  }
   return (
     value.nodes === undefined ||
     (text(value.root) &&
@@ -142,6 +152,12 @@ export interface FolderState {
   error: string | null;
 }
 
+export interface WorkspaceSelectionReceipt {
+  readonly handle: string;
+  readonly generation: number;
+  current(): boolean;
+}
+
 /** Only opaque backend capabilities cross this boundary; display paths are never requests. */
 export function createFolderWorkspace(
   transport: (request: WorkspaceRequest) => Promise<WorkspaceResponse>
@@ -158,6 +174,8 @@ export function createFolderWorkspace(
   let disposed = false;
   let tail = Promise.resolve();
   let epoch = 0;
+  // A new explicit root operation supersedes selection receipts before its RPC settles.
+  let rootIntent = 0;
   let activeEpoch = 0;
   let refreshPending: Promise<void> | undefined;
   let pendingRescan:
@@ -194,7 +212,7 @@ export function createFolderWorkspace(
       protocolVersion: 1,
     });
     if (disposed || expectedEpoch !== epoch) return;
-    if (!validResponse(response, requestId))
+    if (!validResponse(response, requestId, input.op))
       throw new Error("workspace-request");
     if (metadataBytes(response) > WORKSPACE_CACHE_BYTES)
       throw Error("workspace-response-budget");
@@ -380,6 +398,25 @@ export function createFolderWorkspace(
         );
       throw error;
     }
+  }
+  function selectRoot(onSelected?: (receipt: WorkspaceSelectionReceipt) => void) {
+    const selectedEpoch = epoch;
+    const intent = ++rootIntent;
+    return enqueue(async () => {
+      const existing = onSelected && new Set(state.roots.map((root) => root.handle));
+      const response = await request({ op: "select" });
+      const selected = response?.selectedRoot && { ...response.selectedRoot };
+      await refresh();
+      if (!selected || !onSelected || existing?.has(selected.handle)) return;
+      const { handle, generation } = selected;
+      let valid = true;
+      const current = () => {
+        valid = valid && !disposed && !removalPaused && epoch === selectedEpoch &&
+          rootIntent === intent && !state.error && state.roots.some((root) => root.handle === handle && root.generation === generation);
+        return valid;
+      };
+      if (current()) onSelected({ handle, generation, current });
+    }, true);
   }
   async function rescan(root: string) {
     if (pendingRescan && pendingRescan.root !== root)
@@ -567,18 +604,26 @@ export function createFolderWorkspace(
       }
       return refreshPending;
     },
-    select: () =>
-      enqueue(async () => {
-        await request({ op: "select" });
-        await refresh();
-      }, true),
-    setHidden: (root: string, showHidden: boolean) =>
-      enqueue(async () => {
+    select: () => selectRoot(),
+    async selectWithReceipt() {
+      let selected: WorkspaceSelectionReceipt | undefined;
+      try {
+        await selectRoot((receipt) => { selected = receipt; });
+      } catch {
+        return undefined;
+      }
+      return selected?.current() ? selected : undefined;
+    },
+    setHidden: (root: string, showHidden: boolean) => {
+      rootIntent++;
+      return enqueue(async () => {
         await request({ op: "hidden", root, showHidden });
         await refresh();
-      }, true),
-    rescan: (root: string) =>
-      enqueue(async () => {
+      }, true);
+    },
+    rescan: (root: string) => {
+      rootIntent++;
+      return enqueue(async () => {
         try {
           await rescan(root);
         } catch (error) {
@@ -592,7 +637,8 @@ export function createFolderWorkspace(
                 : "目录重扫未完成，保留上次可见结果；请检查目录是否仍可访问后重试。";
           throw new WorkspaceError(rescanNotice);
         }
-      }, true),
+      }, true);
+    },
     prioritize: (root: string, entry: string) =>
       enqueue(async () => {
         await request({ op: "prioritize", root, entry });

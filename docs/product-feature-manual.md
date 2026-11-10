@@ -38,6 +38,8 @@ alpha.329 关闭一个标签后，若还有符合条件的标签，更新为剩�
 
 alpha.330 显式关闭最后一篇后，如果当前窗口确实写过且仍持有匹配记录，会将权威记录设为空。其他运行留下的历史不受影响。见[F-037j 迭代](iterations/F-037j-invalidate-owned-checkpoint-after-last-close.md)。
 
+F-037k 核对原生选择确实新增的目录，供后续恢复使用。取消和重复选择仍保持原有表现；当前不会因此自动打开标签。见[F-037k 迭代](iterations/F-037k-workspace-picker-root-receipt.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037k 原生选择器新增根回执（2026-11-11）
+
+包内已验真实新增回执，普通 WK 原生选择回归通过。OBL-034 的持久根身份、受保护读取、打开及完整恢复，OBL-054 和最终离线继续跟踪。见[F-037k 迭代](iterations/F-037k-workspace-picker-root-receipt.md)。
+
 ## F-037j 最后一篇关闭后清空本次记录（2026-11-11）
 
 普通 WK 已验实际新发布的本窗口记录被清空，以及旧历史保留。OBL-034 的重新授权恢复、程序性清空、草稿与副区、OBL-054 和最终离线继续跟踪。见[F-037j 迭代](iterations/F-037j-invalidate-owned-checkpoint-after-last-close.md)。

@@ -2739,7 +2739,10 @@ export function createWorkspaceService({
           roots.push(root);
           notifyRootRoster(authorization.path);
           wake();
-          return state(value.requestId);
+          return {
+            ...state(value.requestId),
+            selectedRoot: { handle: root.meta.handle, generation: root.meta.generation },
+          };
         } catch {
           return failure(value.requestId, "UNAVAILABLE");
         } finally {

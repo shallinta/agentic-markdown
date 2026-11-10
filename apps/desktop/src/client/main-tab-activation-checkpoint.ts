@@ -2,13 +2,15 @@ import {
   validMainTabCheckpointRequest,
   validMainTabCheckpointResponse,
   type MainTabCheckpointRequest,
+  type MainTabSourceInput,
 } from "../shared/main-tab-checkpoint";
 
-import type { createDocumentController } from "./documents";
+import type { createDocumentController, PrimaryTabLastClose } from "./documents";
 
 type Documents = Pick<ReturnType<typeof createDocumentController>,
-  "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "captureCleanPrimaryTabs">;
-type CheckpointTarget = Pick<MainTabCheckpointRequest["tabs"][number], "documentId" | "handle">;
+  "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "subscribePrimaryTabLastClose" | "captureCleanPrimaryTabs">;
+type CheckpointTarget = Pick<MainTabSourceInput, "documentId" | "handle">;
+type CheckpointIntent = { kind: "record"; target: CheckpointTarget } | { kind: "clear"; close: PrimaryTabLastClose };
 
 /** Persist at most one eligible primary-tab checkpoint at a time. */
 export function attachMainTabActivationCheckpoint(
@@ -17,7 +19,7 @@ export function attachMainTabActivationCheckpoint(
   workspaceScope: () => object | undefined,
   idleMs = 120,
 ) {
-  let pending: CheckpointTarget | undefined;
+  let pending: CheckpointIntent | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
   let disposed = false;
@@ -32,10 +34,19 @@ export function attachMainTabActivationCheckpoint(
   async function publishLatest() {
     timer = undefined;
     if (disposed || inFlight || !pending) return;
-    const target = pending;
+    const intent = pending;
     pending = undefined;
     inFlight = true;
     try {
+      if (intent.kind === "clear") {
+        if (!intent.close.current()) return;
+        const empty = documents.captureCleanPrimaryTabs();
+        if (!empty.ok || empty.tabs.length || empty.activeIndex !== null ||
+            !empty.current() || !intent.close.current() || disposed || pending) return;
+        confirmed = undefined;
+        await send({ protocolVersion: 1, op: "clear" });
+        return;
+      }
       const scope = workspaceScope();
       if (!scope) return;
       const capture = documents.captureCleanPrimaryTabs();
@@ -43,7 +54,7 @@ export function attachMainTabActivationCheckpoint(
       const request = { protocolVersion: 1, tabs: capture.tabs, activeIndex: capture.activeIndex } as const;
       if (!validMainTabCheckpointRequest(request)) return;
       const active = request.tabs[request.activeIndex];
-      if (active.handle !== target.handle || active.documentId !== target.documentId) return;
+      if (active.handle !== intent.target.handle || active.documentId !== intent.target.documentId) return;
       const key = JSON.stringify(request);
       if (confirmed?.scope === scope && confirmed.key === key) return;
       if (!capture.current() || disposed || pending || workspaceScope() !== scope) return;
@@ -62,13 +73,15 @@ export function attachMainTabActivationCheckpoint(
     }
   }
 
-  const enqueue = (target: CheckpointTarget) => {
+  const enqueue = (intent: CheckpointIntent) => {
     if (disposed) return;
-    pending = target;
+    pending = intent;
     schedule();
   };
-  const unsubscribeActivation = documents.subscribeActivation(enqueue);
-  const unsubscribeLayout = documents.subscribePrimaryTabLayoutChange(enqueue);
+  const record = (target: CheckpointTarget) => enqueue({ kind: "record", target });
+  const unsubscribeActivation = documents.subscribeActivation(record);
+  const unsubscribeLayout = documents.subscribePrimaryTabLayoutChange(record);
+  const unsubscribeClose = documents.subscribePrimaryTabLastClose((close) => enqueue({ kind: "clear", close }));
   return () => {
     disposed = true;
     pending = undefined;
@@ -76,5 +89,6 @@ export function attachMainTabActivationCheckpoint(
     clearTimeout(timer);
     unsubscribeActivation();
     unsubscribeLayout();
+    unsubscribeClose();
   };
 }

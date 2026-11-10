@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037j 最后一篇关闭后清空本次记录（2026-11-11）
+
+普通 WK 已验实际新发布的本窗口记录被清空，以及旧历史保留。OBL-034 的重新授权恢复、程序性清空、草稿与副区、OBL-054 和最终离线继续跟踪。见[F-037j 迭代](iterations/F-037j-invalidate-owned-checkpoint-after-last-close.md)。
+
 ## F-037i 关闭后记录剩余主区标签（2026-11-11）
 
 普通 WK 已验非空关闭后的合格记录与取消保护。OBL-034 的最后关闭失效和完整恢复、OBL-054 及最终离线继续跟踪。见[F-037i 迭代](iterations/F-037i-record-remaining-tabs-after-close.md)。

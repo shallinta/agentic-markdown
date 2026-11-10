@@ -34,7 +34,9 @@ alpha.327 在普通窗口打开或切换标签后记录最近一组符合条件�
 
 alpha.328 固定、取消固定、重排或切换模式后，符合条件的标签组也会更新记录，无需再切换标签。未保存时仍保留上一份。见[F-037h 迭代](iterations/F-037h-record-clean-tab-layout-changes.md)。
 
-alpha.329 关闭一个标签后，若还有符合条件的标签，更新为剩余标签组；取消关闭保留旧记录。关闭最后一篇后的历史记录处理继续开发。见[F-037i 迭代](iterations/F-037i-record-remaining-tabs-after-close.md)。
+alpha.329 关闭一个标签后，若还有符合条件的标签，更新为剩余标签组；取消关闭保留旧记录。见[F-037i 迭代](iterations/F-037i-record-remaining-tabs-after-close.md)。
+
+alpha.330 显式关闭最后一篇后，如果当前窗口确实写过且仍持有匹配记录，会将权威记录设为空。其他运行留下的历史不受影响。见[F-037j 迭代](iterations/F-037j-invalidate-owned-checkpoint-after-last-close.md)。
 
 ## 主窗原生全屏（F-038a）
 

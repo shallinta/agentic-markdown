@@ -71,6 +71,8 @@ test("only exact ready ordinary packaged main can lazily create checkpoint write
                 ? { status: "committed" }
                 : { status: "rejected", reason: "stale" }
             ),
+          clear: () =>
+            Promise.resolve({ status: "rejected", reason: "not-owned" }),
           close: () => Promise.resolve(),
         };
       }
@@ -105,6 +107,7 @@ test("latest valid request and navigation or quit suspension invalidate prior gu
           ? { status: "committed" }
           : { status: "rejected", reason: "stale" };
       },
+      clear: () => Promise.resolve({ status: "rejected", reason: "not-owned" }),
       close: () => Promise.resolve(),
     })
   );
@@ -147,6 +150,7 @@ test("metadata failures remain bounded and dispose never awaits pending completi
       write() {
         return Promise.reject(Error("private path must not leak"));
       },
+      clear: () => Promise.resolve({ status: "rejected", reason: "not-owned" }),
       close: () =>
         new Promise<void>((resolve) => {
           finish = resolve;
@@ -160,4 +164,62 @@ test("metadata failures remain bounded and dispose never awaits pending completi
   });
   expect(rpc.dispose()).toBeUndefined();
   finish();
+});
+
+test("clear uses strict protocol and current generation, and navigation cannot carry writer ownership", async () => {
+  expect(
+    validMainTabCheckpointRequest({ protocolVersion: 1, op: "clear" })
+  ).toBe(true);
+  for (const value of [
+    { protocolVersion: 1, op: "clear", tabs: [] },
+    { protocolVersion: 1, op: "clear", path: "file" },
+    { protocolVersion: 2, op: "clear" },
+  ])
+    expect(validMainTabCheckpointRequest(value)).toBe(false);
+  let created = 0,
+    closed = 0;
+  const rpc = createMainTabCheckpointRPC(
+    true,
+    () => true,
+    () => {
+      created++;
+      let owned = false;
+      return {
+        write: (_input, current) => {
+          owned = current();
+          return Promise.resolve(
+            owned
+              ? { status: "committed" }
+              : { status: "rejected", reason: "stale" }
+          );
+        },
+        clear: (current) => {
+          if (!owned || !current())
+            return Promise.resolve({ status: "rejected", reason: "not-owned" });
+          owned = false;
+          return Promise.resolve({ status: "committed" });
+        },
+        close: () => {
+          closed++;
+          return Promise.resolve();
+        },
+      };
+    }
+  );
+  rpc.ready(ready);
+  expect((await rpc.request(request())).status).toBe("committed");
+  const resume = rpc.suspend();
+  resume();
+  expect((await rpc.request({ protocolVersion: 1, op: "clear" })).status).toBe(
+    "committed"
+  );
+  await rpc.request(request());
+  rpc.navigate();
+  rpc.ready(ready);
+  expect(closed).toBe(1);
+  expect((await rpc.request({ protocolVersion: 1, op: "clear" })).status).toBe(
+    "rejected"
+  );
+  expect(created).toBe(2);
+  rpc.dispose();
 });

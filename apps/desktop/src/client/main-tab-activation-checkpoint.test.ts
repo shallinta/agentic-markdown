@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
 
-import type { MainTabCheckpointRequest } from "../shared/main-tab-checkpoint";
+import type { MainTabCheckpointRequest, MainTabSourceInput } from "../shared/main-tab-checkpoint";
 
-import type { CleanPrimaryTabCapture } from "./documents";
+import type { CleanPrimaryTabCapture, PrimaryTabLastClose } from "./documents";
 import { attachMainTabActivationCheckpoint } from "./main-tab-activation-checkpoint";
 
-type Activation = Pick<MainTabCheckpointRequest["tabs"][number], "documentId" | "handle">;
+type Activation = Pick<MainTabSourceInput, "documentId" | "handle">;
 const committed = { protocolVersion: 1, status: "committed" };
 const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-const tabs: MainTabCheckpointRequest["tabs"] = Array.from({ length: 3 }, (_, index) => ({
+const tabs: readonly MainTabSourceInput[] = Array.from({ length: 3 }, (_, index) => ({
   handle: `00000000-0000-4000-8000-00000000000${index}`,
   documentId: `00000000-0000-4000-8000-00000000001${index}`,
   revision: 1,
@@ -22,6 +22,7 @@ const clean = (activeIndex: number, current = () => true): CleanPrimaryTabCaptur
 function fixture() {
   let listener: ((target: Activation) => void) | undefined;
   let layoutListener: ((target: Activation) => void) | undefined;
+  let closeListener: ((intent: PrimaryTabLastClose) => void) | undefined;
   const requests: MainTabCheckpointRequest[] = [];
   const state = {
     capture: clean(0),
@@ -38,6 +39,10 @@ function fixture() {
       layoutListener = onLayout;
       return () => { layoutListener = undefined; };
     },
+    subscribePrimaryTabLastClose(onClose) {
+      closeListener = onClose;
+      return () => { closeListener = undefined; };
+    },
     captureCleanPrimaryTabs() {
       state.calls++;
       return state.capture;
@@ -50,7 +55,12 @@ function fixture() {
     state.capture = clean(index);
     listener?.(tabs[index]);
   }, emit(index: number) { listener?.(tabs[index]); }, layout(index: number) { layoutListener?.(tabs[index]); },
-    subscribed: () => !!listener || !!layoutListener };
+  close(current = () => true) {
+    state.capture = { ok: true, tabs: [], activeIndex: null, current: () => true };
+    closeListener?.({ current });
+  }, emitClose() { closeListener?.({ current: () => true }); },
+    sent: () => requests.map(request => "op" in request ? request.op : request.activeIndex),
+    subscribed: () => !!listener || !!layoutListener || !!closeListener };
 }
 
 test("waits for user activation and captures only the latest activation in a burst", async () => {
@@ -81,7 +91,7 @@ test("merges activation and layout while one publication is in flight", async ()
     f.state.capture = { ok: true, tabs: changed, activeIndex: 0, current: () => true };
     f.layout(2);
     await turn();
-    expect(f.requests.map(request => request.activeIndex)).toEqual([0]);
+    expect(f.sent()).toEqual([0]);
     expect(f.state.calls).toBe(1);
     f.state.send = () => Promise.resolve(committed);
     first.resolve(committed);
@@ -147,25 +157,25 @@ test("deduplicates only confirmed content in the same workspace and never retrie
     await turn();
     f.activate(0);
     await turn();
-    expect(f.requests.map(request => request.activeIndex)).toEqual([0]);
+    expect(f.sent()).toEqual([0]);
     f.state.scope = {};
     f.activate(0);
     await turn();
-    expect(f.requests.map(request => request.activeIndex)).toEqual([0, 0]);
+    expect(f.sent()).toEqual([0, 0]);
 
     f.state.send = () => Promise.resolve({ protocolVersion: 1, status: "unknown" });
     f.activate(1);
     await turn();
     await turn();
-    expect(f.requests.map(request => request.activeIndex)).toEqual([0, 0, 1]);
+    expect(f.sent()).toEqual([0, 0, 1]);
     f.state.send = () => Promise.resolve(committed);
     f.activate(0);
     await turn();
-    expect(f.requests.map(request => request.activeIndex)).toEqual([0, 0, 1, 0]);
+    expect(f.sent()).toEqual([0, 0, 1, 0]);
   } finally { f.stop(); }
 });
 
-test("disposal unsubscribes both triggers, drops queued layout and ignores an outstanding publication", async () => {
+test("disposal unsubscribes all triggers, drops queued layout and ignores an outstanding publication", async () => {
   const f = fixture();
   const first = Promise.withResolvers<unknown>();
   f.state.send = () => first.promise;
@@ -177,8 +187,58 @@ test("disposal unsubscribes both triggers, drops queued layout and ignores an ou
   first.resolve(committed);
   f.activate(2);
   f.layout(2);
+  f.close();
   await turn();
   await turn();
-  expect(f.requests.map(request => request.activeIndex)).toEqual([0]);
+  expect(f.sent()).toEqual([0]);
   expect(f.state.calls).toBe(1);
+});
+
+test("explicit last close replaces a queued record and sends only an empty intent without retry", async () => {
+  const f = fixture();
+  try {
+    f.state.scope = undefined;
+    f.state.send = () => Promise.resolve({ protocolVersion: 1, status: "unknown" });
+    f.activate(0);
+    f.close();
+    await turn();
+    await turn();
+    expect(f.requests).toEqual([{ protocolVersion: 1, op: "clear" }]);
+  } finally { f.stop(); }
+});
+
+test("nonempty, stale, or superseded last close cannot send clear", async () => {
+  const f = fixture();
+  try {
+    f.emitClose();
+    await turn();
+    f.close(() => false);
+    await turn();
+    expect(f.sent()).toEqual([]);
+    f.close();
+    f.activate(1);
+    await turn();
+    expect(f.sent()).toEqual([1]);
+  } finally { f.stop(); }
+});
+
+test("clear waits for an in-flight record and invalidates its deduplication baseline", async () => {
+  const f = fixture();
+  const first = Promise.withResolvers<unknown>();
+  try {
+    f.state.send = () => first.promise;
+    f.activate(0);
+    await turn();
+    f.close();
+    await turn();
+    expect(f.sent()).toEqual([0]);
+    f.state.send = () => Promise.resolve(committed);
+    first.resolve(committed);
+    await turn();
+    await turn();
+    expect(f.sent()).toEqual([0, "clear"]);
+    f.activate(0);
+    await turn();
+    expect(f.sent()).toEqual([0, "clear", 0]);
+  } finally { f.stop(); }
 });

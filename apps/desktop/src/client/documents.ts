@@ -101,6 +101,10 @@ export interface DocumentOpenReceipt {
   kind: "opened" | "reused";
 }
 
+export interface PrimaryTabLastClose {
+  current(): boolean;
+}
+
 export type DocumentEntry = Pick<
   DocumentSnapshot,
   | "handle"
@@ -465,6 +469,7 @@ export function createDocumentController(
   let contentSearchPreparation = 0;
   const activationListeners = new Set<(target: { handle: string; documentId: string }) => void>();
   const primaryTabLayoutListeners = new Set<(target: { handle: string; documentId: string }) => void>();
+  const primaryTabLastCloseListeners = new Set<(intent: PrimaryTabLastClose) => void>();
   const preparePrimaryTabLayoutNotification = (expected = state) => {
     const target = expected.snapshot;
     const incarnation = target && editors.get(target.documentId)?.state.field(editorFaultSession);
@@ -1343,8 +1348,19 @@ export function createDocumentController(
     };
     const notifyLayout = !removeHandle && snapshot
       ? preparePrimaryTabLayoutNotification(next) : undefined;
+    const closedLast = !removeHandle && tabs.length === 0 && snapshot === null;
+    const closedGeneration = generation;
     publish(next);
     notifyLayout?.();
+    if (!closedLast || !primaryTabLastCloseListeners.size) return;
+    const intent: PrimaryTabLastClose = {
+      current: () => !metadataDisposed && generation === closedGeneration && state.tabs.length === 0 && state.snapshot === null,
+    };
+    for (const listener of primaryTabLastCloseListeners) {
+      if (state !== next || !intent.current()) break;
+      try { listener(intent); }
+      catch { /* Optional metadata observation cannot interrupt document operations. */ }
+    }
   }
   async function settleRemoval() {
     if (!removal || removalRunning || !transport.removeStandalone || metadataDisposed) return;
@@ -2375,6 +2391,11 @@ export function createDocumentController(
       primaryTabLayoutListeners.add(listener);
       return () => { primaryTabLayoutListeners.delete(listener); };
     },
+    subscribePrimaryTabLastClose(listener: (intent: PrimaryTabLastClose) => void) {
+      if (metadataDisposed) return () => undefined;
+      primaryTabLastCloseListeners.add(listener);
+      return () => { primaryTabLastCloseListeners.delete(listener); };
+    },
     subscribeActivation(listener: (target: { handle: string; documentId: string }) => void) {
       activationListeners.add(listener);
       return () => { activationListeners.delete(listener); };
@@ -2460,6 +2481,7 @@ export function createDocumentController(
       quickFocusListeners.clear();
       activationListeners.clear();
       primaryTabLayoutListeners.clear();
+      primaryTabLastCloseListeners.clear();
       for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();
       metadataEpoch++;

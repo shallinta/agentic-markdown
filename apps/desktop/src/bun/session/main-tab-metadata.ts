@@ -30,7 +30,8 @@ export type MainTabMetadataFailure =
   | "capacity"
   | "closed"
   | "queue-full"
-  | "stale";
+  | "stale"
+  | "not-owned";
 export type MainTabMetadataRead =
   | { status: "valid"; data: MainTabSessionMetadata }
   | { status: "missing" | MainTabMetadataFailure };
@@ -107,7 +108,8 @@ export function createMainTabMetadataStore(isolatedDir: string) {
 /** Internal checkpoint storage; callers must supply a live authority guard. */
 export function createMainTabCheckpointMetadataStore(directory: string) {
   const store = createMetadataStore(
-    join(directory, "main-tab-session-checkpoint.json")
+    join(directory, "main-tab-session-checkpoint.json"),
+    true
   );
   return {
     ...store,
@@ -122,7 +124,8 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
   };
 }
 
-function createMetadataStore(path: string) {
+function createMetadataStore(path: string, ownedCheckpoint = false) {
+  let owner: { encoded: string; bytes: string } | undefined;
   const store = createSettingsStore<MainTabSessionMetadata>(
     path,
     (value) =>
@@ -177,13 +180,19 @@ function createMetadataStore(path: string) {
       return enqueue(
         async () => {
           let legacy = false;
-          const result = await store.updateObserved((_previous, format) => {
-            if (format === "legacy") {
-              legacy = true;
-              throw Error("Legacy session metadata");
-            }
-            return captured;
-          }, current);
+          let changedBytes = false;
+          const bytes = `${JSON.stringify({ version: 1, data: captured }, null, 2)}\n`;
+          const result = await store.updateObserved(
+            (_previous, format, original) => {
+              changedBytes = original !== bytes;
+              if (format === "legacy") {
+                legacy = true;
+                throw Error("Legacy session metadata");
+              }
+              return captured;
+            },
+            current
+          );
           if ("stale" in result && result.stale)
             return { status: "rejected" as const, reason: "stale" as const };
           if (
@@ -191,8 +200,20 @@ function createMetadataStore(path: string) {
             result.persisted.status === "valid" &&
             result.persisted.format === "version1" &&
             JSON.stringify(result.persisted.data) === JSON.stringify(captured)
-          )
+          ) {
+            if (ownedCheckpoint) {
+              const encoded = JSON.stringify(captured);
+              if (result.confirmed && changedBytes)
+                owner = {
+                  encoded,
+                  bytes,
+                };
+              else if (!result.confirmed || owner?.encoded !== encoded)
+                owner = undefined;
+            }
             return { status: "committed" as const };
+          }
+          if (ownedCheckpoint) owner = undefined;
           // A guarded publication may already have started. Its queue-owned
           // observation is final; a later read cannot prove it was rejected.
           if (current && result.attempted)
@@ -203,6 +224,65 @@ function createMetadataStore(path: string) {
           if (observed.status !== "valid" && observed.status !== "missing")
             return { status: "rejected" as const, reason: observed.status };
           return { status: "unknown" as const, reason: "io" as const };
+        },
+        (reason) => ({ status: "rejected" as const, reason })
+      );
+    },
+    clearOwned(current: () => boolean): Promise<MainTabMetadataWrite> {
+      const capturedOwner = owner;
+      if (!ownedCheckpoint || !capturedOwner)
+        return Promise.resolve({ status: "rejected", reason: "not-owned" });
+      let valid = true;
+      const admitted = () => {
+        try {
+          valid =
+            valid &&
+            owner === capturedOwner &&
+            typeof current === "function" &&
+            current() === true;
+        } catch {
+          valid = false;
+        }
+        return valid;
+      };
+      return enqueue<MainTabMetadataWrite>(
+        async () => {
+          if (!admitted()) return { status: "rejected", reason: "stale" };
+          let matched = false;
+          let stale = false;
+          const empty: MainTabSessionMetadata = { tabs: [], activeIndex: null };
+          const result = await store.updateObserved(
+            (previous, format, original) => {
+              stale = !admitted();
+              if (
+                stale ||
+                format !== "version1" ||
+                original !== capturedOwner.bytes ||
+                JSON.stringify(previous) !== capturedOwner.encoded
+              )
+                throw Error("Checkpoint ownership changed");
+              matched = true;
+              return empty;
+            },
+            admitted
+          );
+          if (stale || ("stale" in result && result.stale))
+            return { status: "rejected" as const, reason: "stale" as const };
+          if (result.attempted) {
+            owner = undefined;
+            if (
+              result.persisted.status === "valid" &&
+              result.persisted.format === "version1" &&
+              JSON.stringify(result.persisted.data) === JSON.stringify(empty)
+            )
+              return { status: "committed" as const };
+            return { status: "unknown" as const, reason: "io" as const };
+          }
+          owner = undefined;
+          return {
+            status: "rejected" as const,
+            reason: matched ? ("io" as const) : ("not-owned" as const),
+          };
         },
         (reason) => ({ status: "rejected" as const, reason })
       );

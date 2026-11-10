@@ -7,7 +7,7 @@ import type { createGuardedMainTabCheckpoint } from "../session/main-tab-checkpo
 
 type Writer = Pick<
   ReturnType<typeof createGuardedMainTabCheckpoint>,
-  "write" | "close"
+  "write" | "clear" | "close"
 >;
 /** One ordinary packaged main-window lifecycle. No startup or exit writes. */
 export function createMainTabCheckpointRPC(
@@ -41,6 +41,9 @@ export function createMainTabCheckpointRPC(
     navigate() {
       ready = false;
       generation++;
+      const retired = writer;
+      writer = undefined;
+      void retired?.close().catch(() => undefined);
     },
     suspend() {
       suspensions++;
@@ -59,10 +62,14 @@ export function createMainTabCheckpointRPC(
       const ticket = ++generation;
       try {
         writer ??= createWriter();
-        const result = await writer.write(
-          { tabs: input.tabs, activeIndex: input.activeIndex },
-          () => ticket === generation && available()
-        );
+        const current = () => ticket === generation && available();
+        const result =
+          "op" in input
+            ? await writer.clear(current)
+            : await writer.write(
+                { tabs: input.tabs, activeIndex: input.activeIndex },
+                current
+              );
         // A completed publication is not undone by a later lifecycle event.
         return { protocolVersion: 1, status: result.status };
       } catch {

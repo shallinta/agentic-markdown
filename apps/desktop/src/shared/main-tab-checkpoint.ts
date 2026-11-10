@@ -10,11 +10,13 @@ export interface MainTabSourceInput {
   pinned: boolean;
   mode: "editing" | "source";
 }
-export interface MainTabCheckpointRequest {
+export interface MainTabCheckpointWriteRequest {
   protocolVersion: 1;
   tabs: readonly MainTabSourceInput[];
   activeIndex: number;
 }
+export type MainTabCheckpointRequest =
+  MainTabCheckpointWriteRequest | { protocolVersion: 1; op: "clear" };
 export interface MainTabCheckpointResponse {
   protocolVersion: 1;
   status: "committed" | "rejected" | "unknown";
@@ -25,6 +27,13 @@ const object = (value: unknown): value is Record<string, unknown> =>
 export function validMainTabCheckpointRequest(
   value: unknown
 ): value is MainTabCheckpointRequest {
+  if (
+    object(value) &&
+    Object.keys(value).sort().join() === "op,protocolVersion" &&
+    value.protocolVersion === 1 &&
+    value.op === "clear"
+  )
+    return true;
   if (
     !object(value) ||
     Object.keys(value).sort().join() !== "activeIndex,protocolVersion,tabs" ||

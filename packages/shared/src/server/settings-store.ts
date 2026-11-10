@@ -195,7 +195,7 @@ export function createSettingsStore<T>(
     /** No migration, backup or write. Same-path ordering is retained. */
     readPersisted: () => enqueue(readPersisted),
     /** One bounded write and observation, including a write that threw after rename. */
-    updateObserved: (update: (state: T, format: "missing" | "legacy" | "version1") => T, current?: () => boolean) => enqueue(async () => {
+    updateObserved: (update: (state: T, format: "missing" | "legacy" | "version1", original: string | undefined) => T, current?: () => boolean) => enqueue(async () => {
       let before: T, expected: T;
       let beforeFormat: "missing" | "legacy" | "version1";
       let confirmed = false;
@@ -205,7 +205,7 @@ export function createSettingsStore<T>(
           return { attempted: false as const };
         before = state.data;
         beforeFormat = state.original === undefined ? "missing" : state.legacy ? "legacy" : "version1";
-        expected = update(before, beforeFormat);
+        expected = update(before, beforeFormat, state.original);
         if (options && !options.validateData(expected)) return { attempted: false as const };
         // No nested public enqueue: the complete operation owns this queue turn.
         try {

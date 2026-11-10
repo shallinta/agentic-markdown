@@ -26,6 +26,7 @@ import {
   CLEAN_PRIMARY_TAB_CAPTURE_LIMIT,
   isDocumentResponse,
   type DocumentTransport,
+  type PrimaryTabLastClose,
 } from "./documents";
 import { createEditingImagePool } from "./editing-image-pool";
 import { editingImageField, editingImagesEffect } from "./editing-images";
@@ -2524,5 +2525,80 @@ test("close publication invalidated by a subscriber cannot notify the former sur
   expect(changed).toBe(true);
   expect(controller.getSnapshot().snapshot?.documentId).toBe(a.documentId);
   expect(notifications).toBe(0);
+  controller.dispose();
+});
+
+test("only a confirmed last close yields an empty ticket that survives discard thaw", async () => {
+  let approve = false;
+  const { controller, value } = setup(() => Promise.resolve(approve));
+  const closes: PrimaryTabLastClose[] = [];
+  let activations = 0;
+  let layout = 0;
+  const unsubscribe = controller.subscribePrimaryTabLastClose(intent => closes.push(intent));
+  expect(closes).toHaveLength(0);
+  await controller.select();
+  controller.subscribeActivation(() => { activations++; });
+  controller.subscribePrimaryTabLayoutChange(() => { layout++; });
+  const editor = controller.getEditor(value.documentId)!;
+  controller.updateEditor(value.documentId, editor.state.update({ changes: { from: 0, insert: "draft" } }));
+  await controller.closeActive();
+  expect(controller.isDirty(value.documentId)).toBe(true);
+  expect(closes).toHaveLength(0);
+  approve = true;
+  await controller.closeActive();
+  expect(controller.getSnapshot().frozen).toBe(false);
+  expect(closes).toHaveLength(1);
+  expect(closes[0].current()).toBe(true);
+  expect(activations).toBe(0);
+  expect(layout).toBe(0);
+  await controller.closeTab(value.documentId);
+  expect(closes).toHaveLength(1);
+  await controller.select();
+  await controller.clear();
+  expect(controller.getSnapshot().tabs).toEqual([]);
+  expect(closes[0].current()).toBe(false);
+  expect(closes).toHaveLength(1);
+  unsubscribe();
+  await controller.select();
+  await controller.closeActive();
+  expect(closes).toHaveLength(1);
+  controller.dispose();
+});
+
+test("removing the last standalone entry and disposing the window do not notify explicit last close", async () => {
+  const { controller, transport, value } = setup();
+  const session = crypto.randomUUID();
+  transport.removeStandalone = request => Promise.resolve(request.op === "state"
+    ? {protocolVersion:1,requestId:request.requestId,status:"state",session,sequence:1}
+    : {protocolVersion:1,requestId:request.requestId,status:request.op === "begin" ? "issued" : request.op === "ack" ? "acked" : "committed", operation:{session:request.session,sequence:request.sequence,handle:request.handle}});
+  await controller.select();
+  let closes = 0;
+  controller.subscribePrimaryTabLastClose(() => { closes++; });
+  controller.setStandaloneRemovalEligibility(handle => handle === value.handle);
+  await controller.removeStandalone(value.handle);
+  expect(controller.getSnapshot().tabs).toEqual([]);
+  expect(closes).toBe(0);
+  await controller.select();
+  controller.dispose();
+  expect(closes).toBe(0);
+});
+
+test("reopening during a last-close publication suppresses the obsolete empty notification", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const reopened: Promise<void>[] = [];
+  let started = false;
+  let closes = 0;
+  controller.subscribePrimaryTabLastClose(() => { closes++; });
+  controller.subscribe(() => {
+    if (started || controller.getSnapshot().tabs.length) return;
+    started = true;
+    reopened.push(Promise.resolve(controller.select()));
+  });
+  await controller.closeActive();
+  await Promise.all(reopened);
+  expect(started).toBe(true);
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(value.documentId);
+  expect(closes).toBe(0);
   controller.dispose();
 });

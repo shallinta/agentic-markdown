@@ -436,3 +436,245 @@ test.each(['{"version":99,"data":{"future":true}}\n', "{broken publication\n"])(
     }
   }
 );
+
+test("only a confirmed new publication owns a checkpoint; identical preexisting bytes cannot be claimed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-owned-"));
+  const first = createMainTabCheckpointMetadataStore(directory);
+  const second = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const data = {
+      tabs: [
+        {
+          rootId: crypto.randomUUID(),
+          relativePath: "a.md",
+          fingerprint: "1:2:3",
+          pinned: false,
+          mode: "editing" as const,
+        },
+      ],
+      activeIndex: 0,
+    };
+    expect(await second.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(readdirSync(directory)).toEqual([]);
+    expect(await first.write(data, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await second.write(data, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await second.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await first.write(data, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await first.clearOwned(() => false)).toEqual({
+      status: "rejected",
+      reason: "stale",
+    });
+    expect(await first.clearOwned(() => true)).toEqual({ status: "committed" });
+    expect(await first.read()).toEqual({
+      status: "valid",
+      data: { tabs: [], activeIndex: null },
+    });
+    expect(
+      JSON.parse(
+        await readFile(
+          join(directory, "main-tab-session-checkpoint.json.bak"),
+          "utf8"
+        )
+      )
+    ).toEqual({ version: 1, data });
+    expect(await first.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+  } finally {
+    await first.close();
+    await second.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("owned clear compares the live queued authority and cannot erase another publication or future format", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-conflict-"));
+  const store = createMainTabCheckpointMetadataStore(directory);
+  const other = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const data = {
+      tabs: [
+        {
+          rootId: crypto.randomUUID(),
+          relativePath: "a.md",
+          fingerprint: "1:2:3",
+          pinned: false,
+          mode: "editing" as const,
+        },
+      ],
+      activeIndex: 0,
+    };
+    await store.write(data, () => true);
+    await other.write(
+      { ...data, tabs: [{ ...data.tabs[0], pinned: true }] },
+      () => true
+    );
+    const file = join(directory, "main-tab-session-checkpoint.json");
+    const before = await readFile(file);
+    expect(await store.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(file)).toEqual(before);
+    await writeFile(file, '{"version":99,"data":{}}');
+    expect(await other.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(file, "utf8")).toBe('{"version":99,"data":{}}');
+  } finally {
+    await store.close();
+    await other.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a clear with unknown publication outcome revokes ownership and never retries or rolls back", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-clear-unknown-"));
+  const store = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const data = {
+      tabs: [
+        {
+          rootId: crypto.randomUUID(),
+          relativePath: "a.md",
+          fingerprint: "1:2:3",
+          pinned: false,
+          mode: "editing" as const,
+        },
+      ],
+      activeIndex: 0,
+    };
+    await store.write(data, () => true);
+    const filename = "main-tab-session-checkpoint.json";
+    let injected = false;
+    expect(
+      await store.clearOwned(() => {
+        const temporary = readdirSync(directory).find(
+          (name) =>
+            name.startsWith(`${filename}.${process.pid}.`) &&
+            name.endsWith(".tmp")
+        );
+        if (temporary && !injected) {
+          writeFileSync(join(directory, temporary), "broken");
+          injected = true;
+        }
+        return true;
+      })
+    ).toEqual({ status: "unknown", reason: "io" });
+    expect(injected).toBe(true);
+    expect(await store.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(join(directory, filename), "utf8")).toBe("broken");
+  } finally {
+    await store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("real bound checkpoint clear shares the writer queue and still leaves markdown untouched", async () => {
+  const f = await fixture();
+  const writer = createGuardedMainTabCheckpoint(join(f.dir, "metadata"), f);
+  try {
+    const { tab } = await f.open(f.paths[0]);
+    const write = writer.write({ tabs: [tab], activeIndex: 0 }, () => true);
+    const clear = writer.clear(() => true);
+    expect(await write).toEqual({ status: "committed" });
+    expect(await clear).toEqual({ status: "committed" });
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      data: { tabs: [], activeIndex: null },
+    });
+    expect(await readFile(join(f.paths[0], "a.md"), "utf8")).toBe(
+      "# Synthetic"
+    );
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("same fields rewritten with different bytes cannot be cleared using old ownership", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-bytes-"));
+  const store = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const data = {
+      tabs: [
+        {
+          rootId: crypto.randomUUID(),
+          relativePath: "a.md",
+          fingerprint: "1:2:3",
+          pinned: false,
+          mode: "editing" as const,
+        },
+      ],
+      activeIndex: 0,
+    };
+    expect(await store.write(data, () => true)).toEqual({
+      status: "committed",
+    });
+    const path = join(directory, "main-tab-session-checkpoint.json");
+    const alternate = JSON.stringify({ version: 1, data });
+    await writeFile(path, alternate);
+    expect(await store.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(path, "utf8")).toBe(alternate);
+  } finally {
+    await store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("rewriting equal fields from noncanonical bytes is a new publication and grants ownership", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-reformat-"));
+  const store = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const data = {
+      tabs: [
+        {
+          rootId: crypto.randomUUID(),
+          relativePath: "a.md",
+          fingerprint: "1:2:3",
+          pinned: false,
+          mode: "editing" as const,
+        },
+      ],
+      activeIndex: 0,
+    };
+    const path = join(directory, "main-tab-session-checkpoint.json");
+    const previous = JSON.stringify({ version: 1, data });
+    await writeFile(path, previous);
+    expect(await store.write(data, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await readFile(path, "utf8")).toBe(
+      `${JSON.stringify({ version: 1, data }, null, 2)}\n`
+    );
+    expect(await readFile(`${path}.bak`, "utf8")).toBe(previous);
+    expect(await store.clearOwned(() => true)).toEqual({ status: "committed" });
+    expect(await store.read()).toEqual({
+      status: "valid",
+      data: { tabs: [], activeIndex: null },
+    });
+  } finally {
+    await store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

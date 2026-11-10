@@ -72,6 +72,24 @@ export function createGuardedMainTabCheckpoint(
       });
       return next;
     },
+    clear(current: () => boolean): Promise<MainTabCheckpointWrite> {
+      if (closed || queued >= 64)
+        return Promise.resolve({
+          status: "rejected",
+          reason: closed ? "closed" : "queue-full",
+        });
+      queued++;
+      const next = tail
+        .then(() => store.clearOwned(current))
+        .catch((): MainTabCheckpointWrite => ({
+          status: "unknown",
+          reason: "io",
+        }));
+      tail = next.finally(() => {
+        queued--;
+      });
+      return next;
+    },
     async drain() {
       await tail;
       await store.drain();

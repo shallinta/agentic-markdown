@@ -9,6 +9,14 @@ export type PersistedSettings<T> =
   | { status: "valid"; data: T; format: "legacy" | "version1" }
   | { status: "missing" | "corrupt" | "future" | "too-large" | "io" };
 
+function canPublish(current?: () => boolean): boolean {
+  try {
+    return current === undefined || current() === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Called only after JSON.parse validated syntax. Detect duplicates before projection. */
 function duplicateObjectKey(source: string): boolean {
   const objects: Set<string>[] = [];
@@ -131,8 +139,9 @@ export function createSettingsStore<T>(
     };
   };
 
-  const atomicWrite = async (destination: string, contents: string) => {
+  const atomicWrite = async (destination: string, contents: string, current?: () => boolean) => {
     const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+    let stale = false;
     try {
       const file = await open(temporary, "wx", 0o600);
       try {
@@ -141,13 +150,19 @@ export function createSettingsStore<T>(
       } finally {
         await file.close();
       }
+      // No await between checking the caller's proof and dispatching rename.
+      stale = !canPublish(current);
+      if (stale) return false;
       await rename(temporary, destination);
+      return true;
     } finally {
-      await rm(temporary, { force: true });
+      const cleanup = rm(temporary, { force: true });
+      if (stale) await cleanup.catch(() => undefined);
+      else await cleanup;
     }
   };
 
-  const commit = async (data: T, original: string | undefined) => {
+  const commit = async (data: T, original: string | undefined, current?: () => boolean) => {
     if (options && !options.validateData(data)) throw Error("SETTINGS_CORRUPT");
     const contents = `${JSON.stringify({ version: 1, data }, null, 2)}\n`;
     if (
@@ -156,11 +171,12 @@ export function createSettingsStore<T>(
         Buffer.byteLength(contents) > options.maxBytes)
     )
       throw Error("SETTINGS_CORRUPT");
-    if (contents === original) return;
+    if (!canPublish(current)) return false;
+    if (contents === original) return true;
     await mkdir(dirname(statePath), { recursive: true });
     // A failed backup never replaces the authoritative file. Keep exact old bytes.
-    if (original !== undefined) await atomicWrite(`${statePath}.bak`, original);
-    await atomicWrite(statePath, contents);
+    if (original !== undefined && !await atomicWrite(`${statePath}.bak`, original, current)) return false;
+    return atomicWrite(statePath, contents, current);
   };
 
   const readPersisted = async (): Promise<PersistedSettings<T>> => {
@@ -179,7 +195,7 @@ export function createSettingsStore<T>(
     /** No migration, backup or write. Same-path ordering is retained. */
     readPersisted: () => enqueue(readPersisted),
     /** One bounded write and observation, including a write that threw after rename. */
-    updateObserved: (update: (state: T, format: "missing" | "legacy" | "version1") => T) => enqueue(async () => {
+    updateObserved: (update: (state: T, format: "missing" | "legacy" | "version1") => T, current?: () => boolean) => enqueue(async () => {
       let before: T, expected: T;
       let beforeFormat: "missing" | "legacy" | "version1";
       let confirmed = false;
@@ -192,10 +208,17 @@ export function createSettingsStore<T>(
         expected = update(before, beforeFormat);
         if (options && !options.validateData(expected)) return { attempted: false as const };
         // No nested public enqueue: the complete operation owns this queue turn.
-        try { await commit(expected, state.original); confirmed = true; }
+        try {
+          if (!await commit(expected, state.original, current))
+            return { attempted: false as const, stale: true as const, persisted: await readPersisted() };
+          confirmed = true;
+        }
         catch { /* The post-write observation decides; rejection alone is not proof. */ }
       } catch { return { attempted: false as const }; }
-      return { attempted: true as const, before, beforeFormat, expected, confirmed, persisted: confirmed ? { status: "valid" as const, data: expected, format: "version1" as const } : await readPersisted() };
+      const persisted = confirmed && current === undefined
+        ? { status: "valid" as const, data: expected, format: "version1" as const }
+        : await readPersisted();
+      return { attempted: true as const, before, beforeFormat, expected, confirmed, persisted };
     }),
     inspectState: () =>
       enqueue(

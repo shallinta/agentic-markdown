@@ -28,6 +28,8 @@
 
 隔离实验已验证标签顺序、固定状态、模式和活动项可以跨进程读回。实验使用合成文件，F-037b 已验证重新授权后的目录标签候选。F-037c 已验证主区在内存中采集已保存标签的状态。F-037d 已验证这些标签确由当前目录授权打开。F-037e 串联了写入、读回和重新授权后的候选匹配。同路径替换的文件不继承旧标签。正式会话恢复入口尚待接入。见[F-037a 迭代](iterations/F-037a-main-tab-session-metadata-probe.md)、[F-037b 迭代](iterations/F-037b-reauthorized-main-tab-candidates.md)、[F-037c 迭代](iterations/F-037c-capture-clean-primary-tabs.md)、[F-037d 迭代](iterations/F-037d-bind-main-tab-session-metadata.md)、[F-037e 迭代](iterations/F-037e-probe-main-tab-session-recovery.md)。
 
+F-037f 已验证私有会话记录在目录授权仍有效时写入。记录不含正文或访问凭据；失效后保留原记录。普通窗口还未开始写入或恢复。见[F-037f 迭代](iterations/F-037f-guarded-main-tab-checkpoint.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

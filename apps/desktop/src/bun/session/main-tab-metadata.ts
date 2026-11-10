@@ -28,7 +28,8 @@ export type MainTabMetadataFailure =
   | "invalid"
   | "capacity"
   | "closed"
-  | "queue-full";
+  | "queue-full"
+  | "stale";
 export type MainTabMetadataRead =
   | { status: "valid"; data: MainTabSessionMetadata }
   | { status: "missing" | MainTabMetadataFailure };
@@ -99,8 +100,30 @@ export const mainTabMetadataSerializedBytes = (data: MainTabSessionMetadata) =>
 
 /** Isolated precursor only. No startup consumer, path lookup, or authority restoration. */
 export function createMainTabMetadataStore(isolatedDir: string) {
+  return createMetadataStore(join(isolatedDir, "main-tab-session-probe.json"));
+}
+
+/** Internal checkpoint storage; callers must supply a live authority guard. */
+export function createMainTabCheckpointMetadataStore(directory: string) {
+  const store = createMetadataStore(
+    join(directory, "main-tab-session-checkpoint.json")
+  );
+  return {
+    ...store,
+    write(
+      value: unknown,
+      current: () => boolean
+    ): Promise<MainTabMetadataWrite> {
+      if (typeof current !== "function")
+        return Promise.resolve({ status: "rejected", reason: "stale" });
+      return store.write(value, current);
+    },
+  };
+}
+
+function createMetadataStore(path: string) {
   const store = createSettingsStore<MainTabSessionMetadata>(
-    join(isolatedDir, "main-tab-session-probe.json"),
+    path,
     (value) =>
       validMainTabSessionMetadata(value)
         ? value
@@ -138,7 +161,10 @@ export function createMainTabMetadataStore(isolatedDir: string) {
     read() {
       return enqueue(read, (status) => ({ status }));
     },
-    write(value: unknown): Promise<MainTabMetadataWrite> {
+    write(
+      value: unknown,
+      current?: () => boolean
+    ): Promise<MainTabMetadataWrite> {
       if (!validMainTabSessionMetadata(value))
         return Promise.resolve({ status: "rejected", reason: "invalid" });
       if (mainTabMetadataSerializedBytes(value) > MAIN_TAB_METADATA_MAX_BYTES)
@@ -156,7 +182,9 @@ export function createMainTabMetadataStore(isolatedDir: string) {
               throw Error("Legacy session metadata");
             }
             return captured;
-          });
+          }, current);
+          if ("stale" in result && result.stale)
+            return { status: "rejected" as const, reason: "stale" as const };
           if (
             result.attempted &&
             result.persisted.status === "valid" &&
@@ -164,6 +192,10 @@ export function createMainTabMetadataStore(isolatedDir: string) {
             JSON.stringify(result.persisted.data) === JSON.stringify(captured)
           )
             return { status: "committed" as const };
+          // A guarded publication may already have started. Its queue-owned
+          // observation is final; a later read cannot prove it was rejected.
+          if (current && result.attempted)
+            return { status: "unknown" as const, reason: "io" as const };
           const observed = await read();
           if (legacy)
             return { status: "rejected" as const, reason: "legacy" as const };

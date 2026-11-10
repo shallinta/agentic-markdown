@@ -48,7 +48,7 @@ const object = (value: unknown): value is Record<string, unknown> =>
 const exact = (value: Record<string, unknown>, keys: string) =>
   Object.keys(value).sort().join() === keys;
 
-function captureInput(
+export function captureMainTabMetadataInput(
   value: unknown
 ): { tabs: MainTabSourceInput[]; activeIndex: number | null } | undefined {
   if (
@@ -112,7 +112,7 @@ export function createMainTabMetadataBinder({
       value: unknown,
       signal?: AbortSignal
     ): Promise<BoundMainTabMetadata> {
-      const input = captureInput(value);
+      const input = captureMainTabMetadataInput(value);
       if (!input) return { status: "invalid" };
       if (signal?.aborted) return { status: "stale" };
       let valid = true;

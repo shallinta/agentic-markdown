@@ -2,6 +2,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@agentic-m
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { discardGuard } from "@/client/discard-guard";
+import { allocateSecondaryPaneHeight, SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
 
 import { MainSideLayout, MAIN_SIDE_MINIMUM_WIDTH } from "./main-side-layout";
 
@@ -9,6 +10,97 @@ const buttonClass = "electrobun-webkit-app-region-no-drag rounded border px-2 py
 const fixtureWidths = [null, 321, 300] as const;
 type FixtureWidth = (typeof fixtureWidths)[number];
 const cssPixels = (width: number) => Math.round(width * 100) / 100;
+
+const heightFixtures = [
+  { label: "99px 恰好装入", total: 99, heights: [33, 66] },
+  { label: "98px 空间不足", total: 98, heights: [33, 65] },
+  { label: "134px 均摊触底", total: 134, heights: [33, 46, 55] },
+  { label: "132px 比例缩小", total: 132, heights: [66, 66] },
+  { label: "99px 空副区", total: 99, heights: [] },
+] as const;
+type HeightFixture = (typeof heightFixtures)[number];
+
+function HeightAllocationLab() {
+  const [state, setState] = useState<{
+    fixture: HeightFixture;
+    heights: readonly number[];
+    notice: string;
+  }>({ fixture: heightFixtures[0], heights: heightFixtures[0].heights, notice: "" });
+  const { fixture, heights, notice } = state;
+  const stack = useRef<HTMLOListElement>(null);
+  const [measured, setMeasured] = useState<{
+    total: number;
+    heights: number[];
+    title?: number;
+    divider?: number;
+  }>();
+
+  useLayoutEffect(() => {
+    const element = stack.current;
+    if (!element) return;
+    const height = (row: Element) => cssPixels(row.getBoundingClientRect().height);
+    const first = element.firstElementChild;
+    const title = first?.firstElementChild;
+    const divider = first?.lastElementChild;
+    setMeasured({
+      total: height(element),
+      heights: Array.from(element.children, height),
+      title: title ? height(title) : undefined,
+      divider: divider ? height(divider) : undefined,
+    });
+  }, [fixture, heights]);
+
+  function addDocument() {
+    setState((previous) => {
+      const result = allocateSecondaryPaneHeight(previous.fixture.total, previous.heights);
+      if (!result.ok) return {
+        ...previous,
+        notice: result.reason === "full" ? "空间不足" : "实验高度无效",
+      };
+      return {
+        ...previous,
+        heights: result.heights,
+        notice: `已加入合成文档 ${result.heights.length}`,
+      };
+    });
+  }
+
+  return (
+    <div className="space-y-2 text-sm">
+      <h3 className="font-semibold">副区高度分配</h3>
+      <div className="flex flex-wrap gap-1" role="group" aria-label="高度预设">
+        {heightFixtures.map((preset) => (
+          <button key={preset.label} type="button" className={buttonClass}
+            aria-pressed={preset === fixture}
+            onClick={() => setState({ fixture: preset, heights: preset.heights, notice: "" })}>
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <button type="button" className={buttonClass} onClick={addDocument}>加入合成文档</button>
+      {notice && <p role="status">{notice}</p>}
+      <p className="tabular-nums">理论 CSS px：总高 {fixture.total}，文档 {heights.join(" / ") || "无"}</p>
+      {measured && (
+        <p className="tabular-nums">
+          实测 CSS px：总高 {measured.total}，文档 {measured.heights.join(" / ") || "无"}
+          {measured.title !== undefined && `，标题栏 ${measured.title}，分隔线 ${measured.divider}`}
+        </p>
+      )}
+      <ol ref={stack} aria-label="副区合成文档" className="bg-background ring-border overflow-hidden rounded ring-1"
+        style={{ height: fixture.total }}>
+        {heights.map((height, index) => (
+          <li key={index} className="flex flex-col overflow-hidden" style={{ height }}>
+            <h4 className="bg-sidebar flex shrink-0 items-center px-2" style={{ height: SECONDARY_MIN_HEIGHT - 1 }}>
+              合成文档 {index + 1}
+            </h4>
+            <div aria-hidden="true" className="min-h-0 grow" />
+            <div aria-hidden="true" className="bg-border h-px shrink-0" />
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
 
 export function LayoutLab() {
   const [fixture, setFixture] = useState<FixtureWidth>(null);
@@ -105,9 +197,10 @@ export function LayoutLab() {
               <MainSideLayout
                 main={<section aria-label="实验主区" className="size-full p-3"><h2>主区</h2></section>}
                 side={
-                  <section ref={side} aria-label="实验副区" className="bg-muted size-full space-y-2 p-3">
+                  <section ref={side} aria-label="实验副区" className="bg-muted size-full space-y-2 overflow-auto p-3">
                     <h2>副区</h2>
                     <button type="button" className={buttonClass}>副区焦点样本</button>
+                    <HeightAllocationLab />
                   </section>
                 }
                 sideVisible={sideVisible}

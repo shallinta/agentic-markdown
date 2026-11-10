@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-034a 副区高度分配实验（2026-11-10）
+
+新增分配与满载拒绝已在合成副区验证。真实区域归属、正式展开入口、分隔线调整、OBL-051 和最终离线继续跟踪。见[F-034a 迭代](iterations/F-034a-secondary-pane-height-allocation.md)。
+
 ## F-048e 独立阅读代码折叠（2026-11-10）
 
 顶层围栏的折叠、复制和查找定位已验。嵌套容器围栏、跨窗折叠状态、换行专项及最终离线仍开放。见[F-048e 迭代](iterations/F-048e-independent-reader-code-folds.md)。

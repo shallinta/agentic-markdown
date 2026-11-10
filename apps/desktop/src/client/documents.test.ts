@@ -352,6 +352,61 @@ test("independent buffer encodes the exact one MiB raw boundary without changing
   controller.dispose();
 });
 
+test("group sorting preserves active editor/MRU and reconciles open, refresh, close and replacement", async () => {
+  const { controller, transport, value: a } = setup(() => Promise.resolve(true));
+  const b = snapshot("B"), c = snapshot("C"), d = snapshot("D"), e = snapshot("E");
+  await controller.select();
+  const open = async (tab: DocumentSnapshot) => {
+    transport.selectDocument = request => Promise.resolve(result(request, tab));
+    await controller.select();
+  };
+  for (const tab of [b, c, d]) await open(tab);
+  for (const tab of [b, c]) { controller.activateTab(tab.documentId); controller.setActiveTabPinned(true); }
+  controller.activateTab(d.documentId);
+  const editor = controller.getEditor(d.documentId)!;
+  controller.updateEditor(d.documentId, editor.state.update({ changes: { from: 0, insert: "draft" }, selection: { anchor: 2 } }));
+  const edited = controller.getEditor(d.documentId);
+  const state = controller.getSnapshot();
+  let activations = 0;
+  const unsubscribe = controller.subscribeActivation(() => { activations++; });
+  const ids = () => controller.getVisualTabs().map(tab => tab.documentId);
+  expect(controller.moveActiveTab(-1)).toBe(true);
+  expect(ids()).toEqual([b, c, d, a].map(tab => tab.documentId));
+  expect(controller.moveActiveTab(-1)).toBe(false);
+  expect(controller.moveTab(d.documentId, b.documentId, "before")).toBe(false);
+  expect(controller.moveTab(c.documentId, b.documentId, "before")).toBe(true);
+  expect(controller.moveTab(c.documentId, b.documentId, "before")).toBe(false);
+  expect(controller.getSnapshot().snapshot).toBe(state.snapshot);
+  expect(controller.getSnapshot().tabs).toBe(state.tabs);
+  expect(controller.getSnapshot().entries).toBe(state.entries);
+  expect(controller.getEditor(d.documentId)).toBe(edited);
+  expect(activations).toBe(0);
+  expect(controller.cycleRecentTabs()).toBe(true);
+  expect(controller.getRecentTabCandidate()).toBe(c.documentId);
+  expect(controller.moveActiveTab(1)).toBe(false);
+  controller.cancelRecentTabSwitch();
+  controller.setInteractionCheck(() => false);
+  expect(controller.moveTab(b.documentId, c.documentId, "before")).toBe(false);
+  controller.setInteractionCheck(() => true);
+  unsubscribe();
+  await open(e);
+  expect(ids()).toEqual([c, b, d, a, e].map(tab => tab.documentId));
+  await open({ ...a, handle: crypto.randomUUID() });
+  expect(ids()).toEqual([c, b, d, a, e].map(tab => tab.documentId));
+  controller.activateTab(b.documentId);
+  controller.setActiveTabPinned(false);
+  expect(ids()).toEqual([c, d, b, a, e].map(tab => tab.documentId));
+  controller.activateTab(d.documentId);
+  await controller.closeActive();
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(b.documentId);
+  expect(ids()).toEqual([c, b, a, e].map(tab => tab.documentId));
+  const replacement = { ...snapshot("replacement"), locationId: a.documentId };
+  await open(replacement);
+  expect(ids()).toEqual([c, b, e, replacement].map(tab => tab.documentId));
+  expect(controller.moveTab(a.documentId, e.documentId, "before")).toBe(false);
+  controller.dispose();
+});
+
 test("pinned tabs keep original order and editor state, and explicit close follows the visual order", async () => {
   let discard = false;
   const { controller, transport, value: first, released } = setup(() =>

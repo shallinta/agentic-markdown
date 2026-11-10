@@ -300,6 +300,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       clearDocument: () => controller.clear(folders.clear),
       closeDocument: controller.closeActive,
       pinCurrentTab: () => { controller.setActiveTabPinned(true); },
+      moveCurrentTabLeft: () => { controller.moveActiveTab(-1); },
+      moveCurrentTabRight: () => { controller.moveActiveTab(1); },
       unpinCurrentTab: () => { controller.setActiveTabPinned(false); },
       cycleRecentTabs: () => { controller.cycleRecentTabs(); },
       undoDocument: ({ documentId }) => {
@@ -385,6 +387,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       closeDocument: () =>
         !controller.getSnapshot().frozen && !!controller.getSnapshot().snapshot,
       pinCurrentTab: () => controller.canSetActiveTabPinned(true),
+      moveCurrentTabLeft: () => controller.canMoveActiveTab(-1),
+      moveCurrentTabRight: () => controller.canMoveActiveTab(1),
       unpinCurrentTab: () => controller.canSetActiveTabPinned(false),
       cycleRecentTabs: () => controller.canCycleRecentTabs() && recentTabContextAvailable(),
     }
@@ -722,6 +726,24 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
   const visualTabs = controller.getVisualTabs();
   const strip = useRef<HTMLElement>(null);
   const candidateTab = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ id: string; state: typeof state; focus: Element | null } | null>(null);
+  const suppressClick = useRef(false);
+  const pointerFocus = useRef<Element | null>(null);
+  const [insertion, setInsertion] = useState<{ id: string; placement: "before" | "after" } | null>(null);
+  const clearDrag = useCallback((restore?: boolean) => {
+    const previous = drag.current;
+    drag.current = null;
+    setInsertion(null);
+    if ((restore ?? previous?.state === controller.getSnapshot()) && previous?.focus instanceof HTMLElement && previous.focus.isConnected)
+      previous.focus.focus({ preventScroll: true });
+  }, [controller]);
+  useEffect(() => {
+    const cancel = () => clearDrag(false);
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") clearDrag(); };
+    window.addEventListener("blur", cancel);
+    window.addEventListener("keydown", key);
+    return () => { window.removeEventListener("blur", cancel); window.removeEventListener("keydown", key); };
+  }, [clearDrag]);
   useLayoutEffect(() => {
     const scroller = strip.current;
     const tab = candidateTab.current;
@@ -736,6 +758,15 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
       ref={strip}
       aria-label="已打开的文档"
       className="flex shrink-0 gap-1 overflow-x-auto"
+      onDragOver={event => {
+        if (event.target === event.currentTarget && drag.current) {
+          setInsertion(null);
+          event.dataTransfer.dropEffect = "none";
+        }
+      }}
+      onDrop={event => {
+        if (drag.current) { event.preventDefault(); clearDrag(); }
+      }}
     >
       {visualTabs.map((tab, index) => {
         const pinned = controller.isTabPinned(tab.documentId);
@@ -748,15 +779,51 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
           <div
             key={tab.documentId}
             ref={candidate ? candidateTab : undefined}
-            className={`flex shrink-0 items-center rounded border ${pinned ? "border-primary/60" : ""} ${groupEnd ? "mr-2" : ""} ${active ? "bg-muted" : ""} ${candidate ? "ring-primary ring-2 ring-inset" : ""}`}
+            className={`relative flex shrink-0 items-center rounded border ${pinned ? "border-primary/60" : ""} ${groupEnd ? "mr-2" : ""} ${active ? "bg-muted" : ""} ${candidate ? "ring-primary ring-2 ring-inset" : ""}`}
+            onDragOver={event => {
+              if (drag.current?.state !== controller.getSnapshot() || !controller.canMoveTab(drag.current.id, tab.documentId)) {
+                setInsertion(null);
+                event.dataTransfer.dropEffect = "none";
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              event.dataTransfer.dropEffect = "move";
+              const rect = event.currentTarget.getBoundingClientRect();
+              const placement = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
+              setInsertion(previous => previous?.id === tab.documentId && previous.placement === placement ? previous : { id: tab.documentId, placement });
+            }}
+            onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setInsertion(null); }}
+            onDrop={event => {
+              if (!drag.current) return;
+              event.preventDefault();
+              event.stopPropagation();
+              const source = drag.current;
+              const rect = event.currentTarget.getBoundingClientRect();
+              const current = source.state === controller.getSnapshot();
+              if (source && current)
+                controller.moveTab(source.id, tab.documentId, event.clientX < rect.left + rect.width / 2 ? "before" : "after");
+              clearDrag(!!current);
+            }}
           >
+            {insertion?.id === tab.documentId && <span aria-hidden="true" className={`bg-primary pointer-events-none absolute top-0 bottom-0 w-0.5 ${insertion.placement === "before" ? "left-0" : "right-0"}`} />}
             <button
               disabled={state.frozen}
+              draggable={controller.canReorderTabs()}
+              onPointerDown={() => { suppressClick.current = false; pointerFocus.current = document.activeElement; }}
+              onDragStart={event => {
+                if (!controller.canReorderTabs()) { event.preventDefault(); return; }
+                drag.current = { id: tab.documentId, state: controller.getSnapshot(), focus: pointerFocus.current };
+                suppressClick.current = true;
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("application/x-agentic-tab", "local");
+              }}
+              onDragEnd={() => clearDrag()}
               aria-current={active ? "page" : undefined}
               aria-label={pinned || candidate ? `${name}${pinned ? " · 已固定" : ""}${candidate ? " · 切换候选" : ""}` : undefined}
               title={tab.displayPath ?? tab.fileName}
               className="max-w-48 truncate px-3 py-2 text-sm"
-              onClick={() => controller.activateTab(tab.documentId)}
+              onClick={event => { if (!suppressClick.current || event.detail === 0) controller.activateTab(tab.documentId); }}
             >
               {name}
             </button>

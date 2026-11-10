@@ -197,18 +197,29 @@ export function createDocumentController(
     frozen: false,
   };
   const pinnedTabs = new Set<string>();
+  let visualOrder: string[] | undefined;
   function getVisualTabs(): readonly DocumentSnapshot[] {
-    if (!pinnedTabs.size) return state.tabs;
+    let ordered: readonly DocumentSnapshot[] = state.tabs;
+    if (visualOrder) {
+      const byId = new Map(state.tabs.map(tab => [tab.documentId, tab]));
+      ordered = visualOrder.map(id => byId.get(id)!).filter(Boolean);
+    }
+    if (!pinnedTabs.size) return ordered;
     const pinned: DocumentSnapshot[] = [];
     const unpinned: DocumentSnapshot[] = [];
-    for (const tab of state.tabs) {
+    for (const tab of ordered) {
       (pinnedTabs.has(tab.documentId) ? pinned : unpinned).push(tab);
     }
     return [...pinned, ...unpinned];
   }
   function prunePinnedTabs(tabs: readonly DocumentSnapshot[]) {
-    if (!pinnedTabs.size) return;
     const liveIds = new Set(tabs.map(tab => tab.documentId));
+    if (visualOrder) {
+      visualOrder = visualOrder.filter(id => liveIds.has(id));
+      const orderedIds = new Set(visualOrder);
+      for (const id of liveIds) if (!orderedIds.has(id)) visualOrder.push(id);
+      if (!visualOrder.length) visualOrder = undefined;
+    }
     for (const id of pinnedTabs) {
       if (!liveIds.has(id)) pinnedTabs.delete(id);
     }
@@ -1326,6 +1337,43 @@ export function createDocumentController(
     },
     cancelRecentTabSwitch,
     getVisualTabs,
+    canReorderTabs(): boolean {
+      return !metadataDisposed && !state.busy && !state.frozen && !editorInputBlocked &&
+        !recentTabSwitch && canLeaveEditor();
+    },
+    canMoveTab(documentId: string, targetId: string): boolean {
+      return controller.canReorderTabs() && documentId !== targetId &&
+        state.tabs.some(tab => tab.documentId === documentId) &&
+        state.tabs.some(tab => tab.documentId === targetId) &&
+        pinnedTabs.has(documentId) === pinnedTabs.has(targetId);
+    },
+    moveTab(documentId: string, targetId: string, placement: "before" | "after"): boolean {
+      if (!controller.canMoveTab(documentId, targetId)) return false;
+      const base = visualOrder ?? state.tabs.map(tab => tab.documentId);
+      const group = pinnedTabs.has(documentId);
+      const old = base.filter(id => pinnedTabs.has(id) === group);
+      const next = old.filter(id => id !== documentId);
+      next.splice(next.indexOf(targetId) + (placement === "after" ? 1 : 0), 0, documentId);
+      if (next.every((id, index) => id === old[index])) return false;
+      let index = 0;
+      visualOrder = base.map(id => pinnedTabs.has(id) === group ? next[index++] : id);
+      state = { ...state };
+      listeners.forEach(listener => listener());
+      return true;
+    },
+    canMoveActiveTab(direction: -1 | 1): boolean {
+      const id = state.snapshot?.documentId;
+      const tabs = getVisualTabs();
+      const target = tabs[tabs.findIndex(tab => tab.documentId === id) + direction];
+      return !!id && !!target && controller.canMoveTab(id, target.documentId);
+    },
+    moveActiveTab(direction: -1 | 1): boolean {
+      if (!controller.canMoveActiveTab(direction)) return false;
+      const id = state.snapshot!.documentId;
+      const tabs = getVisualTabs();
+      const target = tabs[tabs.findIndex(tab => tab.documentId === id) + direction];
+      return controller.moveTab(id, target.documentId, direction < 0 ? "before" : "after");
+    },
     isTabPinned: (documentId: string) => pinnedTabs.has(documentId),
     canSetActiveTabPinned(pinned: boolean): boolean {
       const active = state.snapshot;
@@ -2027,6 +2075,7 @@ export function createDocumentController(
       cancelRecentTabSwitch();
       recentTabListeners.clear();
       pinnedTabs.clear();
+      visualOrder = undefined;
       quickFocusTarget = undefined;
       quickFocusListeners.clear();
       activationListeners.clear();

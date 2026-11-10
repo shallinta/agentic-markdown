@@ -108,6 +108,8 @@ export function CommandPalette({
       type === "clearDocument" ||
       type === "closeDocument" ||
       type === "pinCurrentTab" ||
+      type === "moveCurrentTabLeft" ||
+      type === "moveCurrentTabRight" ||
       type === "unpinCurrentTab"
     )
       return PRODUCT_COMMANDS[type]!.label;

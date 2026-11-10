@@ -94,6 +94,8 @@ export type Command =
   | GenericCommand<"clearDocument">
   | GenericCommand<"closeDocument">
   | GenericCommand<"pinCurrentTab">
+  | GenericCommand<"moveCurrentTabLeft">
+  | GenericCommand<"moveCurrentTabRight">
   | GenericCommand<"unpinCurrentTab">
   | GenericCommand<"cycleRecentTabs">
   | OpenSettingsCommand
@@ -283,6 +285,8 @@ export const COMMAND_META: Record<
   clearDocument: { target: "webview" },
   closeDocument: { target: "webview" },
   pinCurrentTab: { target: "webview" },
+  moveCurrentTabLeft: { target: "webview" },
+  moveCurrentTabRight: { target: "webview" },
   unpinCurrentTab: { target: "webview" },
   cycleRecentTabs: { target: "webview", palette: false },
   openSettings: { target: "webview" },
@@ -369,6 +373,8 @@ export const PRODUCT_COMMANDS: Partial<
     shortcut: "⌘W",
   },
   pinCurrentTab: { label: "固定当前标签" },
+  moveCurrentTabLeft: { label: "在组内左移当前标签" },
+  moveCurrentTabRight: { label: "在组内右移当前标签" },
   unpinCurrentTab: { label: "取消固定当前标签" },
   toggleSidebar: {
     label: "切换侧栏",

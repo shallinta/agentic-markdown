@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { discardGuard } from "@/client/discard-guard";
 import { createDocumentController } from "@/client/documents";
-import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments } from "@/client/real-document-region-lab";
+import { moveRealRegionDocument, projectRealRegionDocuments, type RealRegionAllocation } from "@/client/real-document-region-lab";
+import { SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
 import { CommandProvider, useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
 import { createNativeDocumentTransport } from "@/lib/native-document-transport";
@@ -13,6 +14,8 @@ import { MemoryEditor } from "./memory-editor";
 
 const buttonClass = "electrobun-webkit-app-region-no-drag rounded border px-2 py-1 focus-visible:outline-2 disabled:opacity-50";
 const saveLabel = { saving: "保存中…", saved: "已保存", dirty: "未保存", failed: "保存失败", uncertain: "保存结果未确认" };
+const heightPresets = [65, 66, 320] as const;
+const cssPixels = (value: number) => Math.round(value * 100) / 100;
 
 export function RealDocumentRegionLab() {
   return <CommandProvider><RealDocumentRegionViews /></CommandProvider>;
@@ -22,15 +25,23 @@ function RealDocumentRegionViews() {
   const [controller] = useState(() => createDocumentController(createNativeDocumentTransport(), discardGuard.ask,
     undefined, undefined, { activeDocumentInputOnly: true }));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
-  const [secondaryId, setSecondaryId] = useState<string | null>(null);
+  const [allocation, setAllocation] = useState<RealRegionAllocation>({ ids: [], heights: [], totalHeight: 320 });
+  const [preferredMainId, setPreferredMainId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ documentId: string }>();
   const [receipt, setReceipt] = useState("");
+  const sideCanvas = useRef<HTMLOListElement>(null);
+  const [measured, setMeasured] = useState<{ allocation: RealRegionAllocation; height: number; width: number; rows: number[] }>();
   const activeId = state.snapshot?.documentId;
-  const projection = projectRealRegionDocuments(state.tabs, activeId, secondaryId);
+  const projection = projectRealRegionDocuments(state.tabs, activeId, allocation, preferredMainId);
+  const liveAllocation = projection?.allocation;
+  const mainCurrent = projection ? projection.mainCurrent : state.snapshot;
+  const mainCurrentId = mainCurrent?.documentId ?? null;
+  const moveIn = moveRealRegionDocument(controller, allocation, "secondary");
+  const moveOut = moveRealRegionDocument(controller, allocation, "main");
   const { executeCommand, isCommandEnabled } = useCommands();
   const canSelect = () => {
     const current = controller.getSnapshot();
-    return current.tabs.length < 2 && controller.canSelectFolder() && !controller.hasSaves();
+    return current.tabs.length < 3 && controller.canSelectFolder() && !controller.hasSaves();
   };
   const notifyCommands = useRegisterCommands({
     selectDocument: controller.select,
@@ -86,14 +97,34 @@ function RealDocumentRegionViews() {
   useEffect(() => { void controller.refreshWriteCapability(); }, [controller, state.snapshot?.handle]);
 
   useLayoutEffect(() => {
-    if (secondaryId && projection.secondaryId === null) setSecondaryId(null);
-  }, [projection.secondaryId, secondaryId]);
+    if (liveAllocation && liveAllocation !== allocation) setAllocation(liveAllocation);
+  }, [allocation, liveAllocation]);
+  useLayoutEffect(() => { setPreferredMainId(mainCurrentId); }, [mainCurrentId]);
+  useLayoutEffect(() => {
+    const canvas = sideCanvas.current;
+    if (!canvas || !liveAllocation) return;
+    const read = () => {
+      const { height, width } = canvas.getBoundingClientRect();
+      setMeasured({ allocation: liveAllocation, height: cssPixels(height), width: cssPixels(width),
+        rows: Array.from(canvas.children, (row) => cssPixels(row.getBoundingClientRect().height)) });
+    };
+    const observer = new ResizeObserver(read);
+    observer.observe(canvas);
+    read();
+    return () => observer.disconnect();
+  }, [liveAllocation]);
   useLayoutEffect(() => {
     if (!focusRequest) return;
-    if (controller.getSnapshot().snapshot?.documentId === focusRequest.documentId)
-      controller.focusQuickDocument(focusRequest.documentId);
+    const { documentId } = focusRequest;
+    if (controller.getSnapshot().snapshot?.documentId === documentId) {
+      const index = liveAllocation?.ids.indexOf(documentId) ?? -1;
+      if (index >= 0 && liveAllocation?.heights[index] === SECONDARY_MIN_HEIGHT) {
+        const titles = sideCanvas.current?.querySelectorAll<HTMLButtonElement>("[data-secondary-document]");
+        if (titles) Array.from(titles).find((title) => title.dataset.secondaryDocument === documentId)?.focus();
+      } else controller.focusQuickDocument(documentId);
+    }
     setFocusRequest(undefined);
-  }, [controller, focusRequest]);
+  }, [controller, focusRequest, liveAllocation]);
 
   function activate(documentId: string) {
     if (!controller.canSelectFolder() || controller.isEditorInputBlocked()) {
@@ -111,14 +142,33 @@ function RealDocumentRegionViews() {
 
   function move(target: "main" | "secondary") {
     const document = controller.getSnapshot().snapshot;
-    const result = moveRealRegionDocument(controller, secondaryId, target);
+    const result = moveRealRegionDocument(controller, allocation, target);
+    if (!result.ok && result.reason === "full") {
+      setReceipt("空间不足，文档留在原区域。");
+      return;
+    }
     if (!document || !result.ok) {
       setReceipt("暂未移区，请完成当前操作后重试。");
       return;
     }
-    setSecondaryId(result.secondaryId);
+    setAllocation(result.allocation);
     setReceipt(`已将 ${document.fileName} 移${target === "main" ? "回主区" : "入副区"}`);
     setFocusRequest({ documentId: document.documentId });
+  }
+
+  async function closeSecondary(documentId: string, fileName: string, restoreFocus: boolean) {
+    const wasActive = controller.getSnapshot().snapshot?.documentId === documentId;
+    await controller.closeTab(documentId);
+    const current = controller.getSnapshot();
+    if (current.tabs.some((tab) => tab.documentId === documentId)) return;
+    setReceipt(`已关闭 ${fileName} · 活动文档 ${current.snapshot?.fileName ?? "无"}`);
+    if ((wasActive || restoreFocus) && current.snapshot) setFocusRequest({ documentId: current.snapshot.documentId });
+  }
+
+  function changeHeight(totalHeight: number) {
+    if (!liveAllocation || liveAllocation.ids.length) return;
+    setAllocation({ ids: [], heights: [], totalHeight });
+    setReceipt("");
   }
 
   const editor = (documentId: string) => (
@@ -132,7 +182,14 @@ function RealDocumentRegionViews() {
       <div aria-hidden="true" className="electrobun-webkit-app-region-drag h-12 shrink-0 select-none" />
       <section className="space-y-2 px-4 pb-3 text-sm">
         <h1 className="text-lg font-semibold">真实文件移区实验</h1>
-        <p>请只选择测试文件。保存会写入磁盘，本实验最多打开两篇 Markdown。</p>
+        <p>请只选择测试文件。保存会写入磁盘，本实验最多打开三篇 Markdown，副区最多两篇。</p>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="副区实验高度">
+          {heightPresets.map((height) => (
+            <button key={height} type="button" className={buttonClass} aria-pressed={allocation.totalHeight === height}
+              disabled={!liveAllocation || liveAllocation.ids.length > 0}
+              onClick={() => changeHeight(height)}>副区高度 {height}px</button>
+          ))}
+        </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" className={buttonClass} disabled={!isCommandEnabled("selectDocument")}
             onClick={() => executeCommand({ type: "selectDocument", args: {} })}>打开 Markdown 文件</button>
@@ -142,41 +199,65 @@ function RealDocumentRegionViews() {
           <button type="button" className={buttonClass} disabled={!isCommandEnabled("closeDocument")}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => executeCommand({ type: "closeDocument", args: {} })}>关闭活动文档</button>
-          <button type="button" className={buttonClass} disabled={!canMoveRealRegionDocument(controller, secondaryId, "secondary")}
+          <button type="button" className={buttonClass} disabled={!moveIn.ok && moveIn.reason !== "full"}
             onMouseDown={(event) => event.preventDefault()} onClick={() => move("secondary")}>将活动文档移入副区</button>
-          <button type="button" className={buttonClass} disabled={!canMoveRealRegionDocument(controller, secondaryId, "main")}
+          <button type="button" className={buttonClass} disabled={!moveOut.ok}
             onMouseDown={(event) => event.preventDefault()} onClick={() => move("main")}>将活动文档移回主区</button>
         </div>
         <p role="status">{state.busy ? "正在等待文件选择或读取…" :
           `活动文档 ${state.snapshot?.fileName ?? "无"}${activeStatus ? ` · ${saveLabel[activeStatus.status]}` : ""}`}</p>
         {receipt && <p role="status">{receipt}</p>}
+        {!projection && <p role="alert">副区分配不可用。</p>}
+        {liveAllocation && (
+          <p className="tabular-nums">副区模型 {liveAllocation.totalHeight} CSS px，文档 {liveAllocation.heights.map(cssPixels).join(" / ") || "无"}</p>
+        )}
+        {measured && measured.allocation === liveAllocation && (
+          <p className="tabular-nums">副区实测总高 {measured.height} CSS px，文档 {measured.rows.join(" / ")}，宽度 {measured.width} CSS px</p>
+        )}
         {state.error && <p role="alert" className="text-destructive">{state.error}</p>}
         {activeStatus?.message && <p role="status">{activeStatus.message}</p>}
         {activeId && controller.externalMessage(activeId) && <p role="status">{controller.externalMessage(activeId)}</p>}
       </section>
       <div className="min-h-0 grow overflow-x-auto border-t">
-        <MainSideLayout sideVisible={!!projection.secondary} main={
+        <MainSideLayout sideVisible={!!projection?.secondary.length} main={
           <section aria-label="实验主区" className="flex size-full min-w-0 flex-col gap-2 p-3">
             <h2 className="font-medium">主区</h2>
             <nav aria-label="实验主区标签" className="flex flex-wrap gap-1">
-              {projection.main.map((document) => (
+              {(projection?.main ?? state.tabs).map((document) => (
                 <button key={document.documentId} type="button" className={buttonClass}
                   aria-pressed={activeId === document.documentId}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => activate(document.documentId)}>{document.fileName}{controller.isDirty(document.documentId) ? " · 未保存" : ""}</button>
               ))}
             </nav>
-            {projection.mainCurrent ? editor(projection.mainCurrent.documentId) : <p>主区暂无文档</p>}
+            {mainCurrent ? editor(mainCurrent.documentId) : <p>主区暂无文档</p>}
           </section>
-        } side={projection.secondary && (
-          <section aria-label="实验副区" className="flex size-full min-w-0 flex-col gap-2 p-3">
-            <h2 className="font-medium">副区</h2>
-            <button type="button" className={buttonClass} aria-pressed={activeId === projection.secondary.documentId}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => { if (projection.secondary) activate(projection.secondary.documentId); }}>
-              激活副区 {projection.secondary.fileName}{controller.isDirty(projection.secondary.documentId) ? " · 未保存" : ""}
-            </button>
-            {editor(projection.secondary.documentId)}
+        } side={projection && projection.secondary.length > 0 && (
+          <section aria-label="实验副区" className="size-full min-w-0 overflow-y-auto">
+            <h2 className="px-3 py-2 font-medium">副区</h2>
+            <ol ref={sideCanvas} aria-label="副区文档顺序" className="min-w-[160px] overflow-hidden"
+              style={{ height: projection.allocation.totalHeight }}>
+              {projection.secondary.map(({ documentId, fileName }, index) => {
+                const height = projection.allocation.heights[index];
+                const name = `${fileName}${controller.isDirty(documentId) ? " · 未保存" : ""}`;
+                return (
+                  <li key={documentId} className="flex min-w-0 flex-col overflow-hidden" style={{ height }}>
+                    <div className="bg-sidebar flex shrink-0 items-center gap-1 px-1" style={{ height: SECONDARY_MIN_HEIGHT - 1 }}>
+                      <button type="button" className={`${buttonClass} min-w-0 grow truncate py-0 text-left text-sm`}
+                        aria-pressed={activeId === documentId} aria-label={`激活副区 ${name}`} data-secondary-document={documentId}
+                        onMouseDown={(event) => event.preventDefault()} onClick={() => activate(documentId)}>{name}</button>
+                      <button type="button" className={`${buttonClass} size-6 shrink-0 p-0`} aria-label={`关闭副区 ${fileName}`}
+                        disabled={!controller.canSelectFolder() || controller.isEditorInputBlocked()}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={(event) => void closeSecondary(documentId, fileName,
+                          event.currentTarget.ownerDocument.activeElement === event.currentTarget)}>×</button>
+                    </div>
+                    {height > SECONDARY_MIN_HEIGHT && editor(documentId)}
+                    <div aria-hidden="true" className="bg-border h-px shrink-0" />
+                  </li>
+                );
+              })}
+            </ol>
           </section>
         )} />
       </div>

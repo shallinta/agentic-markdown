@@ -140,6 +140,8 @@ alpha.314 在同一隔离实验台可打开双草稿。只有活动文档可输�
 
 alpha.315 的独立实验入口支持用系统选择器打开两篇 Markdown、把活动文档移到副区或移回、在副区实际保存。保存会修改原文件；普通窗口未开放副区入口。见[F-035j 迭代](iterations/F-035j-real-document-region-lab.md)。
 
+alpha.316 同一隔离实验可打开三篇，其中最多两篇在副区纵向平铺。空间不足时保留原位置；副区文档缩到 33px 时只显示标题和分隔线。两篇可分别编辑保存，关闭后相邻文档接收空出的高度。见[F-035k 迭代](iterations/F-035k-real-secondary-document-stack.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

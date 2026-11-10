@@ -2330,3 +2330,62 @@ test("default controllers retain existing inactive-buffer transaction behavior",
   expect(c.getSnapshot().snapshot?.documentId).toBe(b.documentId);
   c.dispose();
 });
+
+test("workspace open receipts acknowledge only adopted documents and preserve live drafts on reuse", async () => {
+  const { controller: c, value: a, transport } = setup();
+  await c.select();
+  const b = snapshot("second");
+  let calls = 0;
+  transport.openWorkspaceDocument = request => { calls++; return Promise.resolve(result(request, b)); };
+  expect(await c.openWorkspaceEntryWithReceipt("root", "node")).toEqual({ documentId: b.documentId, handle: b.handle, kind: "opened" });
+  const editor = c.getEditor(b.documentId)!.state;
+  c.updateEditor(b.documentId, editor.update({ changes: { from: 0, insert: "draft" } }));
+  c.activateTab(a.documentId);
+  expect(await c.activateWithReceipt(c.getSnapshot().entries.find(entry => entry.documentId === b.documentId)!)).toEqual({ documentId: b.documentId, handle: b.handle, kind: "reused" });
+  expect(calls).toBe(1);
+  expect(c.getEditor(b.documentId)!.state.field(rawText)).toBe("draftsecond");
+  expect(c.runHistory("undo", b.documentId)).toBe(true);
+  await c.closeTab(b.documentId);
+  expect(await c.openWorkspaceEntryWithReceipt("root", "node")).toEqual({ documentId: b.documentId, handle: b.handle, kind: "opened" });
+  expect(calls).toBe(2);
+  c.dispose();
+});
+
+test("failed cancelled and late workspace opens never receipt the prior active document", async () => {
+  const { controller: c, value: a, transport, released } = setup();
+  await c.select();
+  transport.openWorkspaceDocument = request => Promise.resolve({ ...request, ok: false, error: "UNAVAILABLE" });
+  expect(await c.openWorkspaceEntryWithReceipt("root", "bad")).toBeUndefined();
+  expect(c.getSnapshot().snapshot?.documentId).toBe(a.documentId);
+  transport.openWorkspaceDocument = request => Promise.resolve(result(request, null));
+  expect(await c.openWorkspaceEntryWithReceipt("root", "cancelled")).toBeUndefined();
+  const b = snapshot("late");
+  const held = deferred<unknown>();
+  let request: DocumentRequest | undefined;
+  transport.openWorkspaceDocument = params => { request = params; return held.promise; };
+  let valid = true;
+  const pending = c.openWorkspaceEntryWithReceipt("root", "late", () => valid);
+  await Promise.resolve();
+  valid = false;
+  held.resolve(result(request!, b));
+  expect(await pending).toBeUndefined();
+  expect(c.getSnapshot().tabs.map(tab => tab.documentId)).toEqual([a.documentId]);
+  expect(released).toContain(b.handle);
+  c.dispose();
+});
+
+test("workspace receipt is withheld when successful publication is synchronously superseded", async () => {
+  const { controller: c, value: a, transport } = setup();
+  await c.select();
+  const b = snapshot("new");
+  transport.openWorkspaceDocument = request => Promise.resolve(result(request, b));
+  let switched = false;
+  const off = c.subscribe(() => {
+    if (!switched && c.getSnapshot().snapshot?.documentId === b.documentId) {
+      switched = true; c.activateTab(a.documentId);
+    }
+  });
+  expect(await c.openWorkspaceEntryWithReceipt("root", "node")).toBeUndefined();
+  expect(c.getSnapshot().snapshot?.documentId).toBe(a.documentId);
+  off(); c.dispose();
+});

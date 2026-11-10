@@ -1,4 +1,4 @@
-import type { createDocumentController } from "./documents";
+import type { createDocumentController, DocumentOpenReceipt } from "./documents";
 import { allocateSecondaryPaneHeight, SECONDARY_MIN_HEIGHT } from "./secondary-pane-height";
 import { removeSecondaryPaneHeight } from "./secondary-pane-removal";
 
@@ -216,4 +216,30 @@ export function prepareMainTransferToSecondary(
   return { ok: true, plan: context.plan({
     ids: [...allocation.ids, sourceId], heights: added.heights, totalHeight: allocation.totalHeight,
   }) };
+}
+
+
+/** Route only an acknowledged open; failed or superseded operations have no placement. */
+export function routeWorkspaceOpenReceipt(
+  controller: Controller,
+  receipt: DocumentOpenReceipt,
+  allocation: RealRegionAllocation,
+  capturedAllocation: RealRegionAllocation,
+  lastRegion: "main" | "secondary"
+): { allocation: RealRegionAllocation; region: "main" | "secondary"; notice?: string; reason?: "full" | "lab-limit" } | undefined {
+  const state = controller.getSnapshot();
+  if (allocation !== capturedAllocation || state.snapshot?.documentId !== receipt.documentId ||
+      state.snapshot.handle !== receipt.handle || controller.isEditorInputBlocked() || controller.hasSaves() ||
+      !controller.canSelectFolder() || controller.getSnapshot() !== state ||
+      reconcileRealRegionAllocation(state.tabs, allocation) !== allocation) return undefined;
+  const existingSecondary = allocation.ids.includes(receipt.documentId);
+  if (receipt.kind === "reused" || existingSecondary)
+    return { allocation, region: existingSecondary ? "secondary" : "main" };
+  if (lastRegion === "main" || !allocation.ids.length) return { allocation, region: "main" };
+  const added = allocateSecondaryPaneHeight(allocation.totalHeight, allocation.heights);
+  if (!added.ok) return added.reason === "full"
+    ? { allocation, region: "main", reason: "full", notice: "空间不足，已在主区域打开" } : undefined;
+  if (state.tabs.length > 3 || allocation.ids.length >= 2)
+    return { allocation, region: "main", reason: "lab-limit", notice: "已达实验文档数量上限，已在主区域打开" };
+  return { allocation: { ids: [...allocation.ids, receipt.documentId], heights: added.heights, totalHeight: allocation.totalHeight }, region: "secondary" };
 }

@@ -132,6 +132,8 @@ F-032a 已在隔离模型验证持久文档的区域路由，普通窗口的打�
 
 alpha.304 的合成路由实验台可验证双击打开、显式移区、满载回退和最后一篇移出时收起。实验只用合成文档，普通窗口无此入口。见[F-032b 迭代](iterations/F-032b-document-region-workspace-lab.md)。
 
+alpha.323 的真实文件移区实验可加入一个测试目录。单击只选中，双击或按 Enter 按最后活动区打开；已有文档留在原区，副区空间不足时在主区打开并提示。普通窗口没有新的副区入口。见[F-032c 迭代](iterations/F-032c-real-workspace-tree-region-open.md)。
+
 普通窗口仍按文档保持当前位置。alpha.305 已复验切换标签、切换编辑与源码模式，以及重新读取后返回新位置。见[F-035a 迭代](iterations/F-035a-document-viewport-ownership.md)。 alpha.306 进一步复验滚动快照和故障后的安全源码位置，正常操作入口不变。见[F-035b 迭代](iterations/F-035b-editor-scroll-ownership.md)。 alpha.307 已复验两篇文档各自的撤销、重做、选区，以及重新读取后继续编辑。见[F-035c 迭代](iterations/F-035c-editor-dispatch-ownership.md)。 alpha.308 已复验中文候选期间阻止保存、切标签和切模式，上屏或取消后恢复。见[F-035d 迭代](iterations/F-035d-editor-interaction-ownership.md)。 alpha.309 复验普通窗口的列表续写、源码选区和缩进、自动换行。见[F-035e 迭代](iterations/F-035e-editor-command-target-ownership.md)。 alpha.310 复验快速打开后的编辑器焦点，以及窗口正文搜索打开并选中命中。见[F-035f 迭代](iterations/F-035f-editor-location-target-ownership.md)。 alpha.311 复验编辑器折叠快捷键、按钮和各模式限制。见[F-035g 迭代](iterations/F-035g-editor-folding-command-ownership.md)。
 
 alpha.313 的隔离布局实验可同时查看两个只读合成编辑器，已核对选区、折叠、滚动锚点与后台视图重挂。普通窗口没有实验入口。见[F-035h 迭代](iterations/F-035h-dual-readonly-editor-lab.md)。

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-032c 真实目录树的主副区打开（2026-11-11）
+
+隔离 WK 已验双击、Enter、已有实例和满载回主。OBL-049 的正式路由、预览和文件树拖入继续跟踪；OBL-052 的正式副区仍开放，最终离线留人工。见[F-032c 迭代](iterations/F-032c-real-workspace-tree-region-open.md)。
+
 ## F-035p 主区标签拖入已展开副区（2026-11-11）
 
 隔离 WK 已验反向拖入、满载拒绝、收起禁入及草稿状态。OBL-052 的正式副区、文件树入口、自然候选及最终离线仍开放。见[F-035p 迭代](iterations/F-035p-main-tab-drop-to-expanded-secondary.md)。

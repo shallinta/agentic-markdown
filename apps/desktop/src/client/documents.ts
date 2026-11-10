@@ -95,6 +95,12 @@ export interface DocumentViewState {
   elapsedMs: number | null;
   frozen: boolean;
 }
+export interface DocumentOpenReceipt {
+  documentId: string;
+  handle: string;
+  kind: "opened" | "reused";
+}
+
 export type DocumentEntry = Pick<
   DocumentSnapshot,
   | "handle"
@@ -941,7 +947,8 @@ export function createDocumentController(
       hash: string;
       retained?: DocumentEntry;
       adopt(snapshot: DocumentSnapshot, generation: number): void;
-    }
+    },
+    receiptOpen?: { current(): boolean; adopt(receipt: DocumentOpenReceipt, generation: number): void }
   ) {
     const previous = state.snapshot;
     const target = entry ?? previous;
@@ -993,6 +1000,11 @@ export function createDocumentController(
       if (!snapshot) {
         if (!select) throw new Error("empty-read");
         publish({ ...state, busy: false });
+        return;
+      }
+      if (receiptOpen && (!receiptOpen.current() || metadataDisposed || current !== generation || editorInputBlocked || !canLeaveEditor())) {
+        if (select && !state.entries.some(value => value.handle === snapshot.handle)) await release(snapshot.handle);
+        if (current === generation) publish({ ...state, busy: false });
         return;
       }
       // A creation receipt owns its grant until explicit adoption/cleanup. Do
@@ -1063,7 +1075,7 @@ export function createDocumentController(
         const approved = await confirmDiscard(
           "文件已被替换。是否放弃旧文档的未保存变更或内存内容并打开新文件？"
         );
-        if (!approved || current !== generation) {
+        if (!approved || current !== generation || (receiptOpen && (!receiptOpen.current() || metadataDisposed || editorInputBlocked || !canLeaveEditor() || current !== generation))) {
           if (!state.entries.some((entry) => entry.handle === snapshot.handle))
             await release(snapshot.handle);
           if (current === generation)
@@ -1187,6 +1199,9 @@ export function createDocumentController(
         recordActivation(active);
       if (!searchOpen?.retained && previousEntry && previousEntry.handle !== snapshot.handle)
         void release(previousEntry.handle);
+      if (receiptOpen && receiptOpen.current() && !metadataDisposed && current === generation &&
+          state.snapshot?.documentId === active.documentId && state.snapshot.handle === active.handle)
+        receiptOpen.adopt({ documentId: active.documentId, handle: active.handle, kind: existing ? "reused" : "opened" }, current);
     } catch {
       if (pending === params) cancelPending();
       if (current === generation) {
@@ -2266,6 +2281,42 @@ export function createDocumentController(
       // metadata task. Other workspace ownership operations retain protect().
       await protect([], () => { ready = true; });
       if (ready && expected === metadataEpoch && controller.canSelectFolder()) await action();
+    },
+    openWorkspaceEntryWithReceipt: async (root: string, entry: string, current: () => boolean = () => true): Promise<DocumentOpenReceipt | undefined> => {
+      if (!current() || metadataDisposed || !controller.canSelectFolder() || !transport.openWorkspaceDocument) return undefined;
+      let receipt: DocumentOpenReceipt | undefined;
+      let adoptedGeneration = -1;
+      await protect([], async () => {
+        if (!current() || metadataDisposed) return;
+        await load(true, undefined, params => transport.openWorkspaceDocument!({ ...params, root, entry }), undefined, "user", undefined, {
+          current,
+          adopt: (value, at) => { receipt = value; adoptedGeneration = at; },
+        });
+      });
+      return receipt && current() && !metadataDisposed && generation === adoptedGeneration &&
+        state.snapshot?.documentId === receipt.documentId && state.snapshot.handle === receipt.handle ? receipt : undefined;
+    },
+    activateWithReceipt: async (entry: DocumentEntry, current: () => boolean = () => true): Promise<DocumentOpenReceipt | undefined> => {
+      if (!current() || metadataDisposed || state.frozen || !canLeaveEditor()) return undefined;
+      const existing = state.tabs.find(tab => tab.documentId === entry.documentId);
+      if (existing) {
+        const activated = activateTab(existing.documentId);
+        return activated !== undefined && current() && generation === activated && !metadataDisposed &&
+          state.snapshot?.documentId === existing.documentId && state.snapshot.handle === existing.handle
+          ? { documentId: existing.documentId, handle: existing.handle, kind: "reused" } : undefined;
+      }
+      if (!state.entries.some(value => value.handle === entry.handle)) return undefined;
+      let receipt: DocumentOpenReceipt | undefined;
+      let adoptedGeneration = -1;
+      await protect([], async () => {
+        if (!current() || metadataDisposed) return;
+        await load(false, entry, undefined, undefined, "user", undefined, {
+          current,
+          adopt: (value, at) => { receipt = value; adoptedGeneration = at; },
+        });
+      });
+      return receipt && current() && !metadataDisposed && generation === adoptedGeneration &&
+        state.snapshot?.documentId === receipt.documentId && state.snapshot.handle === receipt.handle ? receipt : undefined;
     },
     openWorkspaceEntry: (root: string, entry: string, current: () => boolean = () => true) => {
       if (!current()) return;

@@ -1,25 +1,30 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type PointerEvent } from "react";
 
 import { discardGuard } from "@/client/discard-guard";
-import { createDocumentController, type DocumentViewState } from "@/client/documents";
+import { createDocumentController, type DocumentEntry, type DocumentOpenReceipt, type DocumentViewState } from "@/client/documents";
 import { isExternalTextTarget } from "@/client/history-target";
-import { moveRealRegionDocument, prepareMainTransferToSecondary, prepareSecondaryReturn, projectRealRegionDocuments, reorderRealRegionDocuments, type RealRegionAllocation } from "@/client/real-document-region-lab";
+import { moveRealRegionDocument, prepareMainTransferToSecondary, prepareSecondaryReturn, projectRealRegionDocuments, reorderRealRegionDocuments, routeWorkspaceOpenReceipt, type RealRegionAllocation } from "@/client/real-document-region-lab";
 import { resizeSecondaryPaneDivider } from "@/client/secondary-pane-divider";
 import { SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
+import { createFolderWorkspace } from "@/client/workspace";
 import { CommandProvider, useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
 import { createNativeDocumentTransport } from "@/lib/native-document-transport";
+import type { WorkspaceNode } from "@/shared/workspace";
 
 import { DocumentDiscardDialog } from "./document-discard-dialog";
 import { MainSideLayout } from "./main-side-layout";
 import { MemoryEditor } from "./memory-editor";
+import { WorkspaceTree } from "./workspace-tree";
 
 const buttonClass = "electrobun-webkit-app-region-no-drag rounded border px-2 py-1 focus-visible:outline-2 disabled:opacity-50";
 const saveLabel = { saving: "保存中…", saved: "已保存", dirty: "未保存", failed: "保存失败", uncertain: "保存结果未确认" };
 const heightPresets = [65, 66, 320] as const;
 const cssPixels = (value: number) => Math.round(value * 100) / 100;
 const modalOpen = () => !!document.querySelector('[role="dialog"], [role="alertdialog"]');
+const labTabLimit = 3;
+const disableTreeOrder = () => false;
 
 interface DividerDrag {
   element: HTMLDivElement;
@@ -69,7 +74,14 @@ export function RealDocumentRegionLab() {
 function RealDocumentRegionViews() {
   const [controller] = useState(() => createDocumentController(createNativeDocumentTransport(), discardGuard.ask,
     undefined, undefined, { activeDocumentInputOnly: true }));
+  const [folders] = useState(() => createFolderWorkspace((request) => {
+    if (!electrobun.rpc) return Promise.reject(new Error("RPC unavailable"));
+    return electrobun.rpc.request.workspaceRequest(request);
+  }));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  const folderState = useSyncExternalStore(folders.subscribe, folders.getSnapshot, folders.getSnapshot);
+  const hasFolder = folderState.roots.length > 0;
+  const treeOpenIntent = useRef<symbol | null>(null);
   const [allocation, setAllocation] = useState<RealRegionAllocation>({ ids: [], heights: [], totalHeight: 320 });
   const [preferredMainId, setPreferredMainId] = useState<string | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ documentId: string }>();
@@ -106,11 +118,17 @@ function RealDocumentRegionViews() {
   const { executeCommand, isCommandEnabled } = useCommands();
   const canSelect = () => {
     const current = controller.getSnapshot();
-    return current.tabs.length < 3 && controller.canSelectFolder() && !controller.hasSaves();
+    return current.tabs.length < labTabLimit && controller.canSelectFolder() && !controller.hasSaves();
   };
+  const canUseTree = () => !folders.getSnapshot().busy && controller.canSelectFolder() && !controller.isEditorInputBlocked();
+  const canJoinFolder = () => !folders.getSnapshot().roots.length && canUseTree();
   const notifyCommands = useRegisterCommands({
     toggleSourceMode: () => { controller.toggleSourceMode(); },
     selectDocument: controller.select,
+    selectFolder: () => controller.runWorkspaceAction(() => {
+      const workspace = folders.getSnapshot();
+      if (!workspace.busy && !workspace.roots.length) return folders.select();
+    }),
     saveDocument: controller.save,
     closeDocument: () => {
       const current = controller.getSnapshot().snapshot;
@@ -124,6 +142,7 @@ function RealDocumentRegionViews() {
     toggleSourceMode: () => controller.canToggleSourceMode() &&
       !isExternalTextTarget(document.activeElement) && !modalOpen(),
     selectDocument: canSelect,
+    selectFolder: canJoinFolder,
     saveDocument: controller.canSave,
     closeDocument: () => !controller.getSnapshot().frozen && !!controller.getSnapshot().snapshot,
     undoDocument: controller.canUndo,
@@ -131,6 +150,25 @@ function RealDocumentRegionViews() {
   });
 
   useEffect(() => controller.subscribe(notifyCommands), [controller, notifyCommands]);
+  useEffect(() => folders.subscribe(notifyCommands), [folders, notifyCommands]);
+  useEffect(() => {
+    if (!hasFolder) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        await folders.refresh();
+      } catch {
+        /* The tree presents the workspace error. */
+      }
+      if (!stopped) timer = setTimeout(poll, 350);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [folders, hasFolder]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => routeSourceModeShortcut(
       event, document.activeElement, modalOpen(), isCommandEnabled("toggleSourceMode"), executeCommand,
@@ -171,9 +209,11 @@ function RealDocumentRegionViews() {
       rpc?.removeMessageListener("documentCapabilityChanged", changed);
       rpc?.removeMessageListener("documentExternalChanged", controller.applyExternalObservation);
       unregister();
+      treeOpenIntent.current = null;
+      folders.dispose();
       controller.dispose();
     };
-  }, [controller]);
+  }, [controller, folders]);
   useEffect(() => { void controller.refreshWriteCapability(); }, [controller, state.snapshot?.handle]);
 
   const stopDrag = useCallback((event?: PointerEvent<HTMLDivElement>) => {
@@ -264,6 +304,58 @@ function RealDocumentRegionViews() {
     }
     setFocusRequest(undefined);
   }, [controller, focusRequest, liveAllocation]);
+
+  async function openTreeDocument(
+    alreadyOpen: boolean,
+    available: () => boolean,
+    open: (current: () => boolean) => Promise<DocumentOpenReceipt | undefined>,
+  ) {
+    const captured = committedAllocation.current;
+    if (!captured || !canUseTree() || !available()) return;
+    const { tabs, snapshot } = controller.getSnapshot();
+    if (!alreadyOpen && tabs.length >= labTabLimit) {
+      setReceipt(`已达实验文档数量上限（${labTabLimit} 篇）。`);
+      return;
+    }
+    const lastRegion = snapshot && captured.ids.includes(snapshot.documentId) ? "secondary" : "main";
+    const token = Symbol();
+    treeOpenIntent.current = token;
+    const current = () => treeOpenIntent.current === token && available();
+    stopTitleDrag();
+    setReceipt("");
+    const opened = await open(current);
+    const latestAllocation = committedAllocation.current;
+    if (!opened || !latestAllocation || !current()) return;
+    const route = routeWorkspaceOpenReceipt(controller, opened, latestAllocation, captured, lastRegion);
+    if (!route) return;
+    if (route.allocation !== latestAllocation) setAllocation(route.allocation);
+    setReceipt(route.notice ?? "");
+    setFocusRequest({ documentId: opened.documentId });
+  }
+
+  function openTreeNode(root: string, node: WorkspaceNode) {
+    const workspace = folders.getSnapshot();
+    const generation = workspace.roots.find((value) => value.handle === root)?.generation;
+    if (generation === undefined || node.kind !== "file" || !workspace.nodes[root]?.includes(node)) return;
+    const current = () => {
+      const latest = folders.getSnapshot();
+      return latest.roots.some((value) => value.handle === root && value.generation === generation) &&
+        latest.nodes[root]?.includes(node) === true;
+    };
+    const { entries, tabs } = controller.getSnapshot();
+    const existing = entries.find((entry) => entry.displayPath === node.displayPath &&
+      tabs.some((tab) => tab.handle === entry.handle && tab.documentId === entry.documentId));
+    void openTreeDocument(!!existing, current, (valid) => existing ? controller.activateWithReceipt(existing, valid)
+      : controller.openWorkspaceEntryWithReceipt(root, node.handle, valid));
+  }
+
+  function openTreeStandalone(entry: DocumentEntry) {
+    const { entries, tabs } = controller.getSnapshot();
+    if (!entries.includes(entry)) return;
+    const sameEntry = (value: DocumentEntry) => value.handle === entry.handle && value.documentId === entry.documentId;
+    void openTreeDocument(tabs.some(sameEntry), () => controller.getSnapshot().entries.some(sameEntry),
+      (current) => controller.activateWithReceipt(entry, current));
+  }
 
   function activate(documentId: string) {
     stopTitleDrag();
@@ -485,6 +577,7 @@ function RealDocumentRegionViews() {
     </div>
   );
   const activeStatus = activeId ? controller.getSaveStatus(activeId) : null;
+  const treeDisabled = !canUseTree();
   const secondaryFull = titleDrop?.kind === "secondary-full";
   const secondaryTransferTarget = secondaryFull || titleDrop?.kind === "transfer-to-secondary";
   return (
@@ -529,7 +622,20 @@ function RealDocumentRegionViews() {
         {activeStatus?.message && <p role="status">{activeStatus.message}</p>}
         {activeId && controller.externalMessage(activeId) && <p role="status">{controller.externalMessage(activeId)}</p>}
       </section>
-      <div className="min-h-0 grow overflow-x-auto border-t">
+      <div className="flex min-h-0 grow overflow-x-auto border-t">
+        <aside aria-label="实验工作区" className="bg-sidebar flex min-h-0 w-52 shrink-0 flex-col gap-2 border-r p-3 text-sm">
+          <h2 className="font-medium">实验文件树</h2>
+          <button type="button" className={buttonClass} disabled={!isCommandEnabled("selectFolder")}
+            onClick={() => executeCommand({ type: "selectFolder", args: {} })}>加入测试文件夹</button>
+          {!hasFolder && <p className="text-muted-foreground text-xs">可加入一个测试目录，双击文件或按 Enter 打开。</p>}
+          <WorkspaceTree folders={folders} state={folderState} entries={state.entries} activeHandle={state.snapshot?.handle}
+            disabled={treeDisabled} standaloneDisabled={treeDisabled} canOrder={disableTreeOrder}
+            runAction={controller.runWorkspaceAction} runRescan={controller.runMetadataRescan}
+            setHidden={(root, showHidden) => {
+              if (canUseTree()) void controller.runWorkspaceAction(() => folders.setHidden(root, showHidden))?.catch(() => undefined);
+            }}
+            open={openTreeNode} openStandalone={openTreeStandalone} />
+        </aside>
         <MainSideLayout sideVisible={!!projection?.secondary.length} main={
           <section aria-label="实验主区" className="flex size-full min-w-0 flex-col gap-2 p-3">
             <h2 className="font-medium">主区{mainCurrentId && ` · ${modeLabel(mainCurrentId)}`}</h2>

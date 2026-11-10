@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { createDocumentController } from "./documents";
 import { createDualActiveEditorLab } from "./dual-readonly-editor-lab";
 import { rawText } from "./raw-buffer";
-import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, reorderRealRegionDocuments, prepareSecondaryReturn, prepareMainTransferToSecondary, type RealRegionAllocation } from "./real-document-region-lab";
+import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, reorderRealRegionDocuments, prepareSecondaryReturn, prepareMainTransferToSecondary, routeWorkspaceOpenReceipt, type RealRegionAllocation } from "./real-document-region-lab";
 
 const empty = (totalHeight = 320): RealRegionAllocation => ({ ids: [], heights: [], totalHeight });
 
@@ -255,5 +255,26 @@ test("prepared main transfer rejects closed region, stale plan and composition w
     expect(allocation.ids).toEqual([d.documentId]);
     await c.closeTab(a.documentId);
     expect(prepareMainTransferToSecondary(c, allocation, b.documentId)).toEqual({ ok: false, reason: "keep-main" });
+  } finally { c.dispose(); }
+});
+
+
+test("tree receipts route new documents by captured region and reuse without moving", async () => {
+  const { controller: c, documents: [a, b, d] } = await threeDocuments();
+  try {
+    const receipt = { documentId: d.documentId, handle: d.handle, kind: "opened" as const };
+    const allocation = { ids: [b.documentId], heights: [66], totalHeight: 66 };
+    expect(routeWorkspaceOpenReceipt(c, receipt, allocation, allocation, "secondary")).toEqual({ allocation: { ids: [b.documentId, d.documentId], heights: [33, 33], totalHeight: 66 }, region: "secondary" });
+    expect(routeWorkspaceOpenReceipt(c, { ...receipt, kind: "reused" }, allocation, allocation, "secondary")).toEqual({ allocation, region: "main" });
+    const full = { ids: [b.documentId], heights: [65], totalHeight: 65 };
+    expect(routeWorkspaceOpenReceipt(c, receipt, full, full, "secondary")).toMatchObject({ allocation: full, region: "main", reason: "full", notice: "空间不足，已在主区域打开" });
+    expect(routeWorkspaceOpenReceipt(c, receipt, allocation, { ...allocation }, "secondary")).toBeUndefined();
+    c.activateTab(a.documentId);
+    expect(routeWorkspaceOpenReceipt(c, receipt, allocation, allocation, "secondary")).toBeUndefined();
+    const two = { ids: [b.documentId, d.documentId], heights: [33, 33], totalHeight: 66 };
+    const aReceipt = { documentId: a.documentId, handle: a.handle, kind: "opened" as const };
+    expect(routeWorkspaceOpenReceipt(c, aReceipt, two, two, "secondary")?.reason).toBe("full");
+    const large = { ...two, heights: [160, 160], totalHeight: 320 };
+    expect(routeWorkspaceOpenReceipt(c, aReceipt, large, large, "secondary")?.reason).toBe("lab-limit");
   } finally { c.dispose(); }
 });

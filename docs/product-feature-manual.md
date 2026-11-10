@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 未知语言代码围栏（F-023b）
+
+不识别的代码语言在编辑与独立阅读中按普通代码块显示，源码模式可看到完整围栏和信息行。alpha.292 已验证四波浪线样本中，修改代码正文后保存仍保留原围栏、BOM 和 CRLF。见[F-023b 迭代](iterations/F-023b-unknown-fence-roundtrip.md)。
+
 ## 主区会话元数据实验（F-037a）
 
 隔离实验已验证标签顺序、固定状态、模式和活动项可以跨进程读回。实验使用合成文件，F-037b 已验证重新授权后的目录标签候选。F-037c 已验证主区在内存中采集已保存标签的状态。F-037d 已验证这些标签确由当前目录授权打开。F-037e 串联了写入、读回和重新授权后的候选匹配。同路径替换的文件不继承旧标签。正式会话恢复入口尚待接入。见[F-037a 迭代](iterations/F-037a-main-tab-session-metadata-probe.md)、[F-037b 迭代](iterations/F-037b-reauthorized-main-tab-candidates.md)、[F-037c 迭代](iterations/F-037c-capture-clean-primary-tabs.md)、[F-037d 迭代](iterations/F-037d-bind-main-tab-session-metadata.md)、[F-037e 迭代](iterations/F-037e-probe-main-tab-session-recovery.md)。

@@ -130,6 +130,8 @@ F-031a 在 alpha.258 隔离实验台验证文件树、主区和副区从左到�
 
 F-032a 已在隔离模型验证持久文档的区域路由，普通窗口的打开和移区交互还未接入。见[F-032a 迭代](iterations/F-032a-document-region-routing.md)。
 
+alpha.304 的合成路由实验台可验证双击打开、显式移区、满载回退和最后一篇移出时收起。实验只用合成文档，普通窗口无此入口。见[F-032b 迭代](iterations/F-032b-document-region-workspace-lab.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

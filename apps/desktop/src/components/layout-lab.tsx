@@ -6,6 +6,7 @@ import { resizeSecondaryPaneDivider } from "@/client/secondary-pane-divider";
 import { allocateSecondaryPaneHeight, SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
 import { removeSecondaryPaneHeight } from "@/client/secondary-pane-removal";
 
+import { DocumentRegionWorkspaceLab } from "./document-region-workspace-lab";
 import { MainSideLayout, MAIN_SIDE_MINIMUM_WIDTH } from "./main-side-layout";
 
 const buttonClass = "electrobun-webkit-app-region-no-drag rounded border px-2 py-1 focus-visible:outline-2";
@@ -404,7 +405,12 @@ export function LayoutLab() {
           <ResizablePanel id="layout-lab-workspace" minSize={MAIN_SIDE_MINIMUM_WIDTH}>
             <div ref={host} className="h-full overflow-x-auto" style={{ width: fixture ?? "100%" }}>
               <MainSideLayout
-                main={<section aria-label="实验主区" className="size-full p-3"><h2>主区</h2></section>}
+                main={
+                  <section aria-label="实验主区" className="size-full space-y-2 overflow-auto p-3">
+                    <h2>主区</h2>
+                    <DocumentRegionWorkspaceLab />
+                  </section>
+                }
                 side={
                   <section ref={side} aria-label="实验副区" className="bg-muted size-full space-y-2 overflow-auto p-3">
                     <h2>副区</h2>

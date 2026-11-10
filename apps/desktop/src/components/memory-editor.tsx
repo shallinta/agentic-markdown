@@ -97,6 +97,7 @@ export function MemoryEditor({
   authorizeRaster,
   autoFocusOnMount = true,
   preserveViewportOnSync = false,
+  passive = false,
 }: {
   controller: ReturnType<typeof createDocumentController>;
   documentId: string;
@@ -107,6 +108,7 @@ export function MemoryEditor({
   authorizeRaster?: AuthorizeRasterPaste;
   autoFocusOnMount?: boolean;
   preserveViewportOnSync?: boolean;
+  passive?: boolean;
 }) {
   const imageInputs = useRef({ readLocalImage, assetEpoch });
   imageInputs.current = { readLocalImage, assetEpoch };
@@ -131,12 +133,16 @@ export function MemoryEditor({
     session: EditorFaultSession;
   } | null>(null);
   const editor = controller.getEditor(documentId);
-  const readOnly = !controller.canWrite(documentId);
+  const readOnly = passive || !controller.canWrite(documentId);
   const inputBlocked = controller.isEditorInputBlocked();
   const { executeCommand } = useCommands();
   useLayoutEffect(() => {
     if (!container.current || !editor) return;
-    const initialState = prepareEditorViewState(controller, documentId);
+    const initialState = prepareEditorViewState(passive ? {
+      getEditor: controller.getEditor,
+      updateEditor: controller.updateEditor,
+      canWrite: () => false,
+    } : controller, documentId);
     if (!initialState) {
       // A frozen/busy controller may refuse the facet-only transaction.
       // Wait for its next state notification; never mount an unaccepted state.

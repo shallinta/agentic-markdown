@@ -2318,3 +2318,15 @@ test("fold readiness cannot redirect an admitted command to another owner", asyn
   expect(calls).toBe(1);
   c.dispose();
 });
+
+test("default controllers retain existing inactive-buffer transaction behavior", async () => {
+  const { controller: c, value: a, transport } = setup();
+  await c.select();
+  const b = snapshot("second");
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await c.select();
+  const old = c.getEditor(a.documentId)!.state;
+  expect(c.updateEditor(a.documentId, old.update({ changes: { from: 0, insert: "background" } }))).toBe(true);
+  expect(c.getSnapshot().snapshot?.documentId).toBe(b.documentId);
+  c.dispose();
+});

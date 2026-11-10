@@ -206,8 +206,10 @@ export function createDocumentController(
   confirmDiscard: (message: string) => Promise<boolean> = () =>
     Promise.resolve(false),
   capabilityTimeoutMs = 5000,
-  onTiming?: (phase: "stateCreateMs", ms: number) => void
+  onTiming?: (phase: "stateCreateMs", ms: number) => void,
+  options: { activeDocumentInputOnly?: boolean } = {}
 ) {
+  const activeDocumentInputOnly = options.activeDocumentInputOnly === true;
   let state: DocumentViewState = {
     entries: [],
     tabs: [],
@@ -2569,7 +2571,8 @@ export function createDocumentController(
       const contentChanged = transaction.docChanged || rawChanged;
       if (
         contentChanged &&
-        (editorInputBlocked || !canWrite(documentId) || reading.has(documentId))
+        (editorInputBlocked || !canWrite(documentId) || reading.has(documentId) ||
+          (activeDocumentInputOnly && state.snapshot?.documentId !== documentId))
       )
         return false;
       if (

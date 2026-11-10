@@ -136,6 +136,8 @@ alpha.304 的合成路由实验台可验证双击打开、显式移区、满载�
 
 alpha.313 的隔离布局实验可同时查看两个只读合成编辑器，已核对选区、折叠、滚动锚点与后台视图重挂。普通窗口没有实验入口。见[F-035h 迭代](iterations/F-035h-dual-readonly-editor-lab.md)。
 
+alpha.314 在同一隔离实验台可打开双草稿。只有活动文档可输入；⌘Z 各自撤销，退出不保存合成内容。真实双视图中文候选仍待补验。见[F-035i 迭代](iterations/F-035i-dual-active-editor-lab.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

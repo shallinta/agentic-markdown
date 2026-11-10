@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 
-import { createDualReadonlyEditorLab } from "./dual-readonly-editor-lab";
+import { undo } from "@codemirror/commands";
+import type { StateEffect } from "@codemirror/state";
+
+import { createDualActiveEditorLab, createDualReadonlyEditorLab } from "./dual-readonly-editor-lab";
 import { prepareEditorViewState } from "./editor-view-sync";
 import { rawText } from "./raw-buffer";
 
@@ -47,4 +50,39 @@ test("separate dual lab controllers never share state despite fixed synthetic ID
   } finally {
     first.dispose(); second.dispose();
   }
+});
+
+
+test("active-only lab rejects passive raw and document changes but permits independent view state", async () => {
+  const f = await createDualActiveEditorLab();
+  const { controller: c, documents: [a, b] } = f;
+  try {
+    expect(a.fileName).toBe("双草稿合成-A.md");
+    expect(c.canWrite(a.documentId)).toBe(true);
+    expect(c.canWrite(b.documentId)).toBe(true);
+    let aState = c.getEditor(a.documentId)!.state;
+    expect(c.updateEditor(a.documentId, aState.update({ changes: { from: 0, insert: "草稿" } }))).toBe(true);
+    aState = c.getEditor(a.documentId)!.state;
+    let inverse: readonly StateEffect<unknown>[] = [];
+    expect(undo({ state: aState, dispatch: transaction => { inverse = transaction.effects; } })).toBe(true);
+    expect(inverse.length).toBeGreaterThan(0);
+    const composing = c.registerEditorInteraction(a.documentId, () => false);
+    expect(c.updateEditor(a.documentId, aState.update({ changes: { from: aState.doc.length, insert: "候选" }, selection: { anchor: 2 }, userEvent: "input.type.compose" }))).toBe(true);
+    c.activateTab(b.documentId);
+    expect(c.getSnapshot().snapshot?.documentId).toBe(a.documentId);
+    composing.release();
+    c.activateTab(b.documentId);
+    aState = c.getEditor(a.documentId)!.state;
+    const rawOnly = aState.update({ effects: inverse });
+    expect(rawOnly.docChanged).toBe(false);
+    expect(rawOnly.state.field(rawText)).not.toBe(aState.field(rawText));
+    expect(c.updateEditor(a.documentId, rawOnly)).toBe(false);
+    expect(c.updateEditor(a.documentId, aState.update({ changes: { from: 0, insert: "拒绝" } }))).toBe(false);
+    expect(c.updateEditor(a.documentId, aState.update({ selection: { anchor: 3 } }))).toBe(true);
+    const bState = c.getEditor(b.documentId)!.state;
+    expect(c.updateEditor(b.documentId, bState.update({ changes: { from: 0, insert: "乙" } }))).toBe(true);
+    expect(c.runHistory("undo", b.documentId)).toBe(true);
+    expect(c.getEditor(b.documentId)!.state.field(rawText)).toBe(b.text);
+    expect(c.getEditor(a.documentId)!.state.field(rawText)).toBe("草稿" + a.text + "候选");
+  } finally { f.dispose(); }
 });

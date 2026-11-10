@@ -300,7 +300,7 @@ function HeightAllocationLab({ state, setState }: {
 export function LayoutLab() {
   const [fixture, setFixture] = useState<FixtureWidth>(null);
   const [sideVisible, setSideVisible] = useState(true);
-  const [dualEditorOpen, setDualEditorOpen] = useState(false);
+  const [dualEditorMode, setDualEditorMode] = useState<"readonly" | "draft">();
   const [heightState, setHeightState] = useState(() => createHeightFixture(heightFixtures[0]));
   const [treeWidth, setTreeWidth] = useState(0);
   const [mainWidth, setMainWidth] = useState(0);
@@ -411,12 +411,21 @@ export function LayoutLab() {
                   <section aria-label="实验主区" className="size-full space-y-2 overflow-auto p-3">
                     <h2>主区</h2>
                     <DocumentRegionWorkspaceLab />
-                    <button type="button" className={buttonClass} aria-expanded={dualEditorOpen}
-                      aria-controls={dualEditorOpen ? "layout-lab-dual-editor" : undefined}
-                      onClick={() => setDualEditorOpen((open) => !open)}>
-                      {dualEditorOpen ? "关闭双编辑器只读实验" : "打开双编辑器只读实验"}
-                    </button>
-                    {dualEditorOpen && <DualReadonlyEditorLab />}
+                    <div className="flex flex-wrap gap-1">
+                      <button type="button" className={buttonClass} disabled={dualEditorMode === "draft"}
+                        aria-expanded={dualEditorMode === "readonly"}
+                        aria-controls={dualEditorMode === "readonly" ? "layout-lab-dual-editor" : undefined}
+                        onClick={() => setDualEditorMode((mode) => mode === "readonly" ? undefined : "readonly")}>
+                        {dualEditorMode === "readonly" ? "关闭双编辑器只读实验" : "打开双编辑器只读实验"}
+                      </button>
+                      <button type="button" className={buttonClass} disabled={dualEditorMode === "readonly"}
+                        aria-expanded={dualEditorMode === "draft"}
+                        aria-controls={dualEditorMode === "draft" ? "layout-lab-dual-editor" : undefined}
+                        onClick={() => setDualEditorMode((mode) => mode === "draft" ? undefined : "draft")}>
+                        {dualEditorMode === "draft" ? "关闭双编辑器草稿实验" : "打开双编辑器草稿实验"}
+                      </button>
+                    </div>
+                    {dualEditorMode && <DualReadonlyEditorLab key={dualEditorMode} draft={dualEditorMode === "draft"} />}
                   </section>
                 }
                 side={

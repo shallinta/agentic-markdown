@@ -430,7 +430,7 @@ test("failed save completes before close confirmation and cancel retains full ed
   };
   edit("kept");
   const memory = controller.getEditor(baseline.documentId)!.state;
-  controller.setScrollPosition(baseline.documentId, 120);
+  controller.registerEditorScroll(baseline.documentId, () => undefined).savePosition(controller.getEditor(baseline.documentId)!.state, 120);
   const saving = controller.save();
   await waitCaptured(() => !!request);
   const closing = controller.closeActive();
@@ -455,7 +455,7 @@ test("save preserves selection/history/scroll and does not replace a dirty activ
   const before = controller.getEditor(baseline.documentId)!.state;
   const selection = before.update({ selection: { anchor: 1, head: 4 } });
   controller.updateEditor(baseline.documentId, selection);
-  controller.setScrollPosition(baseline.documentId, 60);
+  controller.registerEditorScroll(baseline.documentId, () => undefined).savePosition(controller.getEditor(baseline.documentId)!.state, 60);
   await controller.save();
   expect(controller.getEditor(baseline.documentId)!.state).toBe(
     selection.state

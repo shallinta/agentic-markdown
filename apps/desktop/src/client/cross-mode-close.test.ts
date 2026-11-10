@@ -122,7 +122,7 @@ for (const mode of ["editing", "source", "safe"] as const) {
     await c.refreshWriteCapability();
     const retained = state(),
       revision = c.getEditor(a.documentId)!.revision;
-    c.setScrollPosition(a.documentId, 123);
+    c.registerEditorScroll(a.documentId, () => undefined).savePosition(c.getEditor(a.documentId)!.state, 123);
     const closing = c.closeActive();
     await waitCaptured(() => !!guard.getSnapshot());
     expect(guard.getSnapshot()!.message).toContain(a.fileName);

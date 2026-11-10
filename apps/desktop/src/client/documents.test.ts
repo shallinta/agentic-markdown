@@ -190,9 +190,9 @@ test("safe source preserves available scroll but a broken geometry capture canno
     await controller.select();
     const scroll = EditorView.scrollIntoView(3);
     let sawScroll = false;
-    controller.setScrollCapture(() => {
+    controller.registerEditorScroll(value.documentId, () => {
       if (broken) throw new Error("private geometry error");
-      return scroll;
+      return { state: controller.getEditor(value.documentId)!.state, effect: scroll };
     });
     controller.setHistoryDispatch((transaction) => {
       sawScroll = transaction.effects.includes(scroll);
@@ -283,7 +283,7 @@ test("inactive controller slots release image widgets while retaining text histo
     expect(foldedRanges(editor.state).size).toBe(1);
     const depth = undoDepth(editor.state), revision = editor.revision;
     const late = editor.state.update({ effects: editingImagesEffect.of({ reset: true, items: [oldItem] }) });
-    controller.setScrollPosition(first.documentId, 123);
+    controller.registerEditorScroll(first.documentId, () => undefined).savePosition(controller.getEditor(first.documentId)!.state, 123);
     transport.selectDocument = request => Promise.resolve(result(request, second));
     await controller.select();
     const inactive = controller.getEditor(first.documentId)!;
@@ -1391,7 +1391,7 @@ test("mode dispatch keeps the current view and scroll effect, and reload retains
   const { controller, transport, value } = setup();
   await controller.select();
   const scroll = EditorView.scrollIntoView(2, { y: "start" });
-  controller.setScrollCapture(() => scroll);
+  controller.registerEditorScroll(value.documentId, () => ({ state: controller.getEditor(value.documentId)!.state, effect: scroll }));
   let dispatched = 0;
   controller.setHistoryDispatch((transaction) => {
     expect(transaction.effects).toContain(scroll);
@@ -1416,9 +1416,10 @@ test("mode dispatch keeps the current view and scroll effect, and reload retains
 test("runtime scroll effects follow identical document state and clear on reload/close", async () => {
   const { controller, transport, value } = setup();
   await controller.select();
-  const doc = controller.getEditor(value.documentId)!.state.doc;
+  const original = controller.getEditor(value.documentId)!.state;
   const effect = EditorView.scrollIntoView(2, { y: "start" });
-  controller.setScrollSnapshot(value.documentId, doc, effect);
+  const scrollOwner = controller.registerEditorScroll(value.documentId, () => ({ state: original, effect }));
+  scrollOwner.captureSnapshot();
   const second = snapshot("second");
   transport.selectDocument = (req) => Promise.resolve(result(req, second));
   await controller.select();
@@ -1427,13 +1428,14 @@ test("runtime scroll effects follow identical document state and clear on reload
   await controller.reload();
   expect(controller.getScrollSnapshot(value.documentId)).toBeUndefined();
   // A view disposed after a reload must not reintroduce the old document anchor.
-  controller.setScrollSnapshot(value.documentId, doc, effect);
+  scrollOwner.captureSnapshot();
   expect(controller.getScrollSnapshot(value.documentId)).toBeUndefined();
-  const current = controller.getEditor(value.documentId)!.state.doc;
-  controller.setScrollSnapshot(value.documentId, current, effect);
+  const current = controller.getEditor(value.documentId)!.state;
+  const nextOwner = controller.registerEditorScroll(value.documentId, () => ({ state: current, effect }));
+  nextOwner.captureSnapshot();
   await controller.closeActive();
   expect(controller.getScrollSnapshot(value.documentId)).toBeUndefined();
-  controller.setScrollSnapshot(value.documentId, current, effect);
+  nextOwner.captureSnapshot();
   expect(controller.getScrollSnapshot(value.documentId)).toBeUndefined();
 });
 
@@ -1748,7 +1750,7 @@ test("tabs retain stale markers independently and repeated close/reopen releases
   for (let i = 0; i < 20; i++) {
     await controller.activate(controller.getSnapshot().entries[1]);
     expect(controller.getSnapshot().tabs).toHaveLength(2);
-    controller.setScrollPosition(second.documentId, 50);
+    controller.registerEditorScroll(second.documentId, () => undefined).savePosition(controller.getEditor(second.documentId)!.state, 50);
     await controller.closeActive();
     expect(controller.getSnapshot().tabs).toHaveLength(1);
     expect(controller.getScrollPosition(second.documentId)).toBe(0);
@@ -1919,4 +1921,110 @@ test("viewport registration cannot revive across reload, close/reopen or disposa
   const newest = controller.registerViewportCapture(id, () => ({ from: 0, offset: -15, ratio: 0.2, revision: 0 }));
   controller.dispose(); newest.capture();
   expect(controller.getViewport(id)).toBeUndefined();
+});
+
+test("owned scroll captures before parser pause, including pixel fallback without a scroll event", async () => {
+  const { controller, transport, value: a } = setup();
+  const b = snapshot("scroll-b");
+  await controller.select();
+  const viewState = controller.getEditor(a.documentId)!.state;
+  const effect = EditorView.scrollIntoView(1);
+  const owner = controller.registerEditorScroll(a.documentId, () => ({ state: viewState, effect, offset: 147 }));
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await controller.select();
+  expect(controller.getEditor(a.documentId)!.state).not.toBe(viewState);
+  expect(controller.getScrollSnapshot(a.documentId)).toBe(effect);
+  expect(controller.getScrollPosition(a.documentId)).toBe(147);
+  owner.savePosition(viewState, 999); // old cleanup is now stale after parser pause
+  expect(owner.captureSnapshot()).toBeUndefined();
+  expect(controller.getScrollPosition(a.documentId)).toBe(147);
+  controller.activateTab(a.documentId);
+  expect(controller.getScrollSnapshot(a.documentId)).toBe(effect);
+  controller.dispose();
+});
+
+test("scroll registration isolates replacement cleanup and rejects old sessions, state and closed lifetimes", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const id = value.documentId;
+  const initial = controller.getEditor(id)!.state;
+  let calls = 0;
+  const old = controller.registerEditorScroll(id, () => { calls++; return { state: initial, offset: 80 }; });
+  const next = controller.registerEditorScroll(id, () => ({ state: controller.getEditor(id)!.state, offset: 100 }));
+  old.release(); old.savePosition(initial, 900); old.captureSnapshot();
+  expect(calls).toBe(0);
+  next.savePosition(initial, 120);
+  expect(controller.getScrollPosition(id)).toBe(120);
+  const editor = controller.getEditor(id)!;
+  controller.updateEditor(id, editor.state.update({ selection: { anchor: 1 } }));
+  next.savePosition(initial, 900);
+  expect(controller.getScrollPosition(id)).toBe(120);
+  expect(next.captureSnapshot()).toBeUndefined();
+  expect(controller.getScrollPosition(id)).toBe(100);
+  await controller.reload();
+  expect(controller.getScrollPosition(id)).toBe(100);
+  next.savePosition(controller.getEditor(id)!.state, 900);
+  next.captureSnapshot();
+  expect(controller.getScrollPosition(id)).toBe(100);
+  const fresh = controller.registerEditorScroll(id, () => ({ state: controller.getEditor(id)!.state, offset: 150 }));
+  next.release(); fresh.captureSnapshot();
+  expect(controller.getScrollPosition(id)).toBe(150);
+  await controller.closeActive();
+  await controller.select();
+  fresh.savePosition(controller.getEditor(id)!.state, 900);
+  expect(controller.getScrollPosition(id)).toBe(0);
+  controller.dispose();
+});
+
+test("mode capture handles geometry failure, recursion and reentrant activation without stale dispatch", async () => {
+  const { controller, transport, value: a } = setup();
+  await controller.select();
+  controller.registerEditorScroll(a.documentId, () => { throw Error("geometry"); });
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(a.documentId)).toBe("source");
+  const effect = EditorView.scrollIntoView(1);
+  let captures = 0;
+  const recursive = controller.registerEditorScroll(a.documentId, () => {
+    captures++;
+    expect(recursive.captureSnapshot()).toBeUndefined();
+    return { state: controller.getEditor(a.documentId)!.state, effect, offset: -1 };
+  });
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(captures).toBe(1);
+  expect(controller.getScrollSnapshot(a.documentId)).toBe(effect);
+  expect(controller.getScrollPosition(a.documentId)).toBe(0);
+  recursive.release();
+  const b = snapshot("scroll-switch");
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await controller.select();
+  controller.activateTab(a.documentId);
+  controller.registerEditorScroll(a.documentId, () => {
+    const before = controller.getEditor(a.documentId)!.state;
+    controller.activateTab(b.documentId);
+    return { state: before, effect, offset: 999 };
+  });
+  expect(controller.toggleSourceMode()).toBe(false);
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(b.documentId);
+  expect(controller.getMode(a.documentId)).toBe("editing");
+  expect(controller.getMode(b.documentId)).toBe("editing");
+  expect(controller.getScrollPosition(a.documentId)).toBe(0);
+  controller.dispose();
+});
+
+test("accepted pixel-only capture replaces old snapshot priority; invalid pixels do not discard a valid effect", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const id = value.documentId, state = controller.getEditor(id)!.state;
+  const effect = EditorView.scrollIntoView(1);
+  controller.registerEditorScroll(id, () => ({ state, effect, offset: 60 })).captureSnapshot();
+  expect(controller.getScrollSnapshot(id)).toBe(effect);
+  controller.registerEditorScroll(id, () => ({ state, effect, offset: -1 })).captureSnapshot();
+  expect(controller.getScrollSnapshot(id)).toBe(effect);
+  expect(controller.getScrollPosition(id)).toBe(60);
+  controller.registerEditorScroll(id, () => ({ state, offset: NaN })).captureSnapshot();
+  expect(controller.getScrollSnapshot(id)).toBe(effect);
+  controller.registerEditorScroll(id, () => ({ state, offset: 120 })).captureSnapshot();
+  expect(controller.getScrollSnapshot(id)).toBeUndefined();
+  expect(controller.getScrollPosition(id)).toBe(120);
+  controller.dispose();
 });

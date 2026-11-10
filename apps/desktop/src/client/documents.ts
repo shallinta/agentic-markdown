@@ -274,6 +274,11 @@ export function createDocumentController(
   const reading = new Set<string>();
   const sourceReturn = new Map<string, "editing" | "reading">();
   const viewports = new Map<string, DocumentViewport>();
+  const scrollCaptures = new Map<string, {
+    savePosition(expectedState: EditorState, offset: number): void;
+    captureSnapshot(): StateEffect<unknown> | undefined;
+    release(): void;
+  }>();
   const viewportCaptures = new Map<string, { capture(): void; release(): void }>();
   const captureCurrentViewport = () => {
     const id = state.snapshot?.documentId;
@@ -816,6 +821,14 @@ export function createDocumentController(
     )
       captureCurrentViewport();
     if (previousId !== nextId) {
+      // Preserve the departing view snapshot before parser pause changes its state.
+      // A collector may reenter controller operations; never publish the old transition over them.
+      if (previousId && next.tabs.some(tab => tab.documentId === previousId)) {
+        const beforeCapture = state, beforeGeneration = generation;
+        const beforeEditor = editors.get(previousId)?.state;
+        scrollCaptures.get(previousId)?.captureSnapshot();
+        if (state !== beforeCapture || generation !== beforeGeneration || editors.get(previousId)?.state !== beforeEditor) return;
+      }
       // Only the two changed active slots, never every tab on each keystroke.
       for (const id of [previousId, nextId]) {
         const editor = id && editors.get(id);
@@ -1016,6 +1029,7 @@ export function createDocumentController(
         sourceReturn.delete(replaced.documentId);
         viewports.delete(replaced.documentId);
         viewportCaptures.delete(replaced.documentId);
+        scrollCaptures.delete(replaced.documentId);
         transfers.delete(replaced.documentId);
         saveResults.delete(replaced.documentId);
         uncertain.delete(replaced.documentId);
@@ -1026,6 +1040,7 @@ export function createDocumentController(
         uncertain.delete(active.documentId);
         scrollSnapshots.delete(active.documentId);
         viewportCaptures.delete(active.documentId);
+        scrollCaptures.delete(active.documentId);
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
         const stateStart = onTiming ? performance.now() : 0;
@@ -1145,6 +1160,7 @@ export function createDocumentController(
     sourceReturn.clear();
     viewports.clear();
     viewportCaptures.clear();
+    scrollCaptures.clear();
     transfers.clear();
     capabilityLifetimes.clear();
     saveResults.clear();
@@ -1209,6 +1225,7 @@ export function createDocumentController(
     sourceReturn.delete(documentId);
     viewports.delete(documentId);
     viewportCaptures.delete(documentId);
+    scrollCaptures.delete(documentId);
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
@@ -1269,7 +1286,6 @@ export function createDocumentController(
     } finally { removalRunning = false; }
   }
   let historyDispatch: ((transaction: Transaction) => void) | undefined;
-  let captureScroll: (() => StateEffect<unknown>) | undefined;
   let scheduleWrapping: (() => void) | undefined;
   let sourceSelectionTarget: {
     documentId: string;
@@ -1673,6 +1689,7 @@ export function createDocumentController(
       const previous = state;
       state = prepared.next; editors = prepared.nextEditors; generation++;
       for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
+      for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
@@ -1722,6 +1739,7 @@ export function createDocumentController(
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       editors = prepared.nextEditors;
       for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
+      for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
       folderRemovalGate = false;
       generation++;
     },
@@ -1729,7 +1747,7 @@ export function createDocumentController(
       const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
       for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
       for (const id of prepared.removedIds) {
-        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); viewportCaptures.delete(id); transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
         safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
       }
       safely(() => observation.sync(state.tabs));
@@ -1873,17 +1891,20 @@ export function createDocumentController(
         return false;
       if (isSafeSource(editor.state)) return true;
       try {
+        const activeBeforeCapture = state.snapshot?.documentId;
         const effects = safeSourceEffects();
         // View geometry can itself be unavailable after a presentation fault.
         // Preserve scroll when possible, but never make it a recovery dependency.
         if (state.snapshot?.documentId === documentId) {
           try {
-            const scroll = captureScroll?.();
+            const scroll = scrollCaptures.get(documentId)?.captureSnapshot();
             if (scroll) effects.push(scroll);
           } catch {
             // The accepted editor state remains the source of recovery truth.
           }
         }
+        if (editors.get(documentId)?.state !== editor.state || state.snapshot?.documentId !== activeBeforeCapture ||
+          metadataDisposed || state.busy || state.frozen || !canLeaveEditor()) return false;
         const transaction = editor.state.update({
           effects,
           selection: editor.state.selection.asSingle(),
@@ -1979,9 +2000,11 @@ export function createDocumentController(
       const documentId = state.snapshot!.documentId;
       const editor = editors.get(documentId)!;
       captureCurrentViewport();
+      if (state.snapshot?.documentId !== documentId || editors.get(documentId)?.state !== editor.state || !canToggleSourceMode()) return false;
       const previous = controller.getMode(documentId);
+      const scroll = scrollCaptures.get(documentId)?.captureSnapshot();
+      if (state.snapshot?.documentId !== documentId || editors.get(documentId)?.state !== editor.state || !canToggleSourceMode()) return false;
       if (previous !== "source") sourceReturn.set(documentId, previous);
-      const scroll = captureScroll?.();
       const effect = switchEditorMode(
         getEditorMode(editor.state) === "editing" ? "source" : "editing",
         sourceWrapping
@@ -2001,8 +2024,42 @@ export function createDocumentController(
       }
       return editors.get(documentId)?.state === transaction.state;
     },
-    setScrollCapture: (capture?: () => StateEffect<unknown>) => {
-      captureScroll = capture;
+    registerEditorScroll: (documentId: string, collect: () => { state: EditorState; effect?: StateEffect<unknown>; offset?: number } | undefined) => {
+      const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      let collecting = false;
+      const current = (expected: EditorState) => !metadataDisposed && !!incarnation &&
+        scrollCaptures.get(documentId) === registration &&
+        editors.get(documentId)?.state === expected && expected.field(editorFaultSession) === incarnation;
+      const registration = {
+        savePosition(expectedState: EditorState, offset: number) {
+          if (current(expectedState) && Number.isFinite(offset) && offset >= 0)
+            scrollPositions.set(documentId, offset);
+        },
+        captureSnapshot(): StateEffect<unknown> | undefined {
+          if (collecting) return;
+          collecting = true;
+          try {
+            const before = editors.get(documentId);
+            if (!before || !current(before.state)) return;
+            const collected = collect();
+            if (!collected) return;
+            const { state: captured, effect, offset } = collected;
+            if (captured !== before.state || !current(before.state) ||
+              editors.get(documentId)?.revision !== before.revision) return;
+            const validOffset = offset !== undefined && Number.isFinite(offset) && offset >= 0;
+            if (validOffset) scrollPositions.set(documentId, offset);
+            if (effect) scrollSnapshots.set(documentId, { doc: captured.doc, effect });
+            else if (validOffset) scrollSnapshots.delete(documentId);
+            return effect;
+          } catch { return; }
+          finally { collecting = false; }
+        },
+        release() {
+          if (scrollCaptures.get(documentId) === registration) scrollCaptures.delete(documentId);
+        },
+      };
+      if (incarnation && !metadataDisposed) scrollCaptures.set(documentId, registration);
+      return registration;
     },
     canWrite,
     refreshWriteCapability,
@@ -2157,22 +2214,6 @@ export function createDocumentController(
         ? saved?.effect
         : undefined;
     },
-    setScrollSnapshot: (
-      documentId: string,
-      doc: EditorState["doc"],
-      effect: StateEffect<unknown>
-    ) => {
-      if (editors.get(documentId)?.state.doc === doc)
-        scrollSnapshots.set(documentId, { doc, effect });
-    },
-    setScrollPosition: (documentId: string, offset: number) => {
-      if (
-        state.tabs.some((tab) => tab.documentId === documentId) &&
-        Number.isFinite(offset) &&
-        offset >= 0
-      )
-        scrollPositions.set(documentId, offset);
-    },
     clear: (beforeClear?: () => Promise<void>) =>
       protect(
         state.tabs.map((tab) => tab.documentId),
@@ -2194,6 +2235,7 @@ export function createDocumentController(
       }
       metadataDisposed = true;
       viewportCaptures.clear();
+    scrollCaptures.clear();
       cancelRecentTabSwitch();
       recentTabListeners.clear();
       pinnedTabs.clear();

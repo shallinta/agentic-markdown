@@ -111,7 +111,7 @@ export function MemoryEditor({
   const checkRaster = useRef<(() => void) | undefined>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const refreshViewportCapture = useRef<((session: EditorFaultSession) => void) | null>(null);
+  const refreshViewCaptures = useRef<((session: EditorFaultSession) => void) | null>(null);
   useLayoutEffect(() => {
     checkRaster.current?.();
     if (viewRef.current) {
@@ -163,7 +163,6 @@ export function MemoryEditor({
     const releaseHistory = controller.setHistoryDispatch((transaction) =>
       view.dispatch(transaction)
     );
-    controller.setScrollCapture(() => view.scrollSnapshot());
     view.contentDOM.setAttribute("aria-label", "Markdown 编辑区");
     if (!scrollTo)
       view.scrollDOM.scrollTop = controller.getScrollPosition(documentId);
@@ -184,16 +183,32 @@ export function MemoryEditor({
         revision: current.revision,
       };
     };
+    const collectScroll = () => {
+      const state = view.state;
+      if (!view.scrollDOM.isConnected || controller.getEditor(documentId)?.state !== state) return;
+      const offset = view.scrollDOM.scrollTop;
+      let effect: ReturnType<EditorView["scrollSnapshot"]> | undefined;
+      try {
+        effect = view.scrollSnapshot();
+      } catch {
+        if (!Number.isFinite(offset) || offset < 0) return;
+      }
+      if (view.scrollDOM.isConnected && view.state === state)
+        return effect ? { state, offset, effect } : { state, offset };
+    };
     let captureSession = session;
     let viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
-    const refreshCapture = (nextSession: EditorFaultSession) => {
+    let scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
+    const refreshCaptures = (nextSession: EditorFaultSession) => {
       if (nextSession === captureSession) return;
       // The same EditorView can adopt a new session after a reload.
       viewportCapture.release();
+      scrollCapture.release();
       captureSession = nextSession;
       viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
+      scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
     };
-    refreshViewportCapture.current = refreshCapture;
+    refreshViewCaptures.current = refreshCaptures;
     const viewport = controller.getViewport(documentId);
     let wrappingReady = !viewport;
     const currentView = () =>
@@ -563,8 +578,10 @@ export function MemoryEditor({
       ready: () => currentView() && view.contentDOM.isConnected && !view.compositionStarted && !view.composing && controller.getEditor(documentId)?.state === view.state,
       focus: () => view.focus(),
     });
-    const saveScroll = () =>
-      controller.setScrollPosition(documentId, view.scrollDOM.scrollTop);
+    const saveScroll = () => {
+      if (view.scrollDOM.isConnected)
+        scrollCapture.savePosition(view.state, view.scrollDOM.scrollTop);
+    };
     view.scrollDOM.addEventListener("scroll", saveScroll);
     const releaseInteraction = controller.setInteractionCheck(
       () => !view.compositionStarted
@@ -774,14 +791,11 @@ export function MemoryEditor({
       removeIndentation();
       viewportCapture.capture();
       viewportCapture.release();
-      if (refreshViewportCapture.current === refreshCapture)
-        refreshViewportCapture.current = null;
+      if (refreshViewCaptures.current === refreshCaptures)
+        refreshViewCaptures.current = null;
       saveScroll();
-      controller.setScrollSnapshot(
-        documentId,
-        view.state.doc,
-        view.scrollSnapshot()
-      );
+      scrollCapture.captureSnapshot();
+      scrollCapture.release();
       releaseInteraction();
       releaseHistory();
       controller.setSourceSelectionTarget(undefined);
@@ -793,7 +807,6 @@ export function MemoryEditor({
         sourceSelectionMouse,
         true
       );
-      controller.setScrollCapture(undefined);
       controller.setWrappingScheduler(undefined);
       view.contentDOM.removeEventListener("keydown", historyKey, true);
       view.contentDOM.removeEventListener("beforeinput", historyInput, true);
@@ -815,7 +828,7 @@ export function MemoryEditor({
     const current = syncCurrentEditorState(view, controller, documentId);
     if (!current) return;
     const fault = current.field(editorFaultSession);
-    refreshViewportCapture.current?.(fault);
+    refreshViewCaptures.current?.(fault);
     if (
       view.state.facet(EditorState.readOnly) !== readOnly ||
       view.state.facet(EditorView.editable) !== !readOnly

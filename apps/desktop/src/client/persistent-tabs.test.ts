@@ -37,7 +37,7 @@ test("real service tabs preserve snapshots, release replaced grants and survive 
     await controller.activate(controller.getSnapshot().entries[0]);
     expect(reads).toBe(0);
     expect(controller.getSnapshot().snapshot).toBe(first);
-    controller.setScrollPosition(first.documentId, 80);
+    controller.registerEditorScroll(first.documentId, () => undefined).savePosition(controller.getEditor(first.documentId)!.state, 80);
     selected = paths[0];
     await writeFile(selected, "changed");
     await controller.select();

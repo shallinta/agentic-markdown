@@ -132,7 +132,7 @@ F-032a 已在隔离模型验证持久文档的区域路由，普通窗口的打�
 
 alpha.304 的合成路由实验台可验证双击打开、显式移区、满载回退和最后一篇移出时收起。实验只用合成文档，普通窗口无此入口。见[F-032b 迭代](iterations/F-032b-document-region-workspace-lab.md)。
 
-普通窗口仍按文档保持当前位置。alpha.305 已复验切换标签、切换编辑与源码模式，以及重新读取后返回新位置。见[F-035a 迭代](iterations/F-035a-document-viewport-ownership.md)。
+普通窗口仍按文档保持当前位置。alpha.305 已复验切换标签、切换编辑与源码模式，以及重新读取后返回新位置。见[F-035a 迭代](iterations/F-035a-document-viewport-ownership.md)。 alpha.306 进一步复验滚动快照和故障后的安全源码位置，正常操作入口不变。见[F-035b 迭代](iterations/F-035b-editor-scroll-ownership.md)。
 
 ## 崩溃草稿恢复（F-066）
 

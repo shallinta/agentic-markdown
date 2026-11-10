@@ -22,6 +22,7 @@ import { analyzeTextFidelity } from "../shared/text-fidelity";
 import { documentCapabilitySuffix } from "./document-status-label";
 import {
   createDocumentController,
+  CLEAN_PRIMARY_TAB_CAPTURE_LIMIT,
   isDocumentResponse,
   type DocumentTransport,
 } from "./documents";
@@ -254,6 +255,143 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
     controller: createDocumentController(transport, confirmDiscard),
   };
 }
+
+test("clean primary capture follows visual order and modes without bodies, and selection stays current", async () => {
+  const { controller, transport, value: a } = setup();
+  const b = snapshot("B"), c = snapshot("C");
+  try {
+    const empty = controller.captureCleanPrimaryTabs();
+    expect(empty.ok && empty.activeIndex).toBe(null);
+    await controller.select();
+    for (const tab of [b, c]) {
+      transport.selectDocument = request => Promise.resolve(result(request, tab));
+      await controller.select();
+    }
+    controller.activateTab(b.documentId);
+    controller.setActiveTabPinned(true);
+    controller.toggleSourceMode();
+    controller.moveTab(c.documentId, a.documentId, "before");
+    const capture = controller.captureCleanPrimaryTabs();
+    if (!capture.ok) throw Error(capture.reason);
+    expect(capture.tabs).toEqual([b, c, a].map(tab => ({
+      handle: tab.handle, documentId: tab.documentId, revision: tab.revision,
+      hash: tab.hash, pinned: tab === b, mode: tab === b ? "source" : "editing",
+    })));
+    expect(capture.activeIndex).toBe(0);
+    const editor = controller.getEditor(b.documentId)!;
+    controller.updateEditor(b.documentId, editor.state.update({ selection: { anchor: 1 } }));
+    expect(capture.current()).toBe(true);
+    controller.activateTab(a.documentId);
+    controller.activateTab(b.documentId);
+    expect(capture.current()).toBe(false);
+    const beforeEdit = controller.captureCleanPrimaryTabs();
+    if (!beforeEdit.ok) throw Error(beforeEdit.reason);
+    const current = controller.getEditor(b.documentId)!;
+    controller.updateEditor(b.documentId, current.state.update({ changes: { from: 0, insert: "draft" } }));
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    expect(controller.runHistory("undo")).toBe(true);
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(true);
+    expect(beforeEdit.current()).toBe(false);
+    const beforeClose = controller.captureCleanPrimaryTabs();
+    await controller.closeTab(b.documentId);
+    expect(beforeClose.ok && beforeClose.current()).toBe(false);
+  } finally { controller.dispose(); }
+});
+
+test("clean primary capture rejects transient and isolated states while allowing clean filesystem readonly", async () => {
+  const { controller, value } = setup();
+  value.writeCapability = { writable: false, reason: "readonly" };
+  try {
+    const loading = controller.select();
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    await loading;
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(true);
+    const capture = controller.captureCleanPrimaryTabs();
+    const restore = controller.setInteractionCheck(() => false);
+    expect(capture.ok && capture.current()).toBe(false);
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    restore();
+    expect(capture.ok && capture.current()).toBe(false);
+    controller.beginDiscard();
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    controller.endDiscard();
+    controller.setEditorInputBlocked(true);
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    controller.setEditorInputBlocked(false);
+    controller.toggleReadingMode();
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    controller.toggleReadingMode();
+    const beforeFault = controller.captureCleanPrimaryTabs();
+    expect(beforeFault.ok).toBe(true);
+    const fault = controller.getEditorFault(value.documentId)!;
+    reportEditorFault(fault, "presentation");
+    expect(beforeFault.ok && beforeFault.current()).toBe(false);
+    controller.enterSafeSource(value.documentId, fault);
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+  } finally { controller.dispose(); }
+});
+
+test("clean primary capture refuses stale baselines and whole over-capacity groups", async () => {
+  const { controller, transport } = setup();
+  try {
+    await controller.select();
+    const before = controller.captureCleanPrimaryTabs();
+    transport.readDocument = request => Promise.resolve({ ...request, ok: false, error: "FILE_CHANGED" });
+    await controller.reload();
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    expect(before.ok && before.current()).toBe(false);
+  } finally { controller.dispose(); }
+  const many = setup();
+  try {
+    for (let index = 0; index < CLEAN_PRIMARY_TAB_CAPTURE_LIMIT; index++) {
+      const tab = snapshot("x");
+      many.transport.selectDocument = request => Promise.resolve(result(request, tab));
+      await many.controller.select();
+    }
+    const exact = many.controller.captureCleanPrimaryTabs();
+    expect(exact.ok && exact.tabs.length).toBe(CLEAN_PRIMARY_TAB_CAPTURE_LIMIT);
+    const extra = snapshot("y");
+    many.transport.selectDocument = request => Promise.resolve(result(request, extra));
+    await many.controller.select();
+    expect(many.controller.captureCleanPrimaryTabs()).toEqual({ ok: false, reason: "limit" });
+    expect(exact.ok && exact.current()).toBe(false);
+  } finally { many.controller.dispose(); }
+});
+
+test("clean primary capture requires settled usable capability while retaining confirmed readonly", async () => {
+  for (const reason of ["invalid", "unavailable"] as const) {
+    const { controller, value } = setup();
+    value.writeCapability = { writable: false, reason };
+    try {
+      await controller.select();
+      expect(controller.captureCleanPrimaryTabs()).toEqual({ ok: false, reason: "unavailable" });
+    } finally { controller.dispose(); }
+  }
+  const { controller, transport } = setup();
+  try {
+    await controller.select();
+    const pending = deferred<unknown>();
+    let request: DocumentRequest & { handle: string };
+    transport.checkDocumentWriteCapability = input => { request = input; return pending.promise; };
+    const before = controller.captureCleanPrimaryTabs();
+    const refresh = controller.refreshWriteCapability();
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+    expect(before.ok && before.current()).toBe(false);
+    pending.resolve({ ...request!, capability: { writable: false, reason: "readonly" } });
+    await refresh;
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(true);
+    expect(before.ok && before.current()).toBe(false);
+    const unchanged = controller.captureCleanPrimaryTabs();
+    transport.checkDocumentWriteCapability = input => Promise.resolve({ ...input, capability: { writable: false, reason: "readonly" } });
+    await controller.refreshWriteCapability();
+    expect(unchanged.ok && unchanged.current()).toBe(false);
+    const readonly = controller.captureCleanPrimaryTabs();
+    transport.checkDocumentWriteCapability = input => Promise.resolve({ ...input, capability: { writable: false, reason: "invalid" } });
+    await controller.refreshWriteCapability();
+    expect(readonly.ok && readonly.current()).toBe(false);
+    expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
+  } finally { controller.dispose(); }
+});
 
 test("independent reading captures exact clean authority and current editing or source buffer bytes", async () => {
   for (const mode of ["editing", "source"] as const) {

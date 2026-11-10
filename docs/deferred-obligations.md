@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037c 已保存主区标签采集（2026-11-10）
+
+已验证有界内存采集及票据失效。OBL-034 的目录来源和正式会话保存恢复、OBL-054、最终离线继续跟踪。见[F-037c 迭代](iterations/F-037c-capture-clean-primary-tabs.md)。
+
 ## F-037b 重新授权后的主区标签候选（2026-11-10）
 
 已验证当前已授权目录、扫描代际与文件身份的内部候选。OBL-034 的正式会话接入与恢复、OBL-054、最终离线继续跟踪。见[F-037b 迭代](iterations/F-037b-reauthorized-main-tab-candidates.md)。

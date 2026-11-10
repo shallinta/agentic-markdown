@@ -99,6 +99,18 @@ export interface SaveViewStatus {
   status: "saved" | "dirty" | "saving" | "failed" | "uncertain";
   message?: string;
 }
+export const CLEAN_PRIMARY_TAB_CAPTURE_LIMIT = 64;
+export type CleanPrimaryTabCapture =
+  | { ok: false; reason: "limit" | "unavailable" }
+  | {
+      ok: true;
+      readonly tabs: readonly Readonly<Pick<DocumentSnapshot, "handle" | "documentId" | "revision" | "hash"> & {
+        pinned: boolean;
+        mode: "editing" | "source";
+      }>[];
+      readonly activeIndex: number | null;
+      current(): boolean;
+    };
 const locationKey = (snapshot: DocumentEntry) =>
   snapshot.locationId ?? snapshot.documentId;
 export const sameRetainedIdentity = (entry: DocumentEntry, peer: DocumentEntry) =>
@@ -197,6 +209,9 @@ export function createDocumentController(
     frozen: false,
   };
   const pinnedTabs = new Set<string>();
+  // Tokens do not retain snapshots or bodies. Selection-only editor transactions
+  // leave the view state untouched; published changes always get another token.
+  const primaryCaptureTokens = new WeakMap<DocumentViewState, object>();
   let visualOrder: string[] | undefined;
   function getVisualTabs(): readonly DocumentSnapshot[] {
     let ordered: readonly DocumentSnapshot[] = state.tabs;
@@ -317,6 +332,7 @@ export function createDocumentController(
     }
     const token = { invalidated: false, expired: false };
     const lifetime = capabilityLifetimes.get(handle);
+    primaryCaptureTokens.delete(state);
     capabilityChecks.set(handle, token);
     const params = { ...request(), handle };
     const deadline = setTimeout(() => {
@@ -505,6 +521,51 @@ export function createDocumentController(
         return { kind: "buffer", snapshot, editor, raw } as const;
     }
     return undefined;
+  }
+  function captureCleanPrimaryTabs(): CleanPrimaryTabCapture {
+    const eligibleEditor = (tab: DocumentSnapshot) => {
+      const editor = editors.get(tab.documentId);
+      return editor && !capabilityChecks.has(tab.handle) &&
+        (tab.writeCapability.reason === "writable" || tab.writeCapability.reason === "readonly") &&
+        !reading.has(tab.documentId) && !isSafeSource(editor.state) &&
+        searchDocumentStatus(tab, editor) === "clean" ? editor : undefined;
+    };
+    const eligible = () =>
+      !metadataDisposed && !state.busy && !state.frozen && !state.stale &&
+      !state.removalPending && !state.folderRemovalPending &&
+      !editorInputBlocked && canLeaveEditor();
+    if (!eligible()) return { ok: false, reason: "unavailable" };
+    if (state.tabs.length > CLEAN_PRIMARY_TAB_CAPTURE_LIMIT)
+      return { ok: false, reason: "limit" };
+    const tabs: Extract<CleanPrimaryTabCapture, { ok: true }>["tabs"][number][] = [];
+    const visualTabs = getVisualTabs();
+    if (visualTabs.length !== state.tabs.length)
+      return { ok: false, reason: "unavailable" };
+    for (const tab of visualTabs) {
+      const editor = eligibleEditor(tab);
+      if (!editor)
+        return { ok: false, reason: "unavailable" };
+      tabs.push({ handle: tab.handle, documentId: tab.documentId,
+        revision: tab.revision, hash: tab.hash,
+        pinned: pinnedTabs.has(tab.documentId), mode: getEditorMode(editor.state) });
+    }
+    const activeIndex = state.snapshot
+      ? tabs.findIndex(tab => tab.documentId === state.snapshot!.documentId)
+      : null;
+    if (activeIndex === -1 || (tabs.length > 0 && activeIndex === null))
+      return { ok: false, reason: "unavailable" };
+    let token = primaryCaptureTokens.get(state);
+    if (!token) { token = {}; primaryCaptureTokens.set(state, token); }
+    const activation = generation;
+    let valid = true;
+    return { ok: true, tabs, activeIndex, current() {
+      valid = valid && primaryCaptureTokens.get(state) === token &&
+        generation === activation && eligible() &&
+        // Fault bits change before their queued view publication. Check only at
+        // explicit receipt validation, bounded by this capture's 64-tab limit.
+        state.tabs.every(tab => !editors.get(tab.documentId)?.state.field(editorFaultSession).fault);
+      return valid;
+    } };
   }
   function captureContentSearch(): ContentSearchCapture {
     checkContentSearch = undefined;
@@ -1337,6 +1398,7 @@ export function createDocumentController(
     },
     cancelRecentTabSwitch,
     getVisualTabs,
+    captureCleanPrimaryTabs,
     canReorderTabs(): boolean {
       return !metadataDisposed && !state.busy && !state.frozen && !editorInputBlocked &&
         !recentTabSwitch && canLeaveEditor();

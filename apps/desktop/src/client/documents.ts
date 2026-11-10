@@ -438,14 +438,18 @@ export function createDocumentController(
       checkingInteraction = false;
     }
   };
-  let quickFocusTarget: { documentId: string; ready(): boolean; focus(): void } | undefined;
-  const quickFocusListeners = new Set<() => void>();
-  let preserveSearchFocus: { documentId: string; handle: string } | undefined;
-  let contentSearchTarget: {
-    documentId: string;
+  interface QuickFocusTarget { ready(): boolean; focus(): void }
+  interface ContentSearchTarget {
     ready(): boolean;
     select(range: { from: number; to: number }, state: EditorState): boolean;
-  } | undefined;
+  }
+  const quickFocusTargets = new Map<string, { incarnation: EditorFaultSession; target: QuickFocusTarget }>();
+  const contentSearchTargets = new Map<string, { incarnation: EditorFaultSession; target: ContentSearchTarget }>();
+  const locationOwnerCurrent = (id: string, incarnation: EditorFaultSession) =>
+    !metadataDisposed && state.snapshot?.documentId === id && editors.get(id)?.state.field(editorFaultSession) === incarnation;
+  let focusingQuickDocument = false;
+  const quickFocusListeners = new Set<() => void>();
+  let preserveSearchFocus: { documentId: string; handle: string } | undefined;
   let tryContentSearchLocation: (() => void) | undefined;
   let cancelContentSearchLocation: (() => void) | undefined;
   let contentSearchPreparation = 0;
@@ -728,16 +732,25 @@ export function createDocumentController(
       const attempt = () => {
         if (tryContentSearchLocation !== schedule) return;
         const editor = eligible();
+        if (tryContentSearchLocation !== schedule) return;
         if (!editor) {
           finish(false);
           return;
         }
-        const target = contentSearchTarget;
-        if (target?.documentId !== snapshot.documentId || !target.ready()) return;
+        const owner = contentSearchTargets.get(snapshot.documentId);
+        if (!owner || !locationOwnerCurrent(snapshot.documentId, owner.incarnation)) return;
+        let ready: boolean;
+        try { ready = owner.target.ready(); } catch { finish(false); return; }
+        if (tryContentSearchLocation !== schedule) return;
+        const stillEligible = eligible();
+        if (tryContentSearchLocation !== schedule) return;
+        if (stillEligible !== editor || contentSearchTargets.get(snapshot.documentId) !== owner ||
+            !locationOwnerCurrent(snapshot.documentId, owner.incarnation)) { finish(false); return; }
+        if (!ready) return;
         const range = contentSearchEditorRange(editor.state, location);
         detach();
         try {
-          resolve(!!range && target.select(range, editor.state));
+          resolve(!!range && owner.target.select(range, editor.state));
         } catch {
           resolve(false);
         }
@@ -1069,6 +1082,8 @@ export function createDocumentController(
         editorDispatchers.delete(replaced.documentId);
         interactions.delete(replaced.documentId);
         commandTargets.delete(replaced.documentId);
+        quickFocusTargets.delete(replaced.documentId);
+        contentSearchTargets.delete(replaced.documentId);
         transfers.delete(replaced.documentId);
         saveResults.delete(replaced.documentId);
         uncertain.delete(replaced.documentId);
@@ -1083,6 +1098,8 @@ export function createDocumentController(
         editorDispatchers.delete(active.documentId);
         interactions.delete(active.documentId);
         commandTargets.delete(active.documentId);
+        quickFocusTargets.delete(active.documentId);
+        contentSearchTargets.delete(active.documentId);
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
         const stateStart = onTiming ? performance.now() : 0;
@@ -1206,6 +1223,8 @@ export function createDocumentController(
     editorDispatchers.clear();
     interactions.clear();
     commandTargets.clear();
+    quickFocusTargets.clear();
+    contentSearchTargets.clear();
     transfers.clear();
     capabilityLifetimes.clear();
     saveResults.clear();
@@ -1274,6 +1293,8 @@ export function createDocumentController(
     editorDispatchers.delete(documentId);
     interactions.delete(documentId);
     commandTargets.delete(documentId);
+    quickFocusTargets.delete(documentId);
+    contentSearchTargets.delete(documentId);
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
@@ -1609,15 +1630,20 @@ export function createDocumentController(
         state.snapshot?.handle !== preserveSearchFocus.handle
       );
     },
-    registerContentSearchTarget(target: NonNullable<typeof contentSearchTarget>) {
-      contentSearchTarget = target;
-      tryContentSearchLocation?.();
-      return () => {
-        if (contentSearchTarget === target) contentSearchTarget = undefined;
+    registerContentSearchTarget(documentId: string, target: ContentSearchTarget) {
+      const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      if (!incarnation || metadataDisposed) return { notifyReady: () => undefined, release: () => undefined };
+      const owner = { incarnation, target };
+      const notifyReady = () => {
+        if (contentSearchTargets.get(documentId) === owner && locationOwnerCurrent(documentId, incarnation))
+          tryContentSearchLocation?.();
       };
-    },
-    notifyContentSearchTargetReady() {
-      tryContentSearchLocation?.();
+      contentSearchTargets.set(documentId, owner);
+      notifyReady();
+      return {
+        notifyReady,
+        release: () => { if (contentSearchTargets.get(documentId) === owner) contentSearchTargets.delete(documentId); },
+      };
     },
     async activateContentSearchLocation(
       location: ContentSearchLocation,
@@ -1762,6 +1788,8 @@ export function createDocumentController(
       for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
       for (const id of interactions.keys()) if (!editors.has(id)) interactions.delete(id);
       for (const id of commandTargets.keys()) if (!editors.has(id)) commandTargets.delete(id);
+      for (const id of quickFocusTargets.keys()) if (!editors.has(id)) quickFocusTargets.delete(id);
+      for (const id of contentSearchTargets.keys()) if (!editors.has(id)) contentSearchTargets.delete(id);
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
@@ -1815,6 +1843,8 @@ export function createDocumentController(
       for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
       for (const id of interactions.keys()) if (!editors.has(id)) interactions.delete(id);
       for (const id of commandTargets.keys()) if (!editors.has(id)) commandTargets.delete(id);
+      for (const id of quickFocusTargets.keys()) if (!editors.has(id)) quickFocusTargets.delete(id);
+      for (const id of contentSearchTargets.keys()) if (!editors.has(id)) contentSearchTargets.delete(id);
       folderRemovalGate = false;
       generation++;
     },
@@ -1822,7 +1852,7 @@ export function createDocumentController(
       const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
       for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
       for (const id of prepared.removedIds) {
-        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); editorDispatchers.delete(id); interactions.delete(id); commandTargets.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); editorDispatchers.delete(id); interactions.delete(id); commandTargets.delete(id); quickFocusTargets.delete(id); contentSearchTargets.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
         safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
       }
       safely(() => observation.sync(state.tabs));
@@ -2249,10 +2279,14 @@ export function createDocumentController(
       activationListeners.add(listener);
       return () => { activationListeners.delete(listener); };
     },
-    registerQuickFocusTarget(target: NonNullable<typeof quickFocusTarget>) {
-      quickFocusTarget = target;
-      for (const listener of quickFocusListeners) listener();
-      return () => { if (quickFocusTarget === target) quickFocusTarget = undefined; };
+    registerQuickFocusTarget(documentId: string, target: QuickFocusTarget) {
+      const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      if (!incarnation || metadataDisposed) return () => undefined;
+      const owner = { incarnation, target };
+      quickFocusTargets.set(documentId, owner);
+      if (locationOwnerCurrent(documentId, incarnation))
+        for (const listener of quickFocusListeners) listener();
+      return () => { if (quickFocusTargets.get(documentId) === owner) quickFocusTargets.delete(documentId); };
     },
     subscribeQuickFocus(listener: () => void) {
       quickFocusListeners.add(listener);
@@ -2260,9 +2294,22 @@ export function createDocumentController(
     },
     focusQuickDocument(documentId: string): "missing" | "blocked" | "focused" {
       if (metadataDisposed || editorInputBlocked || saving.size || state.snapshot?.documentId !== documentId || state.busy || state.frozen || !canLeaveEditor()) return "blocked";
-      if (quickFocusTarget?.documentId !== documentId) return "missing";
-      if (!quickFocusTarget.ready()) return "blocked";
-      quickFocusTarget.focus(); return "focused";
+      const owner = quickFocusTargets.get(documentId);
+      if (!owner || !locationOwnerCurrent(documentId, owner.incarnation)) return "missing";
+      if (focusingQuickDocument) return "blocked";
+      const before = state;
+      const editor = editors.get(documentId);
+      focusingQuickDocument = true;
+      try {
+        if (owner.target.ready() !== true || state !== before || editors.get(documentId) !== editor ||
+            quickFocusTargets.get(documentId) !== owner || !locationOwnerCurrent(documentId, owner.incarnation)) return "blocked";
+        owner.target.focus();
+        return "focused";
+      } catch {
+        return "blocked";
+      } finally {
+        focusingQuickDocument = false;
+      }
     },
     closeTab: (documentId: string) =>
       protect([documentId], () => closeTab(documentId)),
@@ -2291,7 +2338,6 @@ export function createDocumentController(
       ),
     dispose: () => {
       cancelContentSearchLocation?.();
-      contentSearchTarget = undefined;
       preserveSearchFocus = undefined;
       if (creationGate) creationGate.cancelled = true;
       if (duplicateGate) duplicateGate.cancelled = true;
@@ -2305,11 +2351,12 @@ export function createDocumentController(
     editorDispatchers.clear();
     interactions.clear();
     commandTargets.clear();
+    quickFocusTargets.clear();
+    contentSearchTargets.clear();
       cancelRecentTabSwitch();
       recentTabListeners.clear();
       pinnedTabs.clear();
       visualOrder = undefined;
-      quickFocusTarget = undefined;
       quickFocusListeners.clear();
       activationListeners.clear();
       for (const id of faultOwners.keys()) releaseFaultOwner(id);

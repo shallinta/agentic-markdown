@@ -2241,3 +2241,31 @@ for (const kind of ["sourceSelection", "listInput", "indentation"] as const) {
     c.dispose();
   });
 }
+
+test("quick focus targets preserve active ownership, missing after reload, and ready replacement rejection", async () => {
+  const { controller: c, value: a, transport } = setup();
+  await c.select();
+  const b = snapshot("b");
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await c.select();
+  const calls: string[] = [];
+  const old = c.registerQuickFocusTarget(b.documentId, { ready: () => true, focus: () => { calls.push("old"); } });
+  c.registerQuickFocusTarget(a.documentId, { ready: () => true, focus: () => { calls.push("a"); } });
+  c.registerQuickFocusTarget(b.documentId, { ready: () => true, focus: () => { calls.push("b"); } });
+  old();
+  expect(c.focusQuickDocument(b.documentId)).toBe("focused");
+  expect(calls).toEqual(["b"]);
+  transport.readDocument = request => Promise.resolve(result(request, b));
+  await c.reload();
+  expect(c.focusQuickDocument(b.documentId)).toBe("missing");
+  c.registerQuickFocusTarget(b.documentId, { ready: () => {
+    expect(c.focusQuickDocument(b.documentId)).toBe("blocked");
+    c.registerQuickFocusTarget(b.documentId, { ready: () => true, focus: () => { calls.push("new"); } });
+    return true;
+  }, focus: () => { calls.push("invalid"); } });
+  expect(c.focusQuickDocument(b.documentId)).toBe("blocked");
+  expect(calls).toEqual(["b"]);
+  expect(c.focusQuickDocument(b.documentId)).toBe("focused");
+  expect(calls).toEqual(["b", "new"]);
+  c.dispose();
+});

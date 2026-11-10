@@ -111,7 +111,7 @@ export function MemoryEditor({
   const checkRaster = useRef<(() => void) | undefined>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const refreshViewSession = useRef<((session: EditorFaultSession) => void) | null>(null);
+  const refreshViewSession = useRef<((session: EditorFaultSession) => () => void) | null>(null);
   useLayoutEffect(() => {
     checkRaster.current?.();
     if (viewRef.current) {
@@ -597,52 +597,13 @@ export function MemoryEditor({
     };
     const commandTargets = { sourceSelection, listInput, indentation, scheduleWrapping };
     let releaseCommandTargets = controller.registerEditorCommandTargets(documentId, commandTargets);
-    const refreshSession = (nextSession: EditorFaultSession) => {
-      if (nextSession === registeredSession) return;
-      // The same EditorView can adopt a new session after a reload.
-      viewportCapture.release();
-      scrollCapture.release();
-      releaseEditorDispatch();
-      interaction.release();
-      releaseCommandTargets();
-      registeredSession = nextSession;
-      viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
-      scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
-      releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
-      interaction = controller.registerEditorInteraction(documentId, checkInteraction);
-      releaseCommandTargets = controller.registerEditorCommandTargets(documentId, commandTargets);
-    };
-    refreshViewSession.current = refreshSession;
-    if (viewport) {
-      const position = editorOffset(editor.state.field(rawText), viewport.from);
+    const viewportPosition = viewport ? editorOffset(editor.state.field(rawText), viewport.from) : undefined;
+    if (viewportPosition !== undefined)
       view.dispatch({
-        effects: EditorView.scrollIntoView(position, { y: "start" }),
+        effects: EditorView.scrollIntoView(viewportPosition, { y: "start" }),
       });
-      view.requestMeasure({
-        read: () => view.coordsAtPos(position),
-        write: (rect) => {
-          if (!currentView()) return;
-          if (rect)
-            view.scrollDOM.scrollTop +=
-              rect.top -
-              view.scrollDOM.getBoundingClientRect().top -
-              viewport.offset;
-          else
-            view.scrollDOM.scrollTop =
-              viewport.ratio *
-              Math.max(
-                0,
-                view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight
-              );
-          wrappingReady = true;
-          scheduleWrapping();
-          controller.notifyContentSearchTargetReady();
-        },
-      });
-    }
     if (controller.shouldAutoFocusEditor(documentId)) view.focus();
-    const releaseContentSearch = controller.registerContentSearchTarget({
-      documentId,
+    const searchTarget: Parameters<typeof controller.registerContentSearchTarget>[1] = {
       ready: () =>
         currentView() &&
         wrappingReady &&
@@ -662,12 +623,63 @@ export function MemoryEditor({
         view.dispatch(transaction);
         return view.state === transaction.state;
       },
-    });
-    const releaseQuickFocus = controller.registerQuickFocusTarget({
-      documentId,
+    };
+    const quickFocusTarget = {
       ready: () => currentView() && view.contentDOM.isConnected && !view.compositionStarted && !view.composing && controller.getEditor(documentId)?.state === view.state,
       focus: () => view.focus(),
-    });
+    };
+    let contentSearch = controller.registerContentSearchTarget(documentId, searchTarget);
+    let releaseQuickFocus = controller.registerQuickFocusTarget(documentId, quickFocusTarget);
+    const refreshSession = (nextSession: EditorFaultSession) => {
+      if (nextSession === registeredSession) return contentSearch.notifyReady;
+      // The same EditorView can adopt a new session after a reload.
+      viewportCapture.release();
+      scrollCapture.release();
+      releaseEditorDispatch();
+      interaction.release();
+      releaseCommandTargets();
+      contentSearch.release();
+      releaseQuickFocus();
+      registeredSession = nextSession;
+      // Initial viewport measurement belongs to the old editor session.
+      wrappingReady = true;
+      viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
+      scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
+      releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
+      interaction = controller.registerEditorInteraction(documentId, checkInteraction);
+      releaseCommandTargets = controller.registerEditorCommandTargets(documentId, commandTargets);
+      contentSearch = controller.registerContentSearchTarget(documentId, searchTarget);
+      releaseQuickFocus = controller.registerQuickFocusTarget(documentId, quickFocusTarget);
+      return contentSearch.notifyReady;
+    };
+    refreshViewSession.current = refreshSession;
+    if (viewport && viewportPosition !== undefined) {
+      const owner = contentSearch;
+      const currentRestore = () => currentView() &&
+        view.state.field(editorFaultSession) === session &&
+        controller.getEditor(documentId)?.state.field(editorFaultSession) === session;
+      view.requestMeasure({
+        read: () => currentRestore() ? view.coordsAtPos(viewportPosition) : undefined,
+        write: (rect) => {
+          if (!currentRestore()) return;
+          if (rect)
+            view.scrollDOM.scrollTop +=
+              rect.top -
+              view.scrollDOM.getBoundingClientRect().top -
+              viewport.offset;
+          else
+            view.scrollDOM.scrollTop =
+              viewport.ratio *
+              Math.max(
+                0,
+                view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight
+              );
+          wrappingReady = true;
+          scheduleWrapping();
+          owner.notifyReady();
+        },
+      });
+    }
     const saveScroll = () => {
       if (view.scrollDOM.isConnected)
         scrollCapture.savePosition(view.state, view.scrollDOM.scrollTop);
@@ -781,7 +793,7 @@ export function MemoryEditor({
       view.contentDOM.removeEventListener("compositionstart", raster.invalidate, true);
       view.contentDOM.removeEventListener("blur", raster.invalidate, true);
       view.dom.ownerDocument.defaultView?.removeEventListener("blur", raster.invalidate);
-      releaseContentSearch();
+      contentSearch.release();
       releaseQuickFocus();
       removeEmojiCompletion();
       removeCallout();
@@ -833,7 +845,7 @@ export function MemoryEditor({
     const current = syncCurrentEditorState(view, controller, documentId);
     if (!current) return;
     const fault = current.field(editorFaultSession);
-    refreshViewSession.current?.(fault);
+    const notifySearchReady = refreshViewSession.current?.(fault);
     if (
       view.state.facet(EditorState.readOnly) !== readOnly ||
       view.state.facet(EditorView.editable) !== !readOnly
@@ -869,7 +881,7 @@ export function MemoryEditor({
           : { view, session: fault }
         : null
     );
-    controller.notifyContentSearchTargetReady();
+    notifySearchReady?.();
   }, [controller, documentId, editor, frozen, readOnly, inputBlocked]);
   return (
     <>

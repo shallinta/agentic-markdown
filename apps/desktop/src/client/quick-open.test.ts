@@ -40,7 +40,7 @@ test("confirmed existing document focuses once only after its matching scope clo
  const f=await fixture(1);try{let focuses=0;const editor=f.documents.getEditor(f.original.documentId)!;
   f.documents.updateEditor(f.original.documentId,editor.state.update({changes:{from:0,insert:"dirty"},selection:{anchor:2,head:4}}));
   const before=f.documents.getEditor(f.original.documentId)!.state;
-  const release=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>true,focus:()=>{focuses++;}});
+  const release=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>true,focus:()=>{focuses++;}});
   f.quick.open();const scope=f.quick.getSnapshot().scope;f.quick.setQuery("standalone");await settled(f.quick);await f.quick.choose();expect(focuses).toBe(0);
   f.quick.scopeClosed(scope-1);expect(focuses).toBe(0);f.quick.scopeClosed(scope);f.quick.scopeClosed(scope);expect(focuses).toBe(1);
   expect(f.documents.getEditor(f.original.documentId)!.state).toBe(before);expect(f.documents.getSaveStatus(f.original.documentId).status).toBe("dirty");release();
@@ -49,20 +49,20 @@ test("confirmed existing document focuses once only after its matching scope clo
 test("focus joins delayed view registration, while composition rejection and reopening terminate old tickets",async()=>{
  const f=await fixture(1);try{let focuses=0;
   f.quick.open();f.quick.setQuery("standalone");await settled(f.quick);const scope=f.quick.getSnapshot().scope;const chosen=f.quick.choose();f.quick.scopeClosed(scope);await chosen;
-  const release=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>false,focus:()=>{focuses++;}});release();
-  const ready=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);ready();
+  const release=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>false,focus:()=>{focuses++;}});release();
+  const ready=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);ready();
   f.quick.open();f.quick.setQuery("standalone");await settled(f.quick);await f.quick.choose();const old=f.quick.getSnapshot().scope;f.quick.open();f.quick.scopeClosed(old);
-  const later=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);later();
+  const later=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);later();
   f.quick.close();
  }finally{f.dispose();}
 });
 test("asynchronous new open never focuses the old view and waits for its own mounted target",async()=>{
  const f=await fixture(1);try{let oldFocus=0,newFocus=0;
-  const old=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>true,focus:()=>{oldFocus++;}});
+  const old=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>true,focus:()=>{oldFocus++;}});
   f.quick.open();f.quick.setQuery("note");await settled(f.quick);const scope=f.quick.getSnapshot().scope;
   const opening=f.quick.choose();f.quick.scopeClosed(scope);await opening;expect(oldFocus).toBe(0);
   const id=f.documents.getSnapshot().snapshot!.documentId;expect(id).not.toBe(f.original.documentId);
-  const target=f.documents.registerQuickFocusTarget({documentId:id,ready:()=>true,focus:()=>{newFocus++;}});old();
+  const target=f.documents.registerQuickFocusTarget(id,{ready:()=>true,focus:()=>{newFocus++;}});old();
   expect(newFocus).toBe(1);f.quick.scopeClosed(scope);expect(newFocus).toBe(1);target();
  }finally{f.dispose();}
 });
@@ -70,18 +70,18 @@ test("switching away and back revokes a successful ticket still waiting for a vi
  const f=await fixture(1);try{let focuses=0;
   f.quick.open();f.quick.setQuery("note");await settled(f.quick);const scope=f.quick.getSnapshot().scope;await f.quick.choose();f.quick.scopeClosed(scope);
   const id=f.documents.getSnapshot().snapshot!.documentId;f.documents.activateTab(f.original.documentId);f.documents.activateTab(id);
-  const release=f.documents.registerQuickFocusTarget({documentId:id,ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);release();
+  const release=f.documents.registerQuickFocusTarget(id,{ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);release();
  }finally{f.dispose();}
 });
 test("late input blocking consumes a focus ticket instead of restoring it when unblocked",async()=>{
- const f=await fixture(1);try{let focuses=0;const release=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>true,focus:()=>{focuses++;}});
+ const f=await fixture(1);try{let focuses=0;const release=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>true,focus:()=>{focuses++;}});
   f.quick.open();f.quick.setQuery("standalone");await settled(f.quick);const scope=f.quick.getSnapshot().scope;await f.quick.choose();f.documents.setEditorInputBlocked(true);f.quick.scopeClosed(scope);f.documents.setEditorInputBlocked(false);f.quick.scopeClosed(scope);expect(focuses).toBe(0);release();
   f.quick.open();f.quick.setQuery("standalone");await settled(f.quick);const next=f.quick.getSnapshot().scope;await f.quick.choose();f.quick.dispose();f.quick.scopeClosed(next);
-  const later=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);later();
+  const later=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>true,focus:()=>{focuses++;}});expect(focuses).toBe(0);later();
  }finally{f.dispose();}
 });
 test("an already active snapshot cannot masquerade as successful admission after confirmation invalidates",async()=>{
- const f=await fixture(1);try{let focuses=0;const release=f.documents.registerQuickFocusTarget({documentId:f.original.documentId,ready:()=>true,focus:()=>{focuses++;}});
+ const f=await fixture(1);try{let focuses=0;const release=f.documents.registerQuickFocusTarget(f.original.documentId,{ready:()=>true,focus:()=>{focuses++;}});
   f.quick.open();f.quick.setQuery("standalone");await settled(f.quick);const scope=f.quick.getSnapshot().scope;
   const unsub=f.quick.subscribe(()=>{if(!f.quick.getSnapshot().visible)f.folders.beginFolderRemoval();});await f.quick.choose();f.quick.scopeClosed(scope);expect(focuses).toBe(0);unsub();release();f.folders.cancelFolderRemoval();
  }finally{f.dispose();}

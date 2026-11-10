@@ -95,8 +95,7 @@ test("search activation retains buffer, waits for the target, and selects once w
     const location = locateMemory(documents, a.documentId);
     let ready = false;
     const selections: { from: number; to: number }[] = [];
-    documents.registerContentSearchTarget({
-      documentId: a.documentId,
+    const target = documents.registerContentSearchTarget(a.documentId, {
       ready: () => ready,
       select: (range, state) => {
         expect(state.field(rawText)).toBe("\uFEFFa\r\n😀中文");
@@ -111,9 +110,9 @@ test("search activation retains buffer, waits for the target, and selects once w
     await Promise.resolve();
     expect(selections).toEqual([]);
     ready = true;
-    documents.notifyContentSearchTargetReady();
+    target.notifyReady();
     expect(await pending).toBe(true);
-    documents.notifyContentSearchTargetReady();
+    target.notifyReady();
     await Promise.resolve();
     expect(selections).toEqual([{ from: 3, to: 7 }]);
     documents.activateTab(a.documentId);
@@ -161,8 +160,7 @@ test("a temporary editor input guard consumes a pending locator", async () => {
     documents.setEditorInputBlocked(true);
     documents.setEditorInputBlocked(false);
     let selections = 0;
-    documents.registerContentSearchTarget({
-      documentId: snapshot.documentId,
+    documents.registerContentSearchTarget(snapshot.documentId, {
       ready: () => true,
       select: () => { selections++; return true; },
     });
@@ -248,8 +246,7 @@ test("a fresh read-only grant opens as a persistent tab and allows only selectio
   };
   const { documents, released } = setup([]);
   try {
-    documents.registerContentSearchTarget({
-      documentId: snapshot.documentId,
+    mountSearchTarget(documents, snapshot.documentId, {
       ready: () => true,
       select: ({ from, to }, state) => documents.updateEditor(
         snapshot.documentId,
@@ -294,15 +291,14 @@ test.each([true, false])("closed search hit (standalone: %s) reuses the retained
     await documents.closeTab(initial.documentId);
     const entry = documents.getSnapshot().entries[0];
     const selections: { from: number; to: number }[] = [];
-    documents.registerContentSearchTarget({
-      documentId: initial.documentId,
+    const target = mountSearchTarget(documents, initial.documentId, {
       ready: () => true,
       select: (range) => { selections.push(range); return true; },
     });
     expect(await documents.openRetainedContentSearchLocation(
       entry, (request) => Promise.resolve(respond(request, reopened)), retainedLocation, () => true
     )).toBe(true);
-    documents.notifyContentSearchTargetReady();
+    target.notifyReady();
     await Promise.resolve();
     expect(selections).toEqual([{ from: 3, to: 7 }]);
     expect(documents.shouldAutoFocusEditor(initial.documentId)).toBe(false);
@@ -375,4 +371,69 @@ test.each([true, false])("cancelled or invalid receipts (standalone: %s) cannot 
   } finally {
     documents.dispose();
   }
+});
+
+function mountSearchTarget(
+  documents: ReturnType<typeof createDocumentController>,
+  id: string,
+  target: Parameters<ReturnType<typeof createDocumentController>["registerContentSearchTarget"]>[1]
+) {
+  let owner: ReturnType<typeof documents.registerContentSearchTarget> | undefined;
+  const detach = documents.subscribe(() => {
+    if (!owner && documents.getEditor(id)) { owner = documents.registerContentSearchTarget(id, target); detach(); }
+  });
+  return { notifyReady: () => { detach(); owner?.notifyReady(); } };
+}
+
+test("search target ownership isolates background, replaced notifications and ready reentry", async () => {
+  const a = fixture("\uFEFFa\r\n😀中文"), b = fixture();
+  const { documents: c } = setup([a, b]);
+  await c.select(); await c.select(); c.activateTab(a.documentId);
+  const edit = c.getEditor(a.documentId)!.state;
+  c.updateEditor(a.documentId, edit.update({ changes: { from: edit.doc.length, insert: " dirty" } }));
+  let selected = 0, readyCalls = 0, ready = false;
+  const old = c.registerContentSearchTarget(a.documentId, { ready: () => true, select: () => { selected += 100; return true; } });
+  const fresh = c.registerContentSearchTarget(a.documentId, { ready: () => { readyCalls++; return ready; }, select: () => { selected++; return true; } });
+  const background = c.registerContentSearchTarget(b.documentId, { ready: () => { throw Error("background"); }, select: () => false });
+  const pending = c.activateContentSearchLocation(locateMemory(c, a.documentId), () => true);
+  await Promise.resolve();
+  const checked = readyCalls;
+  old.notifyReady(); old.release(); background.notifyReady();
+  await Promise.resolve();
+  expect(readyCalls).toBe(checked);
+  ready = true; fresh.notifyReady();
+  expect(await pending).toBe(true);
+  expect(selected).toBe(1);
+  c.registerContentSearchTarget(a.documentId, {
+    ready: () => {
+      c.registerContentSearchTarget(a.documentId, { ready: () => true, select: () => { selected += 1000; return true; } });
+      return true;
+    },
+    select: () => { selected += 100; return true; },
+  });
+  expect(await c.activateContentSearchLocation(locateMemory(c, a.documentId), () => true)).toBe(false);
+  expect(selected).toBe(1);
+  c.dispose();
+});
+
+test("nested invalid search request in ready consumes the old ticket before selection", async () => {
+  const a = fixture("\uFEFFa\r\n😀中文");
+  const { documents: c } = setup([a]);
+  await c.select();
+  const state = c.getEditor(a.documentId)!.state;
+  c.updateEditor(a.documentId, state.update({ changes: { from: state.doc.length, insert: " dirty" } }));
+  let selections = 0;
+  let nested: Promise<boolean> | undefined;
+  c.registerContentSearchTarget(a.documentId, {
+    ready: () => {
+      nested = c.activateContentSearchLocation({ query: "x", from: 0, to: 1, source: "disk", diskHash: hash }, () => true);
+      return true;
+    },
+    select: () => { selections++; return true; },
+  });
+  expect(await c.activateContentSearchLocation(locateMemory(c, a.documentId), () => true)).toBe(false);
+  expect(nested).toBeDefined();
+  expect(await nested).toBe(false);
+  expect(selections).toBe(0);
+  c.dispose();
 });

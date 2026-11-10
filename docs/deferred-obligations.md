@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-035g 编辑器折叠命令归属（2026-11-10）
+
+按活动文档和会话路由标题、代码围栏和 Frontmatter 折叠。OBL-052 的实际双视图、焦点与正式副区仍开放，最终离线留人工。见[F-035g 迭代](iterations/F-035g-editor-folding-command-ownership.md)。
+
 ## F-035f 快速聚焦与定位归属（2026-11-10）
 
 按活动文档及会话核对快速聚焦和正文定位。OBL-052 的标题折叠、实际多视图及正式副区仍开放，最终离线留人工。见[F-035f 迭代](iterations/F-035f-editor-location-target-ownership.md)。

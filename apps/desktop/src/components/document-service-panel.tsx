@@ -336,6 +336,15 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       dedentSource: ({ documentId }) => {
         controller.runSourceIndentation(false, documentId);
       },
+      toggleHeadingFold: (action) => {
+        controller.runEditorFold(action);
+      },
+      toggleCodeFold: (action) => {
+        controller.runEditorFold({ ...action, kind: "fencedCode" });
+      },
+      toggleFrontmatterFold: (action) => {
+        controller.runEditorFold({ ...action, kind: "frontmatter" });
+      },
       formatBold: ({ documentId, token, nativeToken }) => {
         if (nativeToken !== undefined)
           runNativeInlineFormat("formatBold", documentId, nativeToken);
@@ -378,6 +387,9 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       listSoftBreak: controller.canRunListInput,
       indentSource: controller.canIndentSource,
       dedentSource: controller.canIndentSource,
+      toggleHeadingFold: () => controller.canRunEditorFold(),
+      toggleCodeFold: () => controller.canRunEditorFold("fencedCode"),
+      toggleFrontmatterFold: () => controller.canRunEditorFold("frontmatter"),
       reloadDocument: () =>
         !controller.getSnapshot().busy &&
         !controller.getSnapshot().frozen &&

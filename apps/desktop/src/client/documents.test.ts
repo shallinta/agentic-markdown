@@ -2269,3 +2269,52 @@ test("quick focus targets preserve active ownership, missing after reload, and r
   expect(calls).toEqual(["b", "new"]);
   c.dispose();
 });
+
+test("fold command ownership routes explicit kinds and preserves readonly mode rules", async () => {
+  const { controller: c, value: a, transport } = setup();
+  a.writeCapability = { writable: false, reason: "readonly" };
+  await c.select();
+  const b = snapshot("# second\nbody");
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await c.select(); c.activateTab(a.documentId);
+  const calls: unknown[] = [];
+  const old = c.registerEditorCommandTargets(a.documentId, { folding: { ready: () => true, run: () => { calls.push("old"); return true; } } });
+  c.registerEditorCommandTargets(a.documentId, { folding: { ready: () => true, run: action => { calls.push(action); return true; } } });
+  c.registerEditorCommandTargets(b.documentId, { folding: { ready: () => true, run: () => { calls.push("background"); return true; } } });
+  old();
+  expect(c.canWrite(a.documentId)).toBe(false);
+  expect(c.runEditorFold()).toBe(true);
+  expect(c.runEditorFold({ kind: "frontmatter", heading: 0 })).toBe(true);
+  expect(c.toggleSourceMode()).toBe(true);
+  expect(c.canRunEditorFold("frontmatter")).toBe(false);
+  expect(c.runEditorFold({ kind: "frontmatter" })).toBe(false);
+  expect(c.runEditorFold({ kind: "fencedCode", unfoldFrom: 1, unfoldTo: 3 })).toBe(true);
+  expect(calls).toEqual([{ kind: "heading" }, { kind: "frontmatter", heading: 0 }, { kind: "fencedCode", unfoldFrom: 1, unfoldTo: 3 }]);
+  const interaction = c.registerEditorInteraction(a.documentId, () => false);
+  expect(c.runEditorFold()).toBe(false); interaction.release();
+  c.setEditorInputBlocked(true); expect(c.runEditorFold()).toBe(false); c.setEditorInputBlocked(false);
+  c.beginDiscard(); expect(c.runEditorFold()).toBe(false); c.endDiscard();
+  transport.readDocument = request => Promise.resolve(result(request, a));
+  await c.reload();
+  expect(c.canRunEditorFold()).toBe(false);
+  c.dispose();
+});
+
+test("fold readiness cannot redirect an admitted command to another owner", async () => {
+  const { controller: c, value } = setup();
+  await c.select();
+  let calls = 0;
+  c.registerEditorCommandTargets(value.documentId, { folding: {
+    ready: () => {
+      expect(c.runEditorFold()).toBe(false);
+      c.registerEditorCommandTargets(value.documentId, { folding: { ready: () => true, run: () => { calls++; return true; } } });
+      return true;
+    },
+    run: () => { calls += 100; return true; },
+  } });
+  expect(c.runEditorFold()).toBe(false);
+  expect(calls).toBe(0);
+  expect(c.runEditorFold()).toBe(true);
+  expect(calls).toBe(1);
+  c.dispose();
+});

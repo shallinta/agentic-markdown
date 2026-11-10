@@ -42,6 +42,7 @@ import {
   type EditorFaultSession,
   type EditorFaultKind,
 } from "./editor-fault";
+import type { EditorFoldKind } from "./editor-fold-state";
 import {
   getEditorMode,
   switchEditorMode,
@@ -53,6 +54,7 @@ import {
   getSourceWrapping,
   sourceWrappingEffect,
 } from "./editor-mode";
+import type { HeadingAction } from "./heading-folding";
 import { createRawEditorState, rawText, sourceSearchPresentation } from "./raw-buffer";
 import { incrementalSave } from "./save-channel";
 import { createSearchStore } from "./source-search-store";
@@ -1359,6 +1361,7 @@ export function createDocumentController(
     listInput?: { ready(): boolean; run(soft: boolean): boolean };
     indentation?: { ready(): boolean; run(more: boolean): boolean };
     scheduleWrapping?: () => void;
+    folding?: { ready(kind: EditorFoldKind): boolean; run(action: HeadingAction): boolean };
   }
   const commandTargets = new Map<string, { incarnation: EditorFaultSession; targets: CommandTargets }>();
   const activeCommandOwner = () => {
@@ -1368,7 +1371,7 @@ export function createDocumentController(
       ? { id, owner } : undefined;
   };
   let checkingCommandTarget = false;
-  const readyCommandOwner = (kind: "sourceSelection" | "listInput" | "indentation") => {
+  const readyCommandOwner = (kind: "sourceSelection" | "listInput" | "indentation" | "folding", foldKind: EditorFoldKind = "heading") => {
     if (checkingCommandTarget) return undefined;
     const captured = activeCommandOwner();
     if (!captured) return undefined;
@@ -1381,10 +1384,14 @@ export function createDocumentController(
     try {
       const allowed = kind === "sourceSelection"
         ? controller.canSelectSource(id)
+        : kind === "folding"
+          ? !reading.has(id) && !isSafeSource(editor.state) && !editor.state.field(editorFaultSession).fault &&
+            !editorInputBlocked && !saving.size && !state.frozen && !state.busy && canLeaveEditor() &&
+            (foldKind !== "frontmatter" || controller.getMode(id) === "editing")
         : !reading.has(id) && !isSafeSource(editor.state) && !editor.state.field(editorFaultSession).fault &&
           canWrite(id) && !editorInputBlocked && !state.frozen && !state.busy && canLeaveEditor();
       const current = () => state === before && editors.get(id) === editor && activeCommandOwner()?.owner === owner;
-      if (!allowed || !current() || target.ready() !== true) return undefined;
+      if (!allowed || !current() || target.ready(foldKind) !== true) return undefined;
       return current() ? captured : undefined;
     } catch {
       return undefined;
@@ -1892,6 +1899,12 @@ export function createDocumentController(
       });
       editors.set(documentId, { state: transaction.state, revision: editor.revision });
       return transaction;
+    },
+    canRunEditorFold: (kind: EditorFoldKind = "heading") => !!readyCommandOwner("folding", kind),
+    runEditorFold: (action: HeadingAction = {}) => {
+      const ownedAction = { ...action, kind: action.kind ?? "heading" };
+      const captured = readyCommandOwner("folding", ownedAction.kind);
+      return captured?.owner.targets.folding?.run(ownedAction) ?? false;
     },
     canIndentSource: () => !!readyCommandOwner("indentation"),
     runSourceIndentation: (more: boolean, documentId: string) => {

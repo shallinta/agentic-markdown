@@ -129,7 +129,7 @@ export function MemoryEditor({
   const editor = controller.getEditor(documentId);
   const readOnly = !controller.canWrite(documentId);
   const inputBlocked = controller.isEditorInputBlocked();
-  const { executeCommand, registerCommandHandlers } = useCommands();
+  const { executeCommand } = useCommands();
   useLayoutEffect(() => {
     if (!container.current || !editor) return;
     const initialState = prepareEditorViewState(controller, documentId);
@@ -219,7 +219,7 @@ export function MemoryEditor({
         !snapshot.frozen &&
         !controller.isEditorInputBlocked() &&
         !controller.hasSaves() &&
-        !session.fault &&
+        !view.state.field(editorFaultSession).fault &&
         !controller.isSafeSource(documentId) &&
         controller.getMode(documentId) !== "reading" &&
         !view.compositionStarted &&
@@ -288,25 +288,6 @@ export function MemoryEditor({
           id: `heading-${documentId}`,
         }),
     });
-    const removeHeadingCommand = registerCommandHandlers(
-      {
-        toggleHeadingFold: (action) => {
-          toggleCurrentHeading(view, action);
-        },
-        toggleCodeFold: (action) => {
-          toggleCurrentHeading(view, { ...action, kind: "fencedCode" });
-        },
-        toggleFrontmatterFold: (action) => {
-          toggleCurrentHeading(view, { ...action, kind: "frontmatter" });
-        },
-      },
-      {
-        toggleHeadingFold: headingReady,
-        toggleCodeFold: headingReady,
-        toggleFrontmatterFold: () =>
-          headingReady() && controller.getMode(documentId) === "editing",
-      }
-    );
     const headingKey = (event: KeyboardEvent) => {
       if (!isHeadingShortcut(event) || !view.hasFocus || !headingReady())
         return;
@@ -595,7 +576,12 @@ export function MemoryEditor({
         return view.state === transaction.state;
       },
     };
-    const commandTargets = { sourceSelection, listInput, indentation, scheduleWrapping };
+    const folding: NonNullable<CommandTargets["folding"]> = {
+      ready: (kind) => headingReady() &&
+        (kind !== "frontmatter" || controller.getMode(documentId) === "editing"),
+      run: (action) => toggleCurrentHeading(view, action),
+    };
+    const commandTargets = { sourceSelection, listInput, indentation, scheduleWrapping, folding };
     let releaseCommandTargets = controller.registerEditorCommandTargets(documentId, commandTargets);
     const viewportPosition = viewport ? editorOffset(editor.state.field(rawText), viewport.from) : undefined;
     if (viewportPosition !== undefined)
@@ -802,7 +788,6 @@ export function MemoryEditor({
       toast.dismiss(calloutToast);
       removeTask();
       removeHeading();
-      removeHeadingCommand();
       view.contentDOM.removeEventListener("keydown", headingKey, true);
       removePairing();
       removeFormat();

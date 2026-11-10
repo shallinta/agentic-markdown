@@ -94,7 +94,7 @@ export function validMainTabSessionMetadata(
   }
   return true;
 }
-const serializedBytes = (data: MainTabSessionMetadata) =>
+export const mainTabMetadataSerializedBytes = (data: MainTabSessionMetadata) =>
   Buffer.byteLength(`${JSON.stringify({ version: 1, data }, null, 2)}\n`);
 
 /** Isolated precursor only. No startup consumer, path lookup, or authority restoration. */
@@ -141,7 +141,7 @@ export function createMainTabMetadataStore(isolatedDir: string) {
     write(value: unknown): Promise<MainTabMetadataWrite> {
       if (!validMainTabSessionMetadata(value))
         return Promise.resolve({ status: "rejected", reason: "invalid" });
-      if (serializedBytes(value) > MAIN_TAB_METADATA_MAX_BYTES)
+      if (mainTabMetadataSerializedBytes(value) > MAIN_TAB_METADATA_MAX_BYTES)
         return Promise.resolve({ status: "rejected", reason: "capacity" });
       const captured: MainTabSessionMetadata = {
         tabs: value.tabs.map((tab) => ({ ...tab })),

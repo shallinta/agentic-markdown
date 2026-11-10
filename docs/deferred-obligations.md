@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037d 主区标签来源核对（2026-11-10）
+
+已验证已保存标签与实际目录授权的绑定。OBL-034 的跨进程恢复链路与正式会话入口、OBL-054、最终离线继续跟踪。见[F-037d 迭代](iterations/F-037d-bind-main-tab-session-metadata.md)。
+
 ## F-037c 已保存主区标签采集（2026-11-10）
 
 已验证有界内存采集及票据失效。OBL-034 的目录来源和正式会话保存恢复、OBL-054、最终离线继续跟踪。见[F-037c 迭代](iterations/F-037c-capture-clean-primary-tabs.md)。

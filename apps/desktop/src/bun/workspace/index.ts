@@ -77,6 +77,8 @@ import {
 } from "../index/app-cache";
 import type { ColdIndexGuard, ColdIndexInput } from "../index/cold-prepare";
 import { INDEX_LIMITS, keys, natural, record, scalar } from "../index/protocol";
+import type { MainTabSourceInput, MainTabSourceProof } from "../session/main-tab-binder";
+import { MAIN_TAB_METADATA_MAX_TABS } from "../session/main-tab-metadata";
 
 import {
   authorizeRoot,
@@ -176,6 +178,7 @@ function validObservedIndexTarget(value: unknown): value is ObservedIndexTarget 
 }
 
 export interface TrustedWorkspaceService extends WorkspaceService {
+  captureMainTabSources(tabs: readonly MainTabSourceInput[], check?: () => void): Promise<MainTabSourceProof | undefined>;
   prepareObservedIndex(handle: string, generation: number, signal?: AbortSignal): Promise<ObservedIndexPreparation>;
   refreshObservedIndex(target: ObservedIndexTarget, signal?: AbortSignal): Promise<ObservedIndexRefresh>;
   reconcileObservedIndex(target: ObservedIndexTarget, signal?: AbortSignal): Promise<ObservedIndexReconciliation>;
@@ -2381,6 +2384,68 @@ export function createWorkspaceService({
     trashLifecycle:trash,
     rootMutationsSuspended: () => disposed || rootMutationSuspensions > 0,
     rootMutationGeneration: () => rootSelectionEpoch,
+    async captureMainTabSources(tabs, check = () => undefined) {
+      if (tabs.length > MAIN_TAB_METADATA_MAX_TABS) return;
+      const bindings = documents.captureContentSearchBindings(tabs.map(tab => tab.handle));
+      if (!bindings) return;
+      const epoch = rootSelectionEpoch;
+      const rootsCurrent: (() => boolean)[] = [];
+      const current = () => {
+        try {
+          check();
+          return !disposed && !rootMutationSuspensions && rootSelectionEpoch === epoch &&
+            bindings.current() && rootsCurrent.every(isCurrent => isCurrent());
+        } catch { return false; }
+      };
+      const verify = () => { if (!current()) throw Error("SESSION_BIND_STALE"); };
+      const sources: MainTabSourceProof["sources"][number][] = [];
+      const tasks: (() => Promise<void>)[] = [];
+      try {
+        for (const [index, tab] of tabs.entries()) {
+          verify();
+          const binding = bindings.bindings[index];
+          if (!binding?.scope || binding.documentId !== tab.documentId ||
+              binding.revision !== tab.revision || binding.hash !== tab.hash) return;
+          const owners = roots.filter(root => root.scopes.has(binding.scope as Owner));
+          if (owners.length !== 1) return;
+          const root = owners[0];
+          const captured = captureIndexRootState(root.meta.handle, root.meta.generation);
+          if (!captured.ok) return;
+          const node = root.byPath.get(binding.path);
+          const file = node?.kind === "file" ? root.files.get(node.handle) : undefined;
+          if (!node || file?.fingerprint !== binding.fingerprint) return;
+          const relativePath = relative(root.authorization.path, file.path);
+          if (!validExpansionPath(relativePath)) return;
+          const rootCurrent = () => captured.current() && root.scopes.has(binding.scope as Owner) &&
+            root.byPath.get(file.path) === node && root.files.get(node.handle) === file;
+          rootsCurrent.push(rootCurrent);
+          const checkFile = () => {
+            check();
+            if (disposed || rootSelectionEpoch !== epoch || rootMutationSuspensions || !rootCurrent())
+              throw Error("SESSION_BIND_STALE");
+          };
+          tasks.push(async () => {
+            verify();
+            await binding.verify(checkFile);
+            verify();
+            const grant = await authorizeEntry(root.authorization, file.path, file.fingerprint,
+              file.chain, root.meta.showHidden, checkFile);
+            try {
+              verify();
+              if (documents.trashBlocked(grant.path, grant.fingerprint, grant.directories))
+                throw Error("SESSION_BIND_BLOCKED");
+            } finally { await grant.file.close(); }
+            verify();
+            sources.push({ rootHandle: root.meta.handle, rootPath: root.authorization.path,
+              relativePath, fingerprint: file.fingerprint });
+          });
+        }
+        // Capture every participating root before the first filesystem await.
+        for (const task of tasks) await task();
+        verify();
+        return { sources, current };
+      } catch { return; }
+    },
     captureMainTabCandidates(rootHandle, generation) {
       const captured = captureIndexRootState(rootHandle, generation);
       if (!captured.ok) return;

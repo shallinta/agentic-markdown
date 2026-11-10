@@ -150,6 +150,8 @@ alpha.320 隔离副区可拖动文件名在副区内排序；聚焦标题后也�
 
 alpha.321 隔离窗口可把副区文件名拖到主区正文，原文档成为主区活动标签，保留模式、草稿和选区。最后一篇移回后副区收起。见[F-035o 迭代](iterations/F-035o-secondary-title-drop-to-main.md)。
 
+alpha.322 隔离窗口可把主区标签拖入已展开的副区，文档追加到底部并成为活动文档。空间不足时会提示，松开后保留原布局；收起时不能拖入。见[F-035p 迭代](iterations/F-035p-main-tab-drop-to-expanded-secondary.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

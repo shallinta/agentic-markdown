@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type PointerEvent } from "react";
 
 import { discardGuard } from "@/client/discard-guard";
 import { createDocumentController, type DocumentViewState } from "@/client/documents";
 import { isExternalTextTarget } from "@/client/history-target";
-import { moveRealRegionDocument, prepareSecondaryReturn, projectRealRegionDocuments, reorderRealRegionDocuments, type RealRegionAllocation } from "@/client/real-document-region-lab";
+import { moveRealRegionDocument, prepareMainTransferToSecondary, prepareSecondaryReturn, projectRealRegionDocuments, reorderRealRegionDocuments, type RealRegionAllocation } from "@/client/real-document-region-lab";
 import { resizeSecondaryPaneDivider } from "@/client/secondary-pane-divider";
 import { SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
 import { routeSourceModeShortcut } from "@/client/source-mode-shortcut";
@@ -34,13 +34,16 @@ interface TitleDrag {
   element: HTMLButtonElement;
   pointerId: number;
   sourceId: string;
+  sourceRegion: "main" | "secondary";
   startX: number;
   startY: number;
   moved: boolean;
   allocation: RealRegionAllocation;
   state: DocumentViewState;
+  boundsHost: HTMLOListElement;
   bounds: DOMRect;
   focus: Element | null;
+  mainTransfer?: ReturnType<typeof prepareMainTransferToSecondary>;
 }
 
 interface TitleInsertion {
@@ -50,7 +53,9 @@ interface TitleInsertion {
 }
 
 const mainTitleDrop = { kind: "main" } as const;
-type TitleDrop = typeof mainTitleDrop | TitleInsertion;
+const secondaryTitleDrop = { kind: "transfer-to-secondary" } as const;
+const secondaryFullDrop = { kind: "secondary-full" } as const;
+type TitleDrop = typeof mainTitleDrop | typeof secondaryTitleDrop | typeof secondaryFullDrop | TitleInsertion;
 
 function sameBounds(before: DOMRect, after: DOMRect) {
   return before.left === after.left && before.top === after.top &&
@@ -223,11 +228,11 @@ function RealDocumentRegionViews() {
     const read = () => {
       const bounds = canvas.getBoundingClientRect();
       const { height, width } = bounds;
-      if (titleDrag.current && !sameBounds(titleDrag.current.bounds, bounds)) stopTitleDrag();
+      if (titleDrag.current?.boundsHost === canvas && !sameBounds(titleDrag.current.bounds, bounds)) stopTitleDrag();
       const line = dividerLine.current?.getBoundingClientRect();
       const hit = dividerHit.current?.getBoundingClientRect();
       setMeasured({ allocation: liveAllocation, height: cssPixels(height), width: cssPixels(width),
-        rows: Array.from(canvas.children, (row) => cssPixels(row.getBoundingClientRect().height)),
+        rows: Array.from(canvas.querySelectorAll(":scope > [data-secondary-row]"), (row) => cssPixels(row.getBoundingClientRect().height)),
         divider: line && hit ? {
           line: cssPixels(line.height), hit: cssPixels(hit.height),
           above: cssPixels(line.top - hit.top), below: cssPixels(hit.bottom - line.bottom),
@@ -335,17 +340,18 @@ function RealDocumentRegionViews() {
       setReorderFocus({ allocation: result.allocation, element: focus, wasDivider: focus === dividerHit.current });
   }
 
-  function beginTitleDrag(event: PointerEvent<HTMLButtonElement>, sourceId: string) {
+  function beginTitleDrag(event: PointerEvent<HTMLButtonElement>, sourceId: string, sourceRegion: TitleDrag["sourceRegion"]) {
     if (event.isPrimary) suppressTitleClick.current = null;
     if (event.button !== 0 || event.pointerType !== "mouse" || !event.isPrimary) return;
-    const canvas = sideCanvas.current;
-    if (!canvas || !liveAllocation?.ids.includes(sourceId) || titleDrag.current || drag.current ||
+    const boundsHost = sideCanvas.current;
+    if (!boundsHost || liveAllocation?.ids.includes(sourceId) !== (sourceRegion === "secondary") ||
+        titleDrag.current || drag.current ||
         !canUseSecondaryAllocation(liveAllocation)) return;
     const element = event.currentTarget;
     element.setPointerCapture(event.pointerId);
-    titleDrag.current = { element, pointerId: event.pointerId, sourceId,
+    titleDrag.current = { element, pointerId: event.pointerId, sourceId, sourceRegion,
       startX: event.clientX, startY: event.clientY, moved: false, allocation: liveAllocation,
-      state: controller.getSnapshot(), bounds: canvas.getBoundingClientRect(), focus: element.ownerDocument.activeElement };
+      state: controller.getSnapshot(), boundsHost, bounds: boundsHost.getBoundingClientRect(), focus: element.ownerDocument.activeElement };
   }
 
   function titleDragFor(event: PointerEvent<HTMLButtonElement>) {
@@ -353,9 +359,17 @@ function RealDocumentRegionViews() {
     if (current?.pointerId === event.pointerId && current.element === event.currentTarget) return current;
   }
 
-  function titleDropTarget(event: PointerEvent<HTMLButtonElement>, current: TitleDrag, canvas: HTMLOListElement): TitleDrop | undefined {
-    const hit = canvas.ownerDocument.elementFromPoint(event.clientX, event.clientY);
+  function titleDropTarget(event: PointerEvent<HTMLButtonElement>, current: TitleDrag): TitleDrop | undefined {
+    const canvas = sideCanvas.current;
+    const hit = current.element.ownerDocument.elementFromPoint(event.clientX, event.clientY);
     if (hit?.closest('[role="separator"]')) return;
+    if (current.sourceRegion === "main") {
+      if (!canvas?.contains(hit) || hit?.closest("[data-secondary-close]")) return;
+      const prepared = current.mainTransfer ??= prepareMainTransferToSecondary(controller, current.allocation, current.sourceId);
+      if (prepared.ok) return secondaryTitleDrop;
+      if (prepared.reason === "full") return secondaryFullDrop;
+      return;
+    }
     if (mainDropZone.current?.contains(hit)) return mainTitleDrop;
     const row = hit?.closest<HTMLElement>("[data-secondary-row]");
     const targetId = row?.dataset.secondaryRow;
@@ -372,9 +386,9 @@ function RealDocumentRegionViews() {
   function trackTitleDrag(event: PointerEvent<HTMLButtonElement>, finished = false) {
     const current = titleDragFor(event);
     if (!current) return;
-    const canvas = sideCanvas.current;
-    if (!canvas || controller.getSnapshot() !== current.state || current.allocation !== liveAllocation ||
-        !sameBounds(current.bounds, canvas.getBoundingClientRect()) || !canUseSecondaryAllocation(current.allocation)) {
+    if (!current.boundsHost.isConnected || current.boundsHost !== sideCanvas.current ||
+        controller.getSnapshot() !== current.state || current.allocation !== liveAllocation ||
+        !sameBounds(current.bounds, current.boundsHost.getBoundingClientRect()) || !canUseSecondaryAllocation(current.allocation)) {
       stopTitleDrag();
       return;
     }
@@ -383,35 +397,47 @@ function RealDocumentRegionViews() {
     }
     if (!current.moved) {
       if (finished) {
-        const released = canvas.ownerDocument.elementFromPoint(event.clientX, event.clientY);
+        const released = current.element.ownerDocument.elementFromPoint(event.clientX, event.clientY);
         stopTitleDrag(!current.element.contains(released));
       }
       return;
     }
-    const target = titleDropTarget(event, current, canvas);
+    const target = titleDropTarget(event, current);
     if (finished) {
       stopTitleDrag();
-      if (target?.kind === "main") returnToMain(current);
-      else if (target) reorder(current.allocation, current.sourceId, target, current.focus);
+      if (target?.kind === "main") transferTitle(current, "main");
+      else if (target?.kind === "transfer-to-secondary") transferTitle(current, "secondary");
+      else if (target?.kind === "secondary") reorder(current.allocation, current.sourceId, target, current.focus);
     } else {
       setTitleDrop((previous) => previous?.kind === "secondary" && target?.kind === "secondary" &&
         previous.targetId === target.targetId && previous.placement === target.placement ? previous : target);
     }
   }
 
-  function returnToMain(current: TitleDrag) {
+  function transferTitle(current: TitleDrag, target: "main" | "secondary") {
     const document = current.state.tabs.find((tab) => tab.documentId === current.sourceId);
     if (!document || controller.getSnapshot() !== current.state || committedAllocation.current !== current.allocation) return;
-    const prepared = prepareSecondaryReturn(controller, current.allocation, current.sourceId);
-    if (!prepared.ok || !prepared.plan.commit(() => committedAllocation.current)) return;
+    const prepared = target === "main" ? prepareSecondaryReturn(controller, current.allocation, current.sourceId) : current.mainTransfer;
+    if (!prepared?.ok || !prepared.plan.commit(() => committedAllocation.current)) return;
     setAllocation(prepared.plan.allocation);
-    setPreferredMainId(current.sourceId);
-    setReceipt(`已将 ${document.fileName} 移回主区`);
+    if (target === "main") setPreferredMainId(current.sourceId);
+    setReceipt(`已将 ${document.fileName} 移${target === "main" ? "回主区" : "入副区"}`);
     setFocusRequest({ documentId: current.sourceId });
   }
 
   function cancelTitlePointer(event: PointerEvent<HTMLButtonElement>) {
     if (titleDragFor(event)) stopTitleDrag();
+  }
+
+  function clickTitle(event: MouseEvent<HTMLButtonElement>, documentId: string) {
+    const suppressed = suppressTitleClick.current;
+    const pointerId = "pointerId" in event.nativeEvent ? event.nativeEvent.pointerId : undefined;
+    if (event.detail > 0 && suppressed?.element === event.currentTarget &&
+        (typeof pointerId !== "number" || pointerId <= 0 || pointerId === suppressed.pointerId)) {
+      suppressTitleClick.current = null;
+      return;
+    }
+    activate(documentId);
   }
 
   function move(target: "main" | "secondary") {
@@ -459,8 +485,11 @@ function RealDocumentRegionViews() {
     </div>
   );
   const activeStatus = activeId ? controller.getSaveStatus(activeId) : null;
+  const secondaryFull = titleDrop?.kind === "secondary-full";
+  const secondaryTransferTarget = secondaryFull || titleDrop?.kind === "transfer-to-secondary";
   return (
-    <main className="bg-background text-foreground flex h-screen flex-col" aria-label="真实文件移区实验">
+    <main className={`bg-background text-foreground flex h-screen flex-col${secondaryFull ? " cursor-not-allowed [&_*]:cursor-not-allowed!" : ""}`}
+      aria-label="真实文件移区实验">
       <div aria-hidden="true" className="electrobun-webkit-app-region-drag h-12 shrink-0 select-none" />
       <section className="space-y-2 px-4 pb-3 text-sm">
         <h1 className="text-lg font-semibold">真实文件移区实验</h1>
@@ -506,10 +535,15 @@ function RealDocumentRegionViews() {
             <h2 className="font-medium">主区{mainCurrentId && ` · ${modeLabel(mainCurrentId)}`}</h2>
             <nav aria-label="实验主区标签" className="flex flex-wrap gap-1">
               {(projection?.main ?? state.tabs).map((document) => (
-                <button key={document.documentId} type="button" className={buttonClass}
+                <button key={document.documentId} type="button"
+                  className={`${buttonClass}${liveSecondaryIds?.length ? " cursor-grab active:cursor-grabbing" : ""}`}
                   aria-pressed={activeId === document.documentId}
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => activate(document.documentId)}>{document.fileName}{controller.isDirty(document.documentId) ? " · 未保存" : ""}</button>
+                  onPointerDown={(event) => beginTitleDrag(event, document.documentId, "main")}
+                  onPointerMove={trackTitleDrag}
+                  onPointerUp={(event) => trackTitleDrag(event, true)}
+                  onPointerCancel={cancelTitlePointer} onLostPointerCapture={cancelTitlePointer}
+                  onClick={(event) => clickTitle(event, document.documentId)}>{document.fileName}{controller.isDirty(document.documentId) ? " · 未保存" : ""}</button>
               ))}
             </nav>
             <div ref={mainDropZone} className="relative flex min-h-0 flex-1 flex-col">
@@ -524,7 +558,7 @@ function RealDocumentRegionViews() {
         } side={projection && projection.secondary.length > 0 && (
           <section aria-label="实验副区" className="size-full min-w-0 overflow-y-auto">
             <h2 className="px-3 py-2 font-medium">副区</h2>
-            <ol ref={sideCanvas} aria-label="副区文档顺序" className="min-w-[160px] overflow-hidden"
+            <ol ref={sideCanvas} aria-label="副区文档顺序" className="relative min-w-[160px] overflow-hidden"
               style={{ height: projection.allocation.totalHeight }}>
               {projection.secondary.map(({ documentId, fileName }, index) => {
                 const height = projection.allocation.heights[index];
@@ -540,20 +574,11 @@ function RealDocumentRegionViews() {
                         aria-pressed={activeId === documentId} aria-label={`激活副区 ${name}`} data-secondary-document={documentId}
                         aria-keyshortcuts={projection.secondary.length > 1 ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
                         onMouseDown={(event) => event.preventDefault()}
-                        onPointerDown={(event) => beginTitleDrag(event, documentId)}
+                        onPointerDown={(event) => beginTitleDrag(event, documentId, "secondary")}
                         onPointerMove={trackTitleDrag}
                         onPointerUp={(event) => trackTitleDrag(event, true)}
                         onPointerCancel={cancelTitlePointer} onLostPointerCapture={cancelTitlePointer}
-                        onClick={(event) => {
-                          const suppressed = suppressTitleClick.current;
-                          const pointerId = "pointerId" in event.nativeEvent ? event.nativeEvent.pointerId : undefined;
-                          if (event.detail > 0 && suppressed?.element === event.currentTarget &&
-                              (typeof pointerId !== "number" || pointerId <= 0 || pointerId === suppressed.pointerId)) {
-                            suppressTitleClick.current = null;
-                            return;
-                          }
-                          activate(documentId);
-                        }}
+                        onClick={(event) => clickTitle(event, documentId)}
                         onKeyDown={(event) => {
                           if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.nativeEvent.isComposing || titleDrag.current ||
                               (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
@@ -565,7 +590,7 @@ function RealDocumentRegionViews() {
                             placement: direction === -1 ? "before" : "after" }, event.currentTarget);
                         }}>{name}</button>
                       <span className="text-muted-foreground shrink-0 text-xs">{modeLabel(documentId)}</span>
-                      <button type="button" className={`${buttonClass} size-6 shrink-0 p-0`} aria-label={`关闭副区 ${fileName}`}
+                      <button type="button" className={`${buttonClass} size-6 shrink-0 p-0`} aria-label={`关闭副区 ${fileName}`} data-secondary-close=""
                         disabled={!controller.canSelectFolder() || controller.isEditorInputBlocked()}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={(event) => void closeSecondary(documentId, fileName,
@@ -602,6 +627,13 @@ function RealDocumentRegionViews() {
                   </li>
                 );
               })}
+              {secondaryTransferTarget && (
+                <li role="presentation" className={`pointer-events-none absolute inset-0 z-30 rounded-md ring-2 ring-inset ${secondaryFull ? "ring-destructive text-destructive" : "ring-primary"}`}>
+                  <span role="status" className="bg-background absolute top-2 left-2 rounded border px-2 py-1 text-sm">
+                    {secondaryFull ? "空间不足" : "松开移入副区"}
+                  </span>
+                </li>
+              )}
             </ol>
             {measured?.allocation === projection.allocation && measured.divider && (
               <p className="px-2 py-1 text-sm tabular-nums">

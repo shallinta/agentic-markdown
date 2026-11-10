@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { createDocumentController } from "./documents";
 import { createDualActiveEditorLab } from "./dual-readonly-editor-lab";
 import { rawText } from "./raw-buffer";
-import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, reorderRealRegionDocuments, prepareSecondaryReturn, type RealRegionAllocation } from "./real-document-region-lab";
+import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, reorderRealRegionDocuments, prepareSecondaryReturn, prepareMainTransferToSecondary, type RealRegionAllocation } from "./real-document-region-lab";
 
 const empty = (totalHeight = 320): RealRegionAllocation => ({ ids: [], heights: [], totalHeight });
 
@@ -201,5 +201,59 @@ test("return of an already active secondary skips activation publication", async
     expect(prepared.plan.commit(() => allocation)).toBe(true);
     expect(c.getSnapshot()).toBe(before);
     expect(c.getEditor(b.documentId)).toBe(editor);
+  } finally { c.dispose(); }
+});
+
+for (const height of [65, 66, 320]) {
+  test(`prepared main transfer respects ${height}px capacity and activates the unchanged background draft`, async () => {
+    const { controller: c, documents: [a, b, d] } = await threeDocuments();
+    try {
+      c.activateTab(b.documentId); c.toggleSourceMode();
+      const state = c.getEditor(b.documentId)!.state;
+      c.updateEditor(b.documentId, state.update({ changes: { from: 0, insert: "draft" }, selection: { anchor: 2, head: 5 } }));
+      c.activateTab(a.documentId);
+      const allocation: RealRegionAllocation = { ids: [d.documentId], heights: [height], totalHeight: height };
+      const before = c.getSnapshot();
+      const prepared = prepareMainTransferToSecondary(c, allocation, b.documentId);
+      expect(c.getSnapshot()).toBe(before);
+      if (height === 65) {
+        expect(prepared).toEqual({ ok: false, reason: "full" });
+      } else {
+        if (!prepared.ok) throw Error(prepared.reason);
+        expect(prepared.plan.allocation).toEqual({ ids: [d.documentId, b.documentId], heights: [height / 2, height / 2], totalHeight: height });
+        expect(prepared.plan.commit(() => allocation)).toBe(true);
+        expect(prepared.plan.commit(() => allocation)).toBe(false);
+        expect(c.getSnapshot().snapshot?.documentId).toBe(b.documentId);
+        expect(c.getMode(b.documentId)).toBe("source");
+        expect(c.getEditor(b.documentId)!.state.selection.main.to).toBe(5);
+        expect(c.runHistory("undo", b.documentId)).toBe(true);
+        expect(c.getEditor(b.documentId)!.state.field(rawText)).toBe(b.text);
+      }
+      expect(allocation.heights).toEqual([height]);
+    } finally { c.dispose(); }
+  });
+}
+
+test("prepared main transfer rejects closed region, stale plan and composition without changing ownership", async () => {
+  const { controller: c, documents: [a, b, d] } = await threeDocuments();
+  try {
+    c.activateTab(a.documentId);
+    const allocation: RealRegionAllocation = { ids: [d.documentId], heights: [320], totalHeight: 320 };
+    expect(prepareMainTransferToSecondary(c, empty(), b.documentId)).toEqual({ ok: false, reason: "closed" });
+    expect(prepareMainTransferToSecondary(c, allocation, d.documentId)).toEqual({ ok: false, reason: "invalid" });
+    const prepared = prepareMainTransferToSecondary(c, allocation, b.documentId);
+    if (!prepared.ok) throw Error(prepared.reason);
+    const composition = c.registerEditorInteraction(a.documentId, () => false);
+    expect(prepared.plan.commit(() => allocation)).toBe(false);
+    expect(c.getSnapshot().snapshot?.documentId).toBe(a.documentId);
+    expect(prepareMainTransferToSecondary(c, allocation, b.documentId)).toEqual({ ok: false, reason: "blocked" });
+    composition.release();
+    const stale = prepareMainTransferToSecondary(c, allocation, b.documentId);
+    if (!stale.ok) throw Error(stale.reason);
+    c.activateTab(d.documentId);
+    expect(stale.plan.commit(() => allocation)).toBe(false);
+    expect(allocation.ids).toEqual([d.documentId]);
+    await c.closeTab(a.documentId);
+    expect(prepareMainTransferToSecondary(c, allocation, b.documentId)).toEqual({ ok: false, reason: "keep-main" });
   } finally { c.dispose(); }
 });

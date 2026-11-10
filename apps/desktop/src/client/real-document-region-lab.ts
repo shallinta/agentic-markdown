@@ -144,44 +144,76 @@ export function reorderRealRegionDocuments(
 
 type ReturnController = Controller & Pick<ReturnType<typeof createDocumentController>, "activateTab" | "getEditorFault">;
 
+interface TransferPlan {
+  sourceId: string;
+  allocation: RealRegionAllocation;
+  commit(currentAllocation: () => RealRegionAllocation | undefined): boolean;
+}
+
+function prepareTransferContext(controller: ReturnController, allocation: RealRegionAllocation, sourceId: string) {
+  const before = controller.getSnapshot();
+  const allowed = () => !controller.isEditorInputBlocked() && !controller.hasSaves() && controller.canSelectFolder();
+  if (!before.snapshot || !allowed() || controller.getSnapshot() !== before)
+    return { ok: false as const, reason: "blocked" as const };
+  if (before.tabs.length > 3) return { ok: false as const, reason: "lab-limit" as const };
+  const session = controller.getEditorFault(sourceId);
+  if (!session || !before.tabs.some(tab => tab.documentId === sourceId) ||
+      reconcileRealRegionAllocation(before.tabs, allocation) !== allocation)
+    return { ok: false as const, reason: "invalid" as const };
+  return { ok: true as const, before, plan: (next: RealRegionAllocation): TransferPlan => {
+    let consumed = false;
+    return {
+      sourceId,
+      allocation: next,
+      commit: currentAllocation => {
+        if (consumed) return false;
+        consumed = true;
+        try {
+          if (currentAllocation() !== allocation || !allowed() || currentAllocation() !== allocation || controller.getSnapshot() !== before ||
+              controller.getEditorFault(sourceId) !== session) return false;
+          if (before.snapshot?.documentId !== sourceId) controller.activateTab(sourceId);
+          const after = controller.getSnapshot();
+          if (after.snapshot?.documentId !== sourceId || after.tabs !== before.tabs ||
+              controller.getEditorFault(sourceId) !== session || currentAllocation() !== allocation || !allowed()) return false;
+          return currentAllocation() === allocation && controller.getSnapshot() === after && controller.getEditorFault(sourceId) === session;
+        } catch {
+          return false;
+        }
+      },
+    };
+  } };
+}
+
 /** Preparation never activates or changes ownership; commit only activates after revalidation. */
 export function prepareSecondaryReturn(
   controller: ReturnController,
   allocation: RealRegionAllocation,
   sourceId: string
-): { ok: false; reason: "blocked" | "invalid" | "lab-limit" } | {
-  ok: true;
-  plan: { sourceId: string; allocation: RealRegionAllocation; commit(currentAllocation: () => RealRegionAllocation | undefined): boolean };
-} {
-  const before = controller.getSnapshot();
-  const allowed = () => !controller.isEditorInputBlocked() && !controller.hasSaves() && controller.canSelectFolder();
-  if (!before.snapshot || !allowed() || controller.getSnapshot() !== before) return { ok: false, reason: "blocked" };
-  if (before.tabs.length > 3) return { ok: false, reason: "lab-limit" };
-  const session = controller.getEditorFault(sourceId);
+): { ok: false; reason: "blocked" | "invalid" | "lab-limit" } | { ok: true; plan: TransferPlan } {
+  const context = prepareTransferContext(controller, allocation, sourceId);
+  if (!context.ok) return context;
   const index = allocation.ids.indexOf(sourceId);
-  if (!session || index < 0 || reconcileRealRegionAllocation(before.tabs, allocation) !== allocation)
-    return { ok: false, reason: "invalid" };
+  if (index < 0) return { ok: false, reason: "invalid" };
   const heights = removeSecondaryPaneHeight(allocation.heights, index);
   if (!heights) return { ok: false, reason: "invalid" };
-  const next = { ids: allocation.ids.filter(id => id !== sourceId), heights, totalHeight: allocation.totalHeight };
-  let consumed = false;
-  return { ok: true, plan: {
-    sourceId,
-    allocation: next,
-    commit: currentAllocation => {
-      if (consumed) return false;
-      consumed = true;
-      try {
-        if (currentAllocation() !== allocation || !allowed() || currentAllocation() !== allocation || controller.getSnapshot() !== before ||
-            controller.getEditorFault(sourceId) !== session) return false;
-        if (before.snapshot?.documentId !== sourceId) controller.activateTab(sourceId);
-        const after = controller.getSnapshot();
-        if (after.snapshot?.documentId !== sourceId || after.tabs !== before.tabs ||
-            controller.getEditorFault(sourceId) !== session || currentAllocation() !== allocation || !allowed()) return false;
-        return currentAllocation() === allocation && controller.getSnapshot() === after && controller.getEditorFault(sourceId) === session;
-      } catch {
-        return false;
-      }
-    },
-  } };
+  return { ok: true, plan: context.plan({ ids: allocation.ids.filter(id => id !== sourceId), heights, totalHeight: allocation.totalHeight }) };
+}
+
+/** Append an already authorized main document only to an already open secondary region. */
+export function prepareMainTransferToSecondary(
+  controller: ReturnController,
+  allocation: RealRegionAllocation,
+  sourceId: string
+): { ok: false; reason: Rejection | "closed" } | { ok: true; plan: TransferPlan } {
+  const context = prepareTransferContext(controller, allocation, sourceId);
+  if (!context.ok) return context;
+  if (!allocation.ids.length) return { ok: false, reason: "closed" };
+  if (allocation.ids.includes(sourceId)) return { ok: false, reason: "invalid" };
+  if (allocation.ids.length >= 2) return { ok: false, reason: "lab-limit" };
+  if (context.before.tabs.length - allocation.ids.length <= 1) return { ok: false, reason: "keep-main" };
+  const added = allocateSecondaryPaneHeight(allocation.totalHeight, allocation.heights);
+  if (!added.ok) return { ok: false, reason: added.reason };
+  return { ok: true, plan: context.plan({
+    ids: [...allocation.ids, sourceId], heights: added.heights, totalHeight: allocation.totalHeight,
+  }) };
 }

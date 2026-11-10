@@ -6,6 +6,8 @@
 
 在实验台关闭一篇时，紧邻下方的一篇接收它的高度；关闭末项则交给上方。最后一篇关闭后副区收起，再展开时为空。见[F-034c 迭代](iterations/F-034c-secondary-pane-removal.md)。
 
+实验台可检查当前文档数需要的最低高度。测试恰好容纳时显示占位实测，测试少 1 px 时提示空间不足，原布局保持。见[F-034d 迭代](iterations/F-034d-secondary-pane-minimum-height.md)。
+
 ## 独立阅读代码折叠（F-048e）
 
 顶层代码围栏可用箭头收起正文，语言、行数与复制入口保留。全文查找仍统计代码；跳到其中的命中会展开代码及必要的标题。折叠只影响当前阅读窗口。引用或列表内的代码保持原样。见[F-048e 迭代](iterations/F-048e-independent-reader-code-folds.md)。

@@ -49,6 +49,68 @@ interface HeightDrag {
   ids: readonly number[];
 }
 
+function MinimumHeightWitness({ count, height }: { count: number; height: number }) {
+  const canvas = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState<{ height: number; rows: number[]; overflow: boolean }>();
+
+  useLayoutEffect(() => {
+    const element = canvas.current;
+    if (!element) return;
+    setMeasured({
+      height: cssPixels(element.getBoundingClientRect().height),
+      rows: Array.from(element.children, (row) => cssPixels(row.getBoundingClientRect().height)),
+      overflow: element.scrollHeight > element.clientHeight,
+    });
+  }, [count, height]);
+
+  return (
+    <>
+      <div ref={canvas} aria-hidden="true" className="bg-background ring-border w-8 overflow-clip ring-1"
+        style={{ height }}>
+        {Array.from({ length: count }, (_, index) => (
+          <div key={index}>
+            <div className="bg-sidebar" style={{ height: SECONDARY_MIN_HEIGHT - 1 }} />
+            <div className="bg-border h-px" />
+          </div>
+        ))}
+      </div>
+      {measured && (
+        <p className="tabular-nums">
+          下限样本实测 CSS px，总高 {measured.height}，行高 {measured.rows.join(" / ") || "无"}
+          {measured.overflow ? "，有溢出" : "，无溢出"}
+        </p>
+      )}
+    </>
+  );
+}
+
+function HeightMinimumLab({ ids }: { ids: readonly number[] }) {
+  const minimum = ids.length * SECONDARY_MIN_HEIGHT;
+  const [check, setCheck] = useState<{ ids: readonly number[]; height: number }>();
+  const candidate = check?.ids === ids ? check.height : undefined;
+
+  return (
+    <section className="space-y-2 border-t pt-2" aria-label="副区高度下限实验">
+      <h4 className="font-semibold">副区高度下限</h4>
+      <p className="tabular-nums">{ids.length} 篇文档最少需要 {minimum} CSS px</p>
+      <div className="flex flex-wrap gap-1" role="group" aria-label="下限候选高度">
+        <button type="button" className={buttonClass}
+          onClick={() => setCheck({ ids, height: minimum })}>测试恰好满足下限</button>
+        <button type="button" className={`${buttonClass} disabled:opacity-50`} disabled={minimum === 0}
+          onClick={() => setCheck({ ids, height: minimum - 1 })}>测试比下限少 1px</button>
+      </div>
+      {candidate !== undefined && (
+        <>
+          <p role="status" className="tabular-nums">
+            {candidate < minimum ? `${candidate} CSS px 空间不足，需要 ${minimum} CSS px` : `${candidate} CSS px 恰好满足下限`}
+          </p>
+          {candidate >= minimum && <MinimumHeightWitness count={ids.length} height={candidate} />}
+        </>
+      )}
+    </section>
+  );
+}
+
 function HeightAllocationLab({ state, setState }: {
   state: HeightAllocationState;
   setState: Dispatch<SetStateAction<HeightAllocationState>>;
@@ -228,6 +290,7 @@ function HeightAllocationLab({ state, setState }: {
           {measured.hit && `，命中区 ${measured.hit.height}（向上 ${measured.hit.above}，向下 ${measured.hit.below}）`}
         </p>
       )}
+      <HeightMinimumLab ids={ids} />
     </div>
   );
 }

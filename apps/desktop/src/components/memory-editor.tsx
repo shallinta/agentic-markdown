@@ -111,7 +111,7 @@ export function MemoryEditor({
   const checkRaster = useRef<(() => void) | undefined>(undefined);
   const container = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const refreshViewCaptures = useRef<((session: EditorFaultSession) => void) | null>(null);
+  const refreshViewSession = useRef<((session: EditorFaultSession) => void) | null>(null);
   useLayoutEffect(() => {
     checkRaster.current?.();
     if (viewRef.current) {
@@ -160,9 +160,14 @@ export function MemoryEditor({
       editorSurfaceEditable(initialState.readOnly, frozen, inputBlocked)
     );
     view.dom.dataset.documentEditor = documentId;
-    const releaseHistory = controller.setHistoryDispatch((transaction) =>
-      view.dispatch(transaction)
-    );
+    const currentView = () =>
+      alive &&
+      viewRef.current === view &&
+      controller.getSnapshot().snapshot?.documentId === documentId;
+    const dispatchOwnedTransaction = (transaction: Transaction) => {
+      if (currentView() && view.contentDOM.isConnected && view.state === transaction.startState)
+        view.dispatch(transaction);
+    };
     view.contentDOM.setAttribute("aria-label", "Markdown 编辑区");
     if (!scrollTo)
       view.scrollDOM.scrollTop = controller.getScrollPosition(documentId);
@@ -196,25 +201,24 @@ export function MemoryEditor({
       if (view.scrollDOM.isConnected && view.state === state)
         return effect ? { state, offset, effect } : { state, offset };
     };
-    let captureSession = session;
+    let registeredSession = session;
     let viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
     let scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
-    const refreshCaptures = (nextSession: EditorFaultSession) => {
-      if (nextSession === captureSession) return;
+    let releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
+    const refreshSession = (nextSession: EditorFaultSession) => {
+      if (nextSession === registeredSession) return;
       // The same EditorView can adopt a new session after a reload.
       viewportCapture.release();
       scrollCapture.release();
-      captureSession = nextSession;
+      releaseEditorDispatch();
+      registeredSession = nextSession;
       viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
       scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
+      releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
     };
-    refreshViewCaptures.current = refreshCaptures;
+    refreshViewSession.current = refreshSession;
     const viewport = controller.getViewport(documentId);
     let wrappingReady = !viewport;
-    const currentView = () =>
-      alive &&
-      viewRef.current === view &&
-      controller.getSnapshot().snapshot?.documentId === documentId;
     const calloutToast = `callout-${documentId}`;
     const headingReady = () => {
       const snapshot = controller.getSnapshot();
@@ -791,13 +795,13 @@ export function MemoryEditor({
       removeIndentation();
       viewportCapture.capture();
       viewportCapture.release();
-      if (refreshViewCaptures.current === refreshCaptures)
-        refreshViewCaptures.current = null;
+      if (refreshViewSession.current === refreshSession)
+        refreshViewSession.current = null;
       saveScroll();
       scrollCapture.captureSnapshot();
       scrollCapture.release();
       releaseInteraction();
-      releaseHistory();
+      releaseEditorDispatch();
       controller.setSourceSelectionTarget(undefined);
       controller.setListInputTarget(undefined);
       controller.setIndentationTarget(undefined);
@@ -828,7 +832,7 @@ export function MemoryEditor({
     const current = syncCurrentEditorState(view, controller, documentId);
     if (!current) return;
     const fault = current.field(editorFaultSession);
-    refreshViewCaptures.current?.(fault);
+    refreshViewSession.current?.(fault);
     if (
       view.state.facet(EditorState.readOnly) !== readOnly ||
       view.state.facet(EditorView.editable) !== !readOnly

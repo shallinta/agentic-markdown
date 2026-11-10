@@ -204,9 +204,9 @@ test("old view cleanup cannot remove a newer composition check or history dispat
       oldCalls = 0,
       newCalls = 0;
     const oldCheck = c.setInteractionCheck(() => true);
-    const oldDispatch = c.setHistoryDispatch(() => oldCalls++);
+    const oldDispatch = c.registerEditorDispatch(a.documentId, () => oldCalls++);
     const newCheck = c.setInteractionCheck(() => !composing);
-    const newDispatch = c.setHistoryDispatch((tx) => {
+    const newDispatch = c.registerEditorDispatch(a.documentId, (tx) => {
       newCalls++;
       c.updateEditor(a.documentId, tx);
     });
@@ -292,7 +292,7 @@ test("failed safe dispatch reports once, retains reading and stops automatic ret
     c.toggleReadingMode();
     const before = current();
     let attempts = 0;
-    c.setHistoryDispatch(() => {
+    c.registerEditorDispatch(a.documentId, () => {
       attempts++;
       throw Error("test dispatcher failure");
     });

@@ -194,7 +194,7 @@ test("safe source preserves available scroll but a broken geometry capture canno
       if (broken) throw new Error("private geometry error");
       return { state: controller.getEditor(value.documentId)!.state, effect: scroll };
     });
-    controller.setHistoryDispatch((transaction) => {
+    controller.registerEditorDispatch(value.documentId, (transaction) => {
       sawScroll = transaction.effects.includes(scroll);
       controller.updateEditor(value.documentId, transaction);
     });
@@ -1393,7 +1393,7 @@ test("mode dispatch keeps the current view and scroll effect, and reload retains
   const scroll = EditorView.scrollIntoView(2, { y: "start" });
   controller.registerEditorScroll(value.documentId, () => ({ state: controller.getEditor(value.documentId)!.state, effect: scroll }));
   let dispatched = 0;
-  controller.setHistoryDispatch((transaction) => {
+  controller.registerEditorDispatch(value.documentId, (transaction) => {
     expect(transaction.effects).toContain(scroll);
     expect(transaction.docChanged).toBe(false);
     dispatched++;
@@ -2026,5 +2026,99 @@ test("accepted pixel-only capture replaces old snapshot priority; invalid pixels
   controller.registerEditorScroll(id, () => ({ state, offset: 120 })).captureSnapshot();
   expect(controller.getScrollSnapshot(id)).toBeUndefined();
   expect(controller.getScrollPosition(id)).toBe(120);
+  controller.dispose();
+});
+
+test("owned editor dispatch routes active commands only to the matching document and release token", async () => {
+  const { controller, transport, value: a } = setup();
+  const b = snapshot("dispatch-b");
+  await controller.select();
+  let editor = controller.getEditor(a.documentId)!;
+  controller.updateEditor(a.documentId, editor.state.update({ changes: { from: 0, insert: "draft" } }));
+  let oldCalls = 0, aCalls = 0, bCalls = 0;
+  const oldA = controller.registerEditorDispatch(a.documentId, () => { oldCalls++; });
+  const releaseA = controller.registerEditorDispatch(a.documentId, tx => { aCalls++; controller.updateEditor(a.documentId, tx); });
+  oldA();
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await controller.select();
+  const releaseB = controller.registerEditorDispatch(b.documentId, tx => { bCalls++; controller.updateEditor(b.documentId, tx); });
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(bCalls).toBe(1); expect(aCalls).toBe(0);
+  controller.activateTab(a.documentId);
+  expect(controller.runHistory("undo")).toBe(true);
+  expect(aCalls).toBe(1); expect(bCalls).toBe(1); expect(oldCalls).toBe(0);
+  expect(controller.getEditor(a.documentId)!.state.field(rawText)).toBe(a.text);
+  const reject = controller.registerEditorDispatch(a.documentId, () => undefined);
+  const before = controller.getEditor(a.documentId)!.state;
+  expect(controller.runHistory("redo")).toBe(false);
+  expect(controller.toggleSourceMode()).toBe(false);
+  expect(controller.getEditor(a.documentId)!.state).toBe(before);
+  reject(); releaseA(); releaseB();
+  expect(controller.runHistory("redo")).toBe(true); // no-view fallback remains
+  editor = controller.getEditor(a.documentId)!;
+  expect(editor.state.field(rawText)).toBe("draft" + a.text);
+  controller.dispose();
+});
+
+test("dispatch acknowledges only accepted exact transactions, including subsequent state changes and post-accept throws", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const id = value.documentId;
+  controller.registerEditorDispatch(id, tx => {
+    controller.updateEditor(id, tx);
+    const next = controller.getEditor(id)!.state;
+    controller.updateEditor(id, next.update({ selection: { anchor: 1 } }));
+  });
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(id)).toBe("source");
+  expect(controller.getEditor(id)!.state.selection.main.head).toBe(1);
+  controller.registerEditorDispatch(id, tx => {
+    controller.updateEditor(id, tx);
+    throw Error("view followup after accepted transaction");
+  });
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(id)).toBe("editing");
+  controller.registerEditorDispatch(id, tx => {
+    // A different transaction is not acknowledgement of the requested mode change.
+    controller.updateEditor(id, tx.startState.update({ selection: { anchor: 0 } }));
+  });
+  expect(controller.toggleSourceMode()).toBe(false);
+  expect(controller.getMode(id)).toBe("editing");
+  controller.dispose();
+});
+
+test("reload and close remove old dispatch ownership and old cleanup cannot remove replacement", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const id = value.documentId;
+  let oldCalls = 0, newCalls = 0;
+  const old = controller.registerEditorDispatch(id, tx => { oldCalls++; controller.updateEditor(id, tx); });
+  await controller.reload();
+  const fresh = controller.registerEditorDispatch(id, tx => { newCalls++; controller.updateEditor(id, tx); });
+  old();
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(oldCalls).toBe(0); expect(newCalls).toBe(1);
+  await controller.closeActive(); await controller.select();
+  fresh();
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(newCalls).toBe(1);
+  controller.dispose();
+});
+
+test("accepted mode dispatch preserves a nested newer mode transition", async () => {
+  const { controller, value } = setup();
+  await controller.select();
+  const id = value.documentId;
+  let nested = false;
+  controller.registerEditorDispatch(id, tx => {
+    controller.updateEditor(id, tx);
+    if (!nested) {
+      nested = true;
+      expect(controller.toggleSourceMode()).toBe(true);
+      expect(controller.toggleReadingMode()).toBe(true);
+    }
+  });
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(controller.getMode(id)).toBe("reading"); // outer completion must not erase newer mode
   controller.dispose();
 });

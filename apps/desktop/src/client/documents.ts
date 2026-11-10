@@ -274,6 +274,25 @@ export function createDocumentController(
   const reading = new Set<string>();
   const sourceReturn = new Map<string, "editing" | "reading">();
   const viewports = new Map<string, DocumentViewport>();
+  const editorDispatchers = new Map<string, { incarnation: EditorFaultSession; dispatch(transaction: Transaction): void }>();
+  let dispatchAttempt: { documentId: string; transaction: Transaction; applied: boolean } | undefined;
+  const dispatchEditor = (documentId: string, transaction: Transaction): boolean => {
+    const editor = editors.get(documentId);
+    if (metadataDisposed || state.snapshot?.documentId !== documentId || editor?.state !== transaction.startState) return false;
+    const owner = editorDispatchers.get(documentId);
+    if (!owner) return controller.updateEditor(documentId, transaction);
+    if (owner.incarnation !== editor.state.field(editorFaultSession)) return false;
+    const previousAttempt = dispatchAttempt;
+    const attempt = { documentId, transaction, applied: false };
+    dispatchAttempt = attempt;
+    try {
+      owner.dispatch(transaction);
+      return attempt.applied;
+    } catch (error) {
+      if (attempt.applied) return true; // Never retry a transaction already accepted.
+      throw error;
+    } finally { dispatchAttempt = previousAttempt; }
+  };
   const scrollCaptures = new Map<string, {
     savePosition(expectedState: EditorState, offset: number): void;
     captureSnapshot(): StateEffect<unknown> | undefined;
@@ -1030,6 +1049,7 @@ export function createDocumentController(
         viewports.delete(replaced.documentId);
         viewportCaptures.delete(replaced.documentId);
         scrollCaptures.delete(replaced.documentId);
+        editorDispatchers.delete(replaced.documentId);
         transfers.delete(replaced.documentId);
         saveResults.delete(replaced.documentId);
         uncertain.delete(replaced.documentId);
@@ -1041,6 +1061,7 @@ export function createDocumentController(
         scrollSnapshots.delete(active.documentId);
         viewportCaptures.delete(active.documentId);
         scrollCaptures.delete(active.documentId);
+        editorDispatchers.delete(active.documentId);
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
         const stateStart = onTiming ? performance.now() : 0;
@@ -1161,6 +1182,7 @@ export function createDocumentController(
     viewports.clear();
     viewportCaptures.clear();
     scrollCaptures.clear();
+    editorDispatchers.clear();
     transfers.clear();
     capabilityLifetimes.clear();
     saveResults.clear();
@@ -1226,6 +1248,7 @@ export function createDocumentController(
     viewports.delete(documentId);
     viewportCaptures.delete(documentId);
     scrollCaptures.delete(documentId);
+    editorDispatchers.delete(documentId);
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
@@ -1285,7 +1308,6 @@ export function createDocumentController(
         error: captured.phase === "ack" ? "移除结果已确认，但收据尚未确认回收。可重试；暂不能移除其他文件。" : removal ? "移除结果尚未确认，内存内容已保留并锁定。请重试确认结果，勿关闭应用。" : "无法开始移除，窗口内容完整保留。请重试。" });
     } finally { removalRunning = false; }
   }
-  let historyDispatch: ((transaction: Transaction) => void) | undefined;
   let scheduleWrapping: (() => void) | undefined;
   let sourceSelectionTarget: {
     documentId: string;
@@ -1690,6 +1712,7 @@ export function createDocumentController(
       state = prepared.next; editors = prepared.nextEditors; generation++;
       for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
       for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
+      for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
@@ -1740,6 +1763,7 @@ export function createDocumentController(
       editors = prepared.nextEditors;
       for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
       for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
+      for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
       folderRemovalGate = false;
       generation++;
     },
@@ -1747,7 +1771,7 @@ export function createDocumentController(
       const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
       for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
       for (const id of prepared.removedIds) {
-        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); editorDispatchers.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
         safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
       }
       safely(() => observation.sync(state.tabs));
@@ -1867,9 +1891,7 @@ export function createDocumentController(
       const transaction = expected.update({
         effects, annotations: Transaction.addToHistory.of(false),
       });
-      if (historyDispatch) historyDispatch(transaction);
-      else controller.updateEditor(documentId, transaction);
-      return editors.get(documentId)?.state === transaction.state;
+      return dispatchEditor(documentId, transaction);
     },
     isSafeSource: (documentId: string) => {
       const editor = editors.get(documentId);
@@ -1910,10 +1932,11 @@ export function createDocumentController(
           selection: editor.state.selection.asSingle(),
           annotations: Transaction.addToHistory.of(false),
         });
-        if (state.snapshot?.documentId === documentId && historyDispatch)
-          historyDispatch(transaction);
-        else controller.updateEditor(documentId, transaction);
-        return isSafeSource(editors.get(documentId)!.state);
+        const applied = state.snapshot?.documentId === documentId
+          ? dispatchEditor(documentId, transaction)
+          : controller.updateEditor(documentId, transaction);
+        const recovered = editors.get(documentId);
+        return applied && !!recovered && isSafeSource(recovered.state);
       } catch {
         session.recoveryFailed = true;
         publish({
@@ -1936,9 +1959,9 @@ export function createDocumentController(
         annotations: Transaction.addToHistory.of(false),
         selection: editor.state.selection,
       });
-      if (historyDispatch) historyDispatch(transaction);
-      else controller.updateEditor(documentId, transaction);
-      return true;
+      const applied = dispatchEditor(documentId, transaction);
+      if (!applied && session.inject === kind) session.inject = null;
+      return applied;
     },
     canToggleSourceMode,
     canChangeReadingTheme: () =>
@@ -2004,7 +2027,6 @@ export function createDocumentController(
       const previous = controller.getMode(documentId);
       const scroll = scrollCaptures.get(documentId)?.captureSnapshot();
       if (state.snapshot?.documentId !== documentId || editors.get(documentId)?.state !== editor.state || !canToggleSourceMode()) return false;
-      if (previous !== "source") sourceReturn.set(documentId, previous);
       const effect = switchEditorMode(
         getEditorMode(editor.state) === "editing" ? "source" : "editing",
         sourceWrapping
@@ -2014,15 +2036,18 @@ export function createDocumentController(
         selection: editor.state.selection.asSingle(),
         annotations: Transaction.addToHistory.of(false),
       });
-      if (historyDispatch) historyDispatch(transaction);
-      else controller.updateEditor(documentId, transaction);
-      if (editors.get(documentId)?.state === transaction.state) {
+      const applied = dispatchEditor(documentId, transaction);
+      const after = editors.get(documentId);
+      if (applied && state.snapshot?.documentId === documentId &&
+        after?.state.field(editorFaultSession) === editor.state.field(editorFaultSession) &&
+        controller.getMode(documentId) === getEditorMode(transaction.state)) {
+        if (previous !== "source") sourceReturn.set(documentId, previous);
         if (previous === "source" && sourceReturn.get(documentId) === "reading")
           reading.add(documentId);
         else reading.delete(documentId);
         publish({ ...state });
       }
-      return editors.get(documentId)?.state === transaction.state;
+      return applied;
     },
     registerEditorScroll: (documentId: string, collect: () => { state: EditorState; effect?: StateEffect<unknown>; offset?: number } | undefined) => {
       const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
@@ -2068,22 +2093,24 @@ export function createDocumentController(
     runHistory: (
       direction: "undo" | "redo",
       documentId = state.snapshot?.documentId
-    ) => {
+    ): boolean => {
       if (!documentId || !canHistory(direction, documentId)) return false;
-      return (direction === "undo" ? undo : redo)({
+      let applied = false;
+      const generated = (direction === "undo" ? undo : redo)({
         state: editors.get(documentId)!.state,
-        dispatch: (transaction) => {
-          if (historyDispatch) historyDispatch(transaction);
-          else controller.updateEditor(documentId, transaction);
-        },
+        dispatch: (transaction) => { applied = dispatchEditor(documentId, transaction); },
       });
+      return generated && applied;
     },
-    setHistoryDispatch: (dispatch?: (transaction: Transaction) => void) => {
-      historyDispatch = dispatch;
+    registerEditorDispatch: (documentId: string, dispatch: (transaction: Transaction) => void) => {
+      const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      if (!incarnation || metadataDisposed) return () => undefined;
+      const owner = { incarnation, dispatch };
+      editorDispatchers.set(documentId, owner);
       scheduleFaultRecovery();
       return () => {
-        if (historyDispatch !== dispatch) return;
-        historyDispatch = undefined;
+        if (editorDispatchers.get(documentId) !== owner) return;
+        editorDispatchers.delete(documentId);
         scheduleFaultRecovery();
       };
     },
@@ -2236,6 +2263,7 @@ export function createDocumentController(
       metadataDisposed = true;
       viewportCaptures.clear();
     scrollCaptures.clear();
+    editorDispatchers.clear();
       cancelRecentTabSwitch();
       recentTabListeners.clear();
       pinnedTabs.clear();
@@ -2441,6 +2469,8 @@ export function createDocumentController(
         state: transaction.state,
         revision: editor.revision + (rawChanged ? 1 : 0),
       });
+      if (dispatchAttempt?.documentId === documentId && dispatchAttempt.transaction === transaction)
+        dispatchAttempt.applied = true;
       if (!isSafeSource(editor.state) && isSafeSource(transaction.state))
         reading.delete(documentId);
       if (

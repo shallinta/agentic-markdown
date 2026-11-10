@@ -212,6 +212,7 @@ export async function runParserWorkProbe(
             host.style.cssText = "height:240px;width:100%;overflow:hidden";
             container.append(host);
             let view: EditorView | undefined;
+          let releaseDispatch: (() => void) | undefined;
             let session: MarkdownParseSession | undefined;
             try {
               check(signal);
@@ -246,7 +247,7 @@ export async function runParserWorkProbe(
                   }
                 },
               });
-              controller.setHistoryDispatch((transaction) =>
+              releaseDispatch = controller.registerEditorDispatch(snapshot.documentId, (transaction) =>
                 view?.dispatch(transaction)
               );
               const times: number[] = [];
@@ -327,7 +328,7 @@ export async function runParserWorkProbe(
             } catch {
               row.status = signal.aborted ? "cancelled" : "failed";
             } finally {
-              controller.setHistoryDispatch();
+              releaseDispatch?.();
               view?.destroy();
               controller.dispose();
               host.remove();

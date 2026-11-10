@@ -506,7 +506,7 @@ test("live view dispatcher receives history transaction without replacing editor
   const { a, controller: c, edit } = await setup();
   edit("edit");
   let calls = 0;
-  c.setHistoryDispatch((transaction) => {
+  c.registerEditorDispatch(a.documentId, (transaction) => {
     calls++;
     c.updateEditor(a.documentId, transaction);
   });

@@ -132,6 +132,7 @@ export async function runOpenDocumentProbe(
           host.style.cssText = "height:240px;overflow:hidden";
           container.appendChild(host);
           let view: EditorView | undefined;
+          let releaseDispatch: (() => void) | undefined;
           const cancel = () => {
             controller.dispose();
           };
@@ -161,7 +162,7 @@ export async function runOpenDocumentProbe(
               },
             });
             row.metrics.viewCreateMs = performance.now() - beforeView;
-            controller.setHistoryDispatch((transaction) =>
+            releaseDispatch = controller.registerEditorDispatch(snapshot.documentId, (transaction) =>
               view?.dispatch(transaction)
             );
             const first = performance.now();
@@ -240,6 +241,8 @@ export async function runOpenDocumentProbe(
                 }
               },
             });
+            releaseDispatch?.();
+            releaseDispatch = controller.registerEditorDispatch(snapshot.documentId, transaction => view?.dispatch(transaction));
             let continuousMatches = true;
             let inputSum = 0;
             for (let input = 0; input < 3; input++) {
@@ -323,7 +326,7 @@ export async function runOpenDocumentProbe(
             row.status = signal.aborted ? "cancelled" : "failed";
           } finally {
             signal.removeEventListener("abort", cancel);
-            controller.setHistoryDispatch();
+            releaseDispatch?.();
             view?.destroy();
             controller.dispose();
             host.remove();

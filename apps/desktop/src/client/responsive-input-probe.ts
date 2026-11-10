@@ -89,6 +89,7 @@ export async function runResponsiveInputProbe(
           host.style.cssText = "height:240px;width:100%;overflow:hidden";
           container.append(host);
           let view: EditorView | undefined;
+          let releaseDispatch: (() => void) | undefined;
           let currentRow: PerfRow | undefined;
           let measuring = false;
           const makeRow = (sampleIndex: number): PerfRow => ({
@@ -168,7 +169,7 @@ export async function runResponsiveInputProbe(
                 }
               },
             });
-            controller.setHistoryDispatch((transaction) =>
+            releaseDispatch = controller.registerEditorDispatch(snapshot.documentId, (transaction) =>
               view?.dispatch(transaction)
             );
             for (let sampleIndex = 0; sampleIndex < 3; sampleIndex++) {
@@ -251,7 +252,7 @@ export async function runResponsiveInputProbe(
             currentRow.status = signal.aborted ? "cancelled" : "failed";
           } finally {
             measuring = false;
-            controller.setHistoryDispatch();
+            releaseDispatch?.();
             view?.destroy();
             controller.dispose();
             host.remove();

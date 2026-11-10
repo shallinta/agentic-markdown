@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037i 关闭后记录剩余主区标签（2026-11-11）
+
+普通 WK 已验非空关闭后的合格记录与取消保护。OBL-034 的最后关闭失效和完整恢复、OBL-054 及最终离线继续跟踪。见[F-037i 迭代](iterations/F-037i-record-remaining-tabs-after-close.md)。
+
 ## F-037h 主区布局变更写入会话（2026-11-11）
 
 普通 WK 已验固定、取消固定、重排与模式变更在同一活动标签下记录。OBL-034 的显式关闭、完整恢复和 OBL-054 的命令继续跟踪，最终离线留人工。见[F-037h 迭代](iterations/F-037h-record-clean-tab-layout-changes.md)。

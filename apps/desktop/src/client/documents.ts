@@ -1331,7 +1331,7 @@ export function createDocumentController(
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
-    publish({
+    const next = {
       ...state,
       ...(removeHandle ? { entries: state.entries.filter(entry => entry.handle !== removeHandle), frozen: discardActive, removalPending: "ack" as const } : {}),
       tabs,
@@ -1340,7 +1340,11 @@ export function createDocumentController(
       error: null,
       stale: !!snapshot && staleDocuments.has(snapshot.documentId),
       elapsedMs: null,
-    });
+    };
+    const notifyLayout = !removeHandle && snapshot
+      ? preparePrimaryTabLayoutNotification(next) : undefined;
+    publish(next);
+    notifyLayout?.();
   }
   async function settleRemoval() {
     if (!removal || removalRunning || !transport.removeStandalone || metadataDisposed) return;

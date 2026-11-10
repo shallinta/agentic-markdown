@@ -2450,3 +2450,79 @@ test("reentrant publication and layout listeners cannot emit an obsolete active 
   stopFirst();
   controller.dispose();
 });
+
+test("explicit close records only committed nonempty survivors without extra activation", async () => {
+  let approve = false;
+  const { controller, transport, value: a } = setup(() => Promise.resolve(approve));
+  await controller.select();
+  const b = snapshot("close-B"), c = snapshot("close-C");
+  for (const tab of [b,c]) {
+    transport.selectDocument = request => Promise.resolve(result(request,tab));
+    await controller.select();
+  }
+  controller.activateTab(b.documentId);
+  const layout: {target:string; tabs:string[]}[] = [];
+  let activations = 0;
+  controller.subscribePrimaryTabLayoutChange(target => layout.push({target:target.documentId,tabs:controller.getVisualTabs().map(tab=>tab.documentId)}));
+  controller.subscribeActivation(() => { activations++; });
+  await controller.closeTab(c.documentId);
+  expect(layout).toEqual([{target:b.documentId,tabs:[a.documentId,b.documentId]}]);
+  await controller.closeTab(c.documentId);
+  expect(layout.length).toBe(1);
+  const editor = controller.getEditor(b.documentId)!;
+  controller.updateEditor(b.documentId, editor.state.update({changes:{from:0,insert:"draft"}}));
+  await controller.closeActive();
+  expect(controller.isDirty(b.documentId)).toBe(true);
+  expect(layout.length).toBe(1);
+  approve = true;
+  await controller.closeActive();
+  expect(layout[1]).toEqual({target:a.documentId,tabs:[a.documentId]});
+  expect(controller.getEditor(b.documentId)).toBeUndefined();
+  expect(activations).toBe(0);
+  await controller.closeActive();
+  expect(layout.length).toBe(2);
+  expect(controller.getSnapshot().snapshot).toBeNull();
+  controller.dispose();
+});
+
+test("standalone removal and clear do not publish explicit-close metadata notifications", async () => {
+  const { controller, transport, value:a } = setup();
+  const session = crypto.randomUUID();
+  transport.removeStandalone = request => Promise.resolve(request.op === "state"
+    ? {protocolVersion:1,requestId:request.requestId,status:"state",session,sequence:1}
+    : {protocolVersion:1,requestId:request.requestId,status:request.op === "begin" ? "issued" : request.op === "ack" ? "acked" : "committed", operation:{session:request.session,sequence:request.sequence,handle:request.handle}});
+  await controller.select();
+  const b = snapshot("remove-B");
+  transport.selectDocument = request => Promise.resolve(result(request,b));
+  await controller.select();
+  let notifications = 0;
+  controller.subscribePrimaryTabLayoutChange(() => { notifications++; });
+  controller.setStandaloneRemovalEligibility(handle => handle === b.handle);
+  await controller.removeStandalone(b.handle);
+  expect(controller.getSnapshot().tabs.map(tab=>tab.documentId)).toEqual([a.documentId]);
+  expect(notifications).toBe(0);
+  await controller.clear();
+  expect(controller.getSnapshot().tabs).toEqual([]);
+  expect(notifications).toBe(0);
+  controller.dispose();
+});
+
+test("close publication invalidated by a subscriber cannot notify the former survivor", async () => {
+  const { controller, transport, value:a } = setup();
+  await controller.select();
+  const b = snapshot("reentrant-close-B"), c = snapshot("reentrant-close-C");
+  for (const tab of [b,c]) { transport.selectDocument = request => Promise.resolve(result(request,tab)); await controller.select(); }
+  let notifications = 0, changed = false;
+  controller.subscribePrimaryTabLayoutChange(() => { notifications++; });
+  controller.subscribe(() => {
+    if (!changed && controller.getSnapshot().tabs.length === 2) {
+      changed = true;
+      controller.activateTab(a.documentId);
+    }
+  });
+  await controller.closeActive();
+  expect(changed).toBe(true);
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(a.documentId);
+  expect(notifications).toBe(0);
+  controller.dispose();
+});

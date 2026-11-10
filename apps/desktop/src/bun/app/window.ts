@@ -79,6 +79,10 @@ export async function createMainWindow({
     preload:
       SHELL_PRELOAD +
       labPreload +
+      (url === PACKAGED_VIEW_URL && process.env.AGENTIC_MARKDOWN_PERF_LAB === "1" &&
+        process.env.AGENTIC_MARKDOWN_REGION_DOCUMENT_LAB === "1"
+        ? ";globalThis.__AGENTIC_MARKDOWN_REGION_DOCUMENT_LAB__ = true;"
+        : "") +
       (url === PACKAGED_VIEW_URL && rasterPasteLabEnabled()
         ? ";globalThis.__AGENTIC_MARKDOWN_PERF_LAB__.rasterPasteProbe = true;"
         : "") +

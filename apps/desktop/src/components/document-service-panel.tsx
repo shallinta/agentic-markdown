@@ -21,7 +21,6 @@ import {
 } from "@/client/document-status-label";
 import {
   createDocumentController,
-  type DocumentTransport,
 } from "@/client/documents";
 import { createFolderRemoval } from "@/client/folder-removal";
 import { isExternalTextTarget } from "@/client/history-target";
@@ -45,6 +44,7 @@ import { useCommands, useRegisterCommands } from "@/commands";
 import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { useWorkspaceRootRoster } from "@/hooks/use-workspace-root-roster";
 import { electrobun } from "@/lib/electrobun";
+import { createNativeDocumentTransport } from "@/lib/native-document-transport";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
 import type { CreateTarget } from "@/shared/create-markdown";
 import type { FolderRemovalDocument } from "@/shared/folder-removal";
@@ -55,6 +55,7 @@ import type { WorkspaceRevealTarget } from "@/shared/workspace";
 
 import { ContentSearchPanel } from "./content-search-panel";
 import { CreateMarkdownDialog } from "./create-markdown-dialog";
+import { DocumentDiscardDialog } from "./document-discard-dialog";
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
 import { canClearPendingWorkspaceRoots, PendingWorkspaceRoots } from "./pending-workspace-roots";
@@ -95,39 +96,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     };
   }, []);
   const [controller] = useState(() => {
-    const rpc = electrobun.rpc;
-    const unavailable = () => Promise.reject(new Error("RPC unavailable"));
-    const transport: DocumentTransport = {
-      removeStandalone: request => rpc ? rpc.request.removeStandalone(request) : unavailable(),
-      observeDocument: (request) =>
-        rpc
-          ? rpc.request.observeDocument(request, { maxRequestTime: 4000 })
-          : unavailable(),
-      openWorkspaceDocument: (request) =>
-        rpc ? rpc.request.openWorkspaceDocument(request) : unavailable(),
-      checkDocumentWriteCapability: (request) =>
-        rpc
-          ? rpc.request.checkDocumentWriteCapability(request, {
-              maxRequestTime: 4000,
-            })
-          : unavailable(),
-      cancelDocument: (request) =>
-        rpc ? rpc.request.cancelDocument(request) : unavailable(),
-      selectDocument: (request) =>
-        rpc ? rpc.request.selectDocument(request) : unavailable(),
-      revealDocument: (request) =>
-        rpc ? rpc.request.revealDocument(request) : unavailable(),
-      openDefaultDocument: (request) =>
-        rpc ? rpc.request.openDefaultDocument(request) : unavailable(),
-      readDocument: (request) =>
-        rpc ? rpc.request.readDocument(request) : unavailable(),
-      saveDocument: (request) =>
-        rpc ? rpc.request.saveDocument(request) : unavailable(),
-      waitForDocumentSaves: (request) =>
-        rpc ? rpc.request.waitForDocumentSaves(request) : unavailable(),
-      releaseDocument: (request) =>
-        rpc ? rpc.request.releaseDocument(request) : unavailable(),
-    };
+    const transport = createNativeDocumentTransport();
     return createDocumentController(transport, discardGuard.ask);
   });
   const [folders] = useState(() =>
@@ -944,17 +913,12 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
 }
 
 export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
-  const previousFocus = useRef<HTMLElement | null>(null);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const { state, controller, executeCommand, isCommandEnabled } = workspace;
   const snapshot = state.snapshot;
   const pinCommand = snapshot && controller.isTabPinned(snapshot.documentId)
     ? "unpinCurrentTab"
     : "pinCurrentTab";
-  const dialog = useSyncExternalStore(
-    discardGuard.subscribe,
-    discardGuard.getSnapshot
-  );
   const editor = snapshot && controller.getEditor(snapshot.documentId);
   const mode =
     snapshot && controller.getMode(snapshot.documentId) === "source"
@@ -1295,46 +1259,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog
-        open={!!dialog}
-        onOpenChange={(open) => {
-          if (!open) discardGuard.respond(false);
-        }}
-      >
-        <DialogContent
-          showCloseButton={false}
-          role="alertdialog"
-          onInteractOutside={(event) => event.preventDefault()}
-          onOpenAutoFocus={() => {
-            previousFocus.current =
-              document.activeElement instanceof HTMLElement
-                ? document.activeElement
-                : null;
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            if (previousFocus.current?.isConnected)
-              previousFocus.current.focus();
-          }}
-        >
-          <DialogTitle>确认放弃修改</DialogTitle>
-          <DialogDescription>{dialog?.message}</DialogDescription>
-          <div className="mt-2 flex justify-end gap-3">
-            <button
-              className={buttonClass}
-              onClick={() => discardGuard.respond(false)}
-            >
-              继续编辑
-            </button>
-            <button
-              className={buttonClass}
-              onClick={() => discardGuard.respond(true)}
-            >
-              放弃变更
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <DocumentDiscardDialog buttonClass={buttonClass} />
     </section>
   );
 }

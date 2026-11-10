@@ -65,6 +65,11 @@ const LayoutLab = lazy(() =>
     default: module.LayoutLab,
   }))
 );
+const RealDocumentRegionLab = lazy(() =>
+  import("@/components/real-document-region-lab").then((module) => ({
+    default: module.RealDocumentRegionLab,
+  }))
+);
 const RasterPasteLab = lazy(() =>
   import("@/components/raster-paste-lab").then((module) => ({
     default: module.RasterPasteLab,
@@ -89,6 +94,14 @@ function LazyMount({ open, children }: { open: boolean; children: ReactNode }) {
 }
 
 export function Page() {
+  if ((globalThis as typeof globalThis & {
+    __AGENTIC_MARKDOWN_REGION_DOCUMENT_LAB__?: boolean;
+  }).__AGENTIC_MARKDOWN_REGION_DOCUMENT_LAB__ === true)
+    return (
+      <Suspense fallback={<p>正在加载真实文件移区实验…</p>}>
+        <RealDocumentRegionLab />
+      </Suspense>
+    );
   if (
     (
       globalThis as typeof globalThis & {

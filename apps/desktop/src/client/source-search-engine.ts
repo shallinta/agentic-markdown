@@ -5,6 +5,7 @@ import {
   SEARCH_MARK_LIMIT,
   SEARCH_LIMIT,
   validSearchRequest,
+  validSearchBoundaries,
   type SearchRequest,
   type SearchResult,
 } from "./source-search-protocol";
@@ -27,7 +28,7 @@ export function createSearchEngine(limit = SEARCH_LIMIT) {
     }
     return lo;
   };
-  return (request: SearchRequest): SearchResult => {
+  const search = (request: SearchRequest): SearchResult => {
     if (!validSearchRequest(request, limit))
       throw new Error("invalid search request");
     if (request.kind === "scan") {
@@ -125,4 +126,24 @@ export function createSearchEngine(limit = SEARCH_LIMIT) {
       limited,
     };
   };
+  return Object.assign(search, {
+    /** Select existing matches only. Does not concatenate text or move the current match. */
+    selectRanges(request: { epoch: string; id: number; intervals: [number, number][] }): SearchResult {
+      if (!state || request.epoch !== epoch || !Number.isSafeInteger(request.id) || request.id < 0 ||
+          !validSearchBoundaries(request.intervals, state.doc.length))
+        throw Error("invalid visible search ranges");
+      const ranges: number[] = [];
+      let last = -1, limited = false;
+      outer: for (const [from, to] of request.intervals) {
+        for (let i = Math.max(last + 1, lowerBound(from, true)); i < count && pairs[i * 2] < to; i++) {
+          if (pairs[i * 2 + 1] <= from) continue;
+          if (ranges.length === SEARCH_MARK_LIMIT * 2) { limited = true; break outer; }
+          ranges.push(pairs[i * 2], pairs[i * 2 + 1]);
+          last = i;
+        }
+      }
+      return { epoch: request.epoch, id: request.id, kind: "viewport", count, index,
+        current: index < 0 ? null : [pairs[index * 2], pairs[index * 2 + 1]], ranges, limited };
+    },
+  });
 }

@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-040c 阅读查找可见范围（2026-11-10）
+
+内部 Worker 可按可见区间返回高亮，全文计数保持。正式折叠、查找定位与可见位置测量由 F-040d 承接。见[F-040c 迭代](iterations/F-040c-reader-search-visible-ranges.md)。
+
 ## F-040b 独立阅读章节投影（2026-11-10）
 
 已验证独立阅读实际块的顶层章节范围。正文显隐、查找定位与高亮、大纲和跨窗状态仍待承接，最终离线照旧。见[F-040b 迭代](iterations/F-040b-prepare-reader-heading-folds.md)。

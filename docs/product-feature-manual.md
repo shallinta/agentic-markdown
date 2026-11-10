@@ -2,7 +2,7 @@
 
 ## 独立阅读标题折叠准备（F-040b）
 
-已验证阅读窗可取得与实际呈现一致的顶层章节范围。当前阅读窗还没有标题折叠按钮，查找和复制用法保持。见[F-040b 迭代](iterations/F-040b-prepare-reader-heading-folds.md)。
+已验证阅读窗可取得与实际呈现一致的顶层章节范围。已验证内部可按可见范围选择查找高亮。当前阅读窗还没有标题折叠按钮，查找和复制用法保持。见[F-040b 迭代](iterations/F-040b-prepare-reader-heading-folds.md)、[F-040c 迭代](iterations/F-040c-reader-search-visible-ranges.md)。
 
 ## 非活动标签的图片呈现（F-039b）
 

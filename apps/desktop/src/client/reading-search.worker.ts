@@ -7,6 +7,7 @@ import {
   type ReadingLeaf,
   type ReadingProjection,
 } from "./reading-search-projection";
+import { validReadingVisibleRangesRequest } from "./reading-search-ranges-protocol";
 import { createSearchEngine } from "./source-search-engine";
 import { validSearchRequest } from "./source-search-protocol";
 
@@ -14,6 +15,7 @@ const search = createSearchEngine(READING_SEARCH_UNITS);
 let projection: ReadingProjection | undefined;
 let epoch = "";
 let initialized = false;
+let canonicalRanges = false;
 self.onmessage = (event: MessageEvent<unknown>) => {
   const data = event.data;
   if (
@@ -53,6 +55,7 @@ self.onmessage = (event: MessageEvent<unknown>) => {
     }
     epoch = p.epoch;
     initialized = false;
+    canonicalRanges = false;
     const job = projectReading(p.leaves as ReadingLeaf[], READING_SEARCH_UNITS);
     let result = job.next();
     while (!result.done) result = job.next();
@@ -65,6 +68,12 @@ self.onmessage = (event: MessageEvent<unknown>) => {
     });
     return;
   }
+  if (data && typeof data === "object" && "kind" in data && data.kind === "viewport-ranges") {
+    if (!projection || !initialized || !canonicalRanges || !validReadingVisibleRangesRequest(data, projection.text.length) || data.epoch !== epoch)
+      throw Error("Invalid reading visible ranges");
+    self.postMessage(search.selectRanges(data));
+    return;
+  }
   if (
     !projection ||
     !validSearchRequest(data, READING_SEARCH_UNITS) ||
@@ -75,7 +84,13 @@ self.onmessage = (event: MessageEvent<unknown>) => {
     data.kind === "scan" && !initialized
       ? { ...data, text: projection.text, boundaries: projection.boundaries }
       : data;
+  const canonicalAfterScan = !initialized ||
+    (canonicalRanges && data.kind === "scan" && data.text === undefined && data.boundaries === undefined);
+  if (data.kind === "scan") canonicalRanges = false;
   const response = search(request);
-  if (data.kind === "scan") initialized = true;
+  if (data.kind === "scan") {
+    initialized = true;
+    canonicalRanges = canonicalAfterScan;
+  }
   self.postMessage(response);
 };

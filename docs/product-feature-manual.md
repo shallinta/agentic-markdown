@@ -2,7 +2,7 @@
 
 ## 副区高度分配实验（F-034a）
 
-隔离布局实验使用合成文档验证新增占位。每篇至少 33 px；空间不足时提示并保留原布局。这一能力尚未用于普通窗口的真实文档。见[F-034a 迭代](iterations/F-034a-secondary-pane-height-allocation.md)。
+隔离布局实验使用合成文档验证新增占位。每篇至少 33 px；空间不足时提示并保留原布局。这一能力尚未用于普通窗口的真实文档。见[F-034a 迭代](iterations/F-034a-secondary-pane-height-allocation.md)。 实验台也可拖动分隔线，或聚焦后按上下方向键调整相邻两条。见[F-034b 迭代](iterations/F-034b-secondary-pane-divider.md)。
 
 ## 独立阅读代码折叠（F-048e）
 

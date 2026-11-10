@@ -1,7 +1,8 @@
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@agentic-markdown/ui/ui/resizable";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
 
 import { discardGuard } from "@/client/discard-guard";
+import { resizeSecondaryPaneDivider } from "@/client/secondary-pane-divider";
 import { allocateSecondaryPaneHeight, SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
 
 import { MainSideLayout, MAIN_SIDE_MINIMUM_WIDTH } from "./main-side-layout";
@@ -19,6 +20,13 @@ const heightFixtures = [
   { label: "99px 空副区", total: 99, heights: [] },
 ] as const;
 type HeightFixture = (typeof heightFixtures)[number];
+interface HeightDrag {
+  element: HTMLDivElement;
+  pointerId: number;
+  beforeIndex: number;
+  startY: number;
+  heights: readonly number[];
+}
 
 function HeightAllocationLab() {
   const [state, setState] = useState<{
@@ -28,11 +36,13 @@ function HeightAllocationLab() {
   }>({ fixture: heightFixtures[0], heights: heightFixtures[0].heights, notice: "" });
   const { fixture, heights, notice } = state;
   const stack = useRef<HTMLOListElement>(null);
+  const drag = useRef<HeightDrag | null>(null);
   const [measured, setMeasured] = useState<{
     total: number;
     heights: number[];
     title?: number;
     divider?: number;
+    hit?: { height: number; above: number; below: number };
   }>();
 
   useLayoutEffect(() => {
@@ -41,16 +51,23 @@ function HeightAllocationLab() {
     const height = (row: Element) => cssPixels(row.getBoundingClientRect().height);
     const first = element.firstElementChild;
     const title = first?.firstElementChild;
-    const divider = first?.lastElementChild;
+    const divider = first?.querySelector("[data-height-divider]")?.getBoundingClientRect();
+    const hit = first?.querySelector("[data-height-hit]")?.getBoundingClientRect();
     setMeasured({
       total: height(element),
       heights: Array.from(element.children, height),
       title: title ? height(title) : undefined,
-      divider: divider ? height(divider) : undefined,
+      divider: divider ? cssPixels(divider.height) : undefined,
+      hit: hit && divider ? {
+        height: cssPixels(hit.height),
+        above: cssPixels(divider.top - hit.top),
+        below: cssPixels(hit.bottom - divider.bottom),
+      } : undefined,
     });
   }, [fixture, heights]);
 
   function addDocument() {
+    stopDrag();
     setState((previous) => {
       const result = allocateSecondaryPaneHeight(previous.fixture.total, previous.heights);
       if (!result.ok) return {
@@ -65,6 +82,43 @@ function HeightAllocationLab() {
     });
   }
 
+  function adjust(beforeIndex: number, delta: number, basis?: readonly number[]) {
+    setState((previous) => {
+      const next = resizeSecondaryPaneDivider(basis ?? previous.heights, beforeIndex, delta);
+      if (!next || (next[beforeIndex] === previous.heights[beforeIndex] &&
+        next[beforeIndex + 1] === previous.heights[beforeIndex + 1])) return previous;
+      return { ...previous, heights: next, notice: "" };
+    });
+  }
+
+  function beginDrag(event: PointerEvent<HTMLDivElement>, beforeIndex: number) {
+    if (event.button !== 0 || event.pointerType !== "mouse" || !event.isPrimary || drag.current) return;
+    const canvas = stack.current;
+    if (!canvas) return;
+    const element = event.currentTarget;
+    element.setPointerCapture(event.pointerId);
+    const startY = event.clientY - canvas.getBoundingClientRect().top;
+    drag.current = { element, pointerId: event.pointerId, beforeIndex, startY, heights };
+    event.preventDefault();
+    element.focus({ preventScroll: true });
+  }
+
+  function moveDrag(event: PointerEvent<HTMLDivElement>) {
+    const active = drag.current;
+    const canvas = stack.current;
+    if (!canvas || active?.pointerId !== event.pointerId || active.element !== event.currentTarget) return;
+    const y = event.clientY - canvas.getBoundingClientRect().top;
+    adjust(active.beforeIndex, y - active.startY, active.heights);
+  }
+
+  function stopDrag(event?: PointerEvent<HTMLDivElement>) {
+    const active = drag.current;
+    if (!active || (event && (active.pointerId !== event.pointerId || active.element !== event.currentTarget))) return;
+    drag.current = null;
+    if (active.element.hasPointerCapture(active.pointerId))
+      active.element.releasePointerCapture(active.pointerId);
+  }
+
   return (
     <div className="space-y-2 text-sm">
       <h3 className="font-semibold">副区高度分配</h3>
@@ -72,32 +126,63 @@ function HeightAllocationLab() {
         {heightFixtures.map((preset) => (
           <button key={preset.label} type="button" className={buttonClass}
             aria-pressed={preset === fixture}
-            onClick={() => setState({ fixture: preset, heights: preset.heights, notice: "" })}>
+            onClick={() => {
+              stopDrag();
+              setState({ fixture: preset, heights: preset.heights, notice: "" });
+            }}>
             {preset.label}
           </button>
         ))}
       </div>
       <button type="button" className={buttonClass} onClick={addDocument}>加入合成文档</button>
-      {notice && <p role="status">{notice}</p>}
-      <p className="tabular-nums">理论 CSS px：总高 {fixture.total}，文档 {heights.join(" / ") || "无"}</p>
-      {measured && (
-        <p className="tabular-nums">
-          实测 CSS px：总高 {measured.total}，文档 {measured.heights.join(" / ") || "无"}
-          {measured.title !== undefined && `，标题栏 ${measured.title}，分隔线 ${measured.divider}`}
-        </p>
-      )}
       <ol ref={stack} aria-label="副区合成文档" className="bg-background ring-border overflow-hidden rounded ring-1"
         style={{ height: fixture.total }}>
         {heights.map((height, index) => (
-          <li key={index} className="flex flex-col overflow-hidden" style={{ height }}>
+          <li key={index} id={`layout-lab-height-row-${index}`} className="relative flex flex-col" style={{ height }}>
             <h4 className="bg-sidebar flex shrink-0 items-center px-2" style={{ height: SECONDARY_MIN_HEIGHT - 1 }}>
               合成文档 {index + 1}
             </h4>
             <div aria-hidden="true" className="min-h-0 grow" />
-            <div aria-hidden="true" className="bg-border h-px shrink-0" />
+            <div aria-hidden="true" data-height-divider="" className="bg-border h-px shrink-0" />
+            {index + 1 < heights.length && (
+              <div role="separator" tabIndex={0} aria-orientation="horizontal"
+                aria-label={`合成文档 ${index + 1} 和 ${index + 2} 分隔线`}
+                aria-controls={`layout-lab-height-row-${index}`}
+                aria-valuemin={SECONDARY_MIN_HEIGHT}
+                aria-valuemax={cssPixels(height + heights[index + 1] - SECONDARY_MIN_HEIGHT)}
+                aria-valuenow={cssPixels(height)}
+                aria-valuetext={`上方 ${cssPixels(height)} CSS px，下方 ${cssPixels(heights[index + 1])} CSS px`}
+                data-height-hit=""
+                className="electrobun-webkit-app-region-no-drag focus-visible:bg-ring absolute inset-x-0 -bottom-px z-10 h-[3px] cursor-row-resize touch-none select-none focus-visible:outline-2 focus-visible:outline-offset-1"
+                onKeyDown={(event) => {
+                  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || drag.current) return;
+                  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  adjust(index, event.key === "ArrowDown" ? 8 : -8);
+                }}
+                onPointerDown={(event) => beginDrag(event, index)}
+                onPointerMove={moveDrag}
+                onPointerUp={(event) => {
+                  moveDrag(event);
+                  stopDrag(event);
+                }}
+                onPointerCancel={stopDrag}
+                onLostPointerCapture={stopDrag}
+              />
+            )}
           </li>
         ))}
       </ol>
+      {notice && <p role="status">{notice}</p>}
+      <p className="tabular-nums">理论 CSS px：总高 {fixture.total}，文档 {heights.map(cssPixels).join(" / ") || "无"}</p>
+      {measured && (
+        <p className="tabular-nums">
+          实测 CSS px：总高 {measured.total}，文档 {measured.heights.join(" / ") || "无"}
+          {measured.title !== undefined && `，标题栏 ${measured.title}，分隔线 ${measured.divider}`}
+          {measured.hit && `，命中区 ${measured.hit.height}（向上 ${measured.hit.above}，向下 ${measured.hit.below}）`}
+        </p>
+      )}
     </div>
   );
 }

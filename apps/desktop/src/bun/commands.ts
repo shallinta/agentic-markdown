@@ -61,6 +61,9 @@ export function executeCommandInBun(
         window.maximize();
       }
       return;
+    case "toggleMainWindowFullScreen":
+      window.setFullScreen(!window.isFullScreen());
+      return;
     case "openLink": {
       let url: URL;
       try {

@@ -99,6 +99,8 @@ test("main window palette omits inline reading and retains normal document comma
   expect(markup).not.toContain("toggleReadingMode");
   expect(markup).not.toContain("readingTheme");
   expect(markup).toContain("选择 Markdown 文件");
+  expect(markup).toContain("切换全屏");
+  expect(markup).not.toContain("toggleMainWindowFullScreen");
 });
 
 test("hides restart command until an update is ready", () => {

@@ -71,6 +71,7 @@ export function CommandPalette({
       return "源码查找";
     if (isFormatCommand(type)) return PRODUCT_COMMANDS[type]!.label;
     if (
+      type === "toggleMainWindowFullScreen" ||
       type === "readingThemePaper" ||
       type === "readingThemeInk" ||
       type === "openReadingSnapshot" ||

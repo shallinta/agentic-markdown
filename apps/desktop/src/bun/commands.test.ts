@@ -42,6 +42,19 @@ function createDependencies(openedUrls: string[]) {
   };
 }
 
+test("main-window fullscreen command toggles the supplied window and rejects extra arguments", () => {
+  let fullscreen = false;
+  const setFullScreen = mock((next: boolean) => { fullscreen = next; });
+  const window = { isFullScreen: () => fullscreen, setFullScreen };
+  const dependencies = createDependencies([]);
+  executeCommandInBun({ type: "toggleMainWindowFullScreen", args: {} }, window as never, dependencies);
+  expect(fullscreen).toBe(true);
+  executeCommandInBun({ type: "toggleMainWindowFullScreen", args: {} }, window as never, dependencies);
+  expect(fullscreen).toBe(false);
+  executeCommandInBun({ type: "toggleMainWindowFullScreen", args: { target: "reader" } }, window as never, dependencies);
+  expect(setFullScreen).toHaveBeenCalledTimes(2);
+});
+
 test("reload and update commands never bypass lifecycle approval", () => {
   const dependencies = createDependencies([]);
   const nativeApply = mock(() => Promise.resolve());

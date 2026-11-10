@@ -98,6 +98,7 @@ export type Command =
   | GenericCommand<"moveCurrentTabRight">
   | GenericCommand<"unpinCurrentTab">
   | GenericCommand<"cycleRecentTabs">
+  | GenericCommand<"toggleMainWindowFullScreen">
   | OpenSettingsCommand
   | OpenCommandPaletteCommand
   | ToggleSidebarCommand
@@ -297,6 +298,7 @@ export const COMMAND_META: Record<
   resetZoom: { target: "bun" },
   reload: { target: "bun" },
   toggleMaximized: { target: "bun" },
+  toggleMainWindowFullScreen: { target: "bun" },
   openLink: { target: "bun" },
   checkForUpdates: { target: "bun" },
   applyUpdateAndRestart: { target: "bun" },
@@ -313,6 +315,7 @@ export const PRODUCT_COMMANDS: Partial<
     }
   >
 > = {
+  toggleMainWindowFullScreen: { label: "切换全屏" },
   toggleHeadingFold: { label: "折叠/展开当前标题章节", shortcut: "⌘⌥F" },
   toggleCodeFold: { label: "折叠/展开当前代码块" },
   toggleFrontmatterFold: { label: "折叠/展开 YAML Frontmatter" },

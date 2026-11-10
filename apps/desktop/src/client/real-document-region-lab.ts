@@ -109,3 +109,35 @@ export function canMoveRealRegionDocument(
 ) {
   return moveRealRegionDocument(controller, allocation, target).ok;
 }
+
+/** Move the slot and its owned height together, without activating either document. */
+export function reorderRealRegionDocuments(
+  controller: Controller,
+  allocation: RealRegionAllocation,
+  sourceId: string,
+  targetId: string,
+  placement: "before" | "after"
+): { ok: true; allocation: RealRegionAllocation } | { ok: false; reason: Rejection } {
+  const before = controller.getSnapshot();
+  if (!before.snapshot || controller.isEditorInputBlocked() || controller.hasSaves() ||
+      !controller.canSelectFolder() || controller.getSnapshot() !== before)
+    return { ok: false, reason: "blocked" };
+  if (before.tabs.length > 3) return { ok: false, reason: "lab-limit" };
+  const current = reconcileRealRegionAllocation(before.tabs, allocation);
+  // A stale placement must not also reconcile a closed slot as a side effect.
+  if (current !== allocation || (placement !== "before" && placement !== "after"))
+    return { ok: false, reason: "invalid" };
+  const source = allocation.ids.indexOf(sourceId);
+  const target = allocation.ids.indexOf(targetId);
+  if (source < 0 || target < 0) return { ok: false, reason: "invalid" };
+  if (source === target) return { ok: true, allocation };
+  const ids = allocation.ids.slice();
+  const heights = allocation.heights.slice();
+  const [id] = ids.splice(source, 1);
+  const [height] = heights.splice(source, 1);
+  const destination = ids.indexOf(targetId) + (placement === "after" ? 1 : 0);
+  if (destination === source) return { ok: true, allocation };
+  ids.splice(destination, 0, id);
+  heights.splice(destination, 0, height);
+  return { ok: true, allocation: { ids, heights, totalHeight: allocation.totalHeight } };
+}

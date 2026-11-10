@@ -146,6 +146,8 @@ alpha.318 隔离副区分隔线可鼠标拖动，也可聚焦后用上下方向�
 
 alpha.319 隔离副区可用 ⌘⇧M 切换活动文档模式，⌘F 打开活动源码文档的查找。各篇保持自己的模式和查询，移回主区仍可继续查找。见[F-035m 迭代](iterations/F-035m-real-secondary-mode-search-ownership.md)。
 
+alpha.320 隔离副区可拖动文件名在副区内排序；聚焦标题后也可用 Option+↑/↓。文档带着自己的高度，活动文档和草稿保持。见[F-035n 迭代](iterations/F-035n-real-secondary-document-reorder.md)。
+
 ## 崩溃草稿恢复（F-066）
 
 F-066a 已验证合成草稿的日志写入、检查点整理和重启读回。此轮沿用 alpha.257，现有 App 尚未写入真实草稿，也未提供恢复入口。见[F-066a 迭代](iterations/F-066a-recovery-journal-probe.md)。

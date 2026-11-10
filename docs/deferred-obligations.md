@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-035n 真实副区标题栏排序（2026-11-11）
+
+隔离 WK 已验鼠标、键盘、无效放置、高度及焦点。OBL-052 的跨区拖放、正式副区和自然中文候选继续跟踪，最终离线留人工。见[F-035n 迭代](iterations/F-035n-real-secondary-document-reorder.md)。
+
 ## F-035m 真实副区模式与查找（2026-11-11）
 
 隔离 WK 已验双源码视图与编辑主区的模式、查找、移区和保存归属。OBL-052 的正式入口与自然中文候选仍开放，最终离线留人工。见[F-035m 迭代](iterations/F-035m-real-secondary-mode-search-ownership.md)。

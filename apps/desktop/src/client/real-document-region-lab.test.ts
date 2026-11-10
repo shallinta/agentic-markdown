@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { createDocumentController } from "./documents";
 import { createDualActiveEditorLab } from "./dual-readonly-editor-lab";
 import { rawText } from "./raw-buffer";
-import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, type RealRegionAllocation } from "./real-document-region-lab";
+import { canMoveRealRegionDocument, moveRealRegionDocument, projectRealRegionDocuments, reconcileRealRegionAllocation, reorderRealRegionDocuments, type RealRegionAllocation } from "./real-document-region-lab";
 
 const empty = (totalHeight = 320): RealRegionAllocation => ({ ids: [], heights: [], totalHeight });
 
@@ -100,4 +100,39 @@ test("move guards reject invalid geometry and barriers without changing allocati
     await c.closeActive();
     expect(moved(c, first, "main")).toEqual(empty());
   } finally { f.dispose(); }
+});
+
+test("secondary reorder carries asymmetric heights without activating or changing drafts", async () => {
+  const { controller: c, documents: [a, b, d] } = await threeDocuments();
+  try {
+    c.activateTab(a.documentId);
+    const state = c.getEditor(a.documentId)!.state;
+    c.updateEditor(a.documentId, state.update({ changes: { from: 0, insert: "main draft" } }));
+    const before = c.getSnapshot();
+    const editors = [a, b, d].map(doc => c.getEditor(doc.documentId));
+    const original: RealRegionAllocation = Object.freeze({ ids: Object.freeze([b.documentId, d.documentId]), heights: Object.freeze([100, 220]), totalHeight: 320 });
+    const reordered = reorderRealRegionDocuments(c, original, d.documentId, b.documentId, "before");
+    expect(reordered.ok).toBe(true);
+    if (!reordered.ok) throw Error(reordered.reason);
+    expect(reordered.allocation).toEqual({ ids: [d.documentId, b.documentId], heights: [220, 100], totalHeight: 320 });
+    expect(c.getSnapshot()).toBe(before);
+    for (const [index, doc] of [a, b, d].entries()) expect(c.getEditor(doc.documentId)).toBe(editors[index]);
+    const restored = reorderRealRegionDocuments(c, reordered.allocation, d.documentId, b.documentId, "after");
+    expect(restored).toEqual({ ok: true, allocation: original });
+    const noop = reorderRealRegionDocuments(c, original, b.documentId, d.documentId, "before");
+    expect(noop.ok && noop.allocation === original).toBe(true);
+    expect(reorderRealRegionDocuments(c, original, a.documentId, b.documentId, "after")).toEqual({ ok: false, reason: "invalid" });
+    expect(reorderRealRegionDocuments(c, original, b.documentId, "absent", "after")).toEqual({ ok: false, reason: "invalid" });
+    const composition = c.registerEditorInteraction(a.documentId, () => false);
+    expect(reorderRealRegionDocuments(c, original, b.documentId, d.documentId, "after")).toEqual({ ok: false, reason: "blocked" });
+    composition.release();
+    c.beginDiscard();
+    expect(reorderRealRegionDocuments(c, original, b.documentId, d.documentId, "after")).toEqual({ ok: false, reason: "blocked" });
+    c.endDiscard();
+    expect(reorderRealRegionDocuments({ ...c, hasSaves: () => true }, original, b.documentId, d.documentId, "after")).toEqual({ ok: false, reason: "blocked" });
+    await c.closeTab(d.documentId);
+    expect(reorderRealRegionDocuments(c, original, b.documentId, d.documentId, "after")).toEqual({ ok: false, reason: "invalid" });
+    expect(original.ids).toEqual([b.documentId, d.documentId]);
+    expect(original.heights).toEqual([100, 220]);
+  } finally { c.dispose(); }
 });

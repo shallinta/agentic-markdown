@@ -36,6 +36,7 @@ import {
   type ContentSearchLocation,
 } from "./content-search-location";
 import { createDocumentObservation } from "./document-observation";
+import { editingImageField, editingImagesEffect } from "./editing-images";
 import {
   editorFaultSession,
   type EditorFaultSession,
@@ -818,13 +819,18 @@ export function createDocumentController(
       for (const id of [previousId, nextId]) {
         const editor = id && editors.get(id);
         if (!id || !editor) continue;
+        const effects = id === nextId
+          ? resumeEditorParser(editor.state)
+          : [
+              ...pauseEditorParser(true),
+              ...(editor.state.field(editingImageField, false)?.base.size
+                ? [editingImagesEffect.of({ reset: true, items: [] })]
+                : []),
+            ];
         editors.set(id, {
           ...editor,
           state: editor.state.update({
-            effects:
-              id === nextId
-                ? resumeEditorParser(editor.state)
-                : pauseEditorParser(true),
+            effects,
             annotations: Transaction.addToHistory.of(false),
           }).state,
         });

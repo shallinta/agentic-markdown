@@ -7,6 +7,7 @@ import {
   ensureSyntaxTree,
   syntaxTreeAvailable,
   unfoldEffect,
+  foldEffect,
 } from "@codemirror/language";
 import { Transaction, type TransactionSpec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -26,6 +27,8 @@ import {
   isDocumentResponse,
   type DocumentTransport,
 } from "./documents";
+import { createEditingImagePool } from "./editing-image-pool";
+import { editingImageField, editingImagesEffect } from "./editing-images";
 import { reportEditorFault } from "./editor-fault";
 import { currentTypedFold, editorFoldEntries } from "./editor-fold-state";
 import { prepareEditorViewState } from "./editor-view-sync";
@@ -42,6 +45,7 @@ import {
   codeToggleTransaction,
 } from "./heading-folding";
 import { headingStructureSteps } from "./heading-structure";
+import { summarizeImages } from "./image-summary";
 import { rawText } from "./raw-buffer";
 
 test("Emoji completion uses actual controller dirty/history and refuses stale readonly apply", async () => {
@@ -255,6 +259,56 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
     controller: createDocumentController(transport, confirmDiscard),
   };
 }
+
+test("inactive controller slots release image widgets while retaining text history selection and folds", async () => {
+  const { controller, transport, value: first } = setup();
+  const raw = "before\n\n![a](a.png)\n\n# Heading\nbody\nend";
+  first.text = raw; first.byteLength = Buffer.byteLength(raw); first.fidelity = analyzeTextFidelity(raw);
+  const second = snapshot("second");
+  const pool = createEditingImagePool(first.handle, () => Promise.resolve(null));
+  try {
+    await controller.select();
+    let editor = controller.getEditor(first.documentId)!;
+    controller.updateEditor(first.documentId, editor.state.update({ changes: { from: raw.length, insert: " draft" } }));
+    editor = controller.getEditor(first.documentId)!;
+    const summary = summarizeImages(editor.state.field(rawText));
+    const oldItem = { semantic: summary.images[0], source: summary.sources[0], pool, valid: () => true };
+    controller.updateEditor(first.documentId, editor.state.update({
+      selection: { anchor: 1 },
+      effects: [editingImagesEffect.of({ reset: true, items: [oldItem] }), foldEffect.of({ from: raw.indexOf("body"), to: editor.state.doc.length })],
+      annotations: Transaction.addToHistory.of(false),
+    }));
+    editor = controller.getEditor(first.documentId)!;
+    expect(editor.state.field(editingImageField).base.size).toBe(1);
+    expect(foldedRanges(editor.state).size).toBe(1);
+    const depth = undoDepth(editor.state), revision = editor.revision;
+    const late = editor.state.update({ effects: editingImagesEffect.of({ reset: true, items: [oldItem] }) });
+    controller.setScrollPosition(first.documentId, 123);
+    transport.selectDocument = request => Promise.resolve(result(request, second));
+    await controller.select();
+    const inactive = controller.getEditor(first.documentId)!;
+    expect(inactive.state.field(editingImageField).base.size).toBe(0);
+    expect(inactive.state.field(editingImageField).shown.size).toBe(0);
+    expect(inactive.state.field(rawText)).toBe(raw + " draft");
+    expect(inactive.revision).toBe(revision);
+    expect(undoDepth(inactive.state)).toBe(depth);
+    expect(inactive.state.selection.main.anchor).toBe(1);
+    expect(foldedRanges(inactive.state).size).toBe(1);
+    expect(controller.getMode(first.documentId)).toBe("editing");
+    expect(controller.getScrollPosition(first.documentId)).toBe(123);
+    expect(controller.updateEditor(first.documentId, late)).toBe(false);
+    controller.activateTab(first.documentId);
+    const active = controller.getEditor(first.documentId)!;
+    expect(active.state.field(editingImageField).base.size).toBe(0);
+    expect(controller.updateEditor(first.documentId, late)).toBe(false);
+    const rebuilt = { ...oldItem, valid: () => true };
+    expect(controller.updateEditor(first.documentId, active.state.update({ effects: editingImagesEffect.of({ reset: true, items: [rebuilt] }) }))).toBe(true);
+    expect(controller.getEditor(first.documentId)!.state.field(editingImageField).base.size).toBe(1);
+    expect(controller.getEditor(second.documentId)!.state.field(editingImageField).base.size).toBe(0);
+    expect(controller.runHistory("undo")).toBe(true);
+    expect(controller.getEditor(first.documentId)!.state.field(rawText)).toBe(raw);
+  } finally { controller.dispose(); pool.dispose(); }
+});
 
 test("clean primary capture follows visual order and modes without bodies, and selection stays current", async () => {
   const { controller, transport, value: a } = setup();

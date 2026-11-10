@@ -5,8 +5,8 @@ import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
 import type { ReaderImageReceiver } from "../client/reader-image-receiver";
 import { isOwnedReadingCode } from "../client/reading-code-ownership";
-import { isOwnedReadingFoldBlock, isOwnedReadingFoldButton, type ReadingHeadingFolds } from "../client/reading-heading-folds";
-import { readingHeadingSections, type ReadingHeadingProjection, type ReadingRootBlock } from "../client/reading-heading-structure";
+import { isOwnedReadingFoldBlock, isOwnedReadingFoldButton, isOwnedReadingCodeFoldButton, isOwnedReadingCodeFoldBody, type ReadingHeadingFolds } from "../client/reading-heading-folds";
+import { isReadingFence, readingHeadingSections, type ReadingHeadingProjection, type ReadingRootBlock } from "../client/reading-heading-structure";
 import type { ReadingSearchRegistry } from "../client/reading-search-registry";
 import { ReadingCode } from "../components/reading-code";
 import { ReadingHtmlBlock } from "../components/reading-html-block";
@@ -44,6 +44,7 @@ export function commonmarkContent(
   headingProjection?: ReadingHeadingProjection,
   folds?: ReadingHeadingFolds
 ): ReactNode {
+  let foldableCodes: Set<number> | undefined;
   let work = 0;
   let definitionWork = 0;
   let htmlSource = 0;
@@ -332,15 +333,16 @@ export function commonmarkContent(
         );
       case "code":
         // Entry charges the wrapper; reserve its five fixed generated elements.
-        if (work + 5 > 100000 || depth + 2 > 128)
+        if (work + 5 + (folds && depth === 0 && foldableCodes?.has(Number(key)) ? 1 : 0) > 100000 || depth + 2 > 128)
           throw Error("Presentation budget");
-        work += 5;
+        work += 5 + (folds && depth === 0 && foldableCodes?.has(Number(key)) ? 1 : 0);
         return (
           <ReadingCode
             key={key}
             value={node.value}
             language={node.lang}
             current={codeCurrent}
+            fold={folds && depth === 0 && foldableCodes?.has(Number(key)) ? { id: Number(key), controller: folds } : undefined}
           />
         );
       default:
@@ -364,13 +366,15 @@ export function commonmarkContent(
         if (node.type === "definition") continue;
         if (blocks.length >= 100000) throw Error("Presentation budget");
         blocks.push({ id: index, from: (node.position?.start.offset ?? NaN), to: (node.position?.end.offset ?? NaN),
-          ...(node.type === "heading" ? { headingDepth: node.depth } : {}) });
+          ...(node.type === "heading" ? { headingDepth: node.depth } : {}),
+          ...(isReadingFence(node, source) ? { codeFoldable: true as const } : {}) });
       }
       const projected = readingHeadingSections(blocks);
       if (projected) {
         headingProjection.blocks = blocks;
         headingProjection.sections = projected;
         sections = new Set(projected.map((section) => section.headingId));
+        if (folds) foldableCodes = new Set(blocks.filter((block) => block.codeFoldable).map((block) => block.id));
       }
     }
     if (images) collect(tree);
@@ -384,7 +388,7 @@ export function commonmarkContent(
           ref={(element) => {
             if (!element) return;
             const releaseSearch = search?.mount(element, { kind: "block", id: index });
-            const releaseFold = sections?.size ? folds?.registerBlock(index, element) : undefined;
+            const releaseFold = headingProjection?.blocks.length ? folds?.registerBlock(index, element) : undefined;
             return () => { releaseSearch?.(); releaseFold?.(); };
           }}
           className={foldable ? "reading-heading-fold" : undefined}
@@ -623,6 +627,14 @@ function isCodeElement(element: {
     [...element.attributes].map(({ name, value }) => [name, value])
   );
   const kind = attributes.get("class");
+  if (kind === "reading-code-toggle") {
+    return isOwnedReadingCodeFoldButton(element) && element.localName === "button" &&
+      attributes.size === 4 && attributes.get("type") === "button" &&
+      ((attributes.get("aria-expanded") === "true" && attributes.get("aria-label") === "折叠代码") ||
+        (attributes.get("aria-expanded") === "false" && attributes.get("aria-label") === "展开代码"));
+  }
+  if (kind === "reading-code-body" && attributes.get("hidden") === "" && isOwnedReadingCodeFoldBody(element))
+    attributes.delete("hidden");
   const fixed: Record<
     string,
     { tag: string; attributes: Record<string, string> }
@@ -653,19 +665,17 @@ function isCodeElement(element: {
 
 function validCodeStructure(root: Element): boolean {
   const children = [...root.children];
-  if (children.length !== 4 || !children.every(isCodeElement)) return false;
-  if (
-    children.map((child) => child.className).join(" ") !==
-    "reading-code-language reading-code-copy reading-code-body reading-code-status"
-  )
-    return false;
-  if (
-    children[0].childElementCount ||
-    children[1].childElementCount ||
-    children[3].childElementCount
-  )
-    return false;
-  const pre = children[2];
+  const folded = children.length === 5;
+  if ((children.length !== 4 && !folded) || !children.every(isCodeElement)) return false;
+  const expected = folded
+    ? "reading-code-language reading-code-copy reading-code-toggle reading-code-body reading-code-status"
+    : "reading-code-language reading-code-copy reading-code-body reading-code-status";
+  if (children.map((child) => child.className).join(" ") !== expected) return false;
+  if (children[0].childElementCount || children[1].childElementCount || children[children.length - 1].childElementCount) return false;
+  const pre = children[folded ? 3 : 2];
+  if (folded && (!isOwnedReadingCodeFoldBody(pre) || !isOwnedReadingCodeFoldButton(children[2]) ||
+    children[2].childElementCount || children[2].textContent !== "›" ||
+    !root.parentElement || !isOwnedReadingFoldBlock(root.parentElement))) return false;
   return (
     pre.childElementCount === 1 &&
     pre.firstElementChild?.localName === "code" &&

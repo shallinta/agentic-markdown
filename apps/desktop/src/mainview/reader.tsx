@@ -6,7 +6,7 @@ import ReaderWorker from "../client/current-canonical.worker?worker&inline";
 import { readerImageCandidates } from "../client/reader-image-candidate";
 import { createReaderImageReceiver, type ReaderImageReceiver } from "../client/reader-image-receiver";
 import { createReadingHeadingFolds, type ReadingHeadingFolds } from "../client/reading-heading-folds";
-import type { ReadingHeadingProjection } from "../client/reading-heading-structure";
+import { isReadingFence, type ReadingHeadingProjection } from "../client/reading-heading-structure";
 import { firstReadingBlock } from "../client/reading-position";
 import { createReadingSearchRegistry, type ReadingSearchRegistry } from "../client/reading-search-registry";
 import { copyReadingSelection } from "../client/reading-selection-copy";
@@ -144,7 +144,7 @@ function Reader({ content, label, experimental, retainVerifiedArticle, searchReg
     const scrollTop = scroller?.scrollTop ?? 0;
     const viewportTop = () => Math.max(0, themeControls.current?.getBoundingClientRect().bottom ?? 0);
     const top = viewportTop();
-    const visible = folds?.presentation().visible;
+    const visible = folds?.themeVisible();
     const blocks = article.current?.children;
     const blockAt = (index: number) => visible ? visible[index] : blocks?.item(index);
     const block = blockAt(firstReadingBlock(visible?.length ?? blocks?.length ?? 0, (index) =>
@@ -235,7 +235,7 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
       : undefined;
     if (!snapshotImages) imageReceiver?.close();
     const headingProjection: ReadingHeadingProjection | undefined =
-      searchRegistry && result.tree.children.some((node) => node.type === "heading")
+      searchRegistry && result.tree.children.some((node) => node.type === "heading" || isReadingFence(node, source.text))
         ? { blocks: [], sections: [] }
         : undefined;
     const folds = headingProjection && searchRegistry
@@ -251,7 +251,7 @@ function renderReadingContent(root: Root, source: typeof fixture, label: string,
         retainVerifiedArticle={retainVerifiedArticle}
         searchRegistry={searchRegistry}
         current={current}
-        folds={headingProjection?.sections.length ? folds : undefined}
+        folds={headingProjection?.sections.length || headingProjection?.blocks.some((block) => block.codeFoldable) ? folds : undefined}
       />
     );
   });

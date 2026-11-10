@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   createReadingCodeCopy,
@@ -6,18 +6,45 @@ import {
   type CodeCopyStatus,
 } from "../client/reading-code-copy";
 import { retainReadingCode } from "../client/reading-code-ownership";
+import type { ReadingHeadingFolds } from "../client/reading-heading-folds";
+
+function codeLines(value: string) {
+  if (!value.length) return 0;
+  let lines = 1;
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === "\r") {
+      lines++;
+      if (value[index + 1] === "\n") index++;
+    } else if (value[index] === "\n") lines++;
+  }
+  return lines;
+}
 
 export function ReadingCode({
   value,
   language,
   current,
+  fold,
 }: {
   value: string;
   language?: string | null;
   current?: () => boolean;
+  fold?: {
+    id: number;
+    controller: Pick<ReadingHeadingFolds, "registerCodeButton" | "registerCodeBody" | "toggleCode">;
+  };
 }) {
   const active = useRef(false);
   const [status, setStatus] = useState<CodeCopyStatus>("idle");
+  const foldId = fold?.id;
+  const foldController = fold?.controller;
+  const lines = useMemo(() => foldId === undefined ? 0 : codeLines(value), [foldId, value]);
+  const registerFoldButton = useCallback((element: HTMLButtonElement | null) => {
+    if (element && foldId !== undefined) return foldController?.registerCodeButton(foldId, element, lines);
+  }, [foldController, foldId, lines]);
+  const registerFoldBody = useCallback((element: HTMLPreElement | null) => {
+    if (element && foldId !== undefined) return foldController?.registerCodeBody(foldId, element);
+  }, [foldController, foldId]);
   const copy = useMemo(
     () =>
       createReadingCodeCopy(
@@ -42,7 +69,7 @@ export function ReadingCode({
   }, [status, copy]);
   return (
     <div className="reading-code" ref={retainReadingCode}>
-      <span className="reading-code-language">{language || "代码"}</span>
+      <span className="reading-code-language">{language || "代码"}{fold && ` · ${lines} 行`}</span>
       <button
         type="button"
         className="reading-code-copy"
@@ -52,7 +79,19 @@ export function ReadingCode({
       >
         复制
       </button>
-      <pre className="reading-code-body">
+      {fold && (
+        <button
+          ref={registerFoldButton}
+          type="button"
+          className="reading-code-toggle"
+          aria-expanded="true"
+          aria-label="折叠代码"
+          onClick={() => fold.controller.toggleCode(fold.id)}
+        >
+          ›
+        </button>
+      )}
+      <pre className="reading-code-body" ref={fold ? registerFoldBody : undefined}>
         <code>{value}</code>
       </pre>
       <p className="reading-code-status" role="status" aria-live="polite">

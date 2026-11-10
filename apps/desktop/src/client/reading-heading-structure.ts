@@ -4,6 +4,7 @@ export interface ReadingRootBlock {
   from: number;
   to: number;
   headingDepth?: number;
+  codeFoldable?: true;
 }
 export interface ReadingHeadingSection {
   headingBlock: number;
@@ -66,4 +67,15 @@ export function readingHeadingSections(
   }
   while (stack.length) close(blocks.length);
   return sections.filter((section) => section.end > section.bodyStart);
+}
+
+
+/** Only canonical top-level callers use this marker check; indented code starts with spaces. */
+export function isReadingFence(
+  node: { type: string; position?: { start: { offset?: number } } },
+  source: string
+): boolean {
+  const from = node.position?.start.offset;
+  return node.type === "code" && from !== undefined && Number.isSafeInteger(from) && from >= 0 &&
+    (source.startsWith("```", from) || source.startsWith("~~~", from));
 }

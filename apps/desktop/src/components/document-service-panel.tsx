@@ -29,6 +29,7 @@ import {
   runNativeInlineFormat,
 } from "@/client/inline-format-input";
 import { longLineProtection } from "@/client/long-line-protection";
+import { attachMainTabActivationCheckpoint } from "@/client/main-tab-activation-checkpoint";
 import { createQuickOpen } from "@/client/quick-open";
 import type { RasterPasteSource } from "@/client/raster-paste-intent";
 import { captureRasterWorkspaceAuthority, createRasterPasteTransport } from "@/client/raster-paste-workspace";
@@ -45,6 +46,7 @@ import { useSourceWrapping } from "@/hooks/use-source-wrapping";
 import { useWorkspaceRootRoster } from "@/hooks/use-workspace-root-roster";
 import { electrobun } from "@/lib/electrobun";
 import { createNativeDocumentTransport } from "@/lib/native-document-transport";
+import { PACKAGED_VIEW_URL } from "@/security/shell-policy";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
 import type { CreateTarget } from "@/shared/create-markdown";
 import type { FolderRemovalDocument } from "@/shared/folder-removal";
@@ -109,6 +111,25 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
+  useEffect(() => {
+    const flags = globalThis as typeof globalThis & { __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean };
+    if (window.location.href !== PACKAGED_VIEW_URL || flags.__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__) return;
+    const rpc = electrobun.rpc;
+    if (!rpc) return;
+    const tokens = new WeakMap<ReturnType<typeof folders.getSnapshot>, object>();
+    return attachMainTabActivationCheckpoint(controller,
+      (request) => rpc.request.mainTabCheckpoint(request, { maxRequestTime: 4000 }),
+      () => {
+        const workspace = folders.getSnapshot();
+        if (!workspace.roots.length || workspace.busy || workspace.error) return undefined;
+        let token = tokens.get(workspace);
+        if (!token) {
+          token = {};
+          tokens.set(workspace, token);
+        }
+        return token;
+      });
+  }, [controller, folders]);
   const [publishRaster] = useState(() => createRasterPasteTransport({
     getFloor: async () => electrobun.rpc?.request.getRasterPasteSequence({}, { maxRequestTime: 4000 }),
     publish: async request => {

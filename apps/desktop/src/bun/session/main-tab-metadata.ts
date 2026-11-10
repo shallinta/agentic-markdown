@@ -2,11 +2,12 @@ import { extname, join } from "node:path";
 
 import { createSettingsStore } from "@agentic-markdown/shared/server";
 
+import { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
 import { validRootRosterId } from "../../shared/root-roster";
 import { WORKSPACE_MAX_ROOTS } from "../../shared/workspace";
 import { validExpansionPath } from "../workspace/expansion-store";
 
-export const MAIN_TAB_METADATA_MAX_TABS = 64;
+export { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
 export const MAIN_TAB_METADATA_MAX_BYTES = 256 * 1024;
 export interface MainTabMetadata {
   rootId: string;

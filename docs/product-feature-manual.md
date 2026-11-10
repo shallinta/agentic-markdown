@@ -28,7 +28,9 @@
 
 隔离实验已验证标签顺序、固定状态、模式和活动项可以跨进程读回。实验使用合成文件，F-037b 已验证重新授权后的目录标签候选。F-037c 已验证主区在内存中采集已保存标签的状态。F-037d 已验证这些标签确由当前目录授权打开。F-037e 串联了写入、读回和重新授权后的候选匹配。同路径替换的文件不继承旧标签。正式会话恢复入口尚待接入。见[F-037a 迭代](iterations/F-037a-main-tab-session-metadata-probe.md)、[F-037b 迭代](iterations/F-037b-reauthorized-main-tab-candidates.md)、[F-037c 迭代](iterations/F-037c-capture-clean-primary-tabs.md)、[F-037d 迭代](iterations/F-037d-bind-main-tab-session-metadata.md)、[F-037e 迭代](iterations/F-037e-probe-main-tab-session-recovery.md)。
 
-F-037f 已验证私有会话记录在目录授权仍有效时写入。记录不含正文或访问凭据；失效后保留原记录。普通窗口还未开始写入或恢复。见[F-037f 迭代](iterations/F-037f-guarded-main-tab-checkpoint.md)。
+F-037f 已验证私有会话记录在目录授权仍有效时写入。记录不含正文或访问凭据；失效后保留原记录。该片未接普通窗口。见[F-037f 迭代](iterations/F-037f-guarded-main-tab-checkpoint.md)。
+
+alpha.327 在普通窗口打开或切换标签后记录最近一组符合条件的目录标签，包括顺序、固定、模式和活动项。存在未保存内容或独立文件时保留原记录；当前重启不会自动恢复标签。见[F-037g 迭代](iterations/F-037g-record-clean-tabs-after-activation.md)。
 
 ## 主窗原生全屏（F-038a）
 

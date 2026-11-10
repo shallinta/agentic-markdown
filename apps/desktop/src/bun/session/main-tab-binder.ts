@@ -1,22 +1,16 @@
-import { validRootRosterId } from "../../shared/root-roster";
-import { hashPattern } from "../../shared/save-content";
+import {
+  validMainTabSourceTabs,
+  type MainTabSourceInput,
+} from "../../shared/main-tab-checkpoint";
+export type { MainTabSourceInput } from "../../shared/main-tab-checkpoint";
 
 import {
-  MAIN_TAB_METADATA_MAX_TABS,
   MAIN_TAB_METADATA_MAX_BYTES,
   mainTabMetadataSerializedBytes,
   validMainTabSessionMetadata,
   type MainTabSessionMetadata,
 } from "./main-tab-metadata";
 
-export interface MainTabSourceInput {
-  handle: string;
-  documentId: string;
-  revision: number;
-  hash: string;
-  pinned: boolean;
-  mode: "editing" | "source";
-}
 export interface MainTabSourceProof {
   sources: readonly {
     rootHandle: string;
@@ -54,8 +48,7 @@ export function captureMainTabMetadataInput(
   if (
     !object(value) ||
     !exact(value, "activeIndex,tabs") ||
-    !Array.isArray(value.tabs) ||
-    value.tabs.length > MAIN_TAB_METADATA_MAX_TABS
+    !validMainTabSourceTabs(value.tabs)
   )
     return;
   const { activeIndex } = value;
@@ -68,28 +61,8 @@ export function captureMainTabMetadataInput(
         activeIndex >= value.tabs.length
   )
     return;
-  const handles = new Set<string>(),
-    ids = new Set<string>();
   const tabs: MainTabSourceInput[] = [];
-  for (const tab of value.tabs as unknown[]) {
-    if (
-      !object(tab) ||
-      !exact(tab, "documentId,handle,hash,mode,pinned,revision") ||
-      !validRootRosterId(tab.handle) ||
-      !validRootRosterId(tab.documentId) ||
-      typeof tab.revision !== "number" ||
-      !Number.isSafeInteger(tab.revision) ||
-      tab.revision < 1 ||
-      typeof tab.hash !== "string" ||
-      !hashPattern.test(tab.hash) ||
-      typeof tab.pinned !== "boolean" ||
-      (tab.mode !== "editing" && tab.mode !== "source") ||
-      handles.has(tab.handle) ||
-      ids.has(tab.documentId)
-    )
-      return;
-    handles.add(tab.handle);
-    ids.add(tab.documentId);
+  for (const tab of value.tabs) {
     tabs.push({
       handle: tab.handle,
       documentId: tab.documentId,

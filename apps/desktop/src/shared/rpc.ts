@@ -57,6 +57,10 @@ export interface DesktopRPCType {
         params: import("./recent-files").RecentRequest;
         response: import("./recent-files").RecentResponse;
       };
+      mainTabCheckpoint: {
+        params: import("./main-tab-checkpoint").MainTabCheckpointRequest;
+        response: import("./main-tab-checkpoint").MainTabCheckpointResponse;
+      };
       workspaceRootRoster: {
         params: import("./root-roster").RootRosterRequest;
         response: import("./root-roster").RootRosterResponse;

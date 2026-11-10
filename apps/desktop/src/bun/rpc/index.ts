@@ -14,6 +14,7 @@ import type { DesktopRPCType, OpenReadingSnapshotResponse } from "../../shared/r
 import type { SearchLabResponse } from "../../shared/search-lab";
 import { isSourceWrappingRequest } from "../../shared/source-wrapping";
 import type { WorkspaceService } from "../../shared/workspace";
+import type { WorkspaceExpansionResponse } from "../../shared/workspace-expansion";
 import { setCommandAvailabilityInMenu } from "../app/menu";
 import type { LocaleController } from "../i18n/controller";
 import type { UpdaterService } from "../updates";
@@ -45,6 +46,7 @@ export interface MainWindowRPCDependencies {
     ): Promise<import("../../shared/documents").DocumentResponse>;
   };
   workspaceRootRoster?: (input: unknown) => Promise<import("../../shared/root-roster").RootRosterResponse>;
+  workspaceExpansion?: (input: unknown) => Promise<WorkspaceExpansionResponse>;
   sourceWrapping?: {
     get(): Promise<boolean>;
     set(enabled: boolean): Promise<void>;
@@ -68,6 +70,7 @@ export function createMainWindowRPC({
   documentMRU,
   recentFiles,
   workspaceRootRoster,
+  workspaceExpansion,
   sidebar,
   sourceWrapping,
   workspace,
@@ -106,6 +109,12 @@ export function createMainWindowRPC({
                 reason: "io" as const,
               }),
         workspaceRootRoster: input => workspaceRootRoster?.(input) ?? Promise.resolve({ protocolVersion: 1 as const, pending: [], readOnly: true, failure: "io" as const }),
+        workspaceExpansion: (input) =>
+          workspaceExpansion?.(input) ?? {
+            protocolVersion: 1,
+            ok: false,
+            error: "unavailable",
+          },
         reopenRecentFile: (input) =>
           recentFiles
             ? recentFiles.reopen(input)

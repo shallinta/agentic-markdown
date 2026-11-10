@@ -1342,9 +1342,7 @@ export function createDocumentController(
         !recentTabSwitch && canLeaveEditor();
     },
     canMoveTab(documentId: string, targetId: string): boolean {
-      return controller.canReorderTabs() && documentId !== targetId &&
-        state.tabs.some(tab => tab.documentId === documentId) &&
-        state.tabs.some(tab => tab.documentId === targetId) &&
+      return controller.canDropTab(documentId, targetId) &&
         pinnedTabs.has(documentId) === pinnedTabs.has(targetId);
     },
     moveTab(documentId: string, targetId: string, placement: "before" | "after"): boolean {
@@ -1357,6 +1355,39 @@ export function createDocumentController(
       if (next.every((id, index) => id === old[index])) return false;
       let index = 0;
       visualOrder = base.map(id => pinnedTabs.has(id) === group ? next[index++] : id);
+      state = { ...state };
+      listeners.forEach(listener => listener());
+      return true;
+    },
+    canDropTab(documentId: string, targetId: string): boolean {
+      return controller.canReorderTabs() && documentId !== targetId &&
+        state.tabs.some(tab => tab.documentId === documentId) &&
+        state.tabs.some(tab => tab.documentId === targetId);
+    },
+    dropTab(documentId: string, targetId: string, placement: "before" | "after"): boolean {
+      if (!controller.canDropTab(documentId, targetId)) return false;
+      if (pinnedTabs.has(documentId) === pinnedTabs.has(targetId))
+        return controller.moveTab(documentId, targetId, placement);
+      const next = (visualOrder ?? state.tabs.map(tab => tab.documentId)).filter(id => id !== documentId);
+      next.splice(next.indexOf(targetId) + (placement === "after" ? 1 : 0), 0, documentId);
+      if (pinnedTabs.has(targetId)) pinnedTabs.add(documentId);
+      else pinnedTabs.delete(documentId);
+      visualOrder = next;
+      state = { ...state };
+      listeners.forEach(listener => listener());
+      return true;
+    },
+    canDropTabToEmptyGroup(documentId: string, pinned: boolean): boolean {
+      return controller.canReorderTabs() &&
+        state.tabs.some(tab => tab.documentId === documentId) &&
+        !state.tabs.some(tab => pinnedTabs.has(tab.documentId) === pinned);
+    },
+    dropTabToEmptyGroup(documentId: string, pinned: boolean): boolean {
+      if (!controller.canDropTabToEmptyGroup(documentId, pinned)) return false;
+      const next = (visualOrder ?? state.tabs.map(tab => tab.documentId)).filter(id => id !== documentId);
+      if (pinned) { pinnedTabs.add(documentId); next.unshift(documentId); }
+      else { pinnedTabs.delete(documentId); next.push(documentId); }
+      visualOrder = next;
       state = { ...state };
       listeners.forEach(listener => listener());
       return true;

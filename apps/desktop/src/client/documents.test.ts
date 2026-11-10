@@ -407,6 +407,69 @@ test("group sorting preserves active editor/MRU and reconciles open, refresh, cl
   controller.dispose();
 });
 
+test("cross-group drop publishes only final pin/order and preserves editor, activation and MRU", async () => {
+  const { controller, transport, value: a } = setup(() => Promise.resolve(true));
+  const b = snapshot("B"), c = snapshot("C"), d = snapshot("D");
+  await controller.select();
+  for (const tab of [b, c, d]) {
+    transport.selectDocument = request => Promise.resolve(result(request, tab));
+    await controller.select();
+  }
+  controller.activateTab(a.documentId); controller.setActiveTabPinned(true);
+  controller.activateTab(d.documentId);
+  const editor = controller.getEditor(d.documentId)!;
+  controller.updateEditor(d.documentId, editor.state.update({ changes: { from: 0, insert: "草稿" }, selection: { anchor: 1 } }));
+  const original = controller.getSnapshot(), edited = controller.getEditor(d.documentId);
+  const events: { ids: string[]; pinned: boolean }[] = [];
+  let activations = 0;
+  const stop = controller.subscribe(() => { events.push({ ids: controller.getVisualTabs().map(tab => tab.documentId), pinned: controller.isTabPinned(c.documentId) }); });
+  const stopActivation = controller.subscribeActivation(() => { activations++; });
+  expect(controller.dropTab(c.documentId, a.documentId, "before")).toBe(true);
+  expect(events).toEqual([{ ids: [c, a, b, d].map(tab => tab.documentId), pinned: true }]);
+  expect(controller.getSnapshot().snapshot).toBe(original.snapshot);
+  expect(controller.getSnapshot().tabs).toBe(original.tabs);
+  expect(controller.getEditor(d.documentId)).toBe(edited); expect(activations).toBe(0);
+  expect(controller.cycleRecentTabs()).toBe(true); expect(controller.getRecentTabCandidate()).toBe(a.documentId);
+  expect(controller.dropTab(c.documentId, b.documentId, "after")).toBe(false);
+  controller.cancelRecentTabSwitch();
+  expect(controller.dropTab(c.documentId, b.documentId, "after")).toBe(true);
+  expect(events[events.length - 1]).toEqual({ ids: [a, b, c, d].map(tab => tab.documentId), pinned: false });
+  expect(events).toHaveLength(2);
+  expect(controller.dropTab(c.documentId, c.documentId, "before")).toBe(false);
+  controller.setInteractionCheck(() => false);
+  expect(controller.dropTab(b.documentId, a.documentId, "after")).toBe(false);
+  controller.setInteractionCheck(() => true);
+  controller.activateTab(b.documentId); await controller.closeActive();
+  expect(controller.getSnapshot().snapshot?.documentId).toBe(c.documentId);
+  expect(controller.dropTab(c.documentId, b.documentId, "after")).toBe(false);
+  const e = snapshot("E"); transport.selectDocument = request => Promise.resolve(result(request, e)); await controller.select();
+  expect(controller.getVisualTabs().map(tab => tab.documentId)).toEqual([a, c, d, e].map(tab => tab.documentId));
+  stop(); stopActivation(); controller.dispose();
+});
+
+test("two-tab cross-group sequence handles both empty groups and last-member migration", async () => {
+  const { controller, transport, value: a } = setup(); const b = snapshot("B");
+  await controller.select(); transport.selectDocument = request => Promise.resolve(result(request, b)); await controller.select();
+  controller.activateTab(a.documentId); controller.setActiveTabPinned(true);
+  const active = controller.getSnapshot().snapshot;
+  expect(controller.dropTab(b.documentId, a.documentId, "before")).toBe(true);
+  expect(controller.canDropTabToEmptyGroup(a.documentId, false)).toBe(true);
+  expect(controller.dropTabToEmptyGroup(a.documentId, false)).toBe(true);
+  expect(controller.dropTab(b.documentId, a.documentId, "after")).toBe(true);
+  expect(controller.canDropTabToEmptyGroup(b.documentId, true)).toBe(true);
+  expect(controller.dropTabToEmptyGroup(b.documentId, true)).toBe(true);
+  expect(controller.getVisualTabs().map(tab => tab.documentId)).toEqual([b.documentId, a.documentId]);
+  expect(controller.isTabPinned(a.documentId)).toBe(false); expect(controller.isTabPinned(b.documentId)).toBe(true);
+  expect(controller.getSnapshot().snapshot).toBe(active);
+  expect(controller.dropTabToEmptyGroup(a.documentId, true)).toBe(false);
+  expect(controller.dropTabToEmptyGroup("missing", false)).toBe(false);
+  // Existing keyboard composition can attain the same placement without crossing in the group-move command.
+  controller.activateTab(a.documentId); expect(controller.setActiveTabPinned(true)).toBe(true);
+  expect(controller.moveActiveTab(-1)).toBe(true);
+  expect(controller.getVisualTabs().map(tab => tab.documentId)).toEqual([a.documentId, b.documentId]);
+  controller.dispose();
+});
+
 test("pinned tabs keep original order and editor state, and explicit close follows the visual order", async () => {
   let discard = false;
   const { controller, transport, value: first, released } = setup(() =>

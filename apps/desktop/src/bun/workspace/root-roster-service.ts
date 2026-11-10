@@ -10,7 +10,8 @@ export function createRootRosterService(
   settingsDir: string,
   suspended: () => boolean,
   notify: () => void,
-  generation: () => number = () => 0
+  generation: () => number = () => 0,
+  onDurableChange?: () => void
 ) {
   const roster = createRootRoster(settingsDir);
   const changed = () => {
@@ -20,7 +21,28 @@ export function createRootRosterService(
       /* Notifications never undo committed workspace operations. */
     }
   };
+  const durableChanged = () => {
+    try {
+      onDurableChange?.();
+    } catch {
+      /* Optional maintenance never undoes committed workspace metadata. */
+    }
+  };
+  async function expansionConfirmation<T extends { current(): boolean }>(
+    read: () => Promise<T | undefined>
+  ) {
+    const ticket = generation();
+    const current = () => !suspended() && generation() === ticket;
+    if (!current()) return;
+    const proof = await read();
+    if (!proof?.current() || !current()) return;
+    return { ...proof, current: () => current() && proof.current() };
+  }
   return {
+    confirmExpansionIdentity: (path: string) =>
+      expansionConfirmation(() => roster.confirmExpansionIdentity(path)),
+    confirmExpansionRoster: () =>
+      expansionConfirmation(() => roster.confirmExpansionRoster()),
     committed(
       event: Readonly<{
         paths: readonly string[];
@@ -31,7 +53,10 @@ export function createRootRosterService(
       const operation = event.explicitClear
         ? roster.clearExplicit()
         : roster.reconcile(event.paths, event.selectedPath);
-      void operation.then(changed);
+      void operation.then((result) => {
+        if (result.committed) durableChanged();
+        changed();
+      });
     },
     async request(input: unknown): Promise<RootRosterResponse> {
       if (!validRootRosterRequest(input))
@@ -50,6 +75,7 @@ export function createRootRosterService(
               () => !suspended() && ticket === generation()
             )
           : await roster.read();
+      if (result.committed) durableChanged();
       return {
         protocolVersion: 1,
         pending: result.state.pending,

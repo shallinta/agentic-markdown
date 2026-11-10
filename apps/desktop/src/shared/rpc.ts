@@ -61,6 +61,10 @@ export interface DesktopRPCType {
         params: import("./root-roster").RootRosterRequest;
         response: import("./root-roster").RootRosterResponse;
       };
+      workspaceExpansion: {
+        params: import("./workspace-expansion").WorkspaceExpansionRequest;
+        response: import("./workspace-expansion").WorkspaceExpansionResponse;
+      };
       reopenRecentFile: {
         params: DocumentRequest & { id: string };
         response: DocumentResponse;

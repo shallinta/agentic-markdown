@@ -91,6 +91,7 @@ import { createFolderService, type FolderLease } from "./create-folder";
 import type { FolderNative } from "./create-folder-disk";
 import { createMarkdownService, type CreationNative, type CreationTarget, type CreationLease } from "./create-markdown";
 import { createDirectoryRegistry } from "./created-directories";
+import { EXPANSION_MAX_DIRS_PER_ROOT, validExpansionPath } from "./expansion-store";
 import { createFolderRemoval } from "./folder-removal";
 import type { HiddenPreferences } from "./preferences";
 import type { HiddenRemoval } from "./preferences";
@@ -134,6 +135,13 @@ interface Owner extends DocumentScope {
 }
 export type { ContentSearchFileProgress } from "../../shared/content-search";
 type ContentSearchFileObserver = (update: ContentSearchFileProgress) => void;
+
+export interface WorkspaceExpansionCapture {
+  readonly path: string;
+  readonly relativePath?: string;
+  current(): boolean;
+  project(expanded: readonly string[]): string[] | undefined;
+}
 
 type IndexScopeError = "CANCELLED" | "BUSY" | "STALE" | "NOT_READY" | "UNAVAILABLE" | "LIMIT";
 interface IndexScopeFailure { ok: false; error: IndexScopeError }
@@ -211,6 +219,11 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   rootMutationsSuspended(): boolean;
   rootMutationGeneration(): number;
   suspendRootMutations(): () => void;
+  captureExpansion(
+    rootHandle: string,
+    generation: number,
+    directoryHandle?: string
+  ): WorkspaceExpansionCapture | undefined;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   duplicateMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
@@ -2359,6 +2372,53 @@ export function createWorkspaceService({
     trashLifecycle:trash,
     rootMutationsSuspended: () => disposed || rootMutationSuspensions > 0,
     rootMutationGeneration: () => rootSelectionEpoch,
+    captureExpansion(rootHandle, generation, directoryHandle) {
+      const root = roots.find((item) => item.meta.handle === rootHandle);
+      if (root?.meta.generation !== generation) return;
+      const path = root.authorization.path;
+      const capturedEpoch = rootSelectionEpoch;
+      const node =
+        directoryHandle === undefined
+          ? undefined
+          : root.nodes.find((item) => item.handle === directoryHandle);
+      const currentDirectory = (item: WorkspaceNode) =>
+        item.kind === "directory" &&
+        root.byPath.get(item.displayPath) === item &&
+        visiblePath(path, item.displayPath, root.meta.showHidden);
+      const relativePath = node && relative(path, node.displayPath);
+      if (
+        directoryHandle !== undefined &&
+        (!node || !currentDirectory(node) || !validExpansionPath(relativePath))
+      )
+        return;
+      const current = () =>
+        !disposed &&
+        !indexDisposing &&
+        !rootMutationSuspensions &&
+        capturedEpoch === rootSelectionEpoch &&
+        root.live &&
+        roots.includes(root) &&
+        root.meta.generation === generation &&
+        (!node || currentDirectory(node));
+      if (!current()) return;
+      return {
+        path,
+        relativePath,
+        current,
+        project(expanded) {
+          if (!current() || expanded.length > EXPANSION_MAX_DIRS_PER_ROOT)
+            return;
+          const handles: string[] = [];
+          for (const saved of expanded) {
+            if (!validExpansionPath(saved)) continue;
+            // A lookup in the visible scan only. Saved paths never reach FS calls.
+            const item = root.byPath.get(join(path, saved));
+            if (item && currentDirectory(item)) handles.push(item.handle);
+          }
+          return handles;
+        },
+      };
+    },
     suspendRootMutations() {
       rootMutationSuspensions++;
       rootSelectionEpoch++;

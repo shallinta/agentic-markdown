@@ -14,6 +14,10 @@ import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { Command } from "../../shared/commands";
 import { isReloadCommitResponse } from "../../shared/discard";
 import { MRU_EXIT_MS } from "../../shared/document-mru";
+import {
+  validWorkspaceExpansionRequest,
+  type WorkspaceExpansionResponse,
+} from "../../shared/workspace-expansion";
 import { executeCommandInBun } from "../commands";
 import { createDocumentMRU } from "../document-mru";
 import { createMRUService } from "../document-mru-service";
@@ -29,6 +33,8 @@ import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { createContentSearchRPC } from "../rpc/content-search";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
+import { createExpansionService } from "../workspace/expansion-service";
+import { createExpansionStore } from "../workspace/expansion-store";
 import { createHiddenPreferences } from "../workspace/preferences";
 import { createRootRosterService } from "../workspace/root-roster-service";
 
@@ -96,12 +102,55 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     documents,
     contentSearchStrategy: "direct",
   });
+  const expansionStore = createExpansionStore(getSettingsDir());
   const rootRoster = createRootRosterService(
     getSettingsDir(),
     () => workspace.rootMutationsSuspended(),
     () => rpc?.send.workspaceRootRosterChanged({}),
-    () => workspace.rootMutationGeneration()
+    () => workspace.rootMutationGeneration(),
+    () => {
+      void pruneExpansion().catch(() => undefined);
+    }
   );
+  const expansion = createExpansionService({
+    workspace,
+    roster: rootRoster,
+    store: expansionStore,
+  });
+  let expansionAdmissionSuspensions = 0;
+  let expansionWriteCount = 0;
+  let expansionWriteTail: Promise<void> | undefined;
+  const expansionUnavailable = (): Promise<WorkspaceExpansionResponse> =>
+    Promise.resolve({ protocolVersion: 1, ok: false, error: "unavailable" });
+  function requestExpansion(input: unknown): Promise<WorkspaceExpansionResponse> {
+    if (expansionAdmissionSuspensions || !validWorkspaceExpansionRequest(input))
+      return expansionUnavailable();
+    if (input.op === "read") return expansion.request(input);
+    if (expansionWriteCount >= 64) return expansionUnavailable();
+    expansionWriteCount++;
+    const result = expansionWriteTail
+      ? expansionWriteTail.then(() => expansion.request(input))
+      : expansion.request(input);
+    const complete = () => {
+      expansionWriteCount--;
+      if (!expansionWriteCount) expansionWriteTail = undefined;
+    };
+    expansionWriteTail = result.then(complete, complete);
+    return result;
+  }
+  async function pruneExpansion() {
+    const proof = await rootRoster.confirmExpansionRoster();
+    if (!proof?.current()) return;
+    const saved = await expansionStore.read();
+    if (
+      !proof.current() ||
+      saved.readOnly ||
+      saved.failure ||
+      !saved.roots.some(({ rootId }) => !proof.ids.includes(rootId))
+    )
+      return;
+    await expansionStore.prune(proof.ids, proof.current);
+  }
   const searchLab = searchLabEnabled
     ? (await import("../perf-lab/search")).createSearchLab()
     : undefined;
@@ -137,25 +186,32 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   });
   const lifecycle = createLifecycleGuard({
     guard: async (reason, execute) => {
-      const resumeRootMutations = workspace.suspendRootMutations();
-      const resumeSearch = contentSearch?.suspend();
-      const resumeSnapshots = readerSnapshotEnabled && browserWindow?.url === PACKAGED_VIEW_URL
-        ? readerLab?.suspendSnapshots() : undefined;
-      workspace.trashLifecycle.beforeExit();
+      expansionAdmissionSuspensions++;
       try {
-        // A canceled search may still need to release an unclaimed grant.
-        await contentSearch?.drain();
-        return await documents.withWriteBarrier(() =>
-          guard(reason, async (requestId) => {
-            const settled=await workspace.trashLifecycle.finishExit(Date.now()+2_000);
-            if(!settled){console.warn("Trash operation result remains unknown during exit");try{getRpc().send.trashNotice({reason:"exit-pending"});}catch{/* Exit notice is best effort; never restart the receipt deadline. */}}
-            await recent.drain();
-            await rootRoster.drain();
-            await mru.drainUntil(mruDeadline);
-            return execute(requestId);
-          })
-        );
-      } finally { workspace.trashLifecycle.cancelExit(); resumeRootMutations(); resumeSearch?.(); resumeSnapshots?.(); }
+        if (expansionWriteTail) await expansionWriteTail;
+        const resumeRootMutations = workspace.suspendRootMutations();
+        const resumeSearch = contentSearch?.suspend();
+        const resumeSnapshots = readerSnapshotEnabled && browserWindow?.url === PACKAGED_VIEW_URL
+          ? readerLab?.suspendSnapshots() : undefined;
+        workspace.trashLifecycle.beforeExit();
+        try {
+          // A canceled search may still need to release an unclaimed grant.
+          await contentSearch?.drain();
+          return await documents.withWriteBarrier(() =>
+            guard(reason, async (requestId) => {
+              const settled=await workspace.trashLifecycle.finishExit(Date.now()+2_000);
+              if(!settled){console.warn("Trash operation result remains unknown during exit");try{getRpc().send.trashNotice({reason:"exit-pending"});}catch{/* Exit notice is best effort; never restart the receipt deadline. */}}
+              await recent.drain();
+              await rootRoster.drain();
+              await expansionStore.drain();
+              await mru.drainUntil(mruDeadline);
+              return execute(requestId);
+            })
+          );
+        } finally { workspace.trashLifecycle.cancelExit(); resumeRootMutations(); resumeSearch?.(); resumeSnapshots?.(); }
+      } finally {
+        expansionAdmissionSuspensions--;
+      }
     },
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.
@@ -205,6 +261,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         }],
         ["search lab", () => searchLab?.dispose()],
         ["workspace", () => workspace.dispose()],
+        ["workspace expansion", () => expansionStore.close()],
         ["root roster", () => rootRoster.close()],
         ["documents", () => documents.dispose()],
         ["recent files", () => recent.drain()],
@@ -251,6 +308,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       },
       workspace,
       workspaceRootRoster: input => rootRoster.request(input),
+      workspaceExpansion: requestExpansion,
       searchLab,
       contentSearch,
       openReadingSnapshot: readerSnapshotEnabled && readerLab

@@ -31,6 +31,7 @@ import {
   visibleWorkspaceItems,
   type TreeItem,
 } from "@/client/workspace-tree-model";
+import { useWorkspaceExpansion } from "@/hooks/use-workspace-expansion";
 import type { WorkspaceNode, WorkspaceRevealTarget } from "@/shared/workspace";
 
 export interface RootOrderActions {
@@ -89,8 +90,9 @@ export function WorkspaceTree({
     rootOrder.getSnapshot,
     rootOrder.getSnapshot
   );
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(new Set());
+  const expansion = useWorkspaceExpansion(folders);
+  const [temporaryExpanded, setTemporaryExpanded] = useState<Map<string, number>>(new Map());
+  const [temporaryOpenRoots, setTemporaryOpenRoots] = useState<Map<string, number>>(new Map());
   const [selected, setSelected] = useState<string | null>(null);
   const baseModel = useMemo(
     () =>
@@ -111,6 +113,24 @@ export function WorkspaceTree({
     }),
     [baseModel, order]
   );
+  const { expanded, collapsedRoots } = useMemo(() => {
+    const expanded = new Set<string>(), collapsedRoots = new Set<string>();
+    for (const root of state.roots) {
+      const projection = expansion.state.get(root.handle);
+      if (projection?.generation !== root.generation) continue;
+      if (projection.collapsed) collapsedRoots.add(`root:${root.handle}`);
+      for (const directory of projection.expanded) expanded.add(`node:${root.handle}:${directory}`);
+    }
+    for (const [key, generation] of temporaryExpanded) {
+      const item = model.items.get(key);
+      if (item?.kind === "node" && item.directory && item.root.generation === generation) expanded.add(key);
+    }
+    for (const [key, generation] of temporaryOpenRoots) {
+      const item = model.items.get(key);
+      if (item?.kind === "root" && item.root.generation === generation) collapsedRoots.delete(key);
+    }
+    return { expanded, collapsedRoots };
+  }, [state.roots, expansion.state, model, temporaryExpanded, temporaryOpenRoots]);
   const topIdentity = JSON.stringify(
     (baseModel.children.get(null) ?? []).map((key) => {
       const item = baseModel.items.get(key)!;
@@ -219,8 +239,19 @@ export function WorkspaceTree({
     const parents: string[] = [];
     let parent = item.parent;
     while (parent) { parents.push(parent); parent = model.items.get(parent)?.parent ?? null; }
-    setExpanded(old => new Set([...old, ...parents]));
-    setCollapsedRoots(old => { const next = new Set(old); next.delete(`root:${createdLocation.root}`); return next; });
+    setTemporaryExpanded(old => {
+      const next = new Map(old);
+      for (const key of parents) {
+        const parent = model.items.get(key);
+        if (parent?.kind === "node") next.set(key, parent.root.generation);
+      }
+      return next;
+    });
+    setTemporaryOpenRoots(old => {
+      const next = new Map(old);
+      if (item.kind !== "standalone") next.set(`root:${createdLocation.root}`, item.root.generation);
+      return next;
+    });
     setSelected(key);
     locatedIntent.current = createdLocation.intent;
   }, [createdLocation, model]);
@@ -266,12 +297,18 @@ export function WorkspaceTree({
   useLayoutEffect(() => {
     const oldModel = previousModel.current;
     previousModel.current = model;
-    setExpanded((old) => {
-      const next = new Set([...old].filter((key) => model.items.has(key)));
+    setTemporaryExpanded((old) => {
+      const next = new Map([...old].filter(([key, generation]) => {
+        const item = model.items.get(key);
+        return item?.kind === "node" && item.root.generation === generation;
+      }));
       return next.size === old.size ? old : next;
     });
-    setCollapsedRoots((old) => {
-      const next = new Set([...old].filter((key) => model.items.has(key)));
+    setTemporaryOpenRoots((old) => {
+      const next = new Map([...old].filter(([key, generation]) => {
+        const item = model.items.get(key);
+        return item?.kind === "root" && item.root.generation === generation;
+      }));
       return next.size === old.size ? old : next;
     });
     if (selected && !visible.some((item) => item.key === selected))
@@ -307,30 +344,30 @@ export function WorkspaceTree({
     if (disabled || !item.directory) return;
     const desired = !treeExpanded(item, expanded, collapsedRoots);
     void runAction(async () => {
-      if (item.kind === "node")
-        await folders.prioritize(item.root.handle, item.node.handle);
       const live = current.current.items.get(item.key);
+      const currentRoot = item.kind !== "standalone" && folders.getSnapshot().roots.find(root => root.handle === item.root.handle);
       if (
-        !live ||
-        (item.kind === "node" &&
-          (live.kind !== "node" ||
-            live.root.generation !== item.root.generation))
+        !live || live.kind === "standalone" || item.kind === "standalone" ||
+        !currentRoot || currentRoot.generation !== item.root.generation ||
+        live.root.handle !== item.root.handle || live.root.generation !== item.root.generation ||
+        (item.kind === "node" && (live.kind !== "node" || !live.directory || live.node.handle !== item.node.handle))
       )
         return;
+      if (!expansion.model.setManual(item.root.handle, item.root.generation, desired, item.kind === "node" ? item.node.handle : undefined)) return;
       if (item.kind === "root")
-        setCollapsedRoots((old) => {
-          const next = new Set(old);
-          if (desired) next.delete(item.key);
-          else next.add(item.key);
+        setTemporaryOpenRoots((old) => {
+          const next = new Map(old);
+          next.delete(item.key);
           return next;
         });
       else
-        setExpanded((old) => {
-          const next = new Set(old);
-          if (desired) next.add(item.key);
-          else next.delete(item.key);
+        setTemporaryExpanded((old) => {
+          const next = new Map(old);
+          next.delete(item.key);
           return next;
         });
+      if (item.kind === "node")
+        await folders.prioritize(item.root.handle, item.node.handle);
     })?.catch(() => undefined);
   };
   const activate = (item: TreeItem) => {
@@ -361,6 +398,7 @@ export function WorkspaceTree({
           {state.error}
         </p>
       )}
+      {expansion.writeFailed && <p role="status" className="text-muted-foreground text-xs">展开状态未能保存，本窗口的手动调整仍然有效。</p>}
       <ul role="tree" aria-label="工作区 Markdown 文件树">
         {visible.map((item) => {
           const isExpanded = treeExpanded(item, expanded, collapsedRoots);

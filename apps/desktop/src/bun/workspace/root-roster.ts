@@ -26,6 +26,14 @@ export interface RootRosterResult {
   committed: boolean;
   state: RootRosterState;
 }
+export interface RootRosterIdentityConfirmation {
+  readonly id: string;
+  current(): boolean;
+}
+export interface RootRosterSetConfirmation {
+  readonly ids: readonly string[];
+  current(): boolean;
+}
 export const ROOT_ROSTER_MAX_BYTES =
   WORKSPACE_MAX_ROOTS * (4096 * 6 + 1024 * 6 + 128) + 128;
 const pathValid = (path: unknown): path is string =>
@@ -88,6 +96,7 @@ export function createRootRoster(settingsDir: string) {
   let missedSnapshot = false;
   let admissionWarningEpoch = 0,
     activeAdmissionEpoch = 0;
+  let identityEpoch = 0;
   const state = (
     failure = missedSnapshot ? ("queue-full" as const) : warning
   ): RootRosterState => ({
@@ -105,19 +114,12 @@ export function createRootRoster(settingsDir: string) {
       else pending = result.data.entries;
     } else if (result.status !== "missing") disabled = result.status;
   }
-  function enqueue(
-    operation: () => Promise<RootRosterResult>
-  ): Promise<RootRosterResult> {
+  function queue<T>(
+    operation: () => Promise<T>,
+    fallback: (failure: RootRosterFailure) => T
+  ): Promise<T> {
     if (closed || queued >= 64) {
-      if (!closed) {
-        missedSnapshot = true;
-        warning = "queue-full";
-        admissionWarningEpoch++;
-      }
-      return Promise.resolve({
-        committed: false,
-        state: state(closed ? "closed" : "queue-full"),
-      });
+      return Promise.resolve(fallback(closed ? "closed" : "queue-full"));
     }
     queued++;
     const admittedEpoch = admissionWarningEpoch;
@@ -126,14 +128,50 @@ export function createRootRoster(settingsDir: string) {
         activeAdmissionEpoch = admittedEpoch;
         return operation();
       })
-      .catch(() => {
-        warning = "io";
-        return { committed: false, state: state() };
-      });
+      .catch(() => fallback("io"));
     tail = next.finally(() => {
       queued--;
     });
     return next;
+  }
+  function enqueue(operation: () => Promise<RootRosterResult>) {
+    return queue(operation, (failure) => {
+      if (failure === "queue-full") {
+        missedSnapshot = true;
+        warning = "queue-full";
+        admissionWarningEpoch++;
+      }
+      if (failure === "io") warning = "io";
+      return {
+        committed: false,
+        state: state(failure === "io" ? undefined : failure),
+      };
+    });
+  }
+  function confirmDurable<T>(
+    match: (
+      entries: readonly RootRosterEntry[],
+      current: () => boolean
+    ) => T | undefined
+  ) {
+    const epoch = identityEpoch;
+    const current = () =>
+      !closed && !disabled && !missedSnapshot && identityEpoch === epoch;
+    return queue(
+      async () => {
+        await load();
+        if (!current()) return;
+        const persisted = await store.readPersisted();
+        if (
+          !current() ||
+          persisted.status !== "valid" ||
+          persisted.format !== "version1"
+        )
+          return;
+        return match(persisted.data.entries, current);
+      },
+      () => undefined
+    );
   }
   async function persist(
     authoritative = false,
@@ -196,10 +234,37 @@ export function createRootRoster(settingsDir: string) {
         return { committed: false, state: state(disabled) };
       });
     },
+    confirmExpansionIdentity(
+      path: string
+    ): Promise<RootRosterIdentityConfirmation | undefined> {
+      return confirmDurable((entries, current) => {
+        const entry = live.find((item) => item.path === path);
+        if (
+          entry &&
+          entries.some((item) => item.path === path && item.id === entry.id)
+        )
+          return { id: entry.id, current };
+      });
+    },
+    confirmExpansionRoster(): Promise<RootRosterSetConfirmation | undefined> {
+      return confirmDurable((entries, current) => {
+        // A partial durable roster cannot justify pruning unrelated preferences.
+        const expected = new Map(
+          [...live, ...pending].map(({ path, id }) => [path, id])
+        );
+        if (
+          expected.size !== entries.length ||
+          entries.some(({ path, id }) => expected.get(path) !== id)
+        )
+          return;
+        return { ids: Object.freeze(entries.map(({ id }) => id)), current };
+      });
+    },
     /** Call only after a committed add/remove/Trash. Exact selectedPath also covers verified parent-covered picks.
      * Failed persistence does not undo live authority or successful selection; `committed` refers only to metadata storage.
      */
     reconcile(paths: readonly string[], selectedPath?: string) {
+      identityEpoch++;
       const captured = [...paths];
       return enqueue(async () => {
         await load();
@@ -225,6 +290,7 @@ export function createRootRoster(settingsDir: string) {
       });
     },
     removePending(id: string, admitted: () => boolean = () => true) {
+      identityEpoch++;
       return enqueue(async () => {
         await load();
         if (!admitted()) return { committed: false, state: state("busy") };
@@ -243,6 +309,7 @@ export function createRootRoster(settingsDir: string) {
     },
     /** Only after explicit user clear committed; never call from dispose/removeAll. */
     clearExplicit() {
+      identityEpoch++;
       return enqueue(async () => {
         await load();
         live = [];

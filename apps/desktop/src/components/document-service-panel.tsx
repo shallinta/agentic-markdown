@@ -736,22 +736,58 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
   const strip = useRef<HTMLElement>(null);
   const candidateTab = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: string; state: typeof state; focus: Element | null } | null>(null);
+  const pendingDrop = useRef<{ source: NonNullable<typeof drag.current>; commit: () => boolean; focusAtDrop: Element | null } | null>(null);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const suppressClick = useRef(false);
   const pointerFocus = useRef<Element | null>(null);
+  const [dragTicket, setDragTicket] = useState<{ id: string; state: typeof state } | null>(null);
   const [insertion, setInsertion] = useState<{ id: string; placement: "before" | "after" } | null>(null);
   const clearDrag = useCallback((restore?: boolean) => {
     const previous = drag.current;
+    clearTimeout(settleTimer.current);
+    pendingDrop.current = null;
     drag.current = null;
+    setDragTicket(null);
     setInsertion(null);
-    if ((restore ?? previous?.state === controller.getSnapshot()) && previous?.focus instanceof HTMLElement && previous.focus.isConnected)
-      previous.focus.focus({ preventScroll: true });
+    if ((restore ?? previous?.state === controller.getSnapshot()) && previous) {
+      const focusAtSchedule = document.activeElement;
+      settleTimer.current = setTimeout(() => {
+        if (document.activeElement === focusAtSchedule && previous.state === controller.getSnapshot() && previous.focus instanceof HTMLElement && previous.focus.isConnected)
+          previous.focus.focus({ preventScroll: true });
+      }, 0);
+    }
   }, [controller]);
+  const flushDrop = () => {
+    clearTimeout(settleTimer.current);
+    const pending = pendingDrop.current;
+    pendingDrop.current = null;
+    drag.current = null;
+    setDragTicket(null);
+    setInsertion(null);
+    if (pending?.source.state !== controller.getSnapshot() || !controller.canReorderTabs()) return;
+    const committed = pending.commit();
+    if (document.activeElement === pending.focusAtDrop && (committed || pending.source.state === controller.getSnapshot()) && pending.source.focus instanceof HTMLElement && pending.source.focus.isConnected)
+      pending.source.focus.focus({ preventScroll: true });
+  };
+  const stageDrop = (commit: () => boolean, eligible: () => boolean) => {
+    if (pendingDrop.current) return;
+    const source = drag.current;
+    if (source?.state !== controller.getSnapshot() || !controller.canReorderTabs() || !eligible()) { clearDrag(false); return; }
+    pendingDrop.current = { source, commit, focusAtDrop: document.activeElement };
+    // Keep the native source node in place through drop/dragend. Some WK paths
+    // omit dragend; only an already accepted drop gets this bounded fallback.
+    clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(flushDrop, 750);
+  };
   useEffect(() => {
     const cancel = () => clearDrag(false);
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") clearDrag(); };
     window.addEventListener("blur", cancel);
     window.addEventListener("keydown", key);
-    return () => { window.removeEventListener("blur", cancel); window.removeEventListener("keydown", key); };
+    return () => {
+      window.removeEventListener("blur", cancel); window.removeEventListener("keydown", key);
+      clearTimeout(settleTimer.current); pendingDrop.current = null; drag.current = null;
+    };
   }, [clearDrag]);
   useLayoutEffect(() => {
     const scroller = strip.current;
@@ -762,7 +798,37 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
     if (rect.left < frame.left) scroller.scrollBy(rect.left - frame.left, 0);
     else if (rect.right > frame.right) scroller.scrollBy(rect.right - frame.right, 0);
   }, [candidateId]);
+  const emptyGroupTarget = (pinned: boolean) => {
+    if (dragTicket?.state !== state ||
+        !controller.canDropTabToEmptyGroup(dragTicket.id, pinned)) return null;
+    const id = pinned ? "empty-pinned" : "empty-normal";
+    return (
+      <div
+        aria-label={pinned ? "固定组放置位置" : "普通组放置位置"}
+        className={`bg-background absolute top-full z-20 flex h-9 items-center rounded border border-dashed px-3 text-sm shadow-sm ${pinned ? "left-0" : "right-0"} ${insertion?.id === id ? "border-primary" : "text-muted-foreground"}`}
+        onDragOver={event => {
+          if (drag.current?.state !== controller.getSnapshot() ||
+              !controller.canDropTabToEmptyGroup(drag.current.id, pinned)) {
+            setInsertion(null); event.dataTransfer.dropEffect = "none"; return;
+          }
+          event.preventDefault(); event.stopPropagation();
+          event.dataTransfer.dropEffect = "move";
+          setInsertion(previous => previous?.id === id ? previous : { id, placement: "before" });
+        }}
+        onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setInsertion(null); }}
+        onDrop={event => {
+          if (!drag.current) return;
+          event.preventDefault(); event.stopPropagation();
+          const source = drag.current;
+          stageDrop(() => controller.dropTabToEmptyGroup(source.id, pinned), () => controller.canDropTabToEmptyGroup(source.id, pinned));
+        }}
+      >
+        {pinned ? "固定到此处" : "移到普通标签"}
+      </div>
+    );
+  };
   return (
+    <div className="relative shrink-0">
     <nav
       ref={strip}
       aria-label="已打开的文档"
@@ -790,7 +856,7 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
             ref={candidate ? candidateTab : undefined}
             className={`relative flex shrink-0 items-center rounded border ${pinned ? "border-primary/60" : ""} ${groupEnd ? "mr-2" : ""} ${active ? "bg-muted" : ""} ${candidate ? "ring-primary ring-2 ring-inset" : ""}`}
             onDragOver={event => {
-              if (drag.current?.state !== controller.getSnapshot() || !controller.canMoveTab(drag.current.id, tab.documentId)) {
+              if (drag.current?.state !== controller.getSnapshot() || !controller.canDropTab(drag.current.id, tab.documentId)) {
                 setInsertion(null);
                 event.dataTransfer.dropEffect = "none";
                 return;
@@ -809,25 +875,35 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
               event.stopPropagation();
               const source = drag.current;
               const rect = event.currentTarget.getBoundingClientRect();
-              const current = source.state === controller.getSnapshot();
-              if (source && current)
-                controller.moveTab(source.id, tab.documentId, event.clientX < rect.left + rect.width / 2 ? "before" : "after");
-              clearDrag(!!current);
+              const placement = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
+              stageDrop(() => controller.dropTab(source.id, tab.documentId, placement), () => controller.canDropTab(source.id, tab.documentId));
             }}
           >
-            {insertion?.id === tab.documentId && <span aria-hidden="true" className={`bg-primary pointer-events-none absolute top-0 bottom-0 w-0.5 ${insertion.placement === "before" ? "left-0" : "right-0"}`} />}
+            {dragTicket?.state === state && insertion?.id === tab.documentId && <span aria-hidden="true" className={`bg-primary pointer-events-none absolute top-0 bottom-0 w-0.5 ${insertion.placement === "before" ? "left-0" : "right-0"}`} />}
             <button
               disabled={state.frozen}
               draggable={controller.canReorderTabs()}
               onPointerDown={() => { suppressClick.current = false; pointerFocus.current = document.activeElement; }}
               onDragStart={event => {
+                // A WK path without dragend still owns its accepted drop until
+                // the fallback commits it. A new native drag must not erase it.
+                if (pendingDrop.current) { event.preventDefault(); return; }
                 if (!controller.canReorderTabs()) { event.preventDefault(); return; }
+                clearTimeout(settleTimer.current);
+                pendingDrop.current = null;
                 drag.current = { id: tab.documentId, state: controller.getSnapshot(), focus: pointerFocus.current };
+                setDragTicket({ id: tab.documentId, state: controller.getSnapshot() });
                 suppressClick.current = true;
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("application/x-agentic-tab", "local");
               }}
-              onDragEnd={() => clearDrag()}
+              onDragEnd={() => {
+                if (drag.current?.id !== tab.documentId) return;
+                if (pendingDrop.current) {
+                  clearTimeout(settleTimer.current);
+                  settleTimer.current = setTimeout(flushDrop, 0);
+                } else clearDrag();
+              }}
               aria-current={active ? "page" : undefined}
               aria-label={pinned || candidate ? `${name}${pinned ? " · 已固定" : ""}${candidate ? " · 切换候选" : ""}` : undefined}
               title={tab.displayPath ?? tab.fileName}
@@ -849,6 +925,9 @@ function DocumentTabStrip({ state, controller }: Pick<Workspace, "state" | "cont
         );
       })}
     </nav>
+    {emptyGroupTarget(true)}
+    {emptyGroupTarget(false)}
+    </div>
   );
 }
 

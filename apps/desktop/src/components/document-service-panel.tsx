@@ -43,6 +43,7 @@ import { createWorkspaceRootOrder } from "@/client/workspace-root-order";
 import { projectWorkspaceTree } from "@/client/workspace-tree-model";
 import { useCommands, useRegisterCommands } from "@/commands";
 import { useSourceWrapping } from "@/hooks/use-source-wrapping";
+import { useWorkspaceRootRoster } from "@/hooks/use-workspace-root-roster";
 import { electrobun } from "@/lib/electrobun";
 import { PRODUCT_COMMANDS } from "@/shared/commands";
 import type { CreateTarget } from "@/shared/create-markdown";
@@ -56,6 +57,7 @@ import { ContentSearchPanel } from "./content-search-panel";
 import { CreateMarkdownDialog } from "./create-markdown-dialog";
 import { FocusTraceLab } from "./focus-trace-lab";
 import { MemoryEditor } from "./memory-editor";
+import { canClearPendingWorkspaceRoots, PendingWorkspaceRoots } from "./pending-workspace-roots";
 import { QuickOpenDialog } from "./quick-open-dialog";
 import { RecentFiles, recentFailureText } from "./recent-files";
 import { TextFidelityDetails } from "./text-fidelity-details";
@@ -71,6 +73,7 @@ const recentTabContextAvailable = () =>
   !document.querySelector('[role="dialog"], [role="alertdialog"]');
 
 export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
+  const rootRoster = useWorkspaceRootRoster();
   const [trashDialog, setTrashDialog] = useState<(TrashDialog & { respond(choice: TrashChoice): void }) | null>(null);
   const cancelTrashDialog = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -383,7 +386,8 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         !controller.getSnapshot().frozen &&
         (controller.getSnapshot().busy ||
           controller.getSnapshot().entries.length > 0 ||
-          folders.getSnapshot().roots.length > 0),
+          folders.getSnapshot().roots.length > 0 ||
+          canClearPendingWorkspaceRoots(rootRoster.model.getSnapshot())),
       closeDocument: () =>
         !controller.getSnapshot().frozen && !!controller.getSnapshot().snapshot,
       pinCurrentTab: () => controller.canSetActiveTabPinned(true),
@@ -398,6 +402,10 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     [controller, notifyCommands]
   );
   useEffect(() => folders.subscribe(notifyCommands), [folders, notifyCommands]);
+  useEffect(
+    () => rootRoster.model.subscribe(notifyCommands),
+    [rootRoster.model, notifyCommands]
+  );
   useEffect(
     () => {
       const participant = canonicalDiscardParticipant(
@@ -510,6 +518,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     trash, trashState, trashDialog,
     folderRemovalDialog,
     rootOrder,
+    rootRoster,
     controller,
     folders,
     folderState,
@@ -897,6 +906,14 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
       ).__AGENTIC_MARKDOWN_READER_SNAPSHOT_ENABLED__ === true && (
         <ReadingWindowAction controller={controller} snapshot={snapshot} buttonClass={buttonClass} />
       )}
+      <PendingWorkspaceRoots
+        state={workspace.rootRoster.state}
+        disabled={state.busy || state.frozen || workspace.folderState.busy}
+        canReselect={isCommandEnabled("selectFolder")}
+        reselect={() => { void executeCommand({ type: "selectFolder", args: {} }); }}
+        remove={(id) => { void workspace.rootRoster.model.remove(id); }}
+        refresh={workspace.rootRoster.model.refresh}
+      />
       {!snapshot &&
         !workspace.folderState.roots.length &&
         !state.entries.length &&

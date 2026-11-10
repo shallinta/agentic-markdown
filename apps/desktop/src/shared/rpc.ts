@@ -57,6 +57,10 @@ export interface DesktopRPCType {
         params: import("./recent-files").RecentRequest;
         response: import("./recent-files").RecentResponse;
       };
+      workspaceRootRoster: {
+        params: import("./root-roster").RootRosterRequest;
+        response: import("./root-roster").RootRosterResponse;
+      };
       reopenRecentFile: {
         params: DocumentRequest & { id: string };
         response: DocumentResponse;
@@ -204,6 +208,7 @@ export interface DesktopRPCType {
       trashNotice: { reason: "exit-pending" };
       documentCapabilityChanged: { handle: string };
       recentFilesFailed: { reason: import("./recent-files").RecentFailure };
+      workspaceRootRosterChanged: Record<string, never>;
       documentExternalChanged: import("./document-observation").ObservationEvent;
       contentSearchProgress: import("./content-search").ContentSearchProgress;
       updateStatusChanged: UpdateStatusChangedPayload;

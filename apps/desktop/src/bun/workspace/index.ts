@@ -34,6 +34,7 @@ import type { ContentSearchFragments } from "../../shared/content-search-fragmen
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
+import { validFolderRemovalRequest } from "../../shared/folder-removal";
 import { perfUuid } from "../../shared/perf-lab";
 import {
   parseRasterPasteRequest,
@@ -207,6 +208,9 @@ export interface TrustedWorkspaceService extends WorkspaceService {
     signal?: AbortSignal
   ): Promise<ContentSearchRetainedPrepared>;
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
+  rootMutationsSuspended(): boolean;
+  rootMutationGeneration(): number;
+  suspendRootMutations(): () => void;
   resolveMRU(entries: readonly import("../../shared/document-mru").MRUEntry[], check: () => void): Promise<{ items: import("../../shared/document-mru").MRUResolved[]; incomplete: boolean; current():void }>;
   createMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
   duplicateMarkdown(value: unknown): Promise<CreateMarkdownResponse>;
@@ -228,6 +232,7 @@ export function createWorkspaceService({
   contentSearchStrategy = "native",
   directoryNative,
   trashRun,
+  onRootRosterCommitted,
   preferences = {
     get: () => Promise.resolve(false),
     set: () => Promise.resolve(),
@@ -235,6 +240,11 @@ export function createWorkspaceService({
   },
 }: {
   pickDirectory: () => Promise<string | null>;
+  onRootRosterCommitted?: (event: Readonly<{
+    paths: readonly string[];
+    selectedPath?: string;
+    explicitClear?: boolean;
+  }>) => void;
   documents: TrustedDocumentService;
   worker?: ReturnType<typeof createScanWorker>;
   cacheLimit?: number;
@@ -246,6 +256,17 @@ export function createWorkspaceService({
   preferences?: HiddenPreferences;
 }): TrustedWorkspaceService {
   const roots: Root[] = [];
+  let rootMutationSuspensions = 0;
+  let rootSelectionEpoch = 0;
+  const notifyRootRoster = (selectedPath?: string, explicitClear?: boolean) => {
+    const event = Object.freeze({
+      paths: Object.freeze(roots.map(root => root.authorization.path)),
+      ...(selectedPath === undefined ? {} : { selectedPath }),
+      ...(explicitClear ? { explicitClear: true } : {}),
+    });
+    try { onRootRosterCommitted?.(event); }
+    catch { console.warn("Root roster notification failed"); }
+  };
   let trashReceiptBytes=0;
   let preferenceTail: Promise<unknown> = Promise.resolve();
   let preferencePending = 0;
@@ -1015,8 +1036,9 @@ export function createWorkspaceService({
     };
     wake();
   }
-  async function removeAll() {
+  async function removeAll(explicit = false) {
     const accepted = await documents.withWriteBarrier(() => {
+      if (explicit && rootMutationSuspensions) return Promise.resolve(false);
       epoch++;
       for (const root of roots) {
         invalidate(root);
@@ -1027,6 +1049,7 @@ export function createWorkspaceService({
       for (const handle of assetOwners.keys())
         documents.setAssetScope(handle, undefined);
       assetOwners.clear();
+      if (explicit) notifyRootRoster(undefined, true);
       return Promise.resolve(true);
     });
     wake();
@@ -1197,7 +1220,7 @@ export function createWorkspaceService({
   );
   const folderRemoval = createFolderRemoval(async (rootHandle, generation, opened) => {
     const root = roots.find(item => item.meta.handle === rootHandle);
-    if (disposed || removeStandalone.busy() || removalAdmission || selecting || preferencePending || openingRoots.size || manualCandidates.size || !root?.live || root.meta.generation !== generation || !preferences.remove)
+    if (disposed || rootMutationSuspensions || removeStandalone.busy() || removalAdmission || selecting || preferencePending || openingRoots.size || manualCandidates.size || !root?.live || root.meta.generation !== generation || !preferences.remove)
       throw Error("Folder removal busy");
     removalAdmission = true;
     scanParked = true;
@@ -1302,6 +1325,7 @@ export function createWorkspaceService({
                 queueCleanup(key(root));
                 publication = result;
               });
+              notifyRootRoster();
               for (const cleanup of [() => observation.cancel(root.meta.handle, true), () => reconciliation.invalidate(root.meta.handle)]) {
                 try { cleanup(); } catch { console.warn("Folder removal workspace cleanup failed"); }
               }
@@ -1579,7 +1603,13 @@ export function createWorkspaceService({
           root.meta.entries=root.nodes.length;root.meta.generation++;root.started=false;
           return {root:root.meta.handle,previousGeneration:generation,generation:root.meta.generation,entries:removed?[]:selected.map(node=>node.handle),...(removed?{removed:true as const}:{})};
         });
-        return {files,effects(){for(const {root,oldKey,removed}of prepared){queueCleanup(oldKey);reconciliation.invalidate(root.meta.handle);manualCandidates.delete(root.meta.handle);observation.cancel(root.meta.handle,true);if(removed&&preferences.remove)void preferences.remove(root.authorization.path,Math.max(0,cacheLimit-workspaceUsed())).then(async result=>{if(await result.query()!=="committed")console.warn("Trash preference cleanup incomplete");}).catch(()=>console.warn("Trash preference cleanup failed"));}}};
+        let rosterNotified = false;
+        return {files,effects(){
+          if (!rosterNotified) {
+            rosterNotified = true;
+            if (prepared.some(item => item.removed)) notifyRootRoster();
+          }
+          for(const {root,oldKey,removed}of prepared){queueCleanup(oldKey);reconciliation.invalidate(root.meta.handle);manualCandidates.delete(root.meta.handle);observation.cancel(root.meta.handle,true);if(removed&&preferences.remove)void preferences.remove(root.authorization.path,Math.max(0,cacheLimit-workspaceUsed())).then(async result=>{if(await result.query()!=="committed")console.warn("Trash preference cleanup incomplete");}).catch(()=>console.warn("Trash preference cleanup failed"));}}};
       }};
     }catch(error){release();throw error;}
   }});
@@ -2327,10 +2357,30 @@ export function createWorkspaceService({
     },
     trashDocument:(value)=>trash.request(value),
     trashLifecycle:trash,
+    rootMutationsSuspended: () => disposed || rootMutationSuspensions > 0,
+    rootMutationGeneration: () => rootSelectionEpoch,
+    suspendRootMutations() {
+      rootMutationSuspensions++;
+      rootSelectionEpoch++;
+      let resumed = false;
+      return () => {
+        if (!resumed) { resumed = true; rootMutationSuspensions--; }
+      };
+    },
     createMarkdown: (value) => creation.request(value),
     duplicateMarkdown: (value) => duplication.request(value),
     removeStandalone,
-    removeFolderRoot: (value) => folderRemoval.request(value),
+    removeFolderRoot: (value) => {
+      if (rootMutationSuspensions && validFolderRemovalRequest(value) && (value.op === "prepare" || value.op === "commit")) {
+        return Promise.resolve({
+          protocolVersion: 1 as const,
+          requestId: value.requestId,
+          status: "busy" as const,
+          operation: { session: value.session, sequence: value.sequence, root: value.root },
+        });
+      }
+      return folderRemoval.request(value);
+    },
     reconciliation: {
       prepare: (handle) => removalAdmission ? Promise.resolve({ ok: false as const, reason: "NOT_READY" as const }) : reconciliation.prepare(handle),
       get: (token) => reconciliation.get(token),
@@ -2342,6 +2392,7 @@ export function createWorkspaceService({
     async request(value) {
       if (!validWorkspaceRequest(value)) return failure("", "INVALID_REQUEST");
       if (disposed) return failure(value.requestId, "UNAVAILABLE");
+      if (rootMutationSuspensions && !["state", "page", "queryRescan"].includes(value.op)) return failure(value.requestId, "BUSY");
       if (removalAdmission && !["state", "page", "queryRescan"].includes(value.op)) return failure(value.requestId, "BUSY");
       if (
         workerStopped &&
@@ -2422,29 +2473,35 @@ export function createWorkspaceService({
         return { ...state(value.requestId, false), receipt };
       }
       if (value.op === "state") return state(value.requestId);
-      if (value.op === "clear")
-        return (await removeAll())
-          ? state(value.requestId)
-          : failure(value.requestId, "BUSY");
+      if (value.op === "clear") {
+        if (!await removeAll(true)) return failure(value.requestId, "BUSY");
+        return state(value.requestId);
+      }
       if (value.op === "select") {
         if (selecting) return failure(value.requestId, "BUSY");
         selecting = true;
         searchSelectionGeneration++;
         const generation = epoch;
+        const selectionEpoch = rootSelectionEpoch;
+        const selectionCurrent = () => !disposed && generation === epoch &&
+          selectionEpoch === rootSelectionEpoch && !rootMutationSuspensions;
         try {
           const selected = await pickDirectory();
-          if (disposed || generation !== epoch)
+          if (!selectionCurrent())
             return failure(value.requestId, "INVALID_HANDLE");
           if (selected === null) return state(value.requestId);
           const authorization = await authorizeRoot(selected);
           const showHidden = await preferences.get(authorization.path);
-          if (disposed || generation !== epoch)
+          if (!selectionCurrent())
             return failure(value.requestId, "INVALID_HANDLE");
           const existing = roots.find((root) =>
             containsPath(root.authorization.path, authorization.path)
           );
           if (existing) {
             await verifyRoot(existing.authorization);
+            if (!selectionCurrent() || !existing.live || !roots.includes(existing))
+              return failure(value.requestId, "INVALID_HANDLE");
+            notifyRootRoster(authorization.path);
             return state(value.requestId);
           }
           const covered = roots.filter((root) =>
@@ -2491,6 +2548,7 @@ export function createWorkspaceService({
             roots.splice(roots.indexOf(child), 1);
           }
           roots.push(root);
+          notifyRootRoster(authorization.path);
           wake();
           return state(value.requestId);
         } catch {

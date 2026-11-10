@@ -30,6 +30,7 @@ import { createContentSearchRPC } from "../rpc/content-search";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
 import { createHiddenPreferences } from "../workspace/preferences";
+import { createRootRosterService } from "../workspace/root-roster-service";
 
 import { createDiscardCoordinator } from "./discard-coordinator";
 import { createLifecycleGuard } from "./lifecycle-guard";
@@ -89,11 +90,18 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       ? createReaderLab(() => openReaderWindow(PACKAGED_READER_URL), undefined, setReaderCloseAvailabilityInMenu)
       : undefined;
   const workspace = createWorkspaceService({
+    onRootRosterCommitted: event => rootRoster.committed(event),
     preferences: createHiddenPreferences(getSettingsDir()),
     pickDirectory: () => nativeFiles.pickDirectory(),
     documents,
     contentSearchStrategy: "direct",
   });
+  const rootRoster = createRootRosterService(
+    getSettingsDir(),
+    () => workspace.rootMutationsSuspended(),
+    () => rpc?.send.workspaceRootRosterChanged({}),
+    () => workspace.rootMutationGeneration()
+  );
   const searchLab = searchLabEnabled
     ? (await import("../perf-lab/search")).createSearchLab()
     : undefined;
@@ -129,6 +137,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   });
   const lifecycle = createLifecycleGuard({
     guard: async (reason, execute) => {
+      const resumeRootMutations = workspace.suspendRootMutations();
       const resumeSearch = contentSearch?.suspend();
       const resumeSnapshots = readerSnapshotEnabled && browserWindow?.url === PACKAGED_VIEW_URL
         ? readerLab?.suspendSnapshots() : undefined;
@@ -141,11 +150,12 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
             const settled=await workspace.trashLifecycle.finishExit(Date.now()+2_000);
             if(!settled){console.warn("Trash operation result remains unknown during exit");try{getRpc().send.trashNotice({reason:"exit-pending"});}catch{/* Exit notice is best effort; never restart the receipt deadline. */}}
             await recent.drain();
+            await rootRoster.drain();
             await mru.drainUntil(mruDeadline);
             return execute(requestId);
           })
         );
-      } finally { workspace.trashLifecycle.cancelExit(); resumeSearch?.(); resumeSnapshots?.(); }
+      } finally { workspace.trashLifecycle.cancelExit(); resumeRootMutations(); resumeSearch?.(); resumeSnapshots?.(); }
     },
     // Flush is non-destructive. Another SDK listener can still veto quit;
     // never dispose document grants until the process actually exits.
@@ -195,6 +205,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         }],
         ["search lab", () => searchLab?.dispose()],
         ["workspace", () => workspace.dispose()],
+        ["root roster", () => rootRoster.close()],
         ["documents", () => documents.dispose()],
         ["recent files", () => recent.drain()],
         ["document MRU", async () => {await mru.drainUntil(mruDeadline || performance.now()+MRU_EXIT_MS);mru.dispose();}],
@@ -239,6 +250,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         reopen: createRecentReopener(documents, (id) => recent.find(id)),
       },
       workspace,
+      workspaceRootRoster: input => rootRoster.request(input),
       searchLab,
       contentSearch,
       openReadingSnapshot: readerSnapshotEnabled && readerLab

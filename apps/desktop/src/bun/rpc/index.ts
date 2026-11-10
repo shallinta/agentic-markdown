@@ -44,6 +44,7 @@ export interface MainWindowRPCDependencies {
       input: unknown
     ): Promise<import("../../shared/documents").DocumentResponse>;
   };
+  workspaceRootRoster?: (input: unknown) => Promise<import("../../shared/root-roster").RootRosterResponse>;
   sourceWrapping?: {
     get(): Promise<boolean>;
     set(enabled: boolean): Promise<void>;
@@ -66,6 +67,7 @@ export function createMainWindowRPC({
   documents,
   documentMRU,
   recentFiles,
+  workspaceRootRoster,
   sidebar,
   sourceWrapping,
   workspace,
@@ -103,6 +105,7 @@ export function createMainWindowRPC({
                 available: false as const,
                 reason: "io" as const,
               }),
+        workspaceRootRoster: input => workspaceRootRoster?.(input) ?? Promise.resolve({ protocolVersion: 1 as const, pending: [], readOnly: true, failure: "io" as const }),
         reopenRecentFile: (input) =>
           recentFiles
             ? recentFiles.reopen(input)

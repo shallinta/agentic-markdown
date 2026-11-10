@@ -464,6 +464,20 @@ export function createDocumentController(
   let cancelContentSearchLocation: (() => void) | undefined;
   let contentSearchPreparation = 0;
   const activationListeners = new Set<(target: { handle: string; documentId: string }) => void>();
+  const primaryTabLayoutListeners = new Set<(target: { handle: string; documentId: string }) => void>();
+  const preparePrimaryTabLayoutNotification = (expected = state) => {
+    const target = expected.snapshot;
+    const incarnation = target && editors.get(target.documentId)?.state.field(editorFaultSession);
+    return () => {
+      if (!target || !incarnation) return;
+      for (const listener of primaryTabLayoutListeners) {
+        if (metadataDisposed || state !== expected || state.snapshot !== target ||
+            editors.get(target.documentId)?.state.field(editorFaultSession) !== incarnation) return;
+        try { listener({ handle: target.handle, documentId: target.documentId }); }
+        catch { /* Optional metadata observation cannot interrupt document operations. */ }
+      }
+    };
+  };
   const recordActivation = (target: { handle: string; documentId: string }) => {
     for (const listener of activationListeners) {
       try { listener({ handle: target.handle, documentId: target.documentId }); }
@@ -1559,7 +1573,9 @@ export function createDocumentController(
       let index = 0;
       visualOrder = base.map(id => pinnedTabs.has(id) === group ? next[index++] : id);
       state = { ...state };
+      const notifyLayout = preparePrimaryTabLayoutNotification();
       listeners.forEach(listener => listener());
+      notifyLayout();
       return true;
     },
     canDropTab(documentId: string, targetId: string): boolean {
@@ -1577,7 +1593,9 @@ export function createDocumentController(
       else pinnedTabs.delete(documentId);
       visualOrder = next;
       state = { ...state };
+      const notifyLayout = preparePrimaryTabLayoutNotification();
       listeners.forEach(listener => listener());
+      notifyLayout();
       return true;
     },
     canDropTabToEmptyGroup(documentId: string, pinned: boolean): boolean {
@@ -1592,7 +1610,9 @@ export function createDocumentController(
       else { pinnedTabs.delete(documentId); next.push(documentId); }
       visualOrder = next;
       state = { ...state };
+      const notifyLayout = preparePrimaryTabLayoutNotification();
       listeners.forEach(listener => listener());
+      notifyLayout();
       return true;
     },
     canMoveActiveTab(direction: -1 | 1): boolean {
@@ -1623,7 +1643,9 @@ export function createDocumentController(
       else pinnedTabs.delete(active.documentId);
       // The view changes without replaying document or selection effects.
       state = { ...state };
+      const notifyLayout = preparePrimaryTabLayoutNotification();
       listeners.forEach(listener => listener());
+      notifyLayout();
       return true;
     },
     captureReadingSnapshotSource(): ReadingSnapshotSource | null {
@@ -2143,7 +2165,10 @@ export function createDocumentController(
         if (previous === "source" && sourceReturn.get(documentId) === "reading")
           reading.add(documentId);
         else reading.delete(documentId);
-        publish({ ...state });
+        const next = { ...state };
+        const notifyLayout = preparePrimaryTabLayoutNotification(next);
+        publish(next);
+        notifyLayout();
       }
       return applied;
     },
@@ -2341,6 +2366,11 @@ export function createDocumentController(
     activateTab(documentId: string) {
       activateTab(documentId);
     },
+    subscribePrimaryTabLayoutChange(listener: (target: { handle: string; documentId: string }) => void) {
+      if (metadataDisposed) return () => undefined;
+      primaryTabLayoutListeners.add(listener);
+      return () => { primaryTabLayoutListeners.delete(listener); };
+    },
     subscribeActivation(listener: (target: { handle: string; documentId: string }) => void) {
       activationListeners.add(listener);
       return () => { activationListeners.delete(listener); };
@@ -2425,6 +2455,7 @@ export function createDocumentController(
       visualOrder = undefined;
       quickFocusListeners.clear();
       activationListeners.clear();
+      primaryTabLayoutListeners.clear();
       for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();
       metadataEpoch++;

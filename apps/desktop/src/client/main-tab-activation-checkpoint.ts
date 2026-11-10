@@ -7,17 +7,17 @@ import {
 import type { createDocumentController } from "./documents";
 
 type Documents = Pick<ReturnType<typeof createDocumentController>,
-  "subscribeActivation" | "captureCleanPrimaryTabs">;
-type Activation = Pick<MainTabCheckpointRequest["tabs"][number], "documentId" | "handle">;
+  "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "captureCleanPrimaryTabs">;
+type CheckpointTarget = Pick<MainTabCheckpointRequest["tabs"][number], "documentId" | "handle">;
 
-/** Persist at most one eligible activation at a time, without delaying document actions. */
+/** Persist at most one eligible primary-tab checkpoint at a time. */
 export function attachMainTabActivationCheckpoint(
   documents: Documents,
   send: (request: MainTabCheckpointRequest) => Promise<unknown>,
   workspaceScope: () => object | undefined,
   idleMs = 120,
 ) {
-  let pending: Activation | undefined;
+  let pending: CheckpointTarget | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
   let disposed = false;
@@ -62,16 +62,19 @@ export function attachMainTabActivationCheckpoint(
     }
   }
 
-  const unsubscribe = documents.subscribeActivation((target) => {
+  const enqueue = (target: CheckpointTarget) => {
     if (disposed) return;
     pending = target;
     schedule();
-  });
+  };
+  const unsubscribeActivation = documents.subscribeActivation(enqueue);
+  const unsubscribeLayout = documents.subscribePrimaryTabLayoutChange(enqueue);
   return () => {
     disposed = true;
     pending = undefined;
     confirmed = undefined;
     clearTimeout(timer);
-    unsubscribe();
+    unsubscribeActivation();
+    unsubscribeLayout();
   };
 }

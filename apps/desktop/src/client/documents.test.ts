@@ -2389,3 +2389,64 @@ test("workspace receipt is withheld when successful publication is synchronously
   expect(c.getSnapshot().snapshot?.documentId).toBe(a.documentId);
   off(); c.dispose();
 });
+
+test("primary layout notifications follow successful changes without activation or input events", async () => {
+  const { controller, transport, value: a } = setup();
+  await controller.select();
+  const b = snapshot("layout-B");
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await controller.select();
+  const layout: {handle:string;documentId:string}[] = [];
+  let activations = 0;
+  const stop = controller.subscribePrimaryTabLayoutChange(target => layout.push(target));
+  const stopActivation = controller.subscribeActivation(() => { activations++; });
+  expect(controller.setActiveTabPinned(true)).toBe(true);
+  expect(controller.setActiveTabPinned(true)).toBe(false);
+  expect(controller.setActiveTabPinned(false)).toBe(true);
+  expect(controller.moveTab(b.documentId, a.documentId, "before")).toBe(true);
+  expect(controller.moveTab(b.documentId, a.documentId, "before")).toBe(false);
+  expect(controller.dropTabToEmptyGroup(a.documentId, true)).toBe(true);
+  expect(controller.dropTab(b.documentId, a.documentId, "after")).toBe(true);
+  expect(controller.dropTabToEmptyGroup(b.documentId, false)).toBe(true);
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(layout).toEqual(Array.from({length:7}, () => ({handle:b.handle,documentId:b.documentId})));
+  expect(activations).toBe(0);
+  const editor = controller.getEditor(b.documentId)!;
+  expect(controller.updateEditor(b.documentId, editor.state.update({ changes:{from:0,insert:"draft"} }))).toBe(true);
+  expect(layout.length).toBe(7);
+  const interaction = controller.registerEditorInteraction(b.documentId, () => false);
+  expect(controller.toggleSourceMode()).toBe(false);
+  expect(controller.setActiveTabPinned(true)).toBe(false);
+  expect(layout.length).toBe(7);
+  interaction.release();
+  stop();
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(layout.length).toBe(7);
+  stopActivation();
+  controller.dispose();
+});
+
+test("reentrant publication and layout listeners cannot emit an obsolete active target", async () => {
+  const { controller, transport, value:a } = setup();
+  await controller.select();
+  const b = snapshot("layout-reentry-B");
+  transport.selectDocument = request => Promise.resolve(result(request,b));
+  await controller.select();
+  const seen: string[] = [];
+  const stopLayout = controller.subscribePrimaryTabLayoutChange(target => seen.push(target.documentId));
+  let reenter = true;
+  const stopState = controller.subscribe(() => {
+    if (!reenter) return;
+    reenter = false;
+    controller.activateTab(a.documentId);
+  });
+  expect(controller.setActiveTabPinned(true)).toBe(true);
+  expect(seen).toEqual([]);
+  stopState(); stopLayout();
+  const stopFirst = controller.subscribePrimaryTabLayoutChange(() => controller.activateTab(b.documentId));
+  controller.subscribePrimaryTabLayoutChange(target => seen.push(target.documentId));
+  expect(controller.toggleSourceMode()).toBe(true);
+  expect(seen).toEqual([]);
+  stopFirst();
+  controller.dispose();
+});

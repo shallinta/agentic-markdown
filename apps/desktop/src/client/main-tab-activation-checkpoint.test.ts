@@ -21,6 +21,7 @@ const clean = (activeIndex: number, current = () => true): CleanPrimaryTabCaptur
 
 function fixture() {
   let listener: ((target: Activation) => void) | undefined;
+  let layoutListener: ((target: Activation) => void) | undefined;
   const requests: MainTabCheckpointRequest[] = [];
   const state = {
     capture: clean(0),
@@ -33,6 +34,10 @@ function fixture() {
       listener = onActivate;
       return () => { listener = undefined; };
     },
+    subscribePrimaryTabLayoutChange(onLayout) {
+      layoutListener = onLayout;
+      return () => { layoutListener = undefined; };
+    },
     captureCleanPrimaryTabs() {
       state.calls++;
       return state.capture;
@@ -44,7 +49,8 @@ function fixture() {
   return { state, requests, stop, activate(index: number) {
     state.capture = clean(index);
     listener?.(tabs[index]);
-  }, emit(index: number) { listener?.(tabs[index]); } };
+  }, emit(index: number) { listener?.(tabs[index]); }, layout(index: number) { layoutListener?.(tabs[index]); },
+    subscribed: () => !!listener || !!layoutListener };
 }
 
 test("waits for user activation and captures only the latest activation in a burst", async () => {
@@ -62,7 +68,7 @@ test("waits for user activation and captures only the latest activation in a bur
   } finally { f.stop(); }
 });
 
-test("keeps one publication in flight and sends only the latest new intent afterward", async () => {
+test("merges activation and layout while one publication is in flight", async () => {
   const f = fixture();
   const first = Promise.withResolvers<unknown>();
   try {
@@ -71,6 +77,9 @@ test("keeps one publication in flight and sends only the latest new intent after
     await turn();
     f.activate(1);
     f.activate(2);
+    const changed = [{ ...tabs[2], pinned: true, mode: "source" as const }, tabs[0], tabs[1]];
+    f.state.capture = { ok: true, tabs: changed, activeIndex: 0, current: () => true };
+    f.layout(2);
     await turn();
     expect(f.requests.map(request => request.activeIndex)).toEqual([0]);
     expect(f.state.calls).toBe(1);
@@ -78,7 +87,34 @@ test("keeps one publication in flight and sends only the latest new intent after
     first.resolve(committed);
     await turn();
     await turn();
-    expect(f.requests.map(request => request.activeIndex)).toEqual([0, 2]);
+    expect(f.requests[1]).toEqual({ protocolVersion: 1, tabs: changed, activeIndex: 0 });
+    expect(f.requests).toHaveLength(2);
+  } finally { f.stop(); }
+});
+
+test("layout changes send a clean checkpoint without activation and share failure and deduplication rules", async () => {
+  const f = fixture();
+  try {
+    const changed = [{ ...tabs[0], mode: "source" as const }, tabs[2], tabs[1]];
+    f.state.capture = { ok: true, tabs: changed, activeIndex: 0, current: () => true };
+    f.layout(0);
+    await turn();
+    expect(f.requests).toEqual([{ protocolVersion: 1, tabs: changed, activeIndex: 0 }]);
+    f.layout(0);
+    await turn();
+    expect(f.requests).toHaveLength(1);
+
+    f.state.capture = { ok: false, reason: "unavailable" };
+    f.layout(0);
+    await turn();
+    expect(f.requests).toHaveLength(1);
+
+    f.state.capture = clean(0);
+    f.state.send = () => Promise.resolve({ protocolVersion: 1, status: "unknown" });
+    f.layout(0);
+    await turn();
+    await turn();
+    expect(f.requests).toHaveLength(2);
   } finally { f.stop(); }
 });
 
@@ -129,16 +165,18 @@ test("deduplicates only confirmed content in the same workspace and never retrie
   } finally { f.stop(); }
 });
 
-test("disposal drops queued activation and ignores an outstanding publication", async () => {
+test("disposal unsubscribes both triggers, drops queued layout and ignores an outstanding publication", async () => {
   const f = fixture();
   const first = Promise.withResolvers<unknown>();
   f.state.send = () => first.promise;
   f.activate(0);
   await turn();
-  f.activate(1);
+  f.layout(0);
   f.stop();
+  expect(f.subscribed()).toBe(false);
   first.resolve(committed);
   f.activate(2);
+  f.layout(2);
   await turn();
   await turn();
   expect(f.requests.map(request => request.activeIndex)).toEqual([0]);

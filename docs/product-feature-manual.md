@@ -32,6 +32,8 @@ F-037f 已验证私有会话记录在目录授权仍有效时写入。记录不�
 
 alpha.327 在普通窗口打开或切换标签后记录最近一组符合条件的目录标签，包括顺序、固定、模式和活动项。存在未保存内容或独立文件时保留原记录；当前重启不会自动恢复标签。见[F-037g 迭代](iterations/F-037g-record-clean-tabs-after-activation.md)。
 
+alpha.328 固定、取消固定、重排或切换模式后，符合条件的标签组也会更新记录，无需再切换标签。未保存时仍保留上一份。见[F-037h 迭代](iterations/F-037h-record-clean-tab-layout-changes.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

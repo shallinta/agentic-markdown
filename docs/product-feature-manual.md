@@ -1,5 +1,9 @@
 # 产品功能手册
 
+## 独立阅读标题折叠准备（F-040b）
+
+已验证阅读窗可取得与实际呈现一致的顶层章节范围。当前阅读窗还没有标题折叠按钮，查找和复制用法保持。见[F-040b 迭代](iterations/F-040b-prepare-reader-heading-folds.md)。
+
 ## 非活动标签的图片呈现（F-039b）
 
 切走主区标签后，应用清理旧视图的图片装饰；切回时按当前授权重新显示图片。草稿、模式、选区、折叠、位置和撤销历史保留。见[F-039b 迭代](iterations/F-039b-release-inactive-image-decorations.md)。

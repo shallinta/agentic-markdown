@@ -5,6 +5,7 @@ import type { parseCanonicalMarkdown } from "../client/canonical-parser";
 import type { LocalImages } from "../client/local-images";
 import type { ReaderImageReceiver } from "../client/reader-image-receiver";
 import { isOwnedReadingCode } from "../client/reading-code-ownership";
+import { readingHeadingSections, type ReadingHeadingProjection, type ReadingRootBlock } from "../client/reading-heading-structure";
 import type { ReadingSearchRegistry } from "../client/reading-search-registry";
 import { ReadingCode } from "../components/reading-code";
 import { ReadingHtmlBlock } from "../components/reading-html-block";
@@ -38,7 +39,8 @@ export function commonmarkContent(
   images?: LocalImages,
   codeCurrent?: () => boolean,
   search?: ReadingSearchRegistry,
-  snapshotImages?: { nodes: readonly object[]; receiver: ReaderImageReceiver; current: () => boolean }
+  snapshotImages?: { nodes: readonly object[]; receiver: ReaderImageReceiver; current: () => boolean },
+  headingProjection?: ReadingHeadingProjection
 ): ReactNode {
   let work = 0;
   let definitionWork = 0;
@@ -352,10 +354,14 @@ export function commonmarkContent(
     }
   };
   try {
+    if (headingProjection) { headingProjection.blocks = []; headingProjection.sections = []; }
+    const blocks: ReadingRootBlock[] | undefined = headingProjection ? [] : undefined;
     if (images) collect(tree);
-    return tree.children.map((node, index) => {
+    const content = tree.children.map((node, index) => {
       if (node.type === "definition") return null;
       raw(node);
+      blocks?.push({ id: index, from: node.position!.start.offset!, to: node.position!.end.offset!,
+        ...(node.type === "heading" ? { headingDepth: node.depth } : {}) });
       return (
         <div
           key={index}
@@ -371,7 +377,16 @@ export function commonmarkContent(
         </div>
       );
     });
+    if (headingProjection && blocks) {
+      const sections = readingHeadingSections(blocks);
+      if (sections) {
+        headingProjection.blocks = blocks;
+        headingProjection.sections = sections;
+      }
+    }
+    return content;
   } catch {
+    if (headingProjection) { headingProjection.blocks = []; headingProjection.sections = []; }
     return (
       <div
         ref={(element) =>

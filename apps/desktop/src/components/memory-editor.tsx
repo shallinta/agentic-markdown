@@ -95,6 +95,8 @@ export function MemoryEditor({
   assetEpoch,
   publishRaster,
   authorizeRaster,
+  autoFocusOnMount = true,
+  preserveViewportOnSync = false,
 }: {
   controller: ReturnType<typeof createDocumentController>;
   documentId: string;
@@ -103,6 +105,8 @@ export function MemoryEditor({
   assetEpoch?: string;
   publishRaster?: RasterPasteTransport;
   authorizeRaster?: AuthorizeRasterPaste;
+  autoFocusOnMount?: boolean;
+  preserveViewportOnSync?: boolean;
 }) {
   const imageInputs = useRef({ readLocalImage, assetEpoch });
   imageInputs.current = { readLocalImage, assetEpoch };
@@ -588,7 +592,7 @@ export function MemoryEditor({
       view.dispatch({
         effects: EditorView.scrollIntoView(viewportPosition, { y: "start" }),
       });
-    if (controller.shouldAutoFocusEditor(documentId)) view.focus();
+    if (autoFocusOnMount && controller.shouldAutoFocusEditor(documentId)) view.focus();
     const searchTarget: Parameters<typeof controller.registerContentSearchTarget>[1] = {
       ready: () =>
         currentView() &&
@@ -827,8 +831,23 @@ export function MemoryEditor({
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;
+    const next = preserveViewportOnSync ? controller.getEditor(documentId)?.state : undefined;
+    const previous = view.state;
+    let scroll: ReturnType<EditorView["scrollSnapshot"]> | undefined;
+    if (next && next !== previous && next.doc === previous.doc && view.scrollDOM.isConnected &&
+        next.field(editorFaultSession) === previous.field(editorFaultSession)) {
+      try {
+        scroll = view.scrollSnapshot();
+      } catch {
+        // State synchronization still applies when old geometry is unavailable.
+      }
+    }
     const current = syncCurrentEditorState(view, controller, documentId);
     if (!current) return;
+    if (scroll && current === next && view.state === current && view.scrollDOM.isConnected &&
+        controller.getEditor(documentId)?.state === current) {
+      view.dispatch({ effects: scroll, annotations: Transaction.addToHistory.of(false) });
+    }
     const fault = current.field(editorFaultSession);
     const notifySearchReady = refreshViewSession.current?.(fault);
     if (
@@ -867,7 +886,7 @@ export function MemoryEditor({
         : null
     );
     notifySearchReady?.();
-  }, [controller, documentId, editor, frozen, readOnly, inputBlocked]);
+  }, [controller, documentId, editor, frozen, readOnly, inputBlocked, preserveViewportOnSync]);
   return (
     <>
       <EditingCodeMenu

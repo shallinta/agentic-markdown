@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-035h 双编辑器只读实验（2026-11-10）
+
+隔离真实 WK 已验只读双视图与滚动锚点。OBL-052 的活动写入、实际副区和正式键盘入口仍开放，最终离线留人工。见[F-035h 迭代](iterations/F-035h-dual-readonly-editor-lab.md)。
+
 ## F-035g 编辑器折叠命令归属（2026-11-10）
 
 按活动文档和会话路由标题、代码围栏和 Frontmatter 折叠。OBL-052 的实际双视图、焦点与正式副区仍开放，最终离线留人工。见[F-035g 迭代](iterations/F-035g-editor-folding-command-ownership.md)。

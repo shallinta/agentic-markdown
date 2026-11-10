@@ -7,6 +7,7 @@ import { allocateSecondaryPaneHeight, SECONDARY_MIN_HEIGHT } from "@/client/seco
 import { removeSecondaryPaneHeight } from "@/client/secondary-pane-removal";
 
 import { DocumentRegionWorkspaceLab } from "./document-region-workspace-lab";
+import { DualReadonlyEditorLab } from "./dual-readonly-editor-lab";
 import { MainSideLayout, MAIN_SIDE_MINIMUM_WIDTH } from "./main-side-layout";
 
 const buttonClass = "electrobun-webkit-app-region-no-drag rounded border px-2 py-1 focus-visible:outline-2";
@@ -299,6 +300,7 @@ function HeightAllocationLab({ state, setState }: {
 export function LayoutLab() {
   const [fixture, setFixture] = useState<FixtureWidth>(null);
   const [sideVisible, setSideVisible] = useState(true);
+  const [dualEditorOpen, setDualEditorOpen] = useState(false);
   const [heightState, setHeightState] = useState(() => createHeightFixture(heightFixtures[0]));
   const [treeWidth, setTreeWidth] = useState(0);
   const [mainWidth, setMainWidth] = useState(0);
@@ -409,6 +411,12 @@ export function LayoutLab() {
                   <section aria-label="实验主区" className="size-full space-y-2 overflow-auto p-3">
                     <h2>主区</h2>
                     <DocumentRegionWorkspaceLab />
+                    <button type="button" className={buttonClass} aria-expanded={dualEditorOpen}
+                      aria-controls={dualEditorOpen ? "layout-lab-dual-editor" : undefined}
+                      onClick={() => setDualEditorOpen((open) => !open)}>
+                      {dualEditorOpen ? "关闭双编辑器只读实验" : "打开双编辑器只读实验"}
+                    </button>
+                    {dualEditorOpen && <DualReadonlyEditorLab />}
                   </section>
                 }
                 side={

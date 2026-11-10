@@ -128,6 +128,8 @@ F-021c 在 alpha.262 实验开关下验证独立阅读窗口、安全只读渲�
 
 F-031a 在 alpha.258 隔离实验台验证文件树、主区和副区从左到右排列，两区各至少 160 CSS px。键盘调整、收起及实体鼠标拖动已验。正常文档工作区的副区入口和原生窗口下限待接入。见[F-031a 迭代](iterations/F-031a-primary-secondary-layout-probe.md)。
 
+alpha.324 普通窗口的文档承载已接入主区容器，副区保持收起。侧栏显示、调宽及已打开文档的模式和草稿保持。见[F-031b 迭代](iterations/F-031b-ordinary-primary-region-shell.md)。
+
 F-032a 已在隔离模型验证持久文档的区域路由，普通窗口的打开和移区交互还未接入。见[F-032a 迭代](iterations/F-032a-document-region-routing.md)。
 
 alpha.304 的合成路由实验台可验证双击打开、显式移区、满载回退和最后一篇移出时收起。实验只用合成文档，普通窗口无此入口。见[F-032b 迭代](iterations/F-032b-document-region-workspace-lab.md)。

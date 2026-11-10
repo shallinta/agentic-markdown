@@ -30,6 +30,7 @@ import {
   StandaloneFileList,
   useDocumentWorkspace,
 } from "@/components/document-service-panel";
+import { MainSideLayout } from "@/components/main-side-layout";
 import { UpdateIndicator } from "@/components/update-indicator";
 import { UpdateStatusProvider } from "@/components/update-status-provider";
 import { electrobun } from "@/lib/electrobun";
@@ -388,7 +389,15 @@ function PageInner() {
             <div className="electrobun-webkit-app-region-no-drag absolute top-4 right-4 z-20">
               <UpdateIndicator />
             </div>
-            <DocumentServicePanel workspace={workspace} />
+            <MainSideLayout
+              sideVisible={false}
+              side={null}
+              main={
+                <section aria-label="文档主区" className="size-full min-h-0 min-w-0">
+                  <DocumentServicePanel workspace={workspace} />
+                </section>
+              }
+            />
           </ResizablePanel>
         </ResizablePanelGroup>
       </main>

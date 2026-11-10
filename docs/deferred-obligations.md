@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-038c 全屏重启侧栏回归（2026-11-10）
+
+无保存偏好时的全屏重启侧栏偏差已修正，显式偏好保持。OBL-055 的完整全屏回归、绿钮退出、副区、动画布局与最终离线继续跟踪。见[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。
+
 ## F-039b 非活动标签图片呈现释放（2026-11-10）
 
 已验证切走释放状态持有的图片装饰，切回可重新显示。OBL-024 的完整配额、LRU、堆观测及可见副区保护继续跟踪。见[F-039b 迭代](iterations/F-039b-release-inactive-image-decorations.md)。

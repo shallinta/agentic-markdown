@@ -107,6 +107,15 @@ export function createWindowStatePersistence(
   };
 
   if (options.isFullScreen) {
+    if (!sidebar) {
+      // Read the ordinary frame before native fullscreen changes renderer width.
+      // Sidebar pixels are CSS pixels; the normal renderer default is 20%.
+      const width = win.getFrame().width;
+      if (Number.isFinite(width) && width > 0 && Number.isFinite(desiredZoom) && desiredZoom > 0) {
+        const initial = { visible: true, expandedWidth: Math.max(1, width / desiredZoom * 0.2) };
+        if (isSidebarLayout(initial)) sidebar = initial;
+      }
+    }
     win.setFullScreen(true);
   } else if (options.isMaximized) {
     win.maximize();

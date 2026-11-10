@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
 
 import { discardGuard } from "@/client/discard-guard";
 import { createDocumentController } from "@/client/documents";
 import { moveRealRegionDocument, projectRealRegionDocuments, type RealRegionAllocation } from "@/client/real-document-region-lab";
+import { resizeSecondaryPaneDivider } from "@/client/secondary-pane-divider";
 import { SECONDARY_MIN_HEIGHT } from "@/client/secondary-pane-height";
 import { CommandProvider, useCommands, useRegisterCommands } from "@/commands";
 import { electrobun } from "@/lib/electrobun";
@@ -17,6 +18,15 @@ const saveLabel = { saving: "保存中…", saved: "已保存", dirty: "未保�
 const heightPresets = [65, 66, 320] as const;
 const cssPixels = (value: number) => Math.round(value * 100) / 100;
 
+interface DividerDrag {
+  element: HTMLDivElement;
+  pointerId: number;
+  beforeIndex: number;
+  startY: number;
+  allocation: RealRegionAllocation;
+  activeId: string | undefined;
+}
+
 export function RealDocumentRegionLab() {
   return <CommandProvider><RealDocumentRegionViews /></CommandProvider>;
 }
@@ -30,10 +40,20 @@ function RealDocumentRegionViews() {
   const [focusRequest, setFocusRequest] = useState<{ documentId: string }>();
   const [receipt, setReceipt] = useState("");
   const sideCanvas = useRef<HTMLOListElement>(null);
-  const [measured, setMeasured] = useState<{ allocation: RealRegionAllocation; height: number; width: number; rows: number[] }>();
+  const dividerLine = useRef<HTMLDivElement>(null);
+  const dividerHit = useRef<HTMLDivElement>(null);
+  const drag = useRef<DividerDrag | null>(null);
+  const [measured, setMeasured] = useState<{
+    allocation: RealRegionAllocation;
+    height: number;
+    width: number;
+    rows: number[];
+    divider?: { line: number; hit: number; above: number; below: number };
+  }>();
   const activeId = state.snapshot?.documentId;
   const projection = projectRealRegionDocuments(state.tabs, activeId, allocation, preferredMainId);
   const liveAllocation = projection?.allocation;
+  const liveSecondaryIds = liveAllocation?.ids;
   const mainCurrent = projection ? projection.mainCurrent : state.snapshot;
   const mainCurrentId = mainCurrent?.documentId ?? null;
   const moveIn = moveRealRegionDocument(controller, allocation, "secondary");
@@ -46,7 +66,12 @@ function RealDocumentRegionViews() {
   const notifyCommands = useRegisterCommands({
     selectDocument: controller.select,
     saveDocument: controller.save,
-    closeDocument: controller.closeActive,
+    closeDocument: () => {
+      const current = controller.getSnapshot().snapshot;
+      if (current && liveSecondaryIds?.includes(current.documentId) && isDividerFocused())
+        return closeSecondary(current.documentId, current.fileName, true);
+      return controller.closeActive();
+    },
     undoDocument: ({ documentId }) => { controller.runHistory("undo", documentId); },
     redoDocument: ({ documentId }) => { controller.runHistory("redo", documentId); },
   }, true, {
@@ -96,6 +121,15 @@ function RealDocumentRegionViews() {
   }, [controller]);
   useEffect(() => { void controller.refreshWriteCapability(); }, [controller, state.snapshot?.handle]);
 
+  const stopDrag = useCallback((event?: PointerEvent<HTMLDivElement>) => {
+    const current = drag.current;
+    if (!current || (event && (current.pointerId !== event.pointerId || current.element !== event.currentTarget))) return;
+    drag.current = null;
+    if (current.element.hasPointerCapture(current.pointerId))
+      current.element.releasePointerCapture(current.pointerId);
+  }, []);
+  useLayoutEffect(() => () => stopDrag(), [activeId, liveSecondaryIds, stopDrag]);
+
   useLayoutEffect(() => {
     if (liveAllocation && liveAllocation !== allocation) setAllocation(liveAllocation);
   }, [allocation, liveAllocation]);
@@ -105,8 +139,14 @@ function RealDocumentRegionViews() {
     if (!canvas || !liveAllocation) return;
     const read = () => {
       const { height, width } = canvas.getBoundingClientRect();
+      const line = dividerLine.current?.getBoundingClientRect();
+      const hit = dividerHit.current?.getBoundingClientRect();
       setMeasured({ allocation: liveAllocation, height: cssPixels(height), width: cssPixels(width),
-        rows: Array.from(canvas.children, (row) => cssPixels(row.getBoundingClientRect().height)) });
+        rows: Array.from(canvas.children, (row) => cssPixels(row.getBoundingClientRect().height)),
+        divider: line && hit ? {
+          line: cssPixels(line.height), hit: cssPixels(hit.height),
+          above: cssPixels(line.top - hit.top), below: cssPixels(hit.bottom - line.bottom),
+        } : undefined });
     };
     const observer = new ResizeObserver(read);
     observer.observe(canvas);
@@ -140,6 +180,57 @@ function RealDocumentRegionViews() {
     setFocusRequest({ documentId });
   }
 
+  function isDividerFocused() {
+    const hit = dividerHit.current;
+    return !!hit && hit.ownerDocument.activeElement === hit;
+  }
+
+  function canAdjustDivider(current: RealRegionAllocation) {
+    const { tabs, snapshot } = controller.getSnapshot();
+    return snapshot?.documentId === activeId && current.ids === liveSecondaryIds &&
+      current.ids.every((id) => tabs.some((tab) => tab.documentId === id)) &&
+      controller.canSelectFolder() && !controller.isEditorInputBlocked();
+  }
+
+  function adjustDivider(beforeIndex: number, delta: number, initial?: DividerDrag) {
+    const current = initial?.allocation ?? liveAllocation;
+    if (!current || !canAdjustDivider(current)) return false;
+    setAllocation((previous) => {
+      if (previous.ids !== current.ids) return previous;
+      const heights = resizeSecondaryPaneDivider(initial?.allocation.heights ?? previous.heights, beforeIndex, delta);
+      if (!heights || (heights[beforeIndex] === previous.heights[beforeIndex] &&
+          heights[beforeIndex + 1] === previous.heights[beforeIndex + 1])) return previous;
+      return { ...previous, heights };
+    });
+    return true;
+  }
+
+  function beginDrag(event: PointerEvent<HTMLDivElement>, beforeIndex: number) {
+    if (event.button !== 0 || event.pointerType !== "mouse" || !event.isPrimary) return;
+    // Keep the current editor focused when a native composition blocks the drag.
+    event.preventDefault();
+    const canvas = sideCanvas.current;
+    if (drag.current || !canvas || !liveAllocation || !canAdjustDivider(liveAllocation)) return;
+    const element = event.currentTarget;
+    element.setPointerCapture(event.pointerId);
+    drag.current = { element, pointerId: event.pointerId, beforeIndex,
+      startY: event.clientY - canvas.getBoundingClientRect().top, allocation: liveAllocation,
+      activeId: controller.getSnapshot().snapshot?.documentId };
+    element.focus({ preventScroll: true });
+  }
+
+  function moveDrag(event: PointerEvent<HTMLDivElement>) {
+    const current = drag.current;
+    const canvas = sideCanvas.current;
+    if (!canvas || current?.pointerId !== event.pointerId || current.element !== event.currentTarget) return;
+    if (controller.getSnapshot().snapshot?.documentId !== current.activeId) {
+      stopDrag(event);
+      return;
+    }
+    const y = event.clientY - canvas.getBoundingClientRect().top;
+    if (!adjustDivider(current.beforeIndex, y - current.startY, current)) stopDrag(event);
+  }
+
   function move(target: "main" | "secondary") {
     const document = controller.getSnapshot().snapshot;
     const result = moveRealRegionDocument(controller, allocation, target);
@@ -151,6 +242,7 @@ function RealDocumentRegionViews() {
       setReceipt("暂未移区，请完成当前操作后重试。");
       return;
     }
+    stopDrag();
     setAllocation(result.allocation);
     setReceipt(`已将 ${document.fileName} 移${target === "main" ? "回主区" : "入副区"}`);
     setFocusRequest({ documentId: document.documentId });
@@ -158,11 +250,13 @@ function RealDocumentRegionViews() {
 
   async function closeSecondary(documentId: string, fileName: string, restoreFocus: boolean) {
     const wasActive = controller.getSnapshot().snapshot?.documentId === documentId;
+    const keepFocus = restoreFocus || isDividerFocused();
+    stopDrag();
     await controller.closeTab(documentId);
     const current = controller.getSnapshot();
     if (current.tabs.some((tab) => tab.documentId === documentId)) return;
     setReceipt(`已关闭 ${fileName} · 活动文档 ${current.snapshot?.fileName ?? "无"}`);
-    if ((wasActive || restoreFocus) && current.snapshot) setFocusRequest({ documentId: current.snapshot.documentId });
+    if ((wasActive || keepFocus) && current.snapshot) setFocusRequest({ documentId: current.snapshot.documentId });
   }
 
   function changeHeight(totalHeight: number) {
@@ -209,10 +303,10 @@ function RealDocumentRegionViews() {
         {receipt && <p role="status">{receipt}</p>}
         {!projection && <p role="alert">副区分配不可用。</p>}
         {liveAllocation && (
-          <p className="tabular-nums">副区模型 {liveAllocation.totalHeight} CSS px，文档 {liveAllocation.heights.map(cssPixels).join(" / ") || "无"}</p>
+          <p className="overflow-x-auto whitespace-nowrap tabular-nums">副区模型 {liveAllocation.totalHeight} CSS px，文档 {liveAllocation.heights.map(cssPixels).join(" / ") || "无"}</p>
         )}
         {measured && measured.allocation === liveAllocation && (
-          <p className="tabular-nums">副区实测总高 {measured.height} CSS px，文档 {measured.rows.join(" / ")}，宽度 {measured.width} CSS px</p>
+          <p className="overflow-x-auto whitespace-nowrap tabular-nums">副区实测总高 {measured.height} CSS px，文档 {measured.rows.join(" / ")}，宽度 {measured.width} CSS px</p>
         )}
         {state.error && <p role="alert" className="text-destructive">{state.error}</p>}
         {activeStatus?.message && <p role="status">{activeStatus.message}</p>}
@@ -240,8 +334,10 @@ function RealDocumentRegionViews() {
               {projection.secondary.map(({ documentId, fileName }, index) => {
                 const height = projection.allocation.heights[index];
                 const name = `${fileName}${controller.isDirty(documentId) ? " · 未保存" : ""}`;
+                const next = projection.secondary[index + 1];
+                const nextHeight = projection.allocation.heights[index + 1];
                 return (
-                  <li key={documentId} className="flex min-w-0 flex-col overflow-hidden" style={{ height }}>
+                  <li key={documentId} id={`region-lab-row-${documentId}`} className="relative flex min-w-0 flex-col" style={{ height }}>
                     <div className="bg-sidebar flex shrink-0 items-center gap-1 px-1" style={{ height: SECONDARY_MIN_HEIGHT - 1 }}>
                       <button type="button" className={`${buttonClass} min-w-0 grow truncate py-0 text-left text-sm`}
                         aria-pressed={activeId === documentId} aria-label={`激活副区 ${name}`} data-secondary-document={documentId}
@@ -252,12 +348,41 @@ function RealDocumentRegionViews() {
                         onClick={(event) => void closeSecondary(documentId, fileName,
                           event.currentTarget.ownerDocument.activeElement === event.currentTarget)}>×</button>
                     </div>
-                    {height > SECONDARY_MIN_HEIGHT && editor(documentId)}
-                    <div aria-hidden="true" className="bg-border h-px shrink-0" />
+                    {height > SECONDARY_MIN_HEIGHT && (
+                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{editor(documentId)}</div>
+                    )}
+                    <div ref={next ? dividerLine : undefined} aria-hidden="true" className="bg-border h-px shrink-0" />
+                    {next && (
+                      <div key={next.documentId} ref={dividerHit} role="separator" tabIndex={0} aria-orientation="horizontal"
+                        aria-label={`${fileName} 和 ${next.fileName} 分隔线`} aria-controls={`region-lab-row-${documentId}`}
+                        aria-valuemin={SECONDARY_MIN_HEIGHT} aria-valuemax={cssPixels(height + nextHeight - SECONDARY_MIN_HEIGHT)}
+                        aria-valuenow={cssPixels(height)} aria-valuetext={`上方 ${cssPixels(height)} CSS px，下方 ${cssPixels(nextHeight)} CSS px`}
+                        className="electrobun-webkit-app-region-no-drag focus-visible:bg-ring absolute inset-x-0 -bottom-px z-10 h-[3px] cursor-row-resize touch-none select-none focus-visible:outline-2 focus-visible:outline-offset-1"
+                        onKeyDown={(event) => {
+                          if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.nativeEvent.isComposing || drag.current) return;
+                          if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          adjustDivider(index, event.key === "ArrowDown" ? 8 : -8);
+                        }}
+                        onPointerDown={(event) => beginDrag(event, index)}
+                        onPointerMove={moveDrag}
+                        onPointerUp={(event) => {
+                          moveDrag(event);
+                          stopDrag(event);
+                        }}
+                        onPointerCancel={stopDrag} onLostPointerCapture={stopDrag}
+                      />
+                    )}
                   </li>
                 );
               })}
             </ol>
+            {measured?.allocation === projection.allocation && measured.divider && (
+              <p className="px-2 py-1 text-sm tabular-nums">
+                副区分隔线实测 {measured.divider.line} CSS px，命中区 {measured.divider.hit} CSS px（上 {measured.divider.above} / 下 {measured.divider.below}）
+              </p>
+            )}
           </section>
         )} />
       </div>

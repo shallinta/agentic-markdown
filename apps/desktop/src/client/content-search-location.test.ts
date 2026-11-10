@@ -101,7 +101,7 @@ test("search activation retains buffer, waits for the target, and selects once w
       select: (range, state) => {
         expect(state.field(rawText)).toBe("\uFEFFa\r\n😀中文");
         selections.push(range);
-        documents.notifyInteraction();
+        documents.registerEditorInteraction(documents.getSnapshot().snapshot!.documentId, () => true).notify();
         return true;
       },
     });

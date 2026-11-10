@@ -132,7 +132,7 @@ test("frozen and IME interaction barriers publish pending once and resume withou
     try {
       c.toggleReadingMode();
       let composing = barrier === "interaction";
-      c.setInteractionCheck(() => !composing);
+      const interaction = c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => !composing);
       if (barrier === "frozen") expect(c.beginDiscard()).toBe(true);
       let calls = 0;
       const off = c.subscribe(() => calls++);
@@ -150,7 +150,7 @@ test("frozen and IME interaction barriers publish pending once and resume withou
       if (barrier === "frozen") c.endDiscard();
       else {
         composing = false;
-        c.notifyInteraction();
+        interaction.notify();
       }
       await settle();
       expect(c.isSafeSource(a.documentId)).toBe(true);
@@ -203,9 +203,10 @@ test("old view cleanup cannot remove a newer composition check or history dispat
     let composing = true,
       oldCalls = 0,
       newCalls = 0;
-    const oldCheck = c.setInteractionCheck(() => true);
+    const oldCheck = c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true).release;
     const oldDispatch = c.registerEditorDispatch(a.documentId, () => oldCalls++);
-    const newCheck = c.setInteractionCheck(() => !composing);
+    const newInteraction = c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => !composing);
+    const newCheck = newInteraction.release;
     const newDispatch = c.registerEditorDispatch(a.documentId, (tx) => {
       newCalls++;
       c.updateEditor(a.documentId, tx);
@@ -217,7 +218,7 @@ test("old view cleanup cannot remove a newer composition check or history dispat
     expect(c.isSafeSource(a.documentId)).toBe(false);
     expect(oldCalls + newCalls).toBe(0);
     composing = false;
-    c.notifyInteraction();
+    newInteraction.notify();
     await settle();
     expect(c.isSafeSource(a.documentId)).toBe(true);
     expect(newCalls).toBe(1);
@@ -236,7 +237,7 @@ test("view removal releases the barrier without removing the session owner", asy
   const { c, a } = await setup();
   try {
     c.toggleReadingMode();
-    const remove = c.setInteractionCheck(() => false);
+    const remove = c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false).release;
     const session = c.getEditorFault(a.documentId)!;
     reportEditorFault(session, "parser");
     await settle();
@@ -307,7 +308,7 @@ test("failed safe dispatch reports once, retains reading and stops automatic ret
     expect(c.getSnapshot().error).toBe(
       "安全源码恢复失败，内存状态已保留；请勿关闭文档。"
     );
-    c.notifyInteraction();
+    c.registerEditorInteraction(a.documentId, () => true).notify();
     session.notify?.();
     c.endDiscard();
     await settle();

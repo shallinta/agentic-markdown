@@ -134,7 +134,7 @@ test("registry consults current composition and write capability at dispatch", a
     }
   );
   expect(registry.isCommandEnabled("undoDocument")).toBe(true);
-  c.setInteractionCheck(() => false);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false);
   for (const type of [
     "undoDocument",
     "saveDocument",
@@ -144,7 +144,7 @@ test("registry consults current composition and write capability at dispatch", a
     registry.executeCommand({ type, args: {} });
   }
   expect(invoked).toBe(0);
-  c.setInteractionCheck(() => true);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true);
   await readonly();
   for (const type of ["undoDocument", "saveDocument"] as const) {
     expect(registry.isCommandEnabled(type)).toBe(false);

@@ -286,13 +286,13 @@ test("unknown save settlement visibly cancels quit; readonly dirty and active co
       capability: { writable: false, reason: "readonly" },
     });
   await c.refreshWriteCapability();
-  c.setInteractionCheck(() => false);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false);
   lifecycle.beforeClose({});
   await Promise.all(operations);
   expect(guard.getSnapshot()).toBeNull();
   expect(counts().quits).toBe(0);
   expect(c.getEditor(b.documentId)!.state.field(rawText)).not.toBe(b.text);
-  c.setInteractionCheck(() => true);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true);
   lifecycle.beforeQuit({});
   await nextTurn();
   expect(guard.getSnapshot()?.message).toContain("全部");

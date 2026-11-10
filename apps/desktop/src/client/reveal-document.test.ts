@@ -104,20 +104,20 @@ for (const action of [
         }),
     });
     await controller.select();
-    controller.setInteractionCheck(() => allowed);
+    const interaction = controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => allowed);
     expect(controller.canRevealDocument()).toBe(true);
     const before = controller.getSnapshot();
     const pending = controller[action]();
     expect(controller.canRevealDocument()).toBe(false);
     expect(controller.getSnapshot()).not.toBe(before);
     allowed = false;
-    controller.notifyInteraction();
+    interaction.notify();
     expect(cancelled.length).toBe(1);
     resolve({ ok: false });
     await pending;
     expect(controller.getSnapshot().error).toBeNull();
     allowed = true;
-    controller.notifyInteraction();
+    interaction.notify();
     expect(controller.canRevealDocument()).toBe(true);
     const { active: _active, requestId: _request, ...binding } = observed[0];
     void _active;

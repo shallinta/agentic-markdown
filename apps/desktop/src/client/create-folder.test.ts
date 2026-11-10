@@ -159,7 +159,7 @@ test("folder gate is owner-specific; active exit stays frozen after operation co
 
 test("folder IME guard blocks initiation, and closing before state response never submits", async () => {
   const f = await fixture(); await f.ready();
-  const release = f.documents.setInteractionCheck(() => false);
+  const release = f.documents.registerEditorInteraction(f.documents.getSnapshot().snapshot!.documentId, () => false).release;
   await f.controller.create(); expect(f.calls.some(request => request.op === "state")).toBe(false);
   release();
   const held = deferred<unknown>(); f.intercept(request => request.op === "state" ? held.promise : undefined);

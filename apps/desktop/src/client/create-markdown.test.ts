@@ -62,7 +62,7 @@ test("duplicate gate rejects actual transactions, history and navigation; settle
   await f.documents.closeActive();
   await f.documents.reload();
   expect(f.documents.getSnapshot().tabs).toHaveLength(1);
-  f.documents.notifyInteraction();
+  f.documents.registerEditorInteraction(f.documents.getSnapshot().snapshot!.documentId, () => true).notify();
   expect(f.documents.getSnapshot().frozen).toBe(true);
   const r = f.calls.find(r => r.op === "create")!;
   if (r.op !== "create") throw Error();
@@ -202,7 +202,7 @@ test("draft editing does not freeze; dirty requires explicit version and IME blo
   expect(f.calls.some(r => r.op === "create" || r.op === "state")).toBe(false);
   expect(f.documents.runHistory("undo")).toBe(true);
   f.controller.setDuplicateVersion("disk");
-  const release = f.documents.setInteractionCheck(() => false);
+  const release = f.documents.registerEditorInteraction(f.documents.getSnapshot().snapshot!.documentId, () => false).release;
   await f.controller.create();
   expect(f.calls.some(r => r.op === "create" || r.op === "state")).toBe(false);
   release();

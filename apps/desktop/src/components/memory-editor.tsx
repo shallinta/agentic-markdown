@@ -205,16 +205,20 @@ export function MemoryEditor({
     let viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
     let scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
     let releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
+    const checkInteraction = () => !view.compositionStarted;
+    let interaction = controller.registerEditorInteraction(documentId, checkInteraction);
     const refreshSession = (nextSession: EditorFaultSession) => {
       if (nextSession === registeredSession) return;
       // The same EditorView can adopt a new session after a reload.
       viewportCapture.release();
       scrollCapture.release();
       releaseEditorDispatch();
+      interaction.release();
       registeredSession = nextSession;
       viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
       scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
       releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
+      interaction = controller.registerEditorInteraction(documentId, checkInteraction);
     };
     refreshViewSession.current = refreshSession;
     const viewport = controller.getViewport(documentId);
@@ -587,9 +591,6 @@ export function MemoryEditor({
         scrollCapture.savePosition(view.state, view.scrollDOM.scrollTop);
     };
     view.scrollDOM.addEventListener("scroll", saveScroll);
-    const releaseInteraction = controller.setInteractionCheck(
-      () => !view.compositionStarted
-    );
     controller.setSourceSelectionTarget({
       documentId,
       ready: () => currentView() && !view.compositionStarted && view.hasFocus,
@@ -761,11 +762,13 @@ export function MemoryEditor({
         executeCommand
       );
     view.contentDOM.addEventListener("beforeinput", historyInput, true);
-    const compositionChanged = () =>
+    const compositionChanged = () => {
+      const owner = interaction;
       setTimeout(() => {
         if (!currentView()) return;
-        controller.notifyInteraction();
+        owner.notify();
       }, 0);
+    };
     view.contentDOM.addEventListener("compositionstart", compositionChanged);
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
@@ -800,7 +803,7 @@ export function MemoryEditor({
       saveScroll();
       scrollCapture.captureSnapshot();
       scrollCapture.release();
-      releaseInteraction();
+      interaction.release();
       releaseEditorDispatch();
       controller.setSourceSelectionTarget(undefined);
       controller.setListInputTarget(undefined);

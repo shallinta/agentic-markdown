@@ -501,9 +501,9 @@ test("real controller captures unsaved buffer, ignores selection and cancels on 
   expect(controller.getEditor(value.documentId)).toBe(selectedEditor);
   expect(controller.getSnapshot()).toBe(documentState);
   expect(controller.getViewport(value.documentId)?.offset).toBe(-20);
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   expect(themes.select("paper")).toContain("当前操作进行中");
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   controller.beginDiscard();
   expect(themes.select("paper")).toContain("当前操作进行中");
   controller.endDiscard();

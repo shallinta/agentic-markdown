@@ -420,7 +420,24 @@ export function createDocumentController(
       throw new Error("Save settlement unconfirmed");
     saveDrainRequired = false;
   };
-  let canLeaveEditor = () => true;
+  const interactions = new Map<string, { incarnation: EditorFaultSession; check(): boolean }>();
+  let checkingInteraction = false;
+  const canLeaveEditor = (): boolean => {
+    const id = state.snapshot?.documentId;
+    const owner = id ? interactions.get(id) : undefined;
+    if (!id || !owner || editors.get(id)?.state.field(editorFaultSession) !== owner.incarnation) return true;
+    if (checkingInteraction) return false;
+    checkingInteraction = true;
+    try {
+      const allowed = owner.check();
+      return allowed === true && !metadataDisposed && state.snapshot?.documentId === id &&
+        interactions.get(id) === owner && editors.get(id)?.state.field(editorFaultSession) === owner.incarnation;
+    } catch {
+      return false;
+    } finally {
+      checkingInteraction = false;
+    }
+  };
   let quickFocusTarget: { documentId: string; ready(): boolean; focus(): void } | undefined;
   const quickFocusListeners = new Set<() => void>();
   let preserveSearchFocus: { documentId: string; handle: string } | undefined;
@@ -1050,6 +1067,7 @@ export function createDocumentController(
         viewportCaptures.delete(replaced.documentId);
         scrollCaptures.delete(replaced.documentId);
         editorDispatchers.delete(replaced.documentId);
+        interactions.delete(replaced.documentId);
         transfers.delete(replaced.documentId);
         saveResults.delete(replaced.documentId);
         uncertain.delete(replaced.documentId);
@@ -1062,6 +1080,7 @@ export function createDocumentController(
         viewportCaptures.delete(active.documentId);
         scrollCaptures.delete(active.documentId);
         editorDispatchers.delete(active.documentId);
+        interactions.delete(active.documentId);
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
         const stateStart = onTiming ? performance.now() : 0;
@@ -1183,6 +1202,7 @@ export function createDocumentController(
     viewportCaptures.clear();
     scrollCaptures.clear();
     editorDispatchers.clear();
+    interactions.clear();
     transfers.clear();
     capabilityLifetimes.clear();
     saveResults.clear();
@@ -1249,6 +1269,7 @@ export function createDocumentController(
     viewportCaptures.delete(documentId);
     scrollCaptures.delete(documentId);
     editorDispatchers.delete(documentId);
+    interactions.delete(documentId);
     transfers.delete(documentId);
     saveResults.delete(documentId);
     uncertain.delete(documentId);
@@ -1713,6 +1734,7 @@ export function createDocumentController(
       for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
       for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
       for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
+      for (const id of interactions.keys()) if (!editors.has(id)) interactions.delete(id);
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       if (trashGate?.token === prepared.trashToken) trashGate = null;
@@ -1764,6 +1786,7 @@ export function createDocumentController(
       for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
       for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
       for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
+      for (const id of interactions.keys()) if (!editors.has(id)) interactions.delete(id);
       folderRemovalGate = false;
       generation++;
     },
@@ -1771,7 +1794,7 @@ export function createDocumentController(
       const safely = (effect: () => void) => { try { effect(); } catch { console.error("folder-removal-effect"); } };
       for (const handle of prepared.closed) capabilityLifetimes.delete(handle);
       for (const id of prepared.removedIds) {
-        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); editorDispatchers.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
+        staleDocuments.delete(id); scrollPositions.delete(id); scrollSnapshots.delete(id); reading.delete(id); sourceReturn.delete(id); viewports.delete(id); { viewportCaptures.delete(id); scrollCaptures.delete(id); editorDispatchers.delete(id); interactions.delete(id); } transfers.delete(id); saveResults.delete(id); uncertain.delete(id); trashUncertain.delete(id);
         safely(() => releaseFaultOwner(id)); safely(() => search.delete(id));
       }
       safely(() => observation.sync(state.tabs));
@@ -2117,11 +2140,6 @@ export function createDocumentController(
     setWrappingScheduler: (schedule?: () => void) => {
       scheduleWrapping = schedule;
     },
-    notifyInteraction: () => {
-      controller.setSourceWrapping(sourceWrapping);
-      publish({ ...state });
-      scheduleFaultRecovery();
-    },
     getSnapshot: () => state,
     canRevealDocument: () => !!state.snapshot && !["missing", "replaced"].includes(observation.status(state.snapshot.documentId) ?? "") && !state.busy && !state.frozen && !saving.size && !revealPending && canLeaveEditor(),
     revealCurrentDocument: () => controller.dispatchDocumentPath("reveal"),
@@ -2264,6 +2282,7 @@ export function createDocumentController(
       viewportCaptures.clear();
     scrollCaptures.clear();
     editorDispatchers.clear();
+    interactions.clear();
       cancelRecentTabSwitch();
       recentTabListeners.clear();
       pinnedTabs.clear();
@@ -2420,14 +2439,30 @@ export function createDocumentController(
     beginDiscard,
     endDiscard,
     reportDiscardFailure,
-    setInteractionCheck: (check: () => boolean) => {
-      canLeaveEditor = check;
-      cancelInvalidRecentTabSwitch();
-      scheduleFaultRecovery();
-      return () => {
-        if (canLeaveEditor !== check) return;
-        canLeaveEditor = () => true;
+    registerEditorInteraction: (documentId: string, check: () => boolean) => {
+      const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      if (!incarnation || metadataDisposed) return { notify: () => undefined, release: () => undefined };
+      const owner = { incarnation, check };
+      const current = () => !metadataDisposed && state.snapshot?.documentId === documentId &&
+        interactions.get(documentId) === owner && editors.get(documentId)?.state.field(editorFaultSession) === incarnation;
+      interactions.set(documentId, owner);
+      if (current()) {
+        cancelInvalidRecentTabSwitch();
         scheduleFaultRecovery();
+      }
+      return {
+        notify: () => {
+          if (!current()) return;
+          controller.setSourceWrapping(sourceWrapping);
+          if (!current()) return;
+          publish({ ...state });
+          scheduleFaultRecovery();
+        },
+        release: () => {
+          if (interactions.get(documentId) !== owner) return;
+          interactions.delete(documentId);
+          if (state.snapshot?.documentId === documentId) scheduleFaultRecovery();
+        },
       };
     },
     isEditorInputBlocked: () => editorInputBlocked,

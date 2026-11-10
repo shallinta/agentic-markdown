@@ -303,7 +303,7 @@ test("all tabs are captured and publication invalidates an older capture before 
       a.documentId,
       b.documentId,
     ]);
-    documents.notifyInteraction();
+    documents.registerEditorInteraction(documents.getSnapshot().snapshot!.documentId, () => true).notify();
     expect(capture.current()).toBe(true);
     const seen: boolean[] = [];
     const unsubscribe = documents.subscribe(() => seen.push(capture.current()));

@@ -117,12 +117,12 @@ test("safe source, reload, close fallback and composition gating preserve isolat
   reportEditorFault(session, "presentation");
   expect(controller.enterSafeSource(id, session)).toBe(true);
   await controller.select();
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   controller.activateTab(id);
   expect(controller.getSnapshot().snapshot?.documentId).toBe(
     values[1].documentId
   );
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   controller.activateTab(id);
   expect(controller.isSafeSource(id)).toBe(true);
   expect(controller.getEditor(id)!.state.facet(language)).toBeNull();
@@ -137,7 +137,7 @@ test("safe source, reload, close fallback and composition gating preserve isolat
     controller.getEditor(values[1].documentId)!.state.facet(language)
   ).not.toBeNull();
   const before = controller.getEditor(values[1].documentId)!.state;
-  controller.notifyInteraction();
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true).notify();
   controller.activateTab(values[1].documentId);
   expect(controller.getEditor(values[1].documentId)!.state).toBe(before);
 });

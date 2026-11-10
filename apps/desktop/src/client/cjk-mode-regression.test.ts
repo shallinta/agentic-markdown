@@ -75,7 +75,7 @@ for (const mode of ["editing", "source", "safe"] as const) {
       const { c, a, b, state, results } = await setup(mode);
       const from = state().doc.toString().indexOf("起点") + 2;
       let previous = "";
-      c.setInteractionCheck(() => false);
+      c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false);
       for (let index = 0; index < candidates.length; index++) {
         const value = candidates[index];
         expect(
@@ -102,7 +102,7 @@ for (const mode of ["editing", "source", "safe"] as const) {
       }
       expect(results().saves).toBe(0);
       expect(results().confirmations).toBe(0);
-      c.setInteractionCheck(() => true);
+      c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true);
       const expected = original.replace("起点", "起点" + previous);
       expect(state().field(rawText)).toBe(expected);
       expect(c.isDirty(a.documentId)).toBe(true);
@@ -136,7 +136,7 @@ for (const mode of ["editing", "source", "safe"] as const) {
   test(`synthetic cancelled composition and readonly ${mode} do not corrupt raw text`, async () => {
     const { c, a, state } = await setup(mode);
     const from = state().doc.length;
-    c.setInteractionCheck(() => false);
+    c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false);
     for (const value of ["かな한🙂", ""]) {
       const oldLength = state().doc.length;
       c.updateEditor(
@@ -147,7 +147,7 @@ for (const mode of ["editing", "source", "safe"] as const) {
         })
       );
     }
-    c.setInteractionCheck(() => true);
+    c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true);
     expect(state().field(rawText)).toBe(original);
     expect(c.isDirty(a.documentId)).toBe(false);
     const readonly = await setup(mode, false);

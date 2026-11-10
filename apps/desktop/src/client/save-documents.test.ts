@@ -180,7 +180,7 @@ test("metadata preflight rechecks composition and disposal before long action", 
     });
     await waitCaptured(() => entered);
     if (dispose) controller.dispose();
-    else controller.setInteractionCheck(() => false);
+    else controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
     gate.resolve();
     await pending;
     expect(scans).toBe(0);
@@ -247,12 +247,12 @@ test("workspace actions reject inflight saves, composition and freeze; late save
   expect(controller.canSelectFolder()).toBe(true);
   expect(controller.isDirty(baseline.documentId)).toBe(true);
   expect(controller.getEditor(baseline.documentId)!.state).toBe(memory);
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   await controller.runWorkspaceAction(() => {
     mutations++;
   });
   await controller.openWorkspaceEntry("root", "node");
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   controller.beginDiscard();
   await controller.runWorkspaceAction(() => {
     mutations++;

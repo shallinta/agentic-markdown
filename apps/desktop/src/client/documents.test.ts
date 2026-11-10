@@ -138,9 +138,9 @@ test("safe source preserves dirty revision and transfer, waits for interaction, 
   const transfer = controller.getSaveTransfer(value.documentId);
   const session = controller.getEditorFault(value.documentId)!;
   reportEditorFault(session, "presentation");
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   expect(controller.enterSafeSource(value.documentId, session)).toBe(false);
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   controller.beginDiscard();
   expect(controller.enterSafeSource(value.documentId, session)).toBe(false);
   controller.endDiscard();
@@ -361,7 +361,7 @@ test("clean primary capture rejects transient and isolated states while allowing
     await loading;
     expect(controller.captureCleanPrimaryTabs().ok).toBe(true);
     const capture = controller.captureCleanPrimaryTabs();
-    const restore = controller.setInteractionCheck(() => false);
+    const restore = controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false).release;
     expect(capture.ok && capture.current()).toBe(false);
     expect(controller.captureCleanPrimaryTabs().ok).toBe(false);
     restore();
@@ -508,7 +508,7 @@ test("independent dirty snapshot respects input and lifecycle gates and rejects 
   await controller.select();
   const first = controller.getEditor(value.documentId)!.state;
   expect(controller.updateEditor(value.documentId, first.update({ changes: { from: first.doc.length, insert: "未保存" } }))).toBe(true);
-  const releaseInteraction = controller.setInteractionCheck(() => false);
+  const releaseInteraction = controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false).release;
   expect(controller.getIndependentReadingSnapshotKind()).toBeUndefined();
   expect(controller.captureIndependentReadingSnapshot()).toBeUndefined();
   releaseInteraction();
@@ -577,9 +577,9 @@ test("group sorting preserves active editor/MRU and reconciles open, refresh, cl
   expect(controller.getRecentTabCandidate()).toBe(c.documentId);
   expect(controller.moveActiveTab(1)).toBe(false);
   controller.cancelRecentTabSwitch();
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   expect(controller.moveTab(b.documentId, c.documentId, "before")).toBe(false);
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   unsubscribe();
   await open(e);
   expect(ids()).toEqual([c, b, d, a, e].map(tab => tab.documentId));
@@ -628,9 +628,9 @@ test("cross-group drop publishes only final pin/order and preserves editor, acti
   expect(events[events.length - 1]).toEqual({ ids: [a, b, c, d].map(tab => tab.documentId), pinned: false });
   expect(events).toHaveLength(2);
   expect(controller.dropTab(c.documentId, c.documentId, "before")).toBe(false);
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   expect(controller.dropTab(b.documentId, a.documentId, "after")).toBe(false);
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   controller.activateTab(b.documentId); await controller.closeActive();
   expect(controller.getSnapshot().snapshot?.documentId).toBe(c.documentId);
   expect(controller.dropTab(c.documentId, b.documentId, "after")).toBe(false);
@@ -737,7 +737,7 @@ test("pin gates respect busy, frozen and composing state, and replaced tabs lose
   controller.setEditorInputBlocked(true);
   expect(controller.setActiveTabPinned(true)).toBe(false);
   controller.setEditorInputBlocked(false);
-  const restoreInteraction = controller.setInteractionCheck(() => false);
+  const restoreInteraction = controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false).release;
   expect(controller.setActiveTabPinned(true)).toBe(false);
   restoreInteraction();
   expect(controller.beginDiscard()).toBe(true);
@@ -885,7 +885,7 @@ test("recent tab candidate cancels on lifecycle changes and automatic close fall
   controller.activateTab(first.documentId);
   expect(controller.cycleRecentTabs()).toBe(true);
   expect(controller.getRecentTabCandidate()).toBe(fourth.documentId);
-  const releaseInteraction = controller.setInteractionCheck(() => false);
+  const releaseInteraction = controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false).release;
   expect(controller.getRecentTabCandidate()).toBeNull();
   expect(controller.finishRecentTabSwitch()).toBe(false);
   releaseInteraction();
@@ -1107,7 +1107,7 @@ test("folder open reuses dirty mode and history and honors composition", async (
   expect(controller.getMode(value.documentId)).toBe("reading");
   expect(controller.isDirty(value.documentId)).toBe(true);
   expect(controller.getSnapshot().tabs).toHaveLength(1);
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   expect(controller.canSelectFolder()).toBe(false);
   await controller.openWorkspaceEntry("root", "entry");
   expect(opens).toBe(1);
@@ -1286,10 +1286,10 @@ test("mode transitions respect IME, frozen state and safe source isolation", asy
   const { controller, value } = setup();
   expect(controller.toggleReadingMode()).toBe(false);
   await controller.select();
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   expect(controller.toggleReadingMode()).toBe(false);
   expect(controller.toggleSourceMode()).toBe(false);
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   controller.beginDiscard();
   expect(controller.toggleReadingMode()).toBe(false);
   controller.endDiscard();
@@ -1326,9 +1326,9 @@ test("source mode is per-document and cannot mutate raw, revision, save transfer
   expect(controller.getMode(second.documentId)).toBe("editing");
   controller.activateTab(value.documentId);
   expect(controller.getMode(value.documentId)).toBe("source");
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   expect(controller.toggleSourceMode()).toBe(false);
-  controller.setInteractionCheck(() => true);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => true);
   controller.beginDiscard();
   expect(controller.toggleSourceMode()).toBe(false);
   controller.endDiscard();
@@ -1582,7 +1582,7 @@ test("oversized editing is rejected intact; composition prevents destructive tra
     )
   ).toBe(false);
   expect(controller.getEditor(value.documentId)!.state).toBe(initial);
-  controller.setInteractionCheck(() => false);
+  controller.registerEditorInteraction(controller.getSnapshot().snapshot!.documentId, () => false);
   await controller.clear();
   await controller.closeActive();
   expect(controller.beginDiscard()).toBe(false);
@@ -2121,4 +2121,57 @@ test("accepted mode dispatch preserves a nested newer mode transition", async ()
   expect(controller.toggleSourceMode()).toBe(true);
   expect(controller.getMode(id)).toBe("reading"); // outer completion must not erase newer mode
   controller.dispose();
+});
+
+test("interaction checks belong only to the active incarnation and registration", async () => {
+  const { controller: c, value: a, transport } = setup();
+  const absent = c.registerEditorInteraction("absent", () => false);
+  absent.notify();
+  await c.select();
+  const b = snapshot("second");
+  transport.selectDocument = request => Promise.resolve(result(request, b));
+  await c.select();
+  let backgroundCalls = 0;
+  const background = c.registerEditorInteraction(a.documentId, () => { backgroundCalls++; return false; });
+  expect(c.canToggleSourceMode()).toBe(true);
+  const before = c.getSnapshot();
+  background.notify();
+  expect(c.getSnapshot()).toBe(before);
+  expect(backgroundCalls).toBe(0);
+  let composing = true;
+  const old = c.registerEditorInteraction(b.documentId, () => !composing);
+  expect(c.canToggleSourceMode()).toBe(false);
+  c.activateTab(a.documentId);
+  expect(c.getSnapshot().snapshot?.documentId).toBe(b.documentId);
+  composing = false;
+  old.notify();
+  transport.readDocument = request => Promise.resolve(result(request, b));
+  await c.reload();
+  composing = true;
+  expect(c.canToggleSourceMode()).toBe(true);
+  const fresh = c.registerEditorInteraction(b.documentId, () => false);
+  const current = c.getSnapshot();
+  old.notify(); old.release();
+  expect(c.getSnapshot()).toBe(current);
+  expect(c.canToggleSourceMode()).toBe(false);
+  fresh.release();
+  expect(c.canToggleSourceMode()).toBe(true);
+  background.release(); absent.release(); c.dispose();
+});
+
+test("interaction exceptions and synchronous owner replacement reject the checked operation", async () => {
+  const { controller: c, value } = setup();
+  await c.select();
+  const thrown = c.registerEditorInteraction(value.documentId, () => { throw Error("geometry-independent guard failure"); });
+  expect(c.canToggleSourceMode()).toBe(false);
+  thrown.release();
+  let replace = false;
+  c.registerEditorInteraction(value.documentId, () => {
+    if (replace) c.registerEditorInteraction(value.documentId, () => true);
+    return true;
+  });
+  replace = true;
+  expect(c.canToggleSourceMode()).toBe(false);
+  expect(c.canToggleSourceMode()).toBe(true);
+  c.dispose();
 });

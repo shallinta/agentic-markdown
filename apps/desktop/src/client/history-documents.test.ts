@@ -204,18 +204,18 @@ test("source wrap waits for composition and applies only latest value without re
   const { a, controller: c } = await setup();
   c.toggleSourceMode();
   let composing = true;
-  c.setInteractionCheck(() => !composing);
+  const interaction = c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => !composing);
   const original = c.getEditor(a.documentId)!.state;
   c.setSourceWrapping(false);
   c.setSourceWrapping(true);
   c.setSourceWrapping(false);
   expect(c.getEditor(a.documentId)!.state).toBe(original);
   composing = false;
-  c.notifyInteraction();
+  interaction.notify();
   expect(getSourceWrapping(c.getEditor(a.documentId)!.state)).toBe(false);
   c.dispose();
   c.setSourceWrapping(true);
-  c.notifyInteraction();
+  interaction.notify();
   expect(c.getEditor(a.documentId)).toBeUndefined();
 });
 test("wrapping defers hidden cache and fences measured callbacks against tab, state, composition and disposal", async () => {
@@ -240,9 +240,9 @@ test("wrapping defers hidden cache and fences measured callbacks against tab, st
   edit("changed after measurement");
   expect(c.applySourceWrapping(a.documentId, aBefore)).toBe(false);
   const latest = c.getEditor(a.documentId)!.state;
-  c.setInteractionCheck(() => false);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false);
   expect(c.applySourceWrapping(a.documentId, latest)).toBe(false);
-  c.setInteractionCheck(() => true);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true);
   c.beginDiscard();
   expect(c.applySourceWrapping(a.documentId, latest)).toBe(false);
   c.endDiscard();
@@ -262,7 +262,7 @@ test("list input target fences write permission, focus, IME, freezing and lifecy
  }});
  expect(c.runListInput(false,a.documentId)).toBe(true);
  ready=false;expect(c.runListInput(false,a.documentId)).toBe(false);ready=true;
- c.setInteractionCheck(()=>false);expect(c.canRunListInput()).toBe(false);c.setInteractionCheck(()=>true);
+ c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, ()=>false);expect(c.canRunListInput()).toBe(false);c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, ()=>true);
  c.setEditorInputBlocked(true);expect(c.canRunListInput()).toBe(false);c.setEditorInputBlocked(false);
  c.beginDiscard();expect(c.canRunListInput()).toBe(false);c.endDiscard();
  transport.checkDocumentWriteCapability=req=>Promise.resolve({...req,capability:{writable:false,reason:"readonly"}});
@@ -279,7 +279,7 @@ test("shared indentation admits editing/source and rejects stale, readonly, froz
   expect(c.canIndentSource()).toBe(true);
   c.toggleSourceMode();expect(c.runSourceIndentation(true,a.documentId)).toBe(true);
   ready=false;expect(c.canIndentSource()).toBe(false);ready=true;
-  c.setInteractionCheck(()=>false);expect(c.canIndentSource()).toBe(false);c.setInteractionCheck(()=>true);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, ()=>false);expect(c.canIndentSource()).toBe(false);c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, ()=>true);
   c.setEditorInputBlocked(true);expect(c.canIndentSource()).toBe(false);c.setEditorInputBlocked(false);
   c.beginDiscard();expect(c.canIndentSource()).toBe(false);c.endDiscard();
   transport.checkDocumentWriteCapability=req=>Promise.resolve({...req,capability:{writable:false,reason:"readonly"}});
@@ -318,9 +318,9 @@ test("source selection commands retain read-only selection but fence nonactive, 
       state.update({ changes: { from: 0, insert: "forbidden" } })
     )
   ).toBe(false);
-  c.setInteractionCheck(() => false);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false);
   expect(c.runSourceSelection("above", a.documentId)).toBe(false);
-  c.setInteractionCheck(() => true);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true);
   c.beginDiscard();
   expect(c.runSourceSelection("above", a.documentId)).toBe(false);
   c.endDiscard();
@@ -490,13 +490,13 @@ test("composition and frozen confirmation block history/save and destructive tra
   await openB();
   edit("second");
   c.activateTab(a.documentId);
-  c.setInteractionCheck(() => false);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => false);
   expect(c.canUndo()).toBe(false);
   expect(c.canSave()).toBe(false);
   expect(c.runHistory("undo")).toBe(false);
   await c.closeActive();
   expect(c.getSnapshot().tabs).toHaveLength(2);
-  c.setInteractionCheck(() => true);
+  c.registerEditorInteraction(c.getSnapshot().snapshot!.documentId, () => true);
   c.beginDiscard();
   expect(c.runHistory("undo")).toBe(false);
   c.endDiscard();

@@ -58,6 +58,8 @@ alpha.341 支持恢复横跨多个目录的标签。从「待重新授权的目�
 
 自 alpha.355 起，显式关闭目录文档的标签时，即使其他标签有未保存修改，也会移除本窗口已确认的会话记录中对应的标签。其余标签保留上次记录的状态，草稿仍留在当前窗口。退出时放弃草稿后，重启恢复的是保留标签的磁盘正文。见[F-037ae 迭代](iterations/F-037ae-remove-closed-tab-with-dirty-survivors.md)。
 
+alpha.356 的独立文件仍从欢迎页「最近独立文件」重新选择并打开。独立文件的标签、模式和位置随会话恢复的功能仍在开发。见[F-037af 迭代](iterations/F-037af-standalone-session-source-proof.md)。
+
 alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。重新授权并恢复主区文档时，即使在原位置前插入了内容，也能回到仍可辨认的原段落。原段落已删除时，优先定位到可辨认的邻近块，再按源码坐标和滚动比例回退。alpha.352 支持单篇恢复，alpha.353 扩展到成组标签。若组内有多篇正文变化，优先处理原活动标签，共用计算时限用完后，其余标签按源码坐标或比例恢复。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)、[F-037ab 迭代](iterations/F-037ab-restore-single-tab-by-markdown-block.md)、[F-037ac 迭代](iterations/F-037ac-restore-group-tabs-by-markdown-block.md)。
 
 ## 主窗原生全屏（F-038a）

@@ -2,12 +2,21 @@ import { isDocumentSnapshot } from "./document-snapshot";
 import type { DocumentSnapshot } from "./documents";
 import { MAIN_TAB_METADATA_MAX_TABS } from "./main-tab-checkpoint";
 import { validRootRosterId } from "./root-roster";
+import { WORKSPACE_MAX_ROOTS } from "./workspace";
 
 export type MainTabRecoveryRequest = {
   protocolVersion: 1;
   requestId: string;
 } & (
   | { op: "open"; root: string; generation: number; expectedRootId: string }
+  | {
+      op: "open-multi";
+      roots: readonly {
+        root: string;
+        generation: number;
+        expectedRootId: string;
+      }[];
+    }
   | { op: "finish"; adopted: boolean }
   | { op: "group-item"; index: number }
 );
@@ -44,6 +53,35 @@ export function validMainTabRecoveryRequest(
     v.requestId.length > 80
   )
     return false;
+  if (v.op === "open-multi") {
+    if (
+      Object.keys(v).sort().join() !== "op,protocolVersion,requestId,roots" ||
+      !Array.isArray(v.roots) ||
+      v.roots.length < 2 ||
+      v.roots.length > WORKSPACE_MAX_ROOTS
+    )
+      return false;
+    const handles = new Set<string>();
+    const identities = new Set<string>();
+    for (const value of v.roots as unknown[]) {
+      if (
+        !object(value) ||
+        Object.keys(value).sort().join() !== "expectedRootId,generation,root" ||
+        typeof value.root !== "string" ||
+        typeof value.expectedRootId !== "string" ||
+        !validRootRosterId(value.root) ||
+        !validRootRosterId(value.expectedRootId) ||
+        !Number.isSafeInteger(value.generation) ||
+        Number(value.generation) < 1 ||
+        handles.has(value.root) ||
+        identities.has(value.expectedRootId)
+      )
+        return false;
+      handles.add(value.root);
+      identities.add(value.expectedRootId);
+    }
+    return true;
+  }
   if (v.op === "group-item")
     return (
       Object.keys(v).sort().join() === "index,op,protocolVersion,requestId" &&

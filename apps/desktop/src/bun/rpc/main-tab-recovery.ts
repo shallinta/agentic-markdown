@@ -5,6 +5,7 @@ import {
 } from "../../shared/main-tab-recovery";
 import type {
   createMainTabGroupRecoveryReader,
+  createMainTabMultiRootRecoveryReader,
   MainTabGroupRecoveryResult,
 } from "../session/main-tab-group-recovery";
 import type { MainTabMetadataObservation } from "../session/main-tab-metadata";
@@ -13,6 +14,7 @@ import type {
   SingleMainTabRecoveryResult,
 } from "../session/main-tab-single-recovery";
 
+type MultiReader = ReturnType<typeof createMainTabMultiRootRecoveryReader>;
 type GroupReader = ReturnType<typeof createMainTabGroupRecoveryReader>;
 type Group = Extract<MainTabGroupRecoveryResult, { status: "ready" }>;
 type Reader = ReturnType<typeof createSingleMainTabRecoveryReader>;
@@ -43,12 +45,15 @@ export function createMainTabRecoveryRPC(
     receipt: MainTabMetadataObservation,
     current: () => boolean
   ) => Promise<boolean>,
-  createGroupReader?: () => GroupReader
+  createGroupReader?: () => GroupReader,
+  createMultiReader?: () => MultiReader
 ) {
   let groupReader: GroupReader | undefined;
+  let multiReader: MultiReader | undefined;
   let reader: Reader | undefined, slot: Slot | undefined;
   // Never evict an ID within a page: late RPC dispatch must not revive it.
   const seen = new Set<string>();
+  const clean = new Set<string>();
   const maxSeen = 128;
   let ready = false,
     closed = false,
@@ -73,6 +78,11 @@ export function createMainTabRecoveryRPC(
       : "released";
     return response(target.id, outcome === "released" ? "finished" : "unknown");
   };
+  const settleClean = (target: Slot) => {
+    if (slot !== target) return;
+    clean.add(target.id);
+    if (!target.finishing) slot = undefined;
+  };
   const retire = () => {
     ready = false;
     epoch++;
@@ -88,8 +98,12 @@ export function createMainTabRecoveryRPC(
     const oldPair = groupReader;
     groupReader = undefined;
     void oldPair?.close().catch(() => undefined);
+    const oldMulti = multiReader;
+    multiReader = undefined;
+    void oldMulti?.close().catch(() => undefined);
     last = undefined;
     seen.clear();
+    clean.clear();
   };
   return {
     ready(event: unknown) {
@@ -155,12 +169,7 @@ export function createMainTabRecoveryRPC(
             target.epoch !== epoch
           ) {
             const freed = await release(target);
-            if (
-              freed.status === "finished" &&
-              slot === target &&
-              !target.finishing
-            )
-              slot = undefined;
+            if (freed.status === "finished") settleClean(target);
             return response(
               requestId,
               freed.status === "finished" ? "rejected" : "unknown"
@@ -177,12 +186,7 @@ export function createMainTabRecoveryRPC(
           };
         } catch {
           const freed = await release(target);
-          if (
-            freed.status === "finished" &&
-            slot === target &&
-            !target.finishing
-          )
-            slot = undefined;
+          if (freed.status === "finished") settleClean(target);
           return response(
             requestId,
             freed.status === "finished" ? "rejected" : "unknown"
@@ -194,6 +198,8 @@ export function createMainTabRecoveryRPC(
       if (input.op === "finish") {
         if (slot?.id === requestId && slot.quarantined)
           return response(requestId, "unknown");
+        if (clean.has(requestId))
+          return response(requestId, input.adopted ? "rejected" : "finished");
         if (last?.id === requestId)
           return last.adopted === input.adopted
             ? last.response
@@ -209,6 +215,7 @@ export function createMainTabRecoveryRPC(
             seen.size < maxSeen
           ) {
             seen.add(requestId);
+            clean.add(requestId);
             const result = response(requestId, "finished");
             last = { id: requestId, adopted: false, response: result };
             return result;
@@ -258,7 +265,10 @@ export function createMainTabRecoveryRPC(
           await target.opening;
           const result = await release(target);
           if (slot === target) {
-            if (result.status === "finished") slot = undefined;
+            if (result.status === "finished") {
+              clean.add(requestId);
+              slot = undefined;
+            }
             last = { id: requestId, adopted: false, response: result };
           }
           return result;
@@ -278,22 +288,28 @@ export function createMainTabRecoveryRPC(
       slot = target;
       target.opening = (async () => {
         try {
-          reader ??= createReader();
           const current = () =>
             slot === target &&
             !target.cancelled &&
             target.epoch === epoch &&
             available();
-          let result: SingleMainTabRecoveryResult | MainTabGroupRecoveryResult =
-            await reader.read(input, current);
-          if (
-            result.status === "rejected" &&
-            result.reason === "unavailable" &&
-            current() &&
-            createGroupReader
-          ) {
-            groupReader ??= createGroupReader();
-            result = await groupReader.read(input, current);
+          let result: SingleMainTabRecoveryResult | MainTabGroupRecoveryResult;
+          if (input.op === "open-multi") {
+            if (!createMultiReader) return response(requestId, "rejected");
+            multiReader ??= createMultiReader();
+            result = await multiReader.read(input, current);
+          } else {
+            reader ??= createReader();
+            result = await reader.read(input, current);
+            if (
+              result.status === "rejected" &&
+              result.reason === "unavailable" &&
+              current() &&
+              createGroupReader
+            ) {
+              groupReader ??= createGroupReader();
+              result = await groupReader.read(input, current);
+            }
           }
           if (result.status !== "ready") {
             target.quarantined = result.status === "unknown";
@@ -305,12 +321,7 @@ export function createMainTabRecoveryRPC(
           target.result = result;
           if (!current() || !result.current()) {
             const freed = await release(target);
-            if (
-              freed.status === "finished" &&
-              slot === target &&
-              !target.finishing
-            )
-              slot = undefined;
+            if (freed.status === "finished") settleClean(target);
             return response(
               requestId,
               freed.status === "finished" ? "rejected" : "unknown"
@@ -342,7 +353,7 @@ export function createMainTabRecoveryRPC(
             !target.finishing &&
             !target.quarantined
           )
-            slot = undefined;
+            settleClean(target);
         }
       })();
       return target.opening;

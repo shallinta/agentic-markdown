@@ -13,13 +13,15 @@ import {
 import { Transaction, type TransactionSpec } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
+import { createMainTabRecoveryRPC } from "../bun/rpc/main-tab-recovery";
+import { PACKAGED_VIEW_URL } from "../security/shell-policy";
 import type {
   DocumentRequest,
   DocumentResponse,
   DocumentSnapshot,
 } from "../shared/documents";
 import type { MainTabCheckpointRequest } from "../shared/main-tab-checkpoint";
-import type { MainTabRecoveryRequest } from "../shared/main-tab-recovery";
+import type { MainTabRecoveryRequest, MainTabRecoveryResponse } from "../shared/main-tab-recovery";
 import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
 import type { WorkspaceRoot } from "../shared/workspace";
@@ -304,7 +306,7 @@ function recoveryFixture(
       finished.resolve(request.adopted);
       return finish();
     }
-    if (!groupItem) throw Error("unexpected group request in single recovery fixture");
+    if (request.op !== "group-item" || !groupItem) throw Error("unexpected group request in single recovery fixture");
     return groupItem(request);
   }, () => true);
   return {
@@ -392,6 +394,186 @@ test("cancelled pickers and changed scan generations never issue a recovery read
 });
 
 const checkpointTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+function multiRootRecoveryFixture(required = 3) {
+  const docs = setup();
+  const expected = Array.from({ length: 3 }, (_, index) => ({
+    id: crypto.randomUUID(), handle: crypto.randomUUID(), path: `/root-${index}`,
+    tab: { ...snapshot(`# root ${index}`), explicitStandalone: false, locationId: crypto.randomUUID(), displayPath: `/root-${index}/shared.md` },
+  }));
+  let picked: number | null = null;
+  let roots: WorkspaceRoot[] = [];
+  const folders = createFolderWorkspace((request) => {
+    let selectedRoot;
+    if (request.op === "clear") roots = [];
+    if (request.op === "select" && picked !== null) {
+      const selected = expected[picked];
+      if (!roots.some(root => root.handle === selected.handle)) {
+        roots = [...roots, { handle: selected.handle, generation: 1, name: selected.path, displayPath: selected.path, status: "complete", errors: 0, entries: 0, examined: 0 }];
+        selectedRoot = { handle: selected.handle, generation: 1 };
+      }
+    }
+    return Promise.resolve({ protocolVersion: 1, requestId: request.requestId, ok: true, roots, coveredHandles: [], cacheBytes: 0,
+      ...(selectedRoot ? { selectedRoot } : {}) });
+  });
+  const requests: MainTabRecoveryRequest[] = [];
+  const respond = (request: MainTabRecoveryRequest) => {
+    const envelope = { protocolVersion: 1, requestId: request.requestId };
+    if (request.op === "open-multi" && request.roots.length === required)
+      return { ...envelope, status: "group", count: required, activeIndex: 1 };
+    if (request.op === "group-item")
+      return { ...envelope, status: "group-item", index: request.index, snapshot: expected[request.index].tab, mode: "editing", pinned: false };
+    return { ...envelope, status: request.op === "finish" ? "finished" : "rejected" };
+  };
+  let custom: ((request: MainTabRecoveryRequest) => Promise<unknown> | undefined) | undefined;
+  const recovery = createMainTabRecovery(docs.controller, folders, (request) => {
+    requests.push(request);
+    return custom?.(request) ?? Promise.resolve(respond(request));
+  }, () => true);
+  return {
+    ...docs, recovery, folders, expected, requests,
+    reselect(target: number, choice: number | null = target) {
+      picked = choice;
+      return recovery.reselect(expected[target].id, expected[target].path);
+    },
+    rescan(index: number) {
+      roots = roots.map(root => root.handle === expected[index].handle ? { ...root, generation: root.generation + 1 } : root);
+      return folders.refresh();
+    },
+    intercept(handler: NonNullable<typeof custom>) { custom = handler; },
+    dispose() { recovery.cancel(); folders.dispose(); docs.controller.dispose(); },
+  };
+}
+
+test("multi-root recovery retains valid selections across cancellation and rejected incomplete sets", async () => {
+  const f = multiRootRecoveryFixture();
+  try {
+    await f.reselect(0);
+    const firstRequestCount = f.requests.length;
+    await f.reselect(1, null);
+    expect(f.requests).toHaveLength(firstRequestCount);
+    expect(f.folders.getSnapshot().roots).toHaveLength(1);
+    await f.reselect(1);
+    expect(f.controller.getSnapshot().tabs).toEqual([]);
+    expect(f.requests.filter(request => request.op === "group-item")).toEqual([]);
+    await f.reselect(2);
+    const attempts = f.requests.filter(request => request.op === "open-multi");
+    expect(attempts.map(request => request.roots)).toEqual([2, 3].map(count => f.expected.slice(0, count).map(({ handle, id }) => ({ root: handle, generation: 1, expectedRootId: id }))));
+    expect(f.requests.filter(request => request.op === "group-item").map(request => request.index)).toEqual([0, 1, 2]);
+    expect(f.controller.getSnapshot().tabs).toEqual(f.expected.map(root => root.tab));
+    expect(f.controller.getSnapshot().snapshot).toBe(f.expected[1].tab);
+  } finally { f.dispose(); }
+});
+
+test("wrong folder, changed generation and prior document prevent a multi-root admission", async () => {
+  for (const invalidate of ["wrong-folder", "rescan", "document", "clear"] as const) {
+    const f = multiRootRecoveryFixture(2);
+    try {
+      if (invalidate === "wrong-folder") await f.reselect(0, 2);
+      else {
+        await f.reselect(0);
+        if (invalidate === "rescan") await f.rescan(0);
+        if (invalidate === "document") await f.controller.select();
+        if (invalidate === "clear") { f.recovery.cancel(); await f.controller.clear(f.folders.clear); }
+      }
+      const count = f.requests.length;
+      await f.reselect(1);
+      expect(f.requests).toHaveLength(count);
+      expect(f.requests.some(request => request.op === "open-multi")).toBe(false);
+      expect(f.folders.getSnapshot().roots).toHaveLength(invalidate === "clear" ? 1 : 2);
+      expect(f.controller.getSnapshot().tabs).toEqual(invalidate === "document" ? [f.value] : []);
+    } finally { f.dispose(); }
+  }
+});
+
+test("a superseded recovery releases before the next admission and late replies cannot adopt", async () => {
+  for (const acknowledged of [true, false]) {
+    const f = multiRootRecoveryFixture(2);
+    const firstOpen = deferred<string>();
+    const oldResponse = deferred<unknown>();
+    const cleanup = deferred<unknown>();
+    const cleanupStarted = deferred<void>();
+    let oldId: string | undefined;
+    f.intercept(request => {
+      if (request.op === "open") {
+        oldId = request.requestId;
+        firstOpen.resolve(request.requestId);
+        return oldResponse.promise;
+      }
+      if (request.op === "finish" && request.requestId === oldId) {
+        cleanupStarted.resolve();
+        return cleanup.promise;
+      }
+    });
+    try {
+      const old = f.reselect(0);
+      const requestId = await firstOpen.promise;
+      const next = f.reselect(1);
+      await cleanupStarted.promise;
+      await f.folders.refresh();
+      expect(f.folders.getSnapshot().roots).toHaveLength(2);
+      expect(f.requests.map(request => request.op)).toEqual(["open", "finish"]);
+      cleanup.resolve({ protocolVersion: 1, requestId, status: acknowledged ? "finished" : "unknown" });
+      await next;
+      expect(f.requests.some(request => request.op === "open-multi")).toBe(acknowledged);
+      oldResponse.resolve({ protocolVersion: 1, requestId, status: "ready", snapshot: f.expected[2].tab, mode: "source", pinned: true });
+      await old;
+      expect(f.requests.filter(request => request.op === "finish" && request.requestId === requestId)).toEqual([
+        { protocolVersion: 1, requestId, op: "finish", adopted: false },
+      ]);
+      expect(f.controller.getSnapshot().tabs).toEqual(acknowledged ? f.expected.slice(0, 2).map(root => root.tab) : []);
+    } finally { f.dispose(); }
+  }
+});
+
+test("the real Bun RPC confirms a clean single-root rejection before the client sends a multi-root open", async () => {
+  for (const clean of [true, false]) {
+    const f = multiRootRecoveryFixture(2);
+    const firstResponse = deferred<MainTabRecoveryResponse>();
+    const cleanupResponse = deferred<MainTabRecoveryResponse>();
+    const deliverCleanup = deferred<void>();
+    const rejected = { status: "rejected", reason: "unavailable" } as const;
+    let firstId: string | undefined;
+    const close = () => Promise.resolve();
+    const rpc = createMainTabRecoveryRPC(true, () => true,
+      () => ({ read: () => Promise.resolve(rejected), close }), undefined,
+      () => ({ read: () => Promise.resolve(clean ? rejected : { status: "unknown", reason: "release" }), close }),
+      () => ({
+        read: () => Promise.resolve({ status: "ready", activeIndex: 1,
+          tabs: f.expected.slice(0, 2).map(({ tab }, index) => ({ snapshot: tab, mode: index === 0 ? "source" : "editing", pinned: index === 0 })),
+          ownership: { status: "valid", data: { tabs: [], activeIndex: null }, current: () => true },
+          current: () => true, revalidate: () => Promise.resolve(true), release: () => Promise.resolve("released"),
+        }),
+        close,
+      }));
+    rpc.ready({ data: { detail: PACKAGED_VIEW_URL } });
+    f.intercept(async (request) => {
+      if (request.op === "open") firstId = request.requestId;
+      const reply = await rpc.request(request);
+      if (request.op === "open") firstResponse.resolve(reply);
+      if (request.op === "finish" && request.requestId === firstId) {
+        cleanupResponse.resolve(reply);
+        await deliverCleanup.promise;
+      }
+      return reply;
+    });
+    try {
+      const first = f.reselect(0);
+      const opening = await firstResponse.promise;
+      expect(opening.status).toBe(clean ? "rejected" : "unknown");
+      expect(await cleanupResponse.promise).toEqual({ protocolVersion: 1, requestId: opening.requestId, status: clean ? "finished" : "unknown" });
+      const second = f.reselect(1);
+      await f.folders.refresh();
+      expect(f.folders.getSnapshot().roots).toHaveLength(2);
+      expect(f.requests.map(request => request.op)).toEqual(["open", "finish"]);
+      deliverCleanup.resolve();
+      await Promise.all([first, second]);
+      expect(f.requests.map(request => request.op)).toEqual(clean
+        ? ["open", "finish", "open-multi", "group-item", "group-item", "finish"] : ["open", "finish"]);
+      expect(f.controller.getSnapshot().tabs).toEqual(clean ? f.expected.slice(0, 2).map(root => root.tab) : []);
+    } finally { deliverCleanup.resolve(); f.dispose(); rpc.dispose(); }
+  }
+});
 
 function groupRecoveryFixture(count = 2) {
   type ItemRequest = Extract<MainTabRecoveryRequest, { op: "group-item" }>;

@@ -11,6 +11,13 @@ type Documents = Pick<ReturnType<typeof createDocumentController>,
   "canRestorePrimaryTab" | "adoptRecoveredPrimaryTab" | "adoptRecoveredPrimaryGroup" | "runWorkspaceAction" | "subscribe">;
 type Folders = Pick<ReturnType<typeof createFolderWorkspace>, "getSnapshot" | "select" | "selectWithReceipt" | "subscribe">;
 interface Intent { cancel?: () => void }
+type RootParticipant = Extract<MainTabRecoveryRequest, { op: "open-multi" }>["roots"][number];
+interface Collection {
+  roots: RootParticipant[];
+  selecting: boolean;
+  adoptingSingle: boolean;
+  stop: () => void;
+}
 interface AdoptionSettlement {
   targets: readonly Target[];
   pending: boolean;
@@ -25,18 +32,51 @@ export function createMainTabRecovery(
   send: (request: MainTabRecoveryRequest) => Promise<unknown>,
   available: () => boolean,
 ) {
+  let collection: Collection | undefined;
   let active: Intent | undefined;
+  let previousCleanup: Promise<boolean> | undefined;
   let adoption: AdoptionSettlement | undefined;
   const matchingAdoption = ({ documentId, handle }: Target) =>
     adoption?.targets.some((target) => target.documentId === documentId && target.handle === handle) ? adoption : undefined;
 
-  function cancel() {
+  function stopAttempt() {
     const previous = active;
     active = undefined;
     previous?.cancel?.();
   }
+  function stopCollection() {
+    const previous = collection;
+    collection = undefined;
+    previous?.stop();
+  }
+  function cancel() {
+    stopCollection();
+    stopAttempt();
+  }
 
-  function waitForScan(intent: Intent, selected: WorkspaceSelectionReceipt, current: () => boolean) {
+  function rootsCurrent(gathered: Collection) {
+    const workspace = folders.getSnapshot();
+    const additional = workspace.roots.length - gathered.roots.length;
+    return !workspace.error && (additional === 0 || (gathered.selecting && additional === 1)) &&
+      gathered.roots.every(({ root, generation }) => workspace.roots.some((item) =>
+        item.handle === root && item.generation === generation && (item.status === "complete" || item.status === "scanning")));
+  }
+  function beginCollection() {
+    const check = () => {
+      if (collection === gathered && (!available() || !rootsCurrent(gathered) ||
+          (!gathered.adoptingSingle && !documents.canRestorePrimaryTab()))) cancel();
+    };
+    const offFolders = folders.subscribe(check);
+    const offDocuments = documents.subscribe(check);
+    const gathered: Collection = {
+      roots: [], selecting: false, adoptingSingle: false,
+      stop() { offFolders(); offDocuments(); },
+    };
+    collection = gathered;
+    return gathered;
+  }
+
+  function waitForScan(intent: Intent, current: () => boolean) {
     return new Promise<boolean>((resolve) => {
       let finished = false;
       const finish = (complete: boolean) => {
@@ -44,37 +84,35 @@ export function createMainTabRecovery(
         finished = true;
         intent.cancel = undefined;
         offFolders();
-        offDocuments();
         resolve(complete);
       };
       const check = () => {
         if (!current() || !documents.canRestorePrimaryTab()) { finish(false); return; }
-        const root = folders.getSnapshot().roots.find(root => root.handle === selected.handle);
-        if (root?.status !== "scanning") finish(root?.status === "complete");
+        if (folders.getSnapshot().roots.every(root => root.status === "complete")) finish(true);
       };
       const offFolders = folders.subscribe(check);
-      const offDocuments = documents.subscribe(check);
       intent.cancel = () => finish(false);
       check();
     });
   }
 
-  async function recover(intent: Intent, selected: WorkspaceSelectionReceipt, expectedRootId: string, current: () => boolean) {
+  async function recover(intent: Intent, gathered: Collection, current: () => boolean) {
     const requestId = crypto.randomUUID();
     const envelope = { protocolVersion: 1, requestId } as const;
-    const open = { ...envelope, op: "open", root: selected.handle, generation: selected.generation, expectedRootId } as const;
+    const multi = gathered.roots.length > 1;
+    const open = multi
+      ? { ...envelope, op: "open-multi", roots: [...gathered.roots] } as const
+      : { ...envelope, op: "open", ...gathered.roots[0] } as const;
     if (!validMainTabRecoveryRequest(open) || !current() || !documents.canRestorePrimaryTab()) return;
     let finishing: Promise<unknown> | undefined;
     const finish = (adopted: boolean) => {
-      finishing ??= Promise.resolve().then(() => send({ ...envelope, op: "finish", adopted })).catch(() => undefined);
+      if (!finishing) {
+        finishing = Promise.resolve().then(() => send({ ...envelope, op: "finish", adopted })).catch(() => undefined);
+        if (!adopted) previousCleanup = finishing.then(isFinished);
+      }
       return finishing;
     };
-    const invalidate = () => {
-      if (!current() || !documents.canRestorePrimaryTab()) void finish(false);
-    };
-    const offFolders = folders.subscribe(invalidate);
-    const offDocuments = documents.subscribe(invalidate);
-    const detach = () => { intent.cancel = undefined; offFolders(); offDocuments(); };
+    const isFinished = (reply: unknown) => validMainTabRecoveryResponse(reply, requestId) && reply.status === "finished";
     intent.cancel = () => { void finish(false); };
     const eligible = () => !finishing && current() && documents.canRestorePrimaryTab();
     async function groupItem(index: number) {
@@ -84,10 +122,11 @@ export function createMainTabRecovery(
         return item;
     }
     const registerAdoption = (items: readonly Target[]) => {
-      detach();
+      intent.cancel = undefined;
+      stopCollection();
       const result = finish(true).then((acknowledgement) => {
         ticket.pending = false;
-        return validMainTabRecoveryResponse(acknowledgement, requestId) && acknowledgement.status === "finished";
+        return isFinished(acknowledgement);
       });
       const targets = items.map(({ documentId, handle }) => ({ documentId, handle }));
       const ticket = { targets, pending: true, result };
@@ -97,8 +136,8 @@ export function createMainTabRecovery(
     try {
       const reply = await send(open);
       if (!eligible() || !validMainTabRecoveryResponse(reply, requestId)) return;
-      if (reply.status === "ready") {
-        detach();
+      if (reply.status === "ready" && !multi) {
+        gathered.adoptingSingle = true;
         adopted = await documents.adoptRecoveredPrimaryTab(reply.snapshot, reply.mode, reply.pinned, current,
           () => registerAdoption([reply.snapshot]));
       } else if (reply.status === "group") {
@@ -106,7 +145,8 @@ export function createMainTabRecovery(
           () => !finishing && current(), registerAdoption);
       }
     } finally {
-      detach();
+      gathered.adoptingSingle = false;
+      intent.cancel = undefined;
       await finish(adopted);
     }
   }
@@ -123,28 +163,44 @@ export function createMainTabRecovery(
       adoption = undefined;
       return matching.result;
     },
-    async reselect(expectedRootId: string) {
-      cancel();
-      if (folders.getSnapshot().busy) return;
-      const intent: Intent = {};
-      let selected: WorkspaceSelectionReceipt | undefined;
+    async reselect(expectedRootId: string, expectedPath?: string) {
+      if (folders.getSnapshot().busy || collection?.selecting) return;
       try {
-        if (!available() || folders.getSnapshot().roots.length || !documents.canRestorePrimaryTab()) {
+        if (!available() || !documents.canRestorePrimaryTab() || (!collection && folders.getSnapshot().roots.length)) {
+          cancel();
           await documents.runWorkspaceAction(folders.select);
           return;
         }
+        const gathered = collection ?? beginCollection();
+        stopAttempt();
+        let selected: WorkspaceSelectionReceipt | undefined;
+        gathered.selecting = true;
+        try {
+          await documents.runWorkspaceAction(async () => { selected = await folders.selectWithReceipt(); });
+        } finally { gathered.selecting = false; }
+        if (collection !== gathered) return;
+        if (!selected) {
+          if (!rootsCurrent(gathered)) cancel();
+          else if (!gathered.roots.length) stopCollection();
+          return;
+        }
+        const root = folders.getSnapshot().roots.find(root => root.handle === selected?.handle);
+        if (!selected.current() || !root || (expectedPath !== undefined && root.displayPath !== expectedPath) ||
+            gathered.roots.some(candidate => candidate.expectedRootId === expectedRootId)) { cancel(); return; }
+        gathered.roots.push({ root: selected.handle, generation: selected.generation, expectedRootId });
+        if (!rootsCurrent(gathered)) { cancel(); return; }
+        const intent: Intent = {};
         active = intent;
-        await documents.runWorkspaceAction(async () => { selected = await folders.selectWithReceipt(); });
-        if (!selected || active !== intent) return;
-        const receipt = selected;
-        const current = () => active === intent && receipt.current() &&
-          folders.getSnapshot().roots.length === 1 && folders.getSnapshot().roots[0].handle === receipt.handle &&
-          folders.getSnapshot().roots[0].generation === receipt.generation;
-        if (await waitForScan(intent, receipt, current)) await recover(intent, receipt, expectedRootId, current);
+        const current = () => active === intent && collection === gathered && available() && rootsCurrent(gathered);
+        try {
+          if (!(await waitForScan(intent, current))) return;
+          if (previousCleanup && !(await previousCleanup)) return;
+          if (current()) await recover(intent, gathered, current);
+        } finally {
+          if (active === intent) active = undefined;
+        }
       } catch {
         // An optional recovery does not change the outcome of joining the directory.
-      } finally {
-        if (active === intent) active = undefined;
       }
     },
   };

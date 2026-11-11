@@ -6,6 +6,7 @@ import {
   validMainTabRecoveryResponse,
 } from "../../shared/main-tab-recovery";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
+import { WORKSPACE_MAX_ROOTS } from "../../shared/workspace";
 import type { MainTabGroupRecoveryResult } from "../session/main-tab-group-recovery";
 import type { SingleMainTabRecoveryResult } from "../session/main-tab-single-recovery";
 
@@ -18,6 +19,9 @@ function fixture(
   },
   count = 2
 ) {
+  let groupResult: MainTabGroupRecoveryResult | undefined;
+  let multiReads = 0,
+    singleReads = 0;
   let released = 0,
     reads = 0,
     verified = 0,
@@ -61,7 +65,10 @@ function fixture(
     true,
     () => true,
     () => ({
-      read: () => Promise.resolve(single),
+      read: () => {
+        singleReads++;
+        return Promise.resolve(single);
+      },
       close: () => Promise.resolve(),
     }),
     () => () => {
@@ -71,6 +78,13 @@ function fixture(
     () => ({
       read: () => {
         reads++;
+        return Promise.resolve(groupResult ?? pair);
+      },
+      close: () => Promise.resolve(),
+    }),
+    () => ({
+      read: () => {
+        multiReads++;
         return Promise.resolve(pair);
       },
       close: () => Promise.resolve(),
@@ -98,6 +112,10 @@ function fixture(
     adopted,
   });
   return {
+    setGroupResult(value: MainTabGroupRecoveryResult) {
+      groupResult = value;
+    },
+    routing: () => ({ singleReads, multiReads }),
     rpc,
     input,
     item,
@@ -308,5 +326,138 @@ test("group protocol rejects former pair spelling and invalid group counts or in
         f.input.requestId
       )
     ).toBe(false);
+  f.rpc.dispose();
+});
+
+function multiRequest(requestId: string) {
+  return {
+    protocolVersion: 1 as const,
+    requestId,
+    op: "open-multi" as const,
+    roots: Array.from({ length: 2 }, () => ({
+      root: crypto.randomUUID(),
+      generation: 1,
+      expectedRootId: crypto.randomUUID(),
+    })),
+  };
+}
+
+test("multi-root RPC uses only its trusted reader and the shared delivery and finish slot", async () => {
+  const f = fixture();
+  const input = multiRequest(f.input.requestId);
+  expect(validMainTabRecoveryRequest(input)).toBe(true);
+  expect((await f.rpc.request(input)).status).toBe("group");
+  expect(f.routing()).toEqual({ singleReads: 0, multiReads: 1 });
+  expect(f.counts().reads).toBe(0);
+  expect(
+    (await f.rpc.request({ ...f.input, requestId: crypto.randomUUID() })).status
+  ).toBe("rejected");
+  expect((await f.rpc.request(f.item(0))).status).toBe("group-item");
+  expect((await f.rpc.request(f.item(1))).status).toBe("group-item");
+  expect((await f.rpc.request(f.finish(true))).status).toBe("finished");
+  expect(f.counts().claimed).toBe(1);
+  expect(f.counts().released).toBe(0);
+  f.rpc.dispose();
+});
+
+test("multi-root request validates exact bounded roots, both identity sets and sparse arrays", () => {
+  const value = multiRequest(crypto.randomUUID());
+  const invalid = [
+    { ...value, root: value.roots[0].root },
+    { ...value, roots: [value.roots[0]] },
+    { ...value, roots: [value.roots[0], value.roots[0]] },
+    {
+      ...value,
+      roots: [
+        value.roots[0],
+        { ...value.roots[1], expectedRootId: value.roots[0].expectedRootId },
+      ],
+    },
+    { ...value, roots: [value.roots[0], { ...value.roots[1], generation: 0 }] },
+    {
+      ...value,
+      roots: [value.roots[0], { ...value.roots[1], path: "/not-authority" }],
+    },
+    { ...value, roots: new Array(2) },
+    {
+      ...value,
+      roots: Array.from({ length: WORKSPACE_MAX_ROOTS + 1 }, () => ({
+        root: crypto.randomUUID(),
+        generation: 1,
+        expectedRootId: crypto.randomUUID(),
+      })),
+    },
+  ];
+  for (const input of invalid)
+    expect(validMainTabRecoveryRequest(input)).toBe(false);
+  expect(
+    validMainTabRecoveryRequest({
+      ...value,
+      roots: Array.from({ length: WORKSPACE_MAX_ROOTS }, () => ({
+        root: crypto.randomUUID(),
+        generation: 1,
+        expectedRootId: crypto.randomUUID(),
+      })),
+    })
+  ).toBe(true);
+});
+
+test("multi-root lifecycle cannot bypass readiness or pause and navigation releases partial delivery", async () => {
+  const f = fixture();
+  const input = multiRequest(f.input.requestId);
+  const resume = f.rpc.suspend();
+  expect((await f.rpc.request(input)).status).toBe("rejected");
+  expect(f.routing().multiReads).toBe(0);
+  resume();
+  expect((await f.rpc.request(input)).status).toBe("group");
+  await f.rpc.request(f.item(0));
+  f.rpc.navigate();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(f.counts().released).toBe(1);
+  expect((await f.rpc.request(f.item(1))).status).toBe("rejected");
+  expect(
+    (await f.rpc.request({ ...input, requestId: crypto.randomUUID() })).status
+  ).toBe("rejected");
+  f.rpc.dispose();
+});
+
+test("clean single-root rejection acknowledges cancellation before multi-root admission", async () => {
+  const f = fixture();
+  f.setGroupResult({ status: "rejected", reason: "unavailable" });
+  expect((await f.rpc.request(f.input)).status).toBe("rejected");
+  expect((await f.rpc.request(f.finish(false))).status).toBe("finished");
+  const multi = multiRequest(crypto.randomUUID());
+  expect((await f.rpc.request(multi)).status).toBe("group");
+  // Late completion for the old clean request must not touch this new slot.
+  expect((await f.rpc.request(f.finish(false))).status).toBe("finished");
+  expect((await f.rpc.request(f.finish(true))).status).toBe("rejected");
+  expect(
+    (await f.rpc.request({ ...f.item(0), requestId: multi.requestId })).status
+  ).toBe("group-item");
+  expect(f.counts().released).toBe(0);
+  expect(
+    (await f.rpc.request({ ...f.finish(false), requestId: multi.requestId }))
+      .status
+  ).toBe("finished");
+  expect(f.counts().released).toBe(1);
+  expect((await f.rpc.request(f.finish(false))).status).toBe("finished");
+  f.rpc.dispose();
+});
+
+test("late stale group item preserves a clean cancellation acknowledgement across new requests", async () => {
+  const f = fixture();
+  await f.rpc.request(f.input);
+  await f.rpc.request(f.item(0));
+  f.setVerify(() => Promise.resolve(false));
+  expect((await f.rpc.request(f.item(1))).status).toBe("rejected");
+  expect(f.counts().released).toBe(1);
+  expect((await f.rpc.request(f.finish(false))).status).toBe("finished");
+  const multi = multiRequest(crypto.randomUUID());
+  expect((await f.rpc.request(multi)).status).toBe("group");
+  expect((await f.rpc.request(f.finish(false))).status).toBe("finished");
+  expect(
+    (await f.rpc.request({ ...f.item(0), requestId: multi.requestId })).status
+  ).toBe("group-item");
   f.rpc.dispose();
 });

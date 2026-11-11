@@ -125,8 +125,9 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
   useEffect(() => mainTabRecovery.cancel, [mainTabRecovery]);
   const reselectWorkspaceRoot = (id: string) => {
     const roster = rootRoster.model.getSnapshot();
-    if (roster.busy || roster.readOnly || !roster.pending.some((root) => root.id === id)) return;
-    void mainTabRecovery.reselect(id);
+    const root = roster.pending.find((candidate) => candidate.id === id);
+    if (roster.busy || roster.readOnly || !root) return;
+    void mainTabRecovery.reselect(id, root.path);
   };
   useEffect(() => {
     const flags = globalThis as typeof globalThis & { __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean };

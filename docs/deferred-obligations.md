@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037ac 按 Markdown 内容块恢复成组标签（2026-11-12）
+
+普通 WK 已验同目录两篇的内容块定位，跨目录同名文件用真实文件和内部授权定向验证。OBL-034 继续承接仅滚动时写入及有未保存标签时的关闭清理。原生滚动条、辅助技术、OBL-054 和最终离线继续跟踪。见[F-037ac 迭代](iterations/F-037ac-restore-group-tabs-by-markdown-block.md)。
+
 ## F-037ab 按 Markdown 内容块恢复单篇标签（2026-11-12）
 
 普通 WK 已验单篇文档正文前插与删除后的定位。OBL-034 继续承接成组标签的位置恢复、仅滚动时写入，以及有未保存标签时的关闭清理。原生滚动条、辅助技术、OBL-054 和最终离线继续跟踪。见[F-037ab 迭代](iterations/F-037ab-restore-single-tab-by-markdown-block.md)。

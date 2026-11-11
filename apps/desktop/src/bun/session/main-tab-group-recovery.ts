@@ -4,12 +4,14 @@ import type { DocumentSnapshot } from "../../shared/documents";
 import {
   type MainTabCheckpointViewport,
   MAIN_TAB_METADATA_MAX_TABS,
+  validMainTabCheckpointViewport,
 } from "../../shared/main-tab-checkpoint";
 import { validRootRosterId } from "../../shared/root-roster";
 import { WORKSPACE_MAX_ROOTS } from "../../shared/workspace";
 import type { TrustedDocumentService } from "../documents";
 import type { TrustedWorkspaceService } from "../workspace";
 
+import { resolveMainTabBlockAnchor } from "./main-tab-anchor-worker-client";
 import {
   type MainTabMetadataObservation,
   createMainTabCheckpointMetadataStore,
@@ -34,7 +36,9 @@ export interface MainTabGroupRecoveryDependencies {
   documents: Pick<
     TrustedDocumentService,
     "release" | "verifyRecoverySnapshots" | "ownsRecoverySnapshot"
-  >;
+  > &
+    Partial<Pick<TrustedDocumentService, "currentRecoverySnapshot">>;
+  resolveViewport?: typeof resolveMainTabBlockAnchor;
 }
 export type MainTabGroupRecoveryResult =
   | {
@@ -88,11 +92,16 @@ export function createMainTabRecoveryReaderCore(
 ) {
   const core = createRecoveryGroupCore(directory, dependencies, exactPair, 1);
   return {
-    read(input: SingleMainTabRecoveryInput, current: () => boolean) {
+    read(
+      input: SingleMainTabRecoveryInput,
+      current: () => boolean,
+      signal?: AbortSignal
+    ) {
       const { requestId, root, generation, expectedRootId } = input;
       return core.read(
         { requestId, roots: [{ root, generation, expectedRootId }] },
-        current
+        current,
+        signal
       );
     },
     close: () => core.close(),
@@ -101,17 +110,24 @@ export function createMainTabRecoveryReaderCore(
 
 function createRecoveryGroupCore(
   directory: string,
-  { workspace, roster, documents }: MainTabGroupRecoveryDependencies,
+  {
+    workspace,
+    roster,
+    documents,
+    resolveViewport = resolveMainTabBlockAnchor,
+  }: MainTabGroupRecoveryDependencies,
   exactPair: boolean,
   minimumRoots: 1 | 2
 ) {
   const store = createMainTabCheckpointMetadataStore(directory);
   let running = false;
   let closed = false;
+  let pendingResolution: AbortController | undefined;
   return {
     async read(
       input: MainTabMultiRootRecoveryInput,
-      callerCurrent: () => boolean
+      callerCurrent: () => boolean,
+      signal?: AbortSignal
     ): Promise<MainTabGroupRecoveryResult> {
       const { requestId } = input;
       if (
@@ -150,6 +166,12 @@ function createRecoveryGroupCore(
       }
       if (running) return { status: "rejected", reason: "busy" };
       running = true;
+      const resolution = new AbortController();
+      pendingResolution = resolution;
+      const abort = () => resolution.abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+      let timer: ReturnType<typeof setTimeout> | undefined;
       let valid = true;
       const guards: (() => boolean)[] = [];
       const current = () => {
@@ -157,6 +179,7 @@ function createRecoveryGroupCore(
           valid =
             valid &&
             !closed &&
+            !signal?.aborted &&
             callerCurrent() === true &&
             guards.every((guard) => guard() === true);
         } catch {
@@ -168,6 +191,7 @@ function createRecoveryGroupCore(
         if (!current()) throw Error("PAIR_RECOVERY_STALE");
       };
       const owned: DocumentSnapshot[] = [];
+      const ownedRequests: string[] = [];
       let releasing: Promise<Release> | undefined;
       const release = () => {
         valid = false;
@@ -333,6 +357,7 @@ function createRecoveryGroupCore(
           if (owned.some((other) => other.handle === snapshot.handle))
             return await fail({ status: "unknown", reason: "io" });
           owned.push(snapshot);
+          ownedRequests.push(id);
           check();
           if (
             owned.some(
@@ -366,6 +391,75 @@ function createRecoveryGroupCore(
           )
         )
           return await fail({ status: "rejected", reason: "unavailable" });
+        const viewports = saved.map(
+          (_tab, index): MainTabCheckpointViewport | undefined => {
+            const position = observed.positioned?.tabs[index].position;
+            return position
+              ? {
+                  from: position.from,
+                  offset: position.offset,
+                  ratio: position.ratio,
+                }
+              : undefined;
+          }
+        );
+        let attemptedResolution = false;
+        const physicalCurrent = () => {
+          try {
+            return (
+              !attemptedResolution ||
+              owned.every(
+                (_snapshot, index) =>
+                  documents.currentRecoverySnapshot?.(
+                    owned[index],
+                    ownedRequests[index]
+                  ) === true
+              )
+            );
+          } catch {
+            return false;
+          }
+        };
+        const ordered = [
+          observed.data.activeIndex,
+          ...saved
+            .map((_tab, index) => index)
+            .filter((index) => index !== observed.data.activeIndex),
+        ];
+        const candidates = ordered.filter((index) => {
+          const block = observed.positioned?.tabs[index].position?.block;
+          return block && block.contentHash !== owned[index].hash;
+        });
+        if (candidates.length) {
+          const deadline = performance.now() + 5000;
+          timer = setTimeout(abort, 5000);
+          for (const index of candidates) {
+            check();
+            if (resolution.signal.aborted || performance.now() >= deadline)
+              break;
+            attemptedResolution = true;
+            const position = observed.positioned!.tabs[index].position!;
+            try {
+              const viewport = await resolveViewport(
+                owned[index].text,
+                position,
+                resolution.signal
+              );
+              check();
+              if (
+                !resolution.signal.aborted &&
+                performance.now() < deadline &&
+                validMainTabCheckpointViewport(viewport)
+              )
+                viewports[index] = viewport;
+            } catch {
+              check();
+              // An optional parser failure retains the saved source/ratio fallback.
+            }
+          }
+          clearTimeout(timer);
+          timer = undefined;
+        }
         await verifyRecord();
         if (!(await documents.verifyRecoverySnapshots(owned, check)))
           return await fail({
@@ -378,6 +472,8 @@ function createRecoveryGroupCore(
         )
           return await fail({ status: "rejected", reason: "stale" });
         check();
+        if (!physicalCurrent())
+          return await fail({ status: "rejected", reason: "stale" });
         if (!sources.current())
           return await fail({ status: "rejected", reason: "stale" });
         const resultCurrent = () => {
@@ -386,30 +482,22 @@ function createRecoveryGroupCore(
         };
         return {
           status: "ready",
-          tabs: owned.map((snapshot, index) => {
-            const position = observed.positioned?.tabs[index].position;
-            return {
-              snapshot,
-              mode: saved[index].mode,
-              pinned: saved[index].pinned,
-              ...(position
-                ? {
-                    viewport: {
-                      from: position.from,
-                      offset: position.offset,
-                      ratio: position.ratio,
-                    },
-                  }
-                : {}),
-            };
-          }),
+          tabs: owned.map((snapshot, index) => ({
+            snapshot,
+            mode: saved[index].mode,
+            pinned: saved[index].pinned,
+            ...(viewports[index] ? { viewport: viewports[index] } : {}),
+          })),
           activeIndex: observed.data.activeIndex,
           current: resultCurrent,
           ownership: observed,
           ...(observed.positioned
             ? {
                 verifyDelivery() {
-                  valid = resultCurrent() && store.exactCurrent(observed);
+                  valid =
+                    resultCurrent() &&
+                    physicalCurrent() &&
+                    store.exactCurrent(observed);
                   return valid;
                 },
               }
@@ -426,6 +514,10 @@ function createRecoveryGroupCore(
                 (!exactPair || observed.positioned !== undefined) &&
                 !store.exactCurrent(verifiedObservation)
               ) {
+                valid = false;
+                return false;
+              }
+              if (!physicalCurrent()) {
                 valid = false;
                 return false;
               }
@@ -447,11 +539,15 @@ function createRecoveryGroupCore(
               }
         );
       } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+        pendingResolution = undefined;
         running = false;
       }
     },
     async close() {
       closed = true;
+      pendingResolution?.abort();
       await store.close();
     },
   };

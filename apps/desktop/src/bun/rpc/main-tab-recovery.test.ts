@@ -7,6 +7,7 @@ import {
   validMainTabRecoveryRequest,
 } from "../../shared/main-tab-recovery";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
+import type { MainTabGroupRecoveryResult } from "../session/main-tab-group-recovery";
 import type { SingleMainTabRecoveryResult } from "../session/main-tab-single-recovery";
 
 import { createMainTabRecoveryRPC } from "./main-tab-recovery";
@@ -365,5 +366,67 @@ test("cancel, navigation and suspension abort the held single-reader operation",
     expect(aborted).toBe(true);
     expect((await opening).status).toBe("rejected");
     rpc.dispose();
+  }
+});
+
+test("finish(false) aborts held same-root and multi-root group reads before waiting for their cleanup", async () => {
+  for (const route of ["same-root", "multi-root"] as const) {
+    const entered = Promise.withResolvers<{ route: typeof route; signal?: AbortSignal }>();
+    const cleanup = Promise.withResolvers<MainTabGroupRecoveryResult>();
+    let singleSignal: AbortSignal | undefined;
+    let singleReads = 0;
+    let currentOnAbort: boolean | undefined;
+    const groupReader = (readerRoute: typeof route) => ({
+      read(_input: unknown, current: () => boolean, signal?: AbortSignal) {
+        signal?.addEventListener("abort", () => { currentOnAbort = current(); }, { once: true });
+        entered.resolve({ route: readerRoute, signal });
+        return cleanup.promise;
+      },
+      close: () => Promise.resolve(),
+    });
+    const rpc = createMainTabRecoveryRPC(
+      true,
+      () => true,
+      () => ({
+        read(_input, _current, signal) {
+          singleReads++;
+          singleSignal = signal;
+          return Promise.resolve({ status: "rejected", reason: "unavailable" });
+        },
+        close: () => Promise.resolve(),
+      }),
+      undefined,
+      () => groupReader("same-root"),
+      () => groupReader("multi-root")
+    );
+    rpc.ready(ready);
+    const input = route === "same-root" ? open() : {
+      protocolVersion: 1 as const,
+      requestId: crypto.randomUUID(),
+      op: "open-multi" as const,
+      roots: Array.from({ length: 2 }, () => ({
+        root: crypto.randomUUID(), generation: 1, expectedRootId: crypto.randomUUID(),
+      })),
+    };
+    try {
+      const opening = rpc.request(input);
+      const held = await entered.promise;
+      expect(held.route).toBe(route);
+      expect(held.signal?.aborted).toBe(false);
+      expect(singleReads).toBe(route === "same-root" ? 1 : 0);
+      if (route === "same-root") expect(held.signal).toBe(singleSignal);
+      const finishing = rpc.request(finish(input.requestId, false));
+      expect(held.signal?.aborted).toBe(true);
+      expect(currentOnAbort).toBe(false);
+      expect((await rpc.request(open())).status).toBe("rejected");
+      cleanup.resolve({ status: "rejected", reason: "stale" });
+      expect((await opening).status).toBe("rejected");
+      expect((await finishing).status).toBe("finished");
+      expect((await rpc.request(finish(input.requestId, false))).status).toBe("finished");
+      expect((await rpc.request(input)).status).toBe("rejected");
+    } finally {
+      cleanup.resolve({ status: "rejected", reason: "stale" });
+      rpc.dispose();
+    }
   }
 });

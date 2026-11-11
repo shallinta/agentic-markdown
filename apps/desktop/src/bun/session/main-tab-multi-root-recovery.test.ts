@@ -19,6 +19,8 @@ import { createRootRosterService } from "../workspace/root-roster-service";
 import { createMainTabMetadataBinder } from "./main-tab-binder";
 import { createMainTabMultiRootRecoveryReader } from "./main-tab-group-recovery";
 import { createMainTabCheckpointMetadataStore } from "./main-tab-metadata";
+import { encodeMainTabPosition } from "./main-tab-position-codec";
+import { createMarkdownBlockAnchorProbe } from "./markdown-block-anchor-probe";
 
 const envelope = () => ({
   protocolVersion: 1 as const,
@@ -185,6 +187,7 @@ async function fixture(hardLinkBeforeReauthorization = false) {
       metadata,
       checkpoint,
       alphaFile,
+      betaFile,
       unrelated,
       bytes: await readFile(checkpoint),
       record: bound.data,
@@ -203,6 +206,54 @@ async function fixture(hardLinkBeforeReauthorization = false) {
     throw error;
   }
 }
+
+test("cross-root recovery resolves each changed block for the correct same-name file", async () => {
+  const f = await fixture();
+  const reader = createMainTabMultiRootRecoveryReader(f.metadata, f);
+  try {
+    const files = [f.alphaFile, f.betaFile];
+    const tabs = await Promise.all(
+      f.record.tabs.map(async (tab, index) => {
+        const file = files[index];
+        if (!file) return tab;
+        const raw = await readFile(file, "utf8");
+        const probe = createMarkdownBlockAnchorProbe(raw);
+        if (probe.status !== "ready")
+          throw Error("Fixture anchor parser unavailable");
+        const position = encodeMainTabPosition(
+          probe.capturePosition({ from: 0, offset: index ? -index : 0, ratio: 0.5 })
+        );
+        if (!position?.block) throw Error("Fixture block anchor unavailable");
+        await writeFile(file, "x".repeat(index + 1) + "\n\n" + raw);
+        return { ...tab, position };
+      })
+    );
+    expect(
+      await f.store.writePositions({ ...f.record, schemaVersion: 2, tabs }, () => true)
+    ).toEqual({ status: "committed" });
+    const historical = await readFile(f.checkpoint);
+    const result = await reader.read(
+      { requestId: crypto.randomUUID(), roots: f.roots },
+      () => true
+    );
+    if (result.status !== "ready") throw Error(JSON.stringify(result));
+    expect(result.activeIndex).toBe(1);
+    expect(
+      result.tabs.map(({ snapshot, viewport }) => [snapshot.fileName, viewport])
+    ).toEqual([
+      ["shared.md", { from: 3, offset: 0, ratio: 0.5 }],
+      ["shared.md", { from: 4, offset: -1, ratio: 0.5 }],
+      ["tail.md", undefined],
+    ]);
+    expect(result.verifyDelivery?.()).toBe(true);
+    expect(f.bodyReads()).toBe(3);
+    expect(await result.release()).toBe("released");
+    expect(await readFile(f.checkpoint)).toEqual(historical);
+  } finally {
+    await reader.close();
+    await f.dispose();
+  }
+});
 
 test("reauthorized roots recover distinct same-name files in record order and release only the recovered grants", async () => {
   const f = await fixture();

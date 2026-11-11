@@ -18,11 +18,14 @@ import { createMainTabRecoveryRPC } from "../rpc/main-tab-recovery";
 import { createWorkspaceService } from "../workspace";
 import { createRootRosterService } from "../workspace/root-roster-service";
 
+import { resolveMainTabBlockAnchor } from "./main-tab-anchor-worker-client";
 import { createMainTabMetadataBinder } from "./main-tab-binder";
 import { createMainTabGroupRecoveryReader } from "./main-tab-group-recovery";
 import { createMainTabCheckpointMetadataStore } from "./main-tab-metadata";
 import { createMainTabPairRecoveryReader } from "./main-tab-pair-recovery";
+import { encodeMainTabPosition } from "./main-tab-position-codec";
 import { createSingleMainTabRecoveryReader } from "./main-tab-single-recovery";
+import { createMarkdownBlockAnchorProbe } from "./markdown-block-anchor-probe";
 
 async function fixture(count = 2) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "pair-recovery-")));
@@ -1064,3 +1067,151 @@ test("group last-item delivery rejects position changed after async revalidation
     await f.close();
   }
 });
+
+async function prepareBlockPositions(
+  f: Awaited<ReturnType<typeof fixture>>,
+  changed = [0, 1]
+) {
+  const record = await f.store.read();
+  if (record.status !== "valid") throw Error("No history");
+  const tabs = [];
+  for (const [index, tab] of record.data.tabs.entries()) {
+    const path = join(f.folder, tab.relativePath),
+      raw = await readFile(path, "utf8");
+    const probe = createMarkdownBlockAnchorProbe(raw);
+    if (probe.status !== "ready") throw Error("No parser");
+    const position = encodeMainTabPosition(
+      probe.capturePosition({ from: 0, offset: index - 2, ratio: 0.4 })
+    );
+    if (!position?.block) throw Error("No anchor");
+    tabs.push({ ...tab, position });
+    if (changed.includes(index)) await writeFile(path, "intro\n\n" + raw);
+  }
+  expect(
+    await f.store.writePositions(
+      { schemaVersion: 2, tabs, activeIndex: 1 },
+      () => true
+    )
+  ).toEqual({ status: "committed" });
+}
+
+test("group resolves active changed block first then visual order without rereading bodies", async () => {
+  const f = await fixture();
+  await prepareBlockPositions(f);
+  const order: string[] = [];
+  const reader = createMainTabGroupRecoveryReader(f.directory, {
+    ...f,
+    resolveViewport(raw, position, signal) {
+      order.push(raw);
+      return resolveMainTabBlockAnchor(raw, position, signal);
+    },
+  });
+  try {
+    const result = await reader.read(f.input, () => true);
+    if (result.status !== "ready") throw Error(JSON.stringify(result));
+    expect(order).toEqual(["intro\n\n# Beta\n", "intro\n\n# Alpha\n"]);
+    expect(
+      result.tabs.map((tab) => [tab.snapshot.fileName, tab.viewport])
+    ).toEqual([
+      ["a.md", { from: 7, offset: -2, ratio: 0.4 }],
+      ["b.md", { from: 7, offset: -1, ratio: 0.4 }],
+    ]);
+    expect(f.reads()).toBe(2);
+    expect(result.verifyDelivery?.()).toBe(true);
+    expect(await result.release()).toBe("released");
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("held group resolver cancels with caller or close and releases all grants", async () => {
+  for (const kind of ["caller", "close"] as const) {
+    const f = await fixture();
+    await prepareBlockPositions(f);
+    const abort = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const reader = createMainTabGroupRecoveryReader(f.directory, {
+      ...f,
+      resolveViewport(_raw, _position, signal) {
+        entered();
+        return new Promise((resolve) =>
+          signal!.addEventListener("abort", () => resolve(undefined), {
+            once: true,
+          })
+        );
+      },
+    });
+    try {
+      const pending = reader.read(f.input, () => true, abort.signal);
+      await started;
+      if (kind === "caller") abort.abort();
+      else await reader.close();
+      expect((await pending).status).toBe("rejected");
+      expect(f.documents.locations()).toHaveLength(0);
+    } finally {
+      abort.abort();
+      await reader.close();
+      await f.close();
+    }
+  }
+});
+
+test("async group resolution also fences unchanged peer snapshots at final delivery", async () => {
+  const f = await fixture();
+  await prepareBlockPositions(f, [1]);
+  const reader = createMainTabGroupRecoveryReader(f.directory, f);
+  try {
+    const result = await reader.read(f.input, () => true);
+    if (result.status !== "ready") throw Error(JSON.stringify(result));
+    expect(await result.revalidate()).toBe(true);
+    await writeFile(join(f.folder, "a.md"), "# Other\n");
+    expect(result.verifyDelivery?.()).toBe(false);
+    expect(await result.release()).toBe("released");
+    expect(f.documents.locations()).toHaveLength(0);
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("shared group parser deadline falls back and never starts a second held resolver", async () => {
+  const f = await fixture();
+  await prepareBlockPositions(f);
+  let attempts = 0,
+    aborted = false;
+  const reader = createMainTabGroupRecoveryReader(f.directory, {
+    ...f,
+    resolveViewport(_raw, _position, signal) {
+      attempts++;
+      return new Promise((resolve) =>
+        signal!.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            resolve(undefined);
+          },
+          { once: true }
+        )
+      );
+    },
+  });
+  try {
+    const result = await reader.read(f.input, () => true);
+    if (result.status !== "ready") throw Error(JSON.stringify(result));
+    expect(aborted).toBe(true);
+    expect(attempts).toBe(1);
+    expect(result.tabs.map((tab) => tab.viewport)).toEqual([
+      { from: 0, offset: -2, ratio: 0.4 },
+      { from: 0, offset: -1, ratio: 0.4 },
+    ]);
+    expect(result.verifyDelivery?.()).toBe(true);
+    expect(await result.release()).toBe("released");
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+}, 9000);

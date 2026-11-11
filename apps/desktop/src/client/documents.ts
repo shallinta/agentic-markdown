@@ -2355,22 +2355,40 @@ export function createDocumentController(
       }
       return adopted;
     },
-    adoptRecoveredPrimaryPair(
-      pair: readonly [RecoveredPrimaryTab, RecoveredPrimaryTab],
-      activeIndex: 0 | 1,
+    async adoptRecoveredPrimaryGroup(
+      count: number,
+      activeIndex: number,
+      read: (index: number) => Promise<RecoveredPrimaryTab | undefined>,
       current: () => boolean,
-      onAdopt: () => void
+      onAdopt: (tabs: readonly DocumentSnapshot[]) => void
     ) {
-      if (!current() || !pristinePrimaryTabRecovery()) return false;
-      const tabs = pair.map(({ snapshot }) => snapshot);
-      if (tabs.some(tab => !isDocumentSnapshot(tab) || tab.explicitStandalone !== false || !tab.locationId || !tab.displayPath) ||
-          sharesDocumentLocation(tabs[0], tabs[1]) || (!pair[0].pinned && pair[1].pinned)) return false;
+      if (!Number.isSafeInteger(count) || count < 2 || count > CLEAN_PRIMARY_TAB_CAPTURE_LIMIT ||
+          !Number.isSafeInteger(activeIndex) || activeIndex < 0 || activeIndex >= count) return false;
+      const eligible = () => current() && pristinePrimaryTabRecovery();
       const started = performance.now();
-      const prepared = pair.map(({ snapshot, mode }, index) => prepareRecoveredEditor(snapshot, mode, index !== activeIndex));
-      onTiming?.("stateCreateMs", performance.now() - started);
-      if (!current() || !pristinePrimaryTabRecovery()) return false;
+      const tabs: DocumentSnapshot[] = [];
+      const prepared: { editor: EditorState; pinned: boolean }[] = [];
+      let seenUnpinned = false;
+      let stateCreateMs = 0;
+      for (let index = 0; index < count; index++) {
+        // Yield before the next read. Bun checks all grants again before the last item.
+        if (index > 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (!eligible()) return false;
+        const tab = await read(index);
+        if (!tab || !eligible()) return false;
+        const { snapshot, mode, pinned } = tab;
+        if (!isDocumentSnapshot(snapshot) || snapshot.explicitStandalone !== false || !snapshot.locationId || !snapshot.displayPath ||
+            tabs.some(peer => sharesDocumentLocation(peer, snapshot)) || (seenUnpinned && pinned)) return false;
+        seenUnpinned ||= !pinned;
+        const stateStarted = performance.now();
+        const editor = prepareRecoveredEditor(snapshot, mode, index !== activeIndex);
+        stateCreateMs += performance.now() - stateStarted;
+        prepared.push({ editor, pinned });
+        tabs.push(snapshot);
+      }
+      onTiming?.("stateCreateMs", stateCreateMs);
+      if (!eligible()) return false;
       const snapshot = tabs[activeIndex];
-      const other = tabs[activeIndex === 0 ? 1 : 0];
       const entries = tabs.map(documentEntry);
       ++generation;
       let adopted = false;
@@ -2378,13 +2396,13 @@ export function createDocumentController(
         publish({ ...state, tabs, entries, snapshot, error: null, stale: false, elapsedMs: performance.now() - started }, () => {
           for (const [index, tab] of tabs.entries()) {
             capabilityLifetimes.set(tab.handle, {});
-            editors.set(tab.documentId, { state: prepared[index], revision: 0 });
-            if (pair[index].pinned) pinnedTabs.add(tab.documentId);
+            editors.set(tab.documentId, { state: prepared[index].editor, revision: 0 });
+            if (prepared[index].pinned) pinnedTabs.add(tab.documentId);
             bindFaultOwner(tab.documentId);
           }
-          recentTabIds = [snapshot.documentId, other.documentId];
+          recentTabIds = [snapshot.documentId, ...tabs.filter(tab => tab !== snapshot).map(tab => tab.documentId)];
           adopted = true;
-          onAdopt();
+          onAdopt(tabs);
         });
       } catch {
         // A subscriber failure after publication cannot return the adopted grants to Bun.

@@ -50,7 +50,7 @@ F-037o 在 alpha.336 验证了同目录两篇历史标签的受保护读取，�
 
 alpha.337 从「待重新授权的目录」选回原目录后，尚未发起打开文档或加入其他目录的窗口也可恢复上次在同一目录中的两篇标签。两篇一起显示，保留顺序、编辑或源码模式、固定状态和上次活动项。任一文件失效时只加入目录。关闭其中一篇会记录剩余标签，关闭最后一篇会清空匹配记录。见[F-037p 迭代](iterations/F-037p-restore-two-tabs-after-folder-reauthorization.md)。
 
-F-037q 在 alpha.338 验证了更多同目录标签的内部读取。普通窗口入口仍支持一篇或两篇。见[F-037q 迭代](iterations/F-037q-authorized-group-recovery-baseline.md)。
+alpha.339 将同目录恢复扩到会话上限 64 篇。重新授权后，应用逐篇准备，整组就绪时一起显示。恢复时保留原顺序、固定状态、模式和活动项。见[F-037r 迭代](iterations/F-037r-restore-same-root-tab-group.md)。
 
 ## 主窗原生全屏（F-038a）
 

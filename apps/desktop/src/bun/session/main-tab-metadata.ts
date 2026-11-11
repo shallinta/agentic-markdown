@@ -325,7 +325,8 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
               value.status !== "valid" ||
               value.format !== "version1" ||
               bytes !== witness.bytes ||
-              (value.data.tabs.length !== 1 && value.data.tabs.length !== 2) ||
+              value.data.tabs.length < 1 ||
+              value.data.tabs.length > MAIN_TAB_METADATA_MAX_TABS ||
               value.data.activeIndex === null
             )
               return false;

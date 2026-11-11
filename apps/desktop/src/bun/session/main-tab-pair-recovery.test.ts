@@ -505,9 +505,21 @@ test("internal group accepts five and existing-capacity tabs, while pair entry r
         `# Extra ${count - 1}\n`
       );
       expect(f.reads()).toBe(count);
-      expect(await result.release()).toBe("released");
-      expect(f.documents.locations()).toHaveLength(0);
-      expect(await readFile(f.path)).toEqual(f.bytes);
+      const owner = createMainTabCheckpointMetadataStore(f.directory);
+      try {
+        expect(
+          await owner.claimObservation(result.ownership, () => result.current())
+        ).toBe(true);
+        expect(await readFile(f.path)).toEqual(f.bytes);
+        expect(await result.release()).toBe("released");
+        expect(f.documents.locations()).toHaveLength(0);
+        expect(await owner.clearOwned(() => true)).toEqual({
+          status: "committed",
+        });
+        expect(await readFile(`${f.path}.bak`)).toEqual(f.bytes);
+      } finally {
+        await owner.close();
+      }
     } finally {
       await group.close();
       await pair.close();

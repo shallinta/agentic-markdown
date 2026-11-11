@@ -1,5 +1,6 @@
 import { isDocumentSnapshot } from "./document-snapshot";
 import type { DocumentSnapshot } from "./documents";
+import { MAIN_TAB_METADATA_MAX_TABS } from "./main-tab-checkpoint";
 import { validRootRosterId } from "./root-roster";
 
 export type MainTabRecoveryRequest = {
@@ -8,7 +9,7 @@ export type MainTabRecoveryRequest = {
 } & (
   | { op: "open"; root: string; generation: number; expectedRootId: string }
   | { op: "finish"; adopted: boolean }
-  | { op: "pair-item"; index: 0 | 1 }
+  | { op: "group-item"; index: number }
 );
 export type MainTabRecoveryResponse = {
   protocolVersion: 1;
@@ -20,10 +21,10 @@ export type MainTabRecoveryResponse = {
       mode: "editing" | "source";
       pinned: boolean;
     }
-  | { status: "pair"; activeIndex: 0 | 1 }
+  | { status: "group"; count: number; activeIndex: number }
   | {
-      status: "pair-item";
-      index: 0 | 1;
+      status: "group-item";
+      index: number;
       snapshot: DocumentSnapshot;
       mode: "editing" | "source";
       pinned: boolean;
@@ -43,10 +44,12 @@ export function validMainTabRecoveryRequest(
     v.requestId.length > 80
   )
     return false;
-  if (v.op === "pair-item")
+  if (v.op === "group-item")
     return (
       Object.keys(v).sort().join() === "index,op,protocolVersion,requestId" &&
-      (v.index === 0 || v.index === 1)
+      Number.isSafeInteger(v.index) &&
+      Number(v.index) >= 0 &&
+      Number(v.index) < MAIN_TAB_METADATA_MAX_TABS
     );
   if (v.op === "finish")
     return (
@@ -69,19 +72,27 @@ export function validMainTabRecoveryResponse(
 ): v is MainTabRecoveryResponse {
   if (!object(v) || v.protocolVersion !== 1 || v.requestId !== requestId)
     return false;
-  if (v.status === "pair")
+  if (v.status === "group")
     return (
       Object.keys(v).sort().join() ===
-        "activeIndex,protocolVersion,requestId,status" &&
-      (v.activeIndex === 0 || v.activeIndex === 1)
+        "activeIndex,count,protocolVersion,requestId,status" &&
+      Number.isSafeInteger(v.count) &&
+      Number(v.count) >= 2 &&
+      Number(v.count) <= MAIN_TAB_METADATA_MAX_TABS &&
+      Number.isSafeInteger(v.activeIndex) &&
+      Number(v.activeIndex) >= 0 &&
+      Number(v.activeIndex) < Number(v.count)
     );
-  if (v.status === "ready" || v.status === "pair-item")
+  if (v.status === "ready" || v.status === "group-item")
     return (
       Object.keys(v).sort().join() ===
         (v.status === "ready"
           ? "mode,pinned,protocolVersion,requestId,snapshot,status"
           : "index,mode,pinned,protocolVersion,requestId,snapshot,status") &&
-      (v.status === "ready" || v.index === 0 || v.index === 1) &&
+      (v.status === "ready" ||
+        (Number.isSafeInteger(v.index) &&
+          Number(v.index) >= 0 &&
+          Number(v.index) < MAIN_TAB_METADATA_MAX_TABS)) &&
       isDocumentSnapshot(v.snapshot) &&
       v.snapshot.explicitStandalone === false &&
       (v.mode === "editing" || v.mode === "source") &&

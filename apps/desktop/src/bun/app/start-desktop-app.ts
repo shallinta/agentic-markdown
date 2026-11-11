@@ -34,7 +34,7 @@ import { createContentSearchRPC } from "../rpc/content-search";
 import { createMainTabCheckpointRPC } from "../rpc/main-tab-checkpoint";
 import { createMainTabRecoveryRPC } from "../rpc/main-tab-recovery";
 import { createGuardedMainTabCheckpoint } from "../session/main-tab-checkpoint";
-import { createMainTabPairRecoveryReader } from "../session/main-tab-pair-recovery";
+import { createMainTabGroupRecoveryReader } from "../session/main-tab-group-recovery";
 import { createSingleMainTabRecoveryReader } from "../session/main-tab-single-recovery";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
@@ -132,7 +132,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
     () => browserWindow?.url === PACKAGED_VIEW_URL && browserWindow.webview.url === PACKAGED_VIEW_URL && !browserWindow.webview.isRemoved,
     () => createSingleMainTabRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents}),
     () => mainTabCheckpoint.prepareClaim(),
-    () => createMainTabPairRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents})
+    () => createMainTabGroupRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents})
   );
   const expansion = createExpansionService({
     workspace,

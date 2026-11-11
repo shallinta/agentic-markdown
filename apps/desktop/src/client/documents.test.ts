@@ -271,7 +271,7 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
 function recoveryFixture(
   status: WorkspaceRoot["status"] = "complete",
   finish: () => Promise<unknown> = () => Promise.reject(new Error("finish reply unavailable")),
-  pairItem?: (request: Extract<MainTabRecoveryRequest, { op: "pair-item" }>) => Promise<unknown>,
+  groupItem?: (request: Extract<MainTabRecoveryRequest, { op: "group-item" }>) => Promise<unknown>,
 ) {
   const documents = setup();
   const saved = { ...snapshot("# 当前磁盘正文"), explicitStandalone: false };
@@ -304,8 +304,8 @@ function recoveryFixture(
       finished.resolve(request.adopted);
       return finish();
     }
-    if (!pairItem) throw Error("unexpected pair request in single recovery fixture");
-    return pairItem(request);
+    if (!groupItem) throw Error("unexpected group request in single recovery fixture");
+    return groupItem(request);
   }, () => true);
   return {
     ...documents, folders, recovery, expectedRootId, requests, entered, reply, finished, saved,
@@ -393,35 +393,35 @@ test("cancelled pickers and changed scan generations never issue a recovery read
 
 const checkpointTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-function pairRecoveryFixture() {
-  type ItemRequest = Extract<MainTabRecoveryRequest, { op: "pair-item" }>;
-  const asked = [deferred<ItemRequest>(), deferred<ItemRequest>()] as const;
-  const responses = [deferred<unknown>(), deferred<unknown>()] as const;
+function groupRecoveryFixture(count = 2) {
+  type ItemRequest = Extract<MainTabRecoveryRequest, { op: "group-item" }>;
+  const asked = Array.from({ length: count }, () => deferred<ItemRequest>());
+  const responses = Array.from({ length: count }, () => deferred<unknown>());
   const acknowledgement = deferred<unknown>();
   const f = recoveryFixture("complete", () => acknowledgement.promise, (request) => {
     asked[request.index].resolve(request);
     return responses[request.index].promise;
   });
-  const tabs = ["甲", "乙"].map((name) => ({
-    ...snapshot(`# ${name} 当前正文`), fileName: `${name}.md`,
-    explicitStandalone: false, locationId: crypto.randomUUID(), displayPath: `/test-directory/${name}.md`,
+  const tabs = Array.from({ length: count }, (_, index) => ({
+    ...snapshot(`# 文档 ${index} 当前正文`), fileName: `${index}.md`,
+    explicitStandalone: false, locationId: crypto.randomUUID(), displayPath: `/test-directory/${index}.md`,
   }));
-  const begin = async (activeIndex: 0 | 1 = 1) => {
+  const begin = async (activeIndex = 1) => {
     const restoring = f.recovery.reselect(f.expectedRootId);
     const open = await f.entered.promise;
-    f.reply.resolve({ protocolVersion: 1, requestId: open.requestId, status: "pair", activeIndex });
+    f.reply.resolve({ protocolVersion: 1, requestId: open.requestId, status: "group", count, activeIndex });
     return { restoring, requestId: open.requestId };
   };
-  const replyItem = async (index: 0 | 1, changes: Record<string, unknown> = {}) => {
+  const replyItem = async (index: number, changes: Record<string, unknown> = {}) => {
     const item = await asked[index].promise;
-    responses[index].resolve({ protocolVersion: 1, requestId: item.requestId, status: "pair-item", index,
+    responses[index].resolve({ protocolVersion: 1, requestId: item.requestId, status: "group-item", index,
       snapshot: tabs[index], mode: index === 0 ? "source" : "editing", pinned: index === 0, ...changes });
   };
   return { ...f, tabs, begin, replyItem, asked, acknowledgement };
 }
 
 test("recovery publishes two ordered tabs together, initializes only the active parser, and seeds local switching", async () => {
-  const f = pairRecoveryFixture();
+  const f = groupRecoveryFixture();
   const { controller, tabs } = f;
   const publications: string[][] = [];
   const activations: string[] = [];
@@ -461,11 +461,11 @@ test("recovery publishes two ordered tabs together, initializes only the active 
     f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "finished" });
     await restoring;
     expect(f.recovery.settlementForRecord(tabs[0])).toBeUndefined();
-    expect(f.requests.map(request => request.op === "pair-item" ? request.index : request.op)).toEqual(["open", 0, 1, "finish"]);
+    expect(f.requests.map(request => request.op === "group-item" ? request.index : request.op)).toEqual(["open", 0, 1, "finish"]);
   } finally { f.dispose(); }
 });
 
-test("pair recovery rejects invalid later items, overlapping identities and impossible pin order without publishing a tab", async () => {
+test("group recovery rejects invalid later items, overlapping identities and impossible pin order without publishing a tab", async () => {
   for (const makeChanges of [
     () => ({ status: "unknown" }),
     () => ({ index: 0 }),
@@ -476,7 +476,7 @@ test("pair recovery rejects invalid later items, overlapping identities and impo
     (tabs: DocumentSnapshot[]) => ({ snapshot: { ...tabs[1], displayPath: tabs[0].displayPath } }),
     () => ({ pinned: true }),
   ]) {
-    const f = pairRecoveryFixture();
+    const f = groupRecoveryFixture();
     try {
       const { restoring, requestId } = await f.begin(0);
       await f.replyItem(0, { pinned: false });
@@ -490,8 +490,8 @@ test("pair recovery rejects invalid later items, overlapping identities and impo
   }
 });
 
-test("a competing open during pair delivery cancels once and keeps a late second body out of the editor", async () => {
-  const f = pairRecoveryFixture();
+test("a competing open during group delivery cancels once and keeps a late second body out of the editor", async () => {
+  const f = groupRecoveryFixture();
   try {
     const { restoring, requestId } = await f.begin();
     await f.replyItem(0);
@@ -507,8 +507,8 @@ test("a competing open during pair delivery cancels once and keeps a late second
   } finally { f.dispose(); }
 });
 
-test("closing both recovered tabs during pair handoff sends only the final clear after settlement", async () => {
-  const f = pairRecoveryFixture();
+test("closing all recovered tabs during group handoff sends only the final clear after settlement", async () => {
+  const f = groupRecoveryFixture(4);
   const requests: MainTabCheckpointRequest[] = [];
   const scope = {};
   const stop = attachMainTabActivationCheckpoint(f.controller, (request) => {
@@ -516,15 +516,14 @@ test("closing both recovered tabs during pair handoff sends only the final clear
     return Promise.resolve({ protocolVersion: 1, status: "committed" });
   }, () => scope, { idleMs: 0, settlementForRecord: f.recovery.settlementForRecord, settlementForClose: f.recovery.settlementForClose });
   try {
-    const { restoring, requestId } = await f.begin();
-    await f.replyItem(0);
-    await f.replyItem(1);
+    const { restoring, requestId } = await f.begin(3);
+    for (let index = 0; index < f.tabs.length; index++) await f.replyItem(index);
     expect(await f.finished.promise).toBe(true);
     await f.controller.closeActive();
-    expect(f.controller.getSnapshot().snapshot?.documentId).toBe(f.tabs[0].documentId);
+    expect(f.controller.getSnapshot().snapshot?.documentId).toBe(f.tabs[2].documentId);
     await checkpointTurn();
     expect(requests).toEqual([]);
-    await f.controller.closeActive();
+    for (let index = 0; index < 3; index++) await f.controller.closeActive();
     expect(f.controller.getSnapshot().tabs).toEqual([]);
     await checkpointTurn();
     expect(requests).toEqual([]);
@@ -533,6 +532,55 @@ test("closing both recovered tabs during pair handoff sends only the final clear
     await checkpointTurn();
     expect(requests).toEqual([{ protocolVersion: 1, op: "clear" }]);
   } finally { stop(); f.dispose(); }
+});
+
+test("maximum recovered group publishes once with its saved active index and window-only switching order", async () => {
+  const f = groupRecoveryFixture(CLEAN_PRIMARY_TAB_CAPTURE_LIMIT);
+  const activeIndex = 21;
+  const published: number[] = [];
+  let activations = 0;
+  f.controller.subscribe(() => published.push(f.controller.getSnapshot().tabs.length));
+  f.controller.subscribeActivation(() => { activations++; });
+  try {
+    const { restoring, requestId } = await f.begin(activeIndex);
+    for (let index = 0; index < f.tabs.length; index++) {
+      expect(f.controller.getSnapshot().tabs).toEqual([]);
+      await f.replyItem(index, { pinned: index < 2, mode: index === activeIndex ? "source" : "editing" });
+    }
+    expect(await f.finished.promise).toBe(true);
+    expect(published).toEqual([CLEAN_PRIMARY_TAB_CAPTURE_LIMIT]);
+    expect(f.controller.getVisualTabs()).toEqual(f.tabs);
+    expect(f.controller.getSnapshot().snapshot).toBe(f.tabs[activeIndex]);
+    expect(f.controller.getMode(f.tabs[activeIndex].documentId)).toBe("source");
+    expect(f.controller.isTabPinned(f.tabs[1].documentId)).toBe(true);
+    expect(f.controller.isTabPinned(f.tabs[2].documentId)).toBe(false);
+    expect(activations).toBe(0);
+    expect(f.controller.cycleRecentTabs()).toBe(true);
+    expect(f.controller.getRecentTabCandidate()).toBe(f.tabs[0].documentId);
+    expect(f.controller.cycleRecentTabs()).toBe(true);
+    expect(f.controller.getRecentTabCandidate()).toBe(f.tabs[1].documentId);
+    f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "finished" });
+    await restoring;
+    expect(f.requests.filter(request => request.op === "group-item").map(request => request.index)).toEqual(f.tabs.map((_, index) => index));
+  } finally { f.dispose(); }
+});
+
+test("a user action between group preparations stops further reads and discards every staged editor", async () => {
+  const f = groupRecoveryFixture(4);
+  try {
+    const { restoring, requestId } = await f.begin();
+    await f.asked[0].promise;
+    const competing = checkpointTurn().then(() => f.controller.select());
+    await f.replyItem(0);
+    await competing;
+    expect(await f.finished.promise).toBe(false);
+    f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "finished" });
+    await restoring;
+    expect(f.requests.filter(request => request.op === "group-item").map(request => request.index)).toEqual([0]);
+    expect(f.controller.getSnapshot().tabs).toEqual([f.value]);
+    expect(f.controller.getEditor(f.tabs[0].documentId)).toBeUndefined();
+    expect(f.released).toEqual([]);
+  } finally { f.dispose(); }
 });
 
 function closingRecoveryFixture(closeOnAdoption = true) {

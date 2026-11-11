@@ -3,26 +3,25 @@ import {
   validMainTabRecoveryRequest,
   type MainTabRecoveryResponse,
 } from "../../shared/main-tab-recovery";
-import type { MainTabMetadataObservation } from "../session/main-tab-metadata";
 import type {
-  createMainTabPairRecoveryReader,
-  MainTabPairRecoveryResult,
-} from "../session/main-tab-pair-recovery";
+  createMainTabGroupRecoveryReader,
+  MainTabGroupRecoveryResult,
+} from "../session/main-tab-group-recovery";
+import type { MainTabMetadataObservation } from "../session/main-tab-metadata";
 import type {
   createSingleMainTabRecoveryReader,
   SingleMainTabRecoveryResult,
 } from "../session/main-tab-single-recovery";
 
-
-type PairReader = ReturnType<typeof createMainTabPairRecoveryReader>;
-type Pair = Extract<MainTabPairRecoveryResult, { status: "ready" }>;
+type GroupReader = ReturnType<typeof createMainTabGroupRecoveryReader>;
+type Group = Extract<MainTabGroupRecoveryResult, { status: "ready" }>;
 type Reader = ReturnType<typeof createSingleMainTabRecoveryReader>;
 type Ready = Extract<SingleMainTabRecoveryResult, { status: "ready" }>;
 interface Slot {
   id: string;
   epoch: number;
   cancelled: boolean;
-  result?: Ready | Pair;
+  result?: Ready | Group;
   delivered?: number;
   itemPending?: boolean;
   quarantined?: boolean;
@@ -44,9 +43,9 @@ export function createMainTabRecoveryRPC(
     receipt: MainTabMetadataObservation,
     current: () => boolean
   ) => Promise<boolean>,
-  createPairReader?: () => PairReader
+  createGroupReader?: () => GroupReader
 ) {
-  let pairReader: PairReader | undefined;
+  let groupReader: GroupReader | undefined;
   let reader: Reader | undefined, slot: Slot | undefined;
   // Never evict an ID within a page: late RPC dispatch must not revive it.
   const seen = new Set<string>();
@@ -86,8 +85,8 @@ export function createMainTabRecoveryRPC(
     const oldReader = reader;
     reader = undefined;
     void oldReader?.close().catch(() => undefined);
-    const oldPair = pairReader;
-    pairReader = undefined;
+    const oldPair = groupReader;
+    groupReader = undefined;
     void oldPair?.close().catch(() => undefined);
     last = undefined;
     seen.clear();
@@ -123,7 +122,7 @@ export function createMainTabRecoveryRPC(
     async request(input: unknown): Promise<MainTabRecoveryResponse> {
       if (!validMainTabRecoveryRequest(input)) return response("", "rejected");
       const { requestId } = input;
-      if (input.op === "pair-item") {
+      if (input.op === "group-item") {
         const target = slot;
         if (
           target?.id !== requestId ||
@@ -134,6 +133,7 @@ export function createMainTabRecoveryRPC(
           target.finishing ||
           target.itemPending ||
           (target.delivered ?? 0) !== input.index ||
+          input.index >= target.result.tabs.length ||
           !available() ||
           target.epoch !== epoch
         )
@@ -143,7 +143,8 @@ export function createMainTabRecoveryRPC(
         try {
           const valid =
             result.current() &&
-            (input.index === 0 || (await result.revalidate()));
+            (input.index !== result.tabs.length - 1 ||
+              (await result.revalidate()));
           if (
             !valid ||
             !result.current() ||
@@ -170,7 +171,7 @@ export function createMainTabRecoveryRPC(
           return {
             protocolVersion: 1,
             requestId,
-            status: "pair-item",
+            status: "group-item",
             index: input.index,
             ...item,
           };
@@ -223,7 +224,8 @@ export function createMainTabRecoveryRPC(
             !target.result ||
             target.cancelled ||
             ("tabs" in target.result &&
-              (target.delivered !== 2 || target.itemPending))
+              (target.delivered !== target.result.tabs.length ||
+                target.itemPending))
           )
             return response(requestId, "rejected");
           target.adopted = true;
@@ -282,16 +284,16 @@ export function createMainTabRecoveryRPC(
             !target.cancelled &&
             target.epoch === epoch &&
             available();
-          let result: SingleMainTabRecoveryResult | MainTabPairRecoveryResult =
+          let result: SingleMainTabRecoveryResult | MainTabGroupRecoveryResult =
             await reader.read(input, current);
           if (
             result.status === "rejected" &&
             result.reason === "unavailable" &&
             current() &&
-            createPairReader
+            createGroupReader
           ) {
-            pairReader ??= createPairReader();
-            result = await pairReader.read(input, current);
+            groupReader ??= createGroupReader();
+            result = await groupReader.read(input, current);
           }
           if (result.status !== "ready") {
             target.quarantined = result.status === "unknown";
@@ -318,7 +320,8 @@ export function createMainTabRecoveryRPC(
             return {
               protocolVersion: 1,
               requestId,
-              status: "pair",
+              status: "group",
+              count: result.tabs.length,
               activeIndex: result.activeIndex,
             };
           return {

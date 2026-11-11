@@ -8,7 +8,7 @@ import type { createDocumentController, PrimaryTabLastClose } from "./documents"
 import type { createFolderWorkspace, WorkspaceSelectionReceipt } from "./workspace";
 
 type Documents = Pick<ReturnType<typeof createDocumentController>,
-  "canRestorePrimaryTab" | "adoptRecoveredPrimaryTab" | "adoptRecoveredPrimaryPair" | "runWorkspaceAction" | "subscribe">;
+  "canRestorePrimaryTab" | "adoptRecoveredPrimaryTab" | "adoptRecoveredPrimaryGroup" | "runWorkspaceAction" | "subscribe">;
 type Folders = Pick<ReturnType<typeof createFolderWorkspace>, "getSnapshot" | "select" | "selectWithReceipt" | "subscribe">;
 interface Intent { cancel?: () => void }
 interface AdoptionSettlement {
@@ -77,13 +77,14 @@ export function createMainTabRecovery(
     const detach = () => { intent.cancel = undefined; offFolders(); offDocuments(); };
     intent.cancel = () => { void finish(false); };
     const eligible = () => !finishing && current() && documents.canRestorePrimaryTab();
-    async function pairItem(index: 0 | 1) {
+    async function groupItem(index: number) {
       if (!eligible()) return;
-      const item = await send({ ...envelope, op: "pair-item", index });
-      if (eligible() && validMainTabRecoveryResponse(item, requestId) && item.status === "pair-item" && item.index === index)
+      const item = await send({ ...envelope, op: "group-item", index });
+      if (eligible() && validMainTabRecoveryResponse(item, requestId) && item.status === "group-item" && item.index === index)
         return item;
     }
     const registerAdoption = (items: readonly Target[]) => {
+      detach();
       const result = finish(true).then((acknowledgement) => {
         ticket.pending = false;
         return validMainTabRecoveryResponse(acknowledgement, requestId) && acknowledgement.status === "finished";
@@ -100,14 +101,9 @@ export function createMainTabRecovery(
         detach();
         adopted = await documents.adoptRecoveredPrimaryTab(reply.snapshot, reply.mode, reply.pinned, current,
           () => registerAdoption([reply.snapshot]));
-      } else if (reply.status === "pair") {
-        const first = await pairItem(0);
-        if (!first) return;
-        const second = await pairItem(1);
-        if (!second || !eligible()) return;
-        detach();
-        adopted = documents.adoptRecoveredPrimaryPair([first, second], reply.activeIndex, current,
-          () => registerAdoption([first.snapshot, second.snapshot]));
+      } else if (reply.status === "group") {
+        adopted = await documents.adoptRecoveredPrimaryGroup(reply.count, reply.activeIndex, groupItem,
+          () => !finishing && current(), registerAdoption);
       }
     } finally {
       detach();

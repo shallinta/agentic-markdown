@@ -6,7 +6,7 @@ import {
   validMainTabRecoveryResponse,
 } from "../../shared/main-tab-recovery";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
-import type { MainTabPairRecoveryResult } from "../session/main-tab-pair-recovery";
+import type { MainTabGroupRecoveryResult } from "../session/main-tab-group-recovery";
 import type { SingleMainTabRecoveryResult } from "../session/main-tab-single-recovery";
 
 import { createMainTabRecoveryRPC } from "./main-tab-recovery";
@@ -15,17 +15,18 @@ function fixture(
   single: SingleMainTabRecoveryResult = {
     status: "rejected",
     reason: "unavailable",
-  }
+  },
+  count = 2
 ) {
   let released = 0,
     reads = 0,
     verified = 0,
     claimed = 0;
   let verify: () => Promise<boolean> = () => Promise.resolve(true);
-  const pair: Extract<MainTabPairRecoveryResult, { status: "ready" }> = {
+  const pair: Extract<MainTabGroupRecoveryResult, { status: "ready" }> = {
     status: "ready",
     activeIndex: 1,
-    tabs: [0, 1].map((index) => ({
+    tabs: Array.from({ length: count }, (_, index) => ({
       snapshot: {
         handle: crypto.randomUUID(),
         documentId: crypto.randomUUID(),
@@ -84,10 +85,10 @@ function fixture(
     generation: 1,
     expectedRootId: crypto.randomUUID(),
   };
-  const item = (index: 0 | 1) => ({
+  const item = (index: number) => ({
     protocolVersion: 1 as const,
     requestId: input.requestId,
-    op: "pair-item" as const,
+    op: "group-item" as const,
     index,
   });
   const finish = (adopted: boolean) => ({
@@ -114,7 +115,8 @@ test("pair protocol delivers only index metadata then each single snapshot in or
   expect(await f.rpc.request(f.input)).toEqual({
     protocolVersion: 1,
     requestId: f.input.requestId,
-    status: "pair",
+    status: "group",
+    count: 2,
     activeIndex: 1,
   });
   expect((await f.rpc.request(f.item(1))).status).toBe("rejected");
@@ -124,7 +126,7 @@ test("pair protocol delivers only index metadata then each single snapshot in or
   expect(first).toEqual({
     protocolVersion: 1,
     requestId: f.input.requestId,
-    status: "pair-item",
+    status: "group-item",
     index: 0,
     ...f.pair.tabs[0],
   });
@@ -187,7 +189,7 @@ test("only trusted unavailable falls back and protocol rejects extra data or ind
   }
   const f = fixture();
   expect(validMainTabRecoveryRequest(f.item(0))).toBe(true);
-  expect(validMainTabRecoveryRequest({ ...f.item(0), index: 2 })).toBe(false);
+  expect(validMainTabRecoveryRequest({ ...f.item(0), index: 64 })).toBe(false);
   expect(validMainTabRecoveryRequest({ ...f.item(0), text: "body" })).toBe(
     false
   );
@@ -196,7 +198,8 @@ test("only trusted unavailable falls back and protocol rejects extra data or ind
       {
         protocolVersion: 1,
         requestId: f.input.requestId,
-        status: "pair",
+        status: "group",
+        count: 2,
         activeIndex: 2,
       },
       f.input.requestId
@@ -241,5 +244,69 @@ test("pair proof invalidated in the revalidate continuation cannot publish a sna
   expect("snapshot" in result).toBe(false);
   expect(f.counts().released).toBe(1);
   expect(f.counts().claimed).toBe(0);
+  f.rpc.dispose();
+});
+
+test("group delivers 5 and 64 entries sequentially, verifies only the last, and rejects excess items", async () => {
+  for (const count of [5, 64]) {
+    const f = fixture(undefined, count);
+    const opened = await f.rpc.request(f.input);
+    expect(opened).toEqual({
+      protocolVersion: 1,
+      requestId: f.input.requestId,
+      status: "group",
+      count,
+      activeIndex: 1,
+    });
+    expect(validMainTabRecoveryResponse(opened, f.input.requestId)).toBe(true);
+    for (let index = 0; index < count; index++) {
+      expect((await f.rpc.request(f.item(index + 1))).status).toBe("rejected");
+      const delivered = await f.rpc.request(f.item(index));
+      expect(delivered).toEqual({
+        protocolVersion: 1,
+        requestId: f.input.requestId,
+        status: "group-item",
+        index,
+        ...f.pair.tabs[index],
+      });
+      expect(validMainTabRecoveryResponse(delivered, f.input.requestId)).toBe(
+        true
+      );
+      expect(f.counts().verified).toBe(index === count - 1 ? 1 : 0);
+      if (index < count - 1)
+        expect((await f.rpc.request(f.finish(true))).status).toBe("rejected");
+    }
+    expect((await f.rpc.request(f.item(count))).status).toBe("rejected");
+    expect((await f.rpc.request(f.finish(true))).status).toBe("finished");
+    expect(f.counts()).toEqual({
+      released: 0,
+      reads: 1,
+      verified: 1,
+      claimed: 1,
+    });
+    f.rpc.dispose();
+  }
+});
+
+test("group protocol rejects former pair spelling and invalid group counts or indices", () => {
+  const f = fixture();
+  expect(validMainTabRecoveryRequest({ ...f.item(0), op: "pair-item" })).toBe(
+    false
+  );
+  for (const index of [-1, 0.5, 64, NaN])
+    expect(validMainTabRecoveryRequest(f.item(index))).toBe(false);
+  for (const count of [0, 1, 65, NaN])
+    expect(
+      validMainTabRecoveryResponse(
+        {
+          protocolVersion: 1,
+          requestId: f.input.requestId,
+          status: "group",
+          count,
+          activeIndex: 0,
+        },
+        f.input.requestId
+      )
+    ).toBe(false);
   f.rpc.dispose();
 });

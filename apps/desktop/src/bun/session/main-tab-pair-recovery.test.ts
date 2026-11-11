@@ -10,21 +10,28 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
 import { createDocumentService } from "../documents";
 import { verifySingleFileAuthorization } from "../documents/path-authorization";
 import { createWorkspaceService } from "../workspace";
 import { createRootRosterService } from "../workspace/root-roster-service";
 
 import { createMainTabMetadataBinder } from "./main-tab-binder";
+import { createMainTabGroupRecoveryReader } from "./main-tab-group-recovery";
 import { createMainTabCheckpointMetadataStore } from "./main-tab-metadata";
 import { createMainTabPairRecoveryReader } from "./main-tab-pair-recovery";
 
-async function fixture() {
+async function fixture(count = 2) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "pair-recovery-")));
   const folder = join(dir, "root");
   await mkdir(folder);
   await writeFile(join(folder, "a.md"), "# Alpha\n");
   await writeFile(join(folder, "b.md"), "# Beta\n");
+  for (let index = 2; index < count; index++)
+    await writeFile(
+      join(folder, `extra-${String(index).padStart(2, "0")}.md`),
+      `# Extra ${index}\n`
+    );
   let reads = 0;
   let afterVerify: ((path: string) => Promise<void>) | undefined;
   const documents = createDocumentService({
@@ -74,7 +81,7 @@ async function fixture() {
   const nodes = page.nodes
     ?.filter((node) => node.kind === "file")
     .sort((a, b) => a.name.localeCompare(b.name));
-  if (nodes?.length !== 2) throw Error("Files missing");
+  if (nodes?.length !== count) throw Error("Files missing");
   const snapshots = [];
   for (const node of nodes) {
     const response = await workspace.open({
@@ -468,5 +475,233 @@ test("delivery revalidation detects changes after the ready result without rerea
   } finally {
     await reader.close();
     await f.close();
+  }
+});
+
+test("internal group accepts five and existing-capacity tabs, while pair entry remains exact two", async () => {
+  for (const count of [5, MAIN_TAB_METADATA_MAX_TABS]) {
+    const f = await fixture(count);
+    const group = createMainTabGroupRecoveryReader(f.directory, f);
+    const pair = createMainTabPairRecoveryReader(f.directory, f);
+    try {
+      expect(await pair.read(f.input, () => true)).toEqual({
+        status: "rejected",
+        reason: "unavailable",
+      });
+      expect(f.reads()).toBe(0);
+      const result = await group.read(f.input, () => true);
+      if (result.status !== "ready") throw Error(JSON.stringify(result));
+      expect(result.tabs).toHaveLength(count);
+      expect(result.activeIndex).toBe(1);
+      expect(result.tabs.map((tab) => [tab.mode, tab.pinned])).toEqual(
+        Array.from({ length: count }, (_, index) => [
+          index === 0 ? "source" : "editing",
+          index === 0,
+        ])
+      );
+      expect(result.tabs[0].snapshot.fileName).toBe("a.md");
+      expect(result.tabs[1].snapshot.fileName).toBe("b.md");
+      expect(result.tabs[count - 1].snapshot.text).toBe(
+        `# Extra ${count - 1}\n`
+      );
+      expect(f.reads()).toBe(count);
+      expect(await result.release()).toBe("released");
+      expect(f.documents.locations()).toHaveLength(0);
+      expect(await readFile(f.path)).toEqual(f.bytes);
+    } finally {
+      await group.close();
+      await pair.close();
+      await f.close();
+    }
+  }
+});
+
+test("group terminal history check rejects external record changes made during reads", async () => {
+  const f = await fixture(5);
+  let count = 0;
+  const reader = createMainTabGroupRecoveryReader(f.directory, {
+    ...f,
+    workspace: {
+      ...f.workspace,
+      async openMainTabCandidate(input, proof) {
+        const result = await f.workspace.openMainTabCandidate(input, proof);
+        if (++count === 2) {
+          const record = JSON.parse(f.bytes.toString()) as {
+            version: number;
+            data: { activeIndex: number };
+          };
+          record.data.activeIndex = 0;
+          await writeFile(f.path, JSON.stringify(record));
+        }
+        return result;
+      },
+    },
+  });
+  try {
+    expect((await reader.read(f.input, () => true)).status).toBe("rejected");
+    expect(count).toBe(5);
+    expect(f.documents.locations()).toHaveLength(0);
+    expect(await readFile(f.path)).not.toEqual(f.bytes);
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("group cancellation releases every acquired grant even after unknown cleanup", async () => {
+  const f = await fixture(5);
+  let valid = true,
+    count = 0,
+    released = 0;
+  const reader = createMainTabGroupRecoveryReader(f.directory, {
+    ...f,
+    workspace: {
+      ...f.workspace,
+      async openMainTabCandidate(input, proof) {
+        const result = await f.workspace.openMainTabCandidate(input, proof);
+        if (++count === 4) valid = false;
+        return result;
+      },
+    },
+    documents: {
+      ...f.documents,
+      async release(request) {
+        released++;
+        if (released === 1) throw Error("Injected failure");
+        return f.documents.release(request);
+      },
+    },
+  });
+  try {
+    expect(await reader.read(f.input, () => valid)).toEqual({
+      status: "unknown",
+      reason: "release",
+    });
+    expect(released).toBe(4);
+    expect(f.documents.locations()).toHaveLength(1);
+    expect(await readFile(f.path)).toEqual(f.bytes);
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("group rejects over-capacity metadata without reads or touching authoritative bytes", async () => {
+  const f = await fixture(5);
+  const reader = createMainTabGroupRecoveryReader(f.directory, f);
+  try {
+    const record = JSON.parse(f.bytes.toString()) as {
+      version: number;
+      data: { tabs: Record<string, unknown>[]; activeIndex: number };
+    };
+    record.data.tabs = Array.from(
+      { length: MAIN_TAB_METADATA_MAX_TABS + 1 },
+      (_, index) => ({ ...record.data.tabs[0], relativePath: `${index}.md` })
+    );
+    const bytes = JSON.stringify(record);
+    await writeFile(f.path, bytes);
+    expect(await reader.read(f.input, () => true)).toEqual({
+      status: "rejected",
+      reason: "unavailable",
+    });
+    expect(f.reads()).toBe(0);
+    expect(await readFile(f.path, "utf8")).toBe(bytes);
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("group rejects mixed roots before opening and first-file changes during the last read", async () => {
+  const f = await fixture(5);
+  let count = 0;
+  const reader = createMainTabGroupRecoveryReader(f.directory, {
+    ...f,
+    workspace: {
+      ...f.workspace,
+      async openMainTabCandidate(input, proof) {
+        const result = await f.workspace.openMainTabCandidate(input, proof);
+        if (++count === 5)
+          await writeFile(
+            join(f.folder, "a.md"),
+            "# Changed during last group read\n"
+          );
+        return result;
+      },
+    },
+  });
+  try {
+    const record = await f.store.read();
+    if (record.status !== "valid") throw Error("Missing record");
+    expect(
+      await f.store.write(
+        {
+          ...record.data,
+          tabs: record.data.tabs.map((tab, index) =>
+            index === 3 ? { ...tab, rootId: crypto.randomUUID() } : tab
+          ),
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(await reader.read(f.input, () => true)).toEqual({
+      status: "rejected",
+      reason: "unavailable",
+    });
+    expect(count).toBe(0);
+    expect(await f.store.write(record.data, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await reader.read(f.input, () => true)).toEqual({
+      status: "rejected",
+      reason: "unavailable",
+    });
+    expect(f.documents.locations()).toHaveLength(0);
+    expect(f.reads()).toBe(5);
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("group rejects history changed after asynchronous file terminal verification", async () => {
+  for (const changeDuringRevalidation of [false, true]) {
+    const f = await fixture(5);
+    let mutate = !changeDuringRevalidation;
+    const reader = createMainTabGroupRecoveryReader(f.directory, {
+      ...f,
+      documents: {
+        ...f.documents,
+        async verifyRecoverySnapshots(snapshots, check) {
+          const valid = await f.documents.verifyRecoverySnapshots(
+            snapshots,
+            check
+          );
+          if (mutate) {
+            const record = JSON.parse(f.bytes.toString()) as {
+              data: { activeIndex: number };
+            };
+            record.data.activeIndex = 0;
+            await writeFile(f.path, JSON.stringify(record));
+          }
+          return valid;
+        },
+      },
+    });
+    try {
+      const result = await reader.read(f.input, () => true);
+      if (changeDuringRevalidation) {
+        if (result.status !== "ready") throw Error("No initial group");
+        mutate = true;
+        expect(await result.revalidate()).toBe(false);
+        expect(result.current()).toBe(false);
+        expect(await result.release()).toBe("released");
+      } else expect(result.status).toBe("rejected");
+      expect(f.documents.locations()).toHaveLength(0);
+      expect(await readFile(f.path)).not.toEqual(f.bytes);
+    } finally {
+      await reader.close();
+      await f.close();
+    }
   }
 });

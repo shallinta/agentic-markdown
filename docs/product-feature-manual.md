@@ -50,6 +50,8 @@ F-037o 在 alpha.336 验证了同目录两篇历史标签的受保护读取，�
 
 alpha.337 从「待重新授权的目录」选回原目录后，尚未发起打开文档或加入其他目录的窗口也可恢复上次在同一目录中的两篇标签。两篇一起显示，保留顺序、编辑或源码模式、固定状态和上次活动项。任一文件失效时只加入目录。关闭其中一篇会记录剩余标签，关闭最后一篇会清空匹配记录。见[F-037p 迭代](iterations/F-037p-restore-two-tabs-after-folder-reauthorization.md)。
 
+F-037q 在 alpha.338 验证了更多同目录标签的内部读取。普通窗口入口仍支持一篇或两篇。见[F-037q 迭代](iterations/F-037q-authorized-group-recovery-baseline.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

@@ -17,6 +17,7 @@ import {
   type WriteCapability,
 } from "../../shared/documents";
 import { localImageReference, validLocalImageRequest, type LocalImageResult } from "../../shared/local-images";
+import { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
 import { READER_IMAGE_SNAPSHOT_MAX_SLOTS, type ReaderImageSnapshotSlot } from "../../shared/reader-image-snapshot";
 import { READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import { validMirror } from "../../shared/save-content";
@@ -1053,7 +1054,7 @@ export function createDocumentService({
       return !!proof && proof.requestId === requestId && grants.get(value.handle) === proof.grant;
     },
     async verifyRecoverySnapshots(snapshots, check) {
-      if (snapshots.length !== 2) return false;
+      if (snapshots.length < 2 || snapshots.length > MAIN_TAB_METADATA_MAX_TABS) return false;
       const bindings = service.captureContentSearchBindings(snapshots.map(value => value.handle));
       if (!bindings) return false;
       const verifyCurrent = () => {

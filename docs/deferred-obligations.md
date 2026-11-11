@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037q 同目录多篇内部读取（2026-11-11）
+
+已验同目录多篇成组读取、失效收尾与成本观察。OBL-034 继续承接普通窗口的多篇传输、后台状态及完整会话。OBL-054 与最终离线保持开放。见[F-037q 迭代](iterations/F-037q-authorized-group-recovery-baseline.md)。
+
 ## F-037p 普通窗口恢复同目录两篇（2026-11-11）
 
 普通 WK 已验两篇一并恢复、模式与固定状态、活动项、逐篇关闭及容量边界。OBL-034 继续承接更多标签、跨根、草稿、副区及完整会话。OBL-054 与最终离线保持开放。见[F-037p 迭代](iterations/F-037p-restore-two-tabs-after-folder-reauthorization.md)。

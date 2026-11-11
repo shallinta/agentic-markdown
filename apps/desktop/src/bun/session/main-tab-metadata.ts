@@ -1,3 +1,11 @@
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readSync,
+} from "node:fs";
 import { extname, join, resolve } from "node:path";
 
 import { createSettingsStore } from "@agentic-markdown/shared/server";
@@ -114,6 +122,64 @@ const recoveryWitnesses = new WeakMap<
 >();
 const checkpointObservations = new Map<string, CheckpointObservations>();
 
+/** Private observation only: bounded synchronous terminal byte check, never a restore source. */
+function exactRecoveryObservation(
+  receipt: MainTabMetadataObservation,
+  path: string
+): boolean {
+  const witness = recoveryWitnesses.get(receipt);
+  if (witness?.path !== path) return false;
+  let fd: number | undefined;
+  try {
+    if (!witness.current()) return false;
+    const expected = Buffer.from(witness.bytes);
+    if (expected.length > MAIN_TAB_METADATA_MAX_BYTES) return false;
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    );
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile() || before.size !== BigInt(expected.length))
+      return false;
+    const bytes = Buffer.alloc(expected.length + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = readSync(fd, bytes, length, bytes.length - length, length);
+      if (!count) break;
+      length += count;
+    }
+    const after = fstatSync(fd, { bigint: true });
+    const named = lstatSync(path, { bigint: true });
+    const matches = [after, named].every(
+      (value) =>
+        value.isFile() &&
+        value.dev === before.dev &&
+        value.ino === before.ino &&
+        value.size === before.size &&
+        value.mtimeNs === before.mtimeNs &&
+        value.ctimeNs === before.ctimeNs &&
+        value.mode === before.mode &&
+        value.nlink === before.nlink
+    );
+    return (
+      matches &&
+      length === expected.length &&
+      bytes.subarray(0, length).equals(expected) &&
+      witness.current()
+    );
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* Read-only FD; no ownership is acquired. */
+      }
+    }
+  }
+}
+
 /** Isolated precursor only. No startup consumer, path lookup, or authority restoration. */
 export function createMainTabMetadataStore(isolatedDir: string) {
   return createMetadataStore(join(isolatedDir, "main-tab-session-probe.json"));
@@ -133,6 +199,9 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
   let closed = false;
   return {
     ...store,
+    exactCurrent(receipt: MainTabMetadataObservation): boolean {
+      return !closed && exactRecoveryObservation(receipt, path);
+    },
     async readObserved(): Promise<MainTabMetadataObservation> {
       const token = observed.token;
       const current = () =>

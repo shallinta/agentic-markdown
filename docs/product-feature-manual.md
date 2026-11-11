@@ -54,6 +54,8 @@ alpha.339 将同目录恢复扩到会话上限 64 篇。重新授权后，应用
 
 alpha.341 支持恢复横跨多个目录的标签。从「待重新授权的目录」逐一重选原目录，选齐后应用恢复整组标签。重选顺序不影响标签的原顺序。取消一次选择后，可以继续选择余下目录。见[F-037t 迭代](iterations/F-037t-restore-tabs-across-directories.md)。
 
+重启后恢复正文滚动位置仍待接入。alpha.343 完成了位置记录的隔离存储验证，普通窗口的恢复范围沿用 alpha.341。见[F-037u 迭代](iterations/F-037u-main-tab-position-storage-probe.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

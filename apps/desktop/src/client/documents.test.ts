@@ -447,6 +447,64 @@ test("cancelled pickers and changed scan generations never issue a recovery read
 
 const checkpointTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+test("quiet user viewport checkpoints coalesce without activation and reject stale or dirty owners", async () => {
+  const { controller, value } = setup();
+  value.explicitStandalone = false;
+  await controller.select();
+  const requests: MainTabCheckpointRequest[] = [];
+  const scope = {};
+  const stop = attachMainTabActivationCheckpoint(controller, request => {
+    requests.push(request);
+    return Promise.resolve({ protocolVersion: 1, status: "committed" });
+  }, () => scope, { idleMs: 0, includeViewport: true });
+  let geometry = { from: 1, offset: -1, ratio: 0.2 };
+  let measures = 0;
+  const owner = controller.registerViewportCapture(value.documentId, () => {
+    measures++;
+    return { ...geometry, revision: controller.getEditor(value.documentId)!.revision };
+  });
+  const expected = controller.getEditor(value.documentId)!.state;
+  try {
+    owner.capture(); // ordinary automatic capture does not enqueue persistence
+    await checkpointTurn();
+    expect(requests).toEqual([]);
+    // A prior automatic measurement was never published: a confirmed user
+    // intent may still record it. Only acknowledged writes are deduplicated.
+    owner.checkpoint(expected);
+    await checkpointTurn();
+    expect(requests).toHaveLength(1);
+    requests.length = 0;
+    geometry = { from: 2, offset: -2, ratio: 0.4 };
+    owner.checkpoint(expected);
+    geometry = { from: 3, offset: -3, ratio: 0.6 };
+    owner.checkpoint(expected);
+    await checkpointTurn();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ tabs: [{ viewport: geometry }] });
+    owner.checkpoint(expected);
+    await checkpointTurn();
+    expect(requests).toHaveLength(1);
+    let blocked = true;
+    const interaction = controller.registerEditorInteraction(value.documentId, () => !blocked);
+    geometry = { from: 4, offset: -4, ratio: 0.8 };
+    const count = measures;
+    owner.checkpoint(expected);
+    expect(measures).toBe(count);
+    blocked = false;
+    interaction.release();
+    controller.updateEditor(value.documentId, expected.update({ changes: { from: 0, insert: "draft" } }));
+    owner.checkpoint(expected);
+    owner.checkpoint(controller.getEditor(value.documentId)!.state);
+    expect(measures).toBe(count);
+    await checkpointTurn();
+    expect(requests).toHaveLength(1);
+    owner.release();
+    controller.dispose();
+    owner.checkpoint(expected);
+    expect(measures).toBe(count);
+  } finally { stop(); controller.dispose(); }
+});
+
 test("ordinary checkpoint sends only measured viewports and records returning to the top", async () => {
   const { controller, transport, value: a } = setup();
   const b = snapshot("# second document");

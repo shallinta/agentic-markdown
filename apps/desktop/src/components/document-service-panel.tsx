@@ -1274,6 +1274,8 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
               controller={controller}
               documentId={snapshot.documentId}
               frozen={state.frozen || state.busy}
+              checkpointOnScroll={typeof window !== "undefined" && window.location.href === PACKAGED_VIEW_URL &&
+                !(globalThis as typeof globalThis & { __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean }).__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__}
             />
           </div>
         </>

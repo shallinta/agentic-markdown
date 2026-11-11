@@ -8,7 +8,7 @@ import {
 import type { createDocumentController, PrimaryTabLastClose } from "./documents";
 
 type Documents = Pick<ReturnType<typeof createDocumentController>,
-  "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "subscribePrimaryTabLastClose" | "captureCleanPrimaryTabs">;
+  "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "subscribePrimaryTabLastClose" | "captureCleanPrimaryTabs"> & Partial<Pick<ReturnType<typeof createDocumentController>, "subscribePrimaryTabViewportChange">>;
 type CheckpointTarget = Pick<MainTabSourceInput, "documentId" | "handle">;
 type CheckpointIntent = { kind: "record"; target: CheckpointTarget } | { kind: "clear"; close: PrimaryTabLastClose };
 interface CheckpointOptions {
@@ -111,6 +111,7 @@ export function attachMainTabActivationCheckpoint(
   };
   const record = (target: CheckpointTarget) => enqueue({ kind: "record", target }, settlementForRecord?.(target));
   const unsubscribeActivation = documents.subscribeActivation(record);
+  const unsubscribeViewport = includeViewport ? documents.subscribePrimaryTabViewportChange?.(record) : undefined;
   const unsubscribeLayout = documents.subscribePrimaryTabLayoutChange(record);
   const unsubscribeClose = documents.subscribePrimaryTabLastClose((close) => {
     if (disposed) return;
@@ -125,6 +126,7 @@ export function attachMainTabActivationCheckpoint(
     clearTimeout(timer);
     unsubscribeActivation();
     unsubscribeLayout();
+    unsubscribeViewport?.();
     unsubscribeClose();
   };
 }

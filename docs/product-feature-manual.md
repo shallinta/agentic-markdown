@@ -54,7 +54,7 @@ alpha.339 将同目录恢复扩到会话上限 64 篇。重新授权后，应用
 
 alpha.341 支持恢复横跨多个目录的标签。从「待重新授权的目录」逐一重选原目录，选齐后应用恢复整组标签。重选顺序不影响标签的原顺序。取消一次选择后，可以继续选择余下目录。见[F-037t 迭代](iterations/F-037t-restore-tabs-across-directories.md)。
 
-在已保存的目录文档中滚动后切换标签，主窗口会记录位置。其余标签都已保存时，关闭一篇会移除该标签的会话记录。自 alpha.349 起，重启后重新授权目录，首次显示恢复的标签时会回到保存位置。原源码坐标不可用时，按原滚动比例定位。键盘或滚轮主动移动后再切换标签，可记录新位置。见[F-037y 迭代](iterations/F-037y-main-window-viewport-checkpoint.md)、[F-037z 迭代](iterations/F-037z-restore-main-window-viewport.md)。
+在已保存的目录文档中滚动后切换标签，主窗口会记录位置。自 alpha.354 起，主区标签均已保存时，用键盘或滚轮主动移动并停下也可记录位置。其余标签都已保存时，关闭一篇会移除该标签的会话记录。重启并重新授权目录后，首次显示恢复的标签时会回到保存位置。原源码坐标不可用时，按原滚动比例定位。见[F-037y 迭代](iterations/F-037y-main-window-viewport-checkpoint.md)、[F-037z 迭代](iterations/F-037z-restore-main-window-viewport.md)、[F-037ad 迭代](iterations/F-037ad-save-viewport-after-scrolling.md)。
 
 alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。重新授权并恢复主区文档时，即使在原位置前插入了内容，也能回到仍可辨认的原段落。原段落已删除时，优先定位到可辨认的邻近块，再按源码坐标和滚动比例回退。alpha.352 支持单篇恢复，alpha.353 扩展到成组标签。若组内有多篇正文变化，优先处理原活动标签，共用计算时限用完后，其余标签按源码坐标或比例恢复。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)、[F-037ab 迭代](iterations/F-037ab-restore-single-tab-by-markdown-block.md)、[F-037ac 迭代](iterations/F-037ac-restore-group-tabs-by-markdown-block.md)。
 

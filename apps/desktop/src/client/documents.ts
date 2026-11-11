@@ -510,6 +510,7 @@ export function createDocumentController(
   let contentSearchPreparation = 0;
   const activationListeners = new Set<(target: { handle: string; documentId: string }) => void>();
   const primaryTabLayoutListeners = new Set<(target: { handle: string; documentId: string }) => void>();
+  const primaryTabViewportListeners = new Set<(target: { handle: string; documentId: string }) => void>();
   const primaryTabLastCloseListeners = new Set<(intent: PrimaryTabLastClose) => void>();
   const preparePrimaryTabLayoutNotification = (expected = state) => {
     const target = expected.snapshot;
@@ -2210,6 +2211,31 @@ export function createDocumentController(
       const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
       const recovery = incarnation && recoveredViewports.get(incarnation);
       const registration = {
+        checkpoint(expectedState: EditorState) {
+          if (!primaryTabViewportListeners.size) return;
+          const expected = state;
+          const current = () => !metadataDisposed && state === expected &&
+            state.snapshot?.documentId === documentId && state.snapshot.explicitStandalone === false &&
+            !state.busy && !state.frozen && !state.stale && !state.removalPending && !state.folderRemovalPending && !saving.size &&
+            !editorInputBlocked && !!incarnation && !incarnation.fault &&
+            viewportCaptures.get(documentId) === registration &&
+            editors.get(documentId)?.state === expectedState &&
+            expectedState.field(editorFaultSession) === incarnation;
+          if (!current() || !canLeaveEditor() || !current()) return;
+          const clean = captureCleanPrimaryTabs();
+          if (!clean.ok || !clean.current() || !current()) return;
+          const previous = viewports.get(documentId);
+          registration.capture();
+          const measured = viewports.get(documentId);
+          if (!current() || !clean.current() || !measured || measured === previous || !measured.moved) return;
+          const { from, offset, ratio } = measured.geometry;
+          if (!validMainTabCheckpointViewport({ from, offset, ratio })) return;
+          for (const listener of primaryTabViewportListeners) {
+            if (!current() || !clean.current() || viewports.get(documentId) !== measured) return;
+            try { listener({ handle: expected.snapshot!.handle, documentId }); }
+            catch { /* Optional persistence must not interrupt scrolling. */ }
+          }
+        },
         recover() {
           const position = recovery?.position;
           if (!recovery || !position || !incarnation) return;
@@ -2596,6 +2622,11 @@ export function createDocumentController(
     activateTab(documentId: string) {
       activateTab(documentId);
     },
+    subscribePrimaryTabViewportChange(listener: (target: { handle: string; documentId: string }) => void) {
+      if (metadataDisposed) return () => undefined;
+      primaryTabViewportListeners.add(listener);
+      return () => { primaryTabViewportListeners.delete(listener); };
+    },
     subscribePrimaryTabLayoutChange(listener: (target: { handle: string; documentId: string }) => void) {
       if (metadataDisposed) return () => undefined;
       primaryTabLayoutListeners.add(listener);
@@ -2692,6 +2723,7 @@ export function createDocumentController(
       quickFocusListeners.clear();
       activationListeners.clear();
       primaryTabLayoutListeners.clear();
+      primaryTabViewportListeners.clear();
       primaryTabLastCloseListeners.clear();
       for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();

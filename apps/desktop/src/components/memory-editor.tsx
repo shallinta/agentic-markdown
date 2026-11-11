@@ -98,6 +98,7 @@ export function MemoryEditor({
   autoFocusOnMount = true,
   preserveViewportOnSync = false,
   passive = false,
+  checkpointOnScroll = false,
 }: {
   controller: ReturnType<typeof createDocumentController>;
   documentId: string;
@@ -109,6 +110,7 @@ export function MemoryEditor({
   autoFocusOnMount?: boolean;
   preserveViewportOnSync?: boolean;
   passive?: boolean;
+  checkpointOnScroll?: boolean;
 }) {
   const imageInputs = useRef({ readLocalImage, assetEpoch });
   imageInputs.current = { readLocalImage, assetEpoch };
@@ -181,17 +183,18 @@ export function MemoryEditor({
     view.contentDOM.setAttribute("aria-label", "Markdown 编辑区");
     if (!scrollTo)
       view.scrollDOM.scrollTop = controller.getScrollPosition(documentId);
-    let scrollIntent: { offset: number; direction?: 1 | -1; expires: number } | undefined;
+    let scrollIntent: { offset: number; direction?: 1 | -1; expires: number; checkpoint: boolean } | undefined;
     const consumeScrollMovement = (offset: number) => {
-      if (!scrollIntent) return false;
-      if (performance.now() > scrollIntent.expires) {
+      const intent = scrollIntent;
+      if (!intent) return;
+      if (performance.now() > intent.expires) {
         scrollIntent = undefined;
-        return false;
+        return;
       }
-      const delta = offset - scrollIntent.offset;
-      if ((scrollIntent.direction ? delta * scrollIntent.direction : Math.abs(delta)) < 1) return false;
+      const delta = offset - intent.offset;
+      if ((intent.direction ? delta * intent.direction : Math.abs(delta)) < 1) return;
       scrollIntent = undefined;
-      return true;
+      return intent;
     };
     const collectViewport = () => {
       const current = controller.getEditor(documentId);
@@ -229,6 +232,25 @@ export function MemoryEditor({
     let registeredSession = session;
     let viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
     let scrollCapture = controller.registerEditorScroll(documentId, collectScroll);
+    let scrollCheckpointTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearScrollCheckpoint = () => {
+      if (scrollCheckpointTimer !== undefined) clearTimeout(scrollCheckpointTimer);
+      scrollCheckpointTimer = undefined;
+    };
+    const checkpointReady = () => currentView() && view.scrollDOM.isConnected &&
+      !view.compositionStarted && !view.composing && controller.getEditor(documentId)?.state === view.state;
+    const armScrollCheckpoint = () => {
+      if (!checkpointOnScroll) return;
+      clearScrollCheckpoint();
+      if (!checkpointReady()) return;
+      const owner = viewportCapture;
+      const expectedSession = registeredSession;
+      scrollCheckpointTimer = setTimeout(() => {
+        scrollCheckpointTimer = undefined;
+        if (owner === viewportCapture && expectedSession === registeredSession && checkpointReady())
+          owner.checkpoint(view.state);
+      }, 250);
+    };
     let releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
     const checkInteraction = () => !view.compositionStarted;
     let interaction = controller.registerEditorInteraction(documentId, checkInteraction);
@@ -647,6 +669,7 @@ export function MemoryEditor({
     const refreshSession = (nextSession: EditorFaultSession) => {
       if (nextSession === registeredSession) return contentSearch.notifyReady;
       // The same EditorView can adopt a new session after a reload.
+      clearScrollCheckpoint();
       viewportCapture.release();
       scrollCapture.release();
       releaseEditorDispatch();
@@ -730,8 +753,13 @@ export function MemoryEditor({
       if (!event.isTrusted || event.defaultPrevented || !currentView() ||
         controller.getEditor(documentId)?.state !== view.state) return;
       const offset = view.scrollDOM.scrollTop;
-      if (consumeScrollMovement(offset)) scrollCapture.savePosition(view.state, offset, true);
-      scrollIntent = { offset, direction, expires: performance.now() + 1000 };
+      const movement = consumeScrollMovement(offset);
+      if (movement) scrollCapture.savePosition(view.state, offset, true);
+      if (movement?.checkpoint) armScrollCheckpoint();
+      scrollIntent = {
+        offset, direction, expires: performance.now() + 1000,
+        checkpoint: checkpointOnScroll && !view.compositionStarted && !view.composing,
+      };
       if (recovery?.consume(view.state)) {
         if (recoveryFrame !== undefined) cancelAnimationFrame(recoveryFrame);
         recoveryFrame = undefined;
@@ -752,7 +780,7 @@ export function MemoryEditor({
         event.clientX >= scroller.getBoundingClientRect().left + scroller.clientLeft + scroller.clientWidth)
         noteScrollIntent(event);
     };
-    const trackScrollIntent = scrollCapture.requiresUserMovement;
+    const trackScrollIntent = checkpointOnScroll || scrollCapture.requiresUserMovement;
     if (trackScrollIntent) {
       view.scrollDOM.addEventListener("wheel", wheelIntent, { capture: true, passive: true });
       view.scrollDOM.addEventListener("keydown", keyboardIntent, true);
@@ -761,10 +789,16 @@ export function MemoryEditor({
     const saveScroll = () => {
       if (view.scrollDOM.isConnected) {
         const offset = view.scrollDOM.scrollTop;
-        scrollCapture.savePosition(view.state, offset, consumeScrollMovement(offset));
+        const movement = consumeScrollMovement(offset);
+        scrollCapture.savePosition(view.state, offset, !!movement);
+        return movement;
       }
     };
-    view.scrollDOM.addEventListener("scroll", saveScroll);
+    const onScroll = () => {
+      const movement = saveScroll();
+      if (movement?.checkpoint || scrollCheckpointTimer !== undefined) armScrollCheckpoint();
+    };
+    view.scrollDOM.addEventListener("scroll", onScroll);
     const listKey = (event: KeyboardEvent) =>
       routeListInput(
         event,
@@ -855,7 +889,11 @@ export function MemoryEditor({
         executeCommand
       );
     view.contentDOM.addEventListener("beforeinput", historyInput, true);
-    const compositionChanged = () => {
+    const compositionChanged = (event: CompositionEvent) => {
+      if (event.type === "compositionstart") {
+        clearScrollCheckpoint();
+        if (scrollIntent) scrollIntent.checkpoint = false;
+      }
       const owner = interaction;
       setTimeout(() => {
         if (!currentView()) return;
@@ -866,6 +904,7 @@ export function MemoryEditor({
     view.contentDOM.addEventListener("compositionend", compositionChanged);
     return () => {
       alive = false;
+      clearScrollCheckpoint();
       raster.dispose();
       checkRaster.current = undefined;
       releaseRasterCheck();
@@ -917,13 +956,13 @@ export function MemoryEditor({
         view.scrollDOM.removeEventListener("keydown", keyboardIntent, true);
         view.scrollDOM.removeEventListener("pointerdown", scrollbarIntent, true);
       }
-      view.scrollDOM.removeEventListener("scroll", saveScroll);
+      view.scrollDOM.removeEventListener("scroll", onScroll);
       view.destroy();
       viewRef.current = null;
     };
     // A new view only on document switch; transactions preserve its DOM/IME.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controller, documentId, mountAttempt]);
+  }, [controller, documentId, mountAttempt, checkpointOnScroll]);
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (!view) return;

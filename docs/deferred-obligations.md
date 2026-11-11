@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037l 单篇恢复文档的受保护读取（2026-11-11）
+
+包内验证精确根与文件身份、失效拒绝和晚到授权释放。OBL-034 的普通窗口接入及完整恢复、OBL-054 和最终离线继续跟踪。见[F-037l 迭代](iterations/F-037l-authorized-single-tab-recovery-read.md)。
+
 ## F-037k 原生选择器新增根回执（2026-11-11）
 
 包内已验真实新增回执，普通 WK 原生选择回归通过。OBL-034 的持久根身份、受保护读取、打开及完整恢复，OBL-054 和最终离线继续跟踪。见[F-037k 迭代](iterations/F-037k-workspace-picker-root-receipt.md)。

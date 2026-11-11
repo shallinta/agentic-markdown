@@ -33,6 +33,7 @@ import {
 import type { ContentSearchFragments } from "../../shared/content-search-fragments";
 import type { CreateFolderResponse } from "../../shared/create-folder";
 import type { CreateTarget, CreateMarkdownResponse } from "../../shared/create-markdown";
+import { MAX_DOCUMENT_BYTES, type DocumentResponse } from "../../shared/documents";
 import type { FolderRemovalPublication } from "../../shared/folder-removal";
 import { validFolderRemovalRequest } from "../../shared/folder-removal";
 import { perfUuid } from "../../shared/perf-lab";
@@ -221,6 +222,10 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   trashLifecycle: Pick<ReturnType<typeof createTrashService>,"beforeExit"|"cancelExit"|"finishExit">;
   rootMutationsSuspended(): boolean;
   rootMutationGeneration(): number;
+  openMainTabCandidate(
+    input: { root: string; generation: number; entry: string; fingerprint: string; requestId: string },
+    proof: { check(): void; verify(check: () => void): Promise<void> }
+  ): Promise<DocumentResponse>;
   captureMainTabCandidates(rootHandle: string, generation: number): {
     path: string;
     current(): boolean;
@@ -2445,6 +2450,41 @@ export function createWorkspaceService({
         verify();
         return { sources, current };
       } catch { return; }
+    },
+    async openMainTabCandidate(input, proof) {
+      const { root: rootHandle, generation, entry, fingerprint, requestId } = input;
+      const envelope = { protocolVersion: 1 as const, requestId: requestId };
+      const reject = (error: "INVALID_REQUEST" | "INVALID_HANDLE" | "READ_FAILED"): DocumentResponse => ({ ...envelope, ok: false, error });
+      if (!validWorkspaceOpen({ ...envelope, root: rootHandle, entry: entry }) ||
+          !Number.isSafeInteger(generation) || generation < 1 ||
+          typeof fingerprint !== "string" || fingerprint.length > 100)
+        return reject("INVALID_REQUEST");
+      const captured = captureIndexEntry(rootHandle, generation, entry);
+      if (!captured.ok || captured.file.fingerprint !== fingerprint) return reject("INVALID_HANDLE");
+      const selectionEpoch = rootSelectionEpoch;
+      const { root, file } = captured;
+      const check = () => {
+        proof.check();
+        if (!captured.current() || rootMutationSuspensions || rootSelectionEpoch !== selectionEpoch)
+          throw new DocumentPathError("INVALID_HANDLE");
+      };
+      try {
+        check();
+        return await openWorkspaceFile(root, entry, file, envelope, {
+          maxBytes: MAX_DOCUMENT_BYTES,
+          check,
+          async verify(authorization, _snapshot, current) {
+            await proof.verify(current);
+            current();
+            if (authorization.fingerprint !== fingerprint)
+              throw new DocumentPathError("FILE_CHANGED");
+            await verifySingleFileAuthorization(authorization, current);
+            current();
+            if (documents.trashBlocked(authorization.path, authorization.fingerprint, authorization.directories))
+              throw new DocumentPathError("BUSY");
+          },
+        });
+      } catch { return reject("READ_FAILED"); }
     },
     captureMainTabCandidates(rootHandle, generation) {
       const captured = captureIndexRootState(rootHandle, generation);

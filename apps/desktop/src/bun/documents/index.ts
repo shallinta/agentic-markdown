@@ -1618,7 +1618,7 @@ export function createDocumentService({
           if (proof) checkFreshTarget(candidate.path);
           check();
           await scope.verify();
-          const next = await snapshot(candidate, generation, task, proof?.maxBytes);
+          const next = await snapshot(candidate, generation, task, proof?.maxBytes, proof ? check : undefined);
           await scope.verify();
           check();
           if (proof) {

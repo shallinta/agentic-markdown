@@ -1,4 +1,4 @@
-import { extname, join } from "node:path";
+import { extname, join, resolve } from "node:path";
 
 import { createSettingsStore } from "@agentic-markdown/shared/server";
 
@@ -34,6 +34,9 @@ export type MainTabMetadataFailure =
   | "not-owned";
 export type MainTabMetadataRead =
   | { status: "valid"; data: MainTabSessionMetadata }
+  | { status: "missing" | MainTabMetadataFailure };
+export type MainTabMetadataObservation =
+  | { status: "valid"; data: MainTabSessionMetadata; current(): boolean }
   | { status: "missing" | MainTabMetadataFailure };
 export type MainTabMetadataWrite =
   | { status: "committed" }
@@ -100,6 +103,13 @@ export function validMainTabSessionMetadata(
 export const mainTabMetadataSerializedBytes = (data: MainTabSessionMetadata) =>
   Buffer.byteLength(`${JSON.stringify({ version: 1, data }, null, 2)}\n`);
 
+interface CheckpointObservations {
+  token: object;
+  pendingWrites: number;
+  stores: number;
+}
+const checkpointObservations = new Map<string, CheckpointObservations>();
+
 /** Isolated precursor only. No startup consumer, path lookup, or authority restoration. */
 export function createMainTabMetadataStore(isolatedDir: string) {
   return createMetadataStore(join(isolatedDir, "main-tab-session-probe.json"));
@@ -107,12 +117,22 @@ export function createMainTabMetadataStore(isolatedDir: string) {
 
 /** Internal checkpoint storage; callers must supply a live authority guard. */
 export function createMainTabCheckpointMetadataStore(directory: string) {
-  const store = createMetadataStore(
-    join(directory, "main-tab-session-checkpoint.json"),
-    true
-  );
+  const path = resolve(directory, "main-tab-session-checkpoint.json");
+  const observed = checkpointObservations.get(path) ?? { token: {}, pendingWrites: 0, stores: 0 };
+  observed.stores++;
+  checkpointObservations.set(path, observed);
+  const store = createMetadataStore(path, observed);
+  let closed = false;
   return {
     ...store,
+    async readObserved(): Promise<MainTabMetadataObservation> {
+      const token = observed.token;
+      const current = () => !closed && !observed.pendingWrites && observed.token === token;
+      if (!current()) return { status: "stale" };
+      const record = await store.read();
+      if (!current()) return { status: "stale" };
+      return record.status === "valid" ? { ...record, current } : record;
+    },
     write(
       value: unknown,
       current: () => boolean
@@ -121,10 +141,19 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
         return Promise.resolve({ status: "rejected", reason: "stale" });
       return store.write(value, current);
     },
+    async close() {
+      if (closed) return store.close();
+      closed = true;
+      try { await store.close(); }
+      finally {
+        if (--observed.stores === 0) checkpointObservations.delete(path);
+      }
+    },
   };
 }
 
-function createMetadataStore(path: string, ownedCheckpoint = false) {
+function createMetadataStore(path: string, observed?: CheckpointObservations) {
+  const ownedCheckpoint = !!observed;
   let owner: { encoded: string; bytes: string } | undefined;
   const store = createSettingsStore<MainTabSessionMetadata>(
     path,
@@ -142,14 +171,22 @@ function createMetadataStore(path: string, ownedCheckpoint = false) {
   let tail: Promise<unknown> = Promise.resolve();
   function enqueue<T>(
     operation: () => Promise<T>,
-    reject: (reason: MainTabMetadataFailure) => T
+    reject: (reason: MainTabMetadataFailure) => T,
+    writesCheckpoint = false
   ): Promise<T> {
     if (closed || queued >= 64)
       return Promise.resolve(reject(closed ? "closed" : "queue-full"));
+    const writing = writesCheckpoint ? observed : undefined;
+    if (writing) {
+      // A queued writer can reach the settings store after a read from another instance.
+      writing.token = {};
+      writing.pendingWrites++;
+    }
     queued++;
     const next = tail.then(operation).catch(() => reject("io"));
     tail = next.finally(() => {
       queued--;
+      if (writing) writing.pendingWrites--;
     });
     return next;
   }
@@ -225,7 +262,8 @@ function createMetadataStore(path: string, ownedCheckpoint = false) {
             return { status: "rejected" as const, reason: observed.status };
           return { status: "unknown" as const, reason: "io" as const };
         },
-        (reason) => ({ status: "rejected" as const, reason })
+        (reason) => ({ status: "rejected" as const, reason }),
+        true
       );
     },
     clearOwned(current: () => boolean): Promise<MainTabMetadataWrite> {
@@ -284,7 +322,8 @@ function createMetadataStore(path: string, ownedCheckpoint = false) {
             reason: matched ? ("io" as const) : ("not-owned" as const),
           };
         },
-        (reason) => ({ status: "rejected" as const, reason })
+        (reason) => ({ status: "rejected" as const, reason }),
+        true
       );
     },
     async drain() {

@@ -237,7 +237,7 @@ function exactRecoveryObservation(
   if (witness?.path !== path) return false;
   return exactCheckpointBytes(path, witness.bytes, () => witness.current());
 }
-function exactCheckpointBytes(
+export function exactCheckpointBytes(
   path: string,
   original: string,
   current: () => boolean

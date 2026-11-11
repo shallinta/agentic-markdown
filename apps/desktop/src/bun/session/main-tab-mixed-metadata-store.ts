@@ -1,9 +1,11 @@
-import { join } from "node:path";
+import { lstatSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { createSettingsStore } from "@agentic-markdown/shared/server";
 
 import {
   MAIN_TAB_METADATA_MAX_BYTES,
+  exactCheckpointBytes,
   type MainTabMetadataWrite,
 } from "./main-tab-metadata";
 import {
@@ -26,16 +28,13 @@ type MixedMainTabMetadataRead =
 
 /** Isolated probe only. The ordinary checkpoint file is not a source for this store. */
 export function createMixedMainTabMetadataStore(isolatedDir: string) {
-  const store = createSettingsStore<unknown>(
-    join(isolatedDir, "main-tab-session-mixed-probe.json"),
-    (value) => value,
-    {
-      maxBytes: MAIN_TAB_METADATA_MAX_BYTES,
-      // Classify future bodies separately while still refusing them in the update.
-      validateData: (value) =>
-        decodeMixedMainTabMetadata(value).status !== "invalid",
-    }
-  );
+  const path = resolve(isolatedDir, "main-tab-session-mixed-probe.json");
+  const store = createSettingsStore<unknown>(path, (value) => value, {
+    maxBytes: MAIN_TAB_METADATA_MAX_BYTES,
+    // Classify future bodies separately while still refusing them in the update.
+    validateData: (value) =>
+      decodeMixedMainTabMetadata(value).status !== "invalid",
+  });
   let closed = false;
   let queued = 0;
   let tail: Promise<unknown> = Promise.resolve();
@@ -100,16 +99,42 @@ export function createMixedMainTabMetadataStore(isolatedDir: string) {
         async () => {
           if (!admitted()) return { status: "rejected", reason: "stale" };
           let protectedFormat: "legacy" | "future" | undefined;
-          const result = await store.updateObserved((previous, format) => {
-            if (format === "legacy") protectedFormat = "legacy";
-            else if (
-              format === "version1" &&
-              decodeMixedMainTabMetadata(previous).status === "future"
-            )
-              protectedFormat = "future";
-            if (protectedFormat) throw Error("Protected mixed session format");
-            return candidate;
-          }, admitted);
+          let originalBytes: string | undefined;
+          let observedOriginal = false;
+          const publicationCurrent = () => {
+            if (!admitted() || !observedOriginal) return false;
+            if (originalBytes !== undefined) {
+              live = exactCheckpointBytes(path, originalBytes, () => live);
+              return live;
+            }
+            try {
+              lstatSync(path);
+              live = false;
+            } catch (error) {
+              live =
+                !!error &&
+                typeof error === "object" &&
+                "code" in error &&
+                error.code === "ENOENT";
+            }
+            return live;
+          };
+          const result = await store.updateObserved(
+            (previous, format, original) => {
+              originalBytes = original;
+              observedOriginal = true;
+              if (format === "legacy") protectedFormat = "legacy";
+              else if (
+                format === "version1" &&
+                decodeMixedMainTabMetadata(previous).status === "future"
+              )
+                protectedFormat = "future";
+              if (protectedFormat)
+                throw Error("Protected mixed session format");
+              return candidate;
+            },
+            publicationCurrent
+          );
           if ("stale" in result && result.stale)
             return { status: "rejected", reason: "stale" };
           if (result.attempted) {

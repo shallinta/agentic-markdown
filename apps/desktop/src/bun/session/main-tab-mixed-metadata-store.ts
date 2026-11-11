@@ -27,7 +27,19 @@ type MixedMainTabMetadataRead =
 
 /** Isolated probe only. The ordinary checkpoint file is not a source for this store. */
 export function createMixedMainTabMetadataStore(isolatedDir: string) {
-  const path = resolve(isolatedDir, "main-tab-session-mixed-probe.json");
+  return createMixedStore(
+    resolve(isolatedDir, "main-tab-session-mixed-probe.json")
+  );
+}
+
+/** Dedicated production candidate slot; not connected to window events. */
+export function createMixedMainTabCheckpointMetadataStore(dataDir: string) {
+  return createMixedStore(
+    resolve(dataDir, "main-tab-session-mixed-checkpoint.json")
+  );
+}
+
+function createMixedStore(path: string) {
   const store = createSettingsStore<unknown>(path, (value) => value, {
     maxBytes: MAIN_TAB_METADATA_MAX_BYTES,
     // Classify future bodies separately while still refusing them in the update.

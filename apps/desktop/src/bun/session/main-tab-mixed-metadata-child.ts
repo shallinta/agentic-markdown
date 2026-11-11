@@ -1,15 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 
-import { createMixedMainTabMetadataStore } from "./main-tab-mixed-metadata-store";
+import { createMixedMainTabCheckpointMetadataStore, createMixedMainTabMetadataStore } from "./main-tab-mixed-metadata-store";
 
 const [operation, directory, input] = process.argv.slice(2);
-if (!directory || !["read", "write", "stale"].includes(operation))
+if (!directory || !["read", "read-official", "write", "stale"].includes(operation))
   throw Error("Explicit mixed-session fixture operation and directory required");
 
-const store = createMixedMainTabMetadataStore(directory);
+const store = operation === "read-official"
+  ? createMixedMainTabCheckpointMetadataStore(directory)
+  : createMixedMainTabMetadataStore(directory);
 try {
-  if (operation === "read") {
+  if (operation === "read" || operation === "read-official") {
     const result = await store.read();
     const expected: unknown = input && JSON.parse(await readFile(input, "utf8"));
     const receipt = result.status === "valid"

@@ -21,6 +21,7 @@ import {
   type SaveDocumentRequest,
 } from "../shared/documents";
 import type { FolderRemovalPublication, FolderRemovalDocument } from "../shared/folder-removal";
+import { validMainTabCheckpointViewport, type MainTabCheckpointSourceInput } from "../shared/main-tab-checkpoint";
 import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
 import type { BufferReadingSnapshotSource, ReadingSnapshotSource } from "../shared/rpc";
 import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
@@ -82,6 +83,12 @@ export interface DocumentViewport {
   ratio: number;
   revision: number;
 }
+interface ViewportMeasurement {
+  geometry: DocumentViewport;
+  incarnation: EditorFaultSession;
+  baseline?: Pick<DocumentSnapshot, "handle" | "hash" | "revision">;
+  moved: boolean;
+}
 
 export interface DocumentViewState {
   folderRemovalPending?: "confirming" | "ack";
@@ -134,11 +141,9 @@ export type CleanPrimaryTabCapture =
   | { ok: false; reason: "limit" | "unavailable" }
   | {
       ok: true;
-      readonly tabs: readonly Readonly<Pick<DocumentSnapshot, "handle" | "documentId" | "revision" | "hash"> & {
-        pinned: boolean;
-        mode: "editing" | "source";
-      }>[];
+      readonly tabs: readonly Readonly<MainTabCheckpointSourceInput>[];
       readonly activeIndex: number | null;
+      confirmViewportResets?(): void;
       current(): boolean;
     };
 const locationKey = (snapshot: DocumentEntry) =>
@@ -297,7 +302,14 @@ export function createDocumentController(
   const search = createSearchStore(id=>editors.has(id) && !metadataDisposed);
   const reading = new Set<string>();
   const sourceReturn = new Map<string, "editing" | "reading">();
-  const viewports = new Map<string, DocumentViewport>();
+  const viewports = new Map<string, ViewportMeasurement>();
+  const scrolledSessions = new WeakSet<EditorFaultSession>();
+  const viewportResets = new Map<string, object>();
+  function pruneViewportResets(entries: readonly DocumentEntry[]) {
+    if (!viewportResets.size) return;
+    const retained = new Set(entries.map(entry => entry.documentId));
+    for (const id of viewportResets.keys()) if (!retained.has(id)) viewportResets.delete(id);
+  }
   const editorDispatchers = new Map<string, { incarnation: EditorFaultSession; dispatch(transaction: Transaction): void }>();
   let dispatchAttempt: { documentId: string; transaction: Transaction; applied: boolean } | undefined;
   const dispatchEditor = (documentId: string, transaction: Transaction): boolean => {
@@ -609,7 +621,7 @@ export function createDocumentController(
     }
     return undefined;
   }
-  function captureCleanPrimaryTabs(): CleanPrimaryTabCapture {
+  function captureCleanPrimaryTabs(includeViewport = false): CleanPrimaryTabCapture {
     const eligibleEditor = (tab: DocumentSnapshot) => {
       const editor = editors.get(tab.documentId);
       return editor && !capabilityChecks.has(tab.handle) &&
@@ -625,6 +637,8 @@ export function createDocumentController(
     if (state.tabs.length > CLEAN_PRIMARY_TAB_CAPTURE_LIMIT)
       return { ok: false, reason: "limit" };
     const tabs: Extract<CleanPrimaryTabCapture, { ok: true }>["tabs"][number][] = [];
+    const capturedViewports: { documentId: string; measurement: ViewportMeasurement }[] = [];
+    const capturedResets: [string, object][] = [];
     const visualTabs = getVisualTabs();
     if (visualTabs.length !== state.tabs.length)
       return { ok: false, reason: "unavailable" };
@@ -632,9 +646,25 @@ export function createDocumentController(
       const editor = eligibleEditor(tab);
       if (!editor)
         return { ok: false, reason: "unavailable" };
+      const measurement = includeViewport ? viewports.get(tab.documentId) : undefined;
+      const reset = includeViewport ? viewportResets.get(tab.documentId) : undefined;
+      if (reset) capturedResets.push([tab.documentId, reset]);
+      const baseline = measurement?.baseline;
+      let viewport;
+      if (measurement?.moved && baseline?.handle === tab.handle && baseline.hash === tab.hash &&
+          baseline.revision === tab.revision && measurement.geometry.revision === editor.revision &&
+          measurement.incarnation === editor.state.field(editorFaultSession)) {
+        const { from, offset, ratio } = measurement.geometry;
+        const candidate = { from, offset, ratio };
+        if (validMainTabCheckpointViewport(candidate)) {
+          viewport = candidate;
+          capturedViewports.push({ documentId: tab.documentId, measurement });
+        }
+      }
       tabs.push({ handle: tab.handle, documentId: tab.documentId,
         revision: tab.revision, hash: tab.hash,
-        pinned: pinnedTabs.has(tab.documentId), mode: getEditorMode(editor.state) });
+        pinned: pinnedTabs.has(tab.documentId), mode: getEditorMode(editor.state),
+        ...(viewport ? { viewport } : {}), ...(reset ? { resetViewport: true } : {}) });
     }
     const activeIndex = state.snapshot
       ? tabs.findIndex(tab => tab.documentId === state.snapshot!.documentId)
@@ -645,9 +675,14 @@ export function createDocumentController(
     if (!token) { token = {}; primaryCaptureTokens.set(state, token); }
     const activation = generation;
     let valid = true;
-    return { ok: true, tabs, activeIndex, current() {
+    return { ok: true, tabs, activeIndex,
+      ...(capturedResets.length ? { confirmViewportResets() {
+        for (const [id, reset] of capturedResets) if (viewportResets.get(id) === reset) viewportResets.delete(id);
+      } } : {}), current() {
       valid = valid && primaryCaptureTokens.get(state) === token &&
         generation === activation && eligible() &&
+        capturedViewports.every(({ documentId, measurement }) => viewports.get(documentId) === measurement) &&
+        capturedResets.every(([id, reset]) => viewportResets.get(id) === reset) &&
         // Fault bits change before their queued view publication. Check only at
         // explicit receipt validation, bounded by this capture's 64-tab limit.
         state.tabs.every(tab => !editors.get(tab.documentId)?.state.field(editorFaultSession).fault);
@@ -900,6 +935,7 @@ export function createDocumentController(
     const recoveryUnblocked =
       (state.busy && !next.busy) || (state.frozen && !next.frozen);
     const previousTabs = state.tabs;
+    const previousEntries = state.entries;
     const previousId = state.snapshot?.documentId;
     const nextId = next.snapshot?.documentId;
     // Capture before subscribers can invalidate/unmount the current reading DOM.
@@ -940,6 +976,7 @@ export function createDocumentController(
       }
     }
     state = next;
+    if (previousEntries !== next.entries) pruneViewportResets(next.entries);
     adoptRecovery?.();
     syncRecentTabOrder(previousTabs, previousId);
     if (previousTabs !== next.tabs) {
@@ -1271,6 +1308,7 @@ export function createDocumentController(
     reading.clear();
     sourceReturn.clear();
     viewports.clear();
+    viewportResets.clear();
     viewportCaptures.clear();
     scrollCaptures.clear();
     editorDispatchers.clear();
@@ -1342,6 +1380,7 @@ export function createDocumentController(
     reading.delete(documentId);
     sourceReturn.delete(documentId);
     viewports.delete(documentId);
+    if (!removeHandle) viewportResets.set(documentId, {});
     viewportCaptures.delete(documentId);
     scrollCaptures.delete(documentId);
     editorDispatchers.delete(documentId);
@@ -1874,6 +1913,7 @@ export function createDocumentController(
     swapTrashedDocument: (prepared: { next: DocumentViewState; nextEditors: typeof editors; trashToken: string }) => {
       const previous = state;
       state = prepared.next; editors = prepared.nextEditors; generation++;
+      pruneViewportResets(state.entries);
       for (const id of viewportCaptures.keys()) if (!editors.has(id)) viewportCaptures.delete(id);
       for (const id of scrollCaptures.keys()) if (!editors.has(id)) scrollCaptures.delete(id);
       for (const id of editorDispatchers.keys()) if (!editors.has(id)) editorDispatchers.delete(id);
@@ -1926,6 +1966,7 @@ export function createDocumentController(
     swapPrepared: (prepared: { next: DocumentViewState; nextEditors: typeof editors }) => {
       const previous = state;
       state = prepared.next;
+      pruneViewportResets(state.entries);
       prunePinnedTabs(state.tabs);
       syncRecentTabOrder(previous.tabs, previous.snapshot?.documentId);
       editors = prepared.nextEditors;
@@ -2149,6 +2190,7 @@ export function createDocumentController(
             if (metadataDisposed || !incarnation || !before ||
               viewportCaptures.get(documentId) !== registration ||
               before.state.field(editorFaultSession) !== incarnation) return;
+            const baseline = state.tabs.find(tab => tab.documentId === documentId);
             const collected = collect();
             if (!collected) return;
             const { from, offset, ratio, revision } = collected;
@@ -2158,7 +2200,12 @@ export function createDocumentController(
               after.state.field(editorFaultSession) !== incarnation || revision !== after.revision ||
               !Number.isSafeInteger(from) || from < 0 || from > after.state.field(rawText).length ||
               !Number.isFinite(offset) || !Number.isFinite(ratio)) return;
-            viewports.set(documentId, { from, offset, ratio, revision });
+            if (ratio > 0 && ratio <= 1) scrolledSessions.add(incarnation);
+            viewports.set(documentId, {
+              geometry: { from, offset, ratio, revision }, incarnation,
+              baseline: baseline && { handle: baseline.handle, hash: baseline.hash, revision: baseline.revision },
+              moved: scrolledSessions.has(incarnation),
+            });
           } catch {
             // Detached geometry and failed measurements must not block document operations.
           }
@@ -2170,7 +2217,7 @@ export function createDocumentController(
       if (incarnation && !metadataDisposed) viewportCaptures.set(documentId, registration);
       return registration;
     },
-    getViewport: (documentId: string) => viewports.get(documentId),
+    getViewport: (documentId: string) => viewports.get(documentId)?.geometry,
     canToggleReadingMode: () =>
       canToggleSourceMode() &&
       controller.getMode(state.snapshot!.documentId) !== "source",
@@ -2225,8 +2272,10 @@ export function createDocumentController(
         editors.get(documentId)?.state === expected && expected.field(editorFaultSession) === incarnation;
       const registration = {
         savePosition(expectedState: EditorState, offset: number) {
-          if (current(expectedState) && Number.isFinite(offset) && offset >= 0)
+          if (current(expectedState) && Number.isFinite(offset) && offset >= 0) {
             scrollPositions.set(documentId, offset);
+            if (incarnation && offset > 0 && !scrolledSessions.has(incarnation)) scrolledSessions.add(incarnation);
+          }
         },
         captureSnapshot(): StateEffect<unknown> | undefined {
           if (collecting) return;
@@ -2572,6 +2621,7 @@ export function createDocumentController(
         revealPending = null;
       }
       metadataDisposed = true;
+      viewportResets.clear();
       viewportCaptures.clear();
     scrollCaptures.clear();
     editorDispatchers.clear();

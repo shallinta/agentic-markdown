@@ -147,6 +147,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         }
         return token;
       }, {
+        includeViewport: true,
         settlementForRecord: mainTabRecovery.settlementForRecord,
         settlementForClose: mainTabRecovery.settlementForClose,
       });

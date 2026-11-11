@@ -1,4 +1,5 @@
 import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
+import type { MainTabSourceInput } from "../../shared/main-tab-checkpoint";
 import {
   validMainTabRecoveryRequest,
   type MainTabRecoveryResponse,
@@ -30,7 +31,8 @@ interface Slot {
   adopted?: boolean;
   claim?: (
     receipt: MainTabMetadataObservation,
-    current: () => boolean
+    current: () => boolean,
+    sources?: readonly MainTabSourceInput[]
   ) => Promise<boolean>;
   opening: Promise<MainTabRecoveryResponse>;
   finishing?: Promise<MainTabRecoveryResponse>;
@@ -43,7 +45,8 @@ export function createMainTabRecoveryRPC(
   createReader: () => Reader,
   prepareClaim?: () => (
     receipt: MainTabMetadataObservation,
-    current: () => boolean
+    current: () => boolean,
+    sources?: readonly MainTabSourceInput[]
   ) => Promise<boolean>,
   createGroupReader?: () => GroupReader,
   createMultiReader?: () => MultiReader
@@ -246,7 +249,8 @@ export function createMainTabRecoveryRPC(
                     slot === target &&
                     target.epoch === epoch &&
                     available() &&
-                    receipt.current()
+                    receipt.current(),
+                  ("tabs" in receipt ? receipt.tabs : [receipt]).map(item => ({ handle: item.snapshot.handle, documentId: item.snapshot.documentId, revision: item.snapshot.revision, hash: item.snapshot.hash, mode: item.mode, pinned: item.pinned }))
                 );
             } catch {
               /* Grant ownership already transferred; metadata failure never releases it. */

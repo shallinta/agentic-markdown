@@ -261,3 +261,58 @@ test("versioned writes reject invalid input and missing guards without touching 
       await store.close();
     }
   }));
+
+test("viewport CAS never borrows ownership after its exact observation changes", async () =>
+  fixture(async (dir, path) => {
+    const store = createMainTabCheckpointMetadataStore(dir);
+    try {
+      for (const change of ["v1", "missing", "v2"] as const) {
+        expect(await store.writePositions(positioned(), () => true)).toEqual({
+          status: "committed",
+        });
+        const receipt = await store.readObserved();
+        if (change === "missing") await rm(path);
+        else
+          await writeFile(
+            path,
+            encode(
+              change === "v1" ? base() : { ...positioned(), activeIndex: 0 }
+            )
+          );
+        expect(
+          await store.writeViewportPositions(positioned(), () => true, receipt)
+        ).toEqual({ status: "rejected", reason: "not-owned" });
+        if (change === "missing")
+          expect(await Bun.file(path).exists()).toBe(false);
+        else
+          expect(await readFile(path, "utf8")).toBe(
+            encode(
+              change === "v1" ? base() : { ...positioned(), activeIndex: 0 }
+            )
+          );
+      }
+    } finally {
+      await store.close();
+    }
+  }));
+
+test("missing viewport admission rejects a later authoritative file", async () =>
+  fixture(async (dir, path) => {
+    const store = createMainTabCheckpointMetadataStore(dir);
+    try {
+      expect(await store.readObserved()).toEqual({ status: "missing" });
+      const bytes = encode(base());
+      await writeFile(path, bytes);
+      expect(
+        await store.writeViewportPositions(
+          positioned(),
+          () => true,
+          undefined,
+          true
+        )
+      ).toEqual({ status: "rejected", reason: "not-owned" });
+      expect(await readFile(path, "utf8")).toBe(bytes);
+    } finally {
+      await store.close();
+    }
+  }));

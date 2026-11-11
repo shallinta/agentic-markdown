@@ -352,6 +352,26 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
         return Promise.resolve({ status: "rejected", reason: "stale" });
       return store.write(value, current, true);
     },
+    writeViewportPositions(
+      value: unknown,
+      current: () => boolean,
+      receipt?: MainTabMetadataObservation,
+      expectedMissing = false
+    ): Promise<MainTabMetadataWrite> {
+      if (typeof current !== "function")
+        return Promise.resolve({ status: "rejected", reason: "stale" });
+      const witness = receipt ? recoveryWitnesses.get(receipt) : undefined;
+      if (receipt && (witness?.path !== path || !witness.current()))
+        return Promise.resolve({ status: "rejected", reason: "stale" });
+      return store.write(
+        value,
+        current,
+        true,
+        true,
+        witness?.bytes,
+        expectedMissing
+      );
+    },
     async close() {
       if (closed) return store.close();
       closed = true;
@@ -433,6 +453,16 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
         (status) => ({ record: { status }, bytes: undefined })
       );
     },
+    ownsObservation(receipt: MainTabMetadataObservation): boolean {
+      const witness = recoveryWitnesses.get(receipt);
+      return (
+        !closed &&
+        !!owner &&
+        witness?.path === path &&
+        witness.bytes === owner.bytes &&
+        witness.current()
+      );
+    },
     claimObservation(
       receipt: MainTabMetadataObservation,
       current: () => boolean
@@ -469,7 +499,10 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
     write(
       value: unknown,
       current?: () => boolean,
-      withPositions = false
+      withPositions = false,
+      requirePositionOwner = false,
+      expectedPositionBytes?: string,
+      expectedPositionMissing = false
     ): Promise<MainTabMetadataWrite> {
       let captured: StoredSession;
       if (withPositions) {
@@ -495,10 +528,23 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
         async () => {
           let legacy = false;
           let protectedPositions = false;
+          let notOwned = false;
           let changedBytes = false;
           const bytes = `${JSON.stringify({ version: 1, data: captured }, null, 2)}\n`;
           const result = await store.updateObserved(
             (previous, format, original) => {
+              if (
+                requirePositionOwner &&
+                (expectedPositionBytes !== undefined || expectedPositionMissing
+                  ? expectedPositionBytes !== original
+                  : isPositioned(previous) &&
+                    (!owner ||
+                      owner.bytes !== original ||
+                      owner.encoded !== JSON.stringify(previous)))
+              ) {
+                notOwned = true;
+                throw Error("Position checkpoint ownership changed");
+              }
               if (!withPositions && isPositioned(previous)) {
                 protectedPositions = true;
                 throw Error("Position metadata requires versioned writer");
@@ -532,6 +578,11 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
             }
             return { status: "committed" as const };
           }
+          if (notOwned)
+            return {
+              status: "rejected" as const,
+              reason: "not-owned" as const,
+            };
           if (protectedPositions)
             return { status: "rejected" as const, reason: "future" as const };
           if (ownedCheckpoint) owner = undefined;

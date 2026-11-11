@@ -2,6 +2,7 @@ import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import {
   validMainTabCheckpointRequest,
   type MainTabCheckpointResponse,
+  type MainTabSourceInput,
 } from "../../shared/main-tab-checkpoint";
 import type { createGuardedMainTabCheckpoint } from "../session/main-tab-checkpoint";
 import type { MainTabMetadataObservation } from "../session/main-tab-metadata";
@@ -62,14 +63,15 @@ export function createMainTabCheckpointRPC(
       const ticket = generation;
       return async (
         receipt: MainTabMetadataObservation,
-        callerCurrent: () => boolean = () => true
+        callerCurrent: () => boolean = () => true,
+        sources?: readonly MainTabSourceInput[]
       ) => {
         const current = () =>
           ticket === generation && available() && callerCurrent() === true;
         if (!current()) return false;
         try {
           writer ??= createWriter();
-          return (await writer.claim?.(receipt, current)) ?? false;
+          return (await writer.claim?.(receipt, current, sources)) ?? false;
         } catch {
           return false;
         }

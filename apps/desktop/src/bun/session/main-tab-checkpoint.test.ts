@@ -815,3 +815,159 @@ test("actual single recovery observation transfers ownership to a fresh writer w
     await f.close();
   }
 });
+
+test("viewport checkpoints preserve exact live instances, remove closed rows and reject bad bindings", async () => {
+  const f = await fixture();
+  const writer = createGuardedMainTabCheckpoint(join(f.dir, "metadata"), f);
+  try {
+    const a = await f.open(f.paths[0]),
+      b = await f.open(f.paths[1]);
+    const viewport = { from: 3, offset: -1.5, ratio: 0.6 };
+    expect(
+      await writer.write(
+        { tabs: [{ ...a.tab, viewport }, b.tab], activeIndex: 1 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(
+      await writer.write({ tabs: [b.tab, a.tab], activeIndex: 0 }, () => true)
+    ).toEqual({ status: "committed" });
+    let read = await writer.read();
+    if (read.status !== "valid") throw Error("No checkpoint");
+    expect(read.positioned?.tabs[1].position).toEqual(viewport);
+    expect(
+      (
+        await writer.write(
+          { tabs: [{ ...a.tab, revision: 999, viewport }], activeIndex: 0 },
+          () => true
+        )
+      ).status
+    ).toBe("rejected");
+    expect(
+      await writer.write({ tabs: [b.tab], activeIndex: 0 }, () => true)
+    ).toEqual({ status: "committed" });
+    await f.documents.release({ ...f.request(), handle: a.tab.handle });
+    const reopened = await f.open(f.paths[0]);
+    expect(reopened.tab.handle).not.toBe(a.tab.handle);
+    expect(
+      await writer.write(
+        { tabs: [b.tab, reopened.tab], activeIndex: 1 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    read = await writer.read();
+    if (read.status !== "valid") throw Error("No checkpoint");
+    expect(read.positioned?.tabs).toHaveLength(2);
+    expect(
+      read.positioned?.tabs.every((tab) => tab.position === undefined)
+    ).toBe(true);
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("claimed historical v2 binds positions to delivered instances; unrelated new sessions may replace", async () => {
+  const f = await fixture(),
+    directory = join(f.dir, "metadata");
+  const first = createGuardedMainTabCheckpoint(directory, f);
+  const next = createGuardedMainTabCheckpoint(directory, f);
+  const observer = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const a = await f.open(f.paths[0]),
+      b = await f.open(f.paths[1]);
+    const viewport = { from: 2, offset: 4, ratio: 0.25 };
+    expect(
+      await first.write(
+        { tabs: [{ ...a.tab, viewport }], activeIndex: 0 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(
+      (await next.write({ tabs: [a.tab], activeIndex: 0 }, () => true)).status
+    ).toBe("rejected");
+    expect(
+      (
+        await next.write(
+          { tabs: [{ ...a.tab, resetViewport: true }], activeIndex: 0 },
+          () => true
+        )
+      ).status
+    ).toBe("rejected");
+    const receipt = await observer.readObserved();
+    expect(await next.claim(receipt, () => true, [a.tab])).toBe(true);
+    expect(
+      await next.write(
+        { tabs: [{ ...a.tab, pinned: true }], activeIndex: 0 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const restored = await next.read();
+    if (restored.status !== "valid") throw Error("No checkpoint");
+    expect(restored.positioned?.tabs[0].position).toEqual(viewport);
+    const fresh = createGuardedMainTabCheckpoint(directory, f);
+    try {
+      expect(
+        await fresh.write({ tabs: [b.tab], activeIndex: 0 }, () => true)
+      ).toEqual({ status: "committed" });
+      const other = await fresh.read();
+      if (other.status !== "valid") throw Error("No replacement");
+      expect(other.positioned?.tabs[0].position).toBeUndefined();
+      expect(other.data.tabs[0].rootId).not.toBe(restored.data.tabs[0].rootId);
+    } finally {
+      await fresh.close();
+    }
+  } finally {
+    await first.close();
+    await next.close();
+    await observer.close();
+    await f.close();
+  }
+});
+
+test("external position changes invalidate in-memory reuse; explicit close/reopen resets retained identities", async () => {
+  const f = await fixture(),
+    directory = join(f.dir, "metadata");
+  const writer = createGuardedMainTabCheckpoint(directory, f);
+  try {
+    const a = await f.open(f.paths[0]);
+    const viewport = { from: 1, offset: 2, ratio: 0.4 };
+    expect(
+      await writer.write(
+        { tabs: [{ ...a.tab, viewport }], activeIndex: 0 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const path = join(directory, "main-tab-session-checkpoint.json");
+    const changed = JSON.parse(await readFile(path, "utf8")) as {
+      data: { tabs: { position: { ratio: number } }[] };
+    };
+    changed.data.tabs[0].position.ratio = 0.8;
+    const bytes = JSON.stringify(changed);
+    await writeFile(path, bytes);
+    expect(
+      (await writer.write({ tabs: [a.tab], activeIndex: 0 }, () => true)).status
+    ).toBe("rejected");
+    expect(await readFile(path, "utf8")).toBe(bytes);
+    // A fresh measurement is allowed to supersede the current exact observed bytes.
+    expect(
+      await writer.write(
+        { tabs: [{ ...a.tab, viewport }], activeIndex: 0 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    // Retained Quick Open grants may keep these four identifiers across a close/reopen.
+    expect(
+      await writer.write(
+        { tabs: [{ ...a.tab, resetViewport: true }], activeIndex: 0 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const reset = await writer.read();
+    if (reset.status !== "valid") throw Error("No checkpoint");
+    expect(reset.positioned?.tabs[0].position).toBeUndefined();
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});

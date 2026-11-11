@@ -20,7 +20,7 @@ import type {
   DocumentResponse,
   DocumentSnapshot,
 } from "../shared/documents";
-import type { MainTabCheckpointRequest } from "../shared/main-tab-checkpoint";
+import { validMainTabCheckpointRequest, type MainTabCheckpointRequest } from "../shared/main-tab-checkpoint";
 import type { MainTabRecoveryRequest, MainTabRecoveryResponse } from "../shared/main-tab-recovery";
 import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
@@ -394,6 +394,157 @@ test("cancelled pickers and changed scan generations never issue a recovery read
 });
 
 const checkpointTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+test("ordinary checkpoint sends only measured viewports and records returning to the top", async () => {
+  const { controller, transport, value: a } = setup();
+  const b = snapshot("# second document");
+  const requests: MainTabCheckpointRequest[] = [];
+  const scope = {};
+  const stop = attachMainTabActivationCheckpoint(controller, (request) => {
+    expect(validMainTabCheckpointRequest(request)).toBe(true);
+    requests.push(request);
+    return Promise.resolve({ protocolVersion: 1, status: "committed" });
+  }, () => scope, { idleMs: 0, includeViewport: true });
+  try {
+    await controller.select();
+    let geometry = { from: 5, offset: -2.5, ratio: 0.5 };
+    let measures = 0;
+    controller.registerViewportCapture(a.documentId, () => {
+      measures++;
+      return { ...geometry, revision: 0 };
+    });
+    await checkpointTurn();
+    expect(measures).toBe(0);
+    expect(requests[requests.length - 1]).toMatchObject({ activeIndex: 0, tabs: [{ documentId: a.documentId }] });
+    transport.selectDocument = request => Promise.resolve(result(request, b));
+    await controller.select();
+    controller.registerViewportCapture(b.documentId, () => ({ from: 0, offset: 0, ratio: 0, revision: 0 }));
+    const departureMeasures = measures;
+    await checkpointTurn();
+    const first = requests[requests.length - 1];
+    expect(measures).toBe(departureMeasures);
+    expect(first).toMatchObject({ activeIndex: 1, tabs: [{ documentId: a.documentId, viewport: geometry }, { documentId: b.documentId }] });
+    expect(first && "tabs" in first && first.tabs[1].viewport).toBeUndefined();
+
+    controller.activateTab(a.documentId);
+    await checkpointTurn();
+    const untouched = requests[requests.length - 1];
+    expect(untouched && "tabs" in untouched && untouched.tabs[1].viewport).toBeUndefined();
+    geometry = { from: 0, offset: 0, ratio: 0 };
+    controller.activateTab(b.documentId);
+    await checkpointTurn();
+    expect(requests[requests.length - 1]).toMatchObject({ activeIndex: 1, tabs: [{ documentId: a.documentId, viewport: geometry }, { documentId: b.documentId }] });
+    const editorB = controller.getEditor(b.documentId)!.state;
+    const scroll = controller.registerEditorScroll(b.documentId, () => undefined);
+    scroll.savePosition(editorB, 120);
+    scroll.savePosition(editorB, 0);
+    controller.activateTab(a.documentId);
+    await checkpointTurn();
+    expect(requests[requests.length - 1]).toMatchObject({ activeIndex: 0, tabs: [{ documentId: a.documentId }, { documentId: b.documentId, viewport: geometry }] });
+
+    await controller.closeTab(b.documentId);
+    await checkpointTurn();
+    const last = requests[requests.length - 1];
+    expect(last && "tabs" in last && last.tabs.map(tab => tab.documentId)).toEqual([a.documentId]);
+    expect(controller.getViewport(b.documentId)).toBeUndefined();
+  } finally { stop(); controller.dispose(); }
+});
+
+test("checkpoint positions belong to the measured buffer revision, editor session and grant", async () => {
+  const { controller, transport, value } = setup();
+  const id = value.documentId;
+  const viewport = { from: 2, offset: 0.5, ratio: 0.25 };
+  const checkpointPosition = () => {
+    const capture = controller.captureCleanPrimaryTabs(true);
+    return capture.ok ? capture.tabs[0]?.viewport : undefined;
+  };
+  try {
+    await controller.select();
+    const initial = controller.registerViewportCapture(id, () => ({ ...viewport, revision: controller.getEditor(id)!.revision }));
+    initial.capture();
+    expect(checkpointPosition()).toEqual(viewport);
+    const legacy = controller.captureCleanPrimaryTabs();
+    expect(legacy.ok && "viewport" in legacy.tabs[0]).toBe(false);
+    const former = controller.captureCleanPrimaryTabs(true);
+    initial.capture();
+    expect(former.ok && former.current()).toBe(false);
+    const editor = controller.getEditor(id)!.state;
+    controller.updateEditor(id, editor.update({ changes: { from: 0, insert: "dirty" } }));
+    expect(controller.captureCleanPrimaryTabs(true).ok).toBe(false);
+    expect(controller.runHistory("undo")).toBe(true);
+    expect(checkpointPosition()).toBeUndefined();
+    initial.capture();
+    expect(checkpointPosition()).toEqual(viewport);
+    await controller.reload();
+    initial.capture();
+    expect(checkpointPosition()).toBeUndefined();
+    const reloaded = controller.registerViewportCapture(id, () => ({ ...viewport, revision: 0 }));
+    reloaded.capture();
+    expect(checkpointPosition()).toEqual(viewport);
+    transport.selectDocument = request => Promise.resolve(result(request, { ...value, handle: crypto.randomUUID() }));
+    await controller.select();
+    expect(checkpointPosition()).toBeUndefined();
+  } finally { controller.dispose(); }
+});
+
+test("rapid close and reopen resets retained-grant positions until that exact reset commits", async () => {
+  const { controller, transport, value: a } = setup();
+  const b = snapshot("# other tab");
+  const requests: MainTabCheckpointRequest[] = [];
+  const scope = {};
+  const committed = { protocolVersion: 1, status: "committed" };
+  let response = Promise.resolve<unknown>(committed);
+  const stop = attachMainTabActivationCheckpoint(controller, (request) => {
+    requests.push(request);
+    return response;
+  }, () => scope, { idleMs: 0, includeViewport: true });
+  const latest = () => requests[requests.length - 1];
+  try {
+    await controller.select();
+    const entry = controller.getSnapshot().entries[0];
+    const viewport = { from: 4, offset: -1.5, ratio: 0.6 };
+    controller.registerViewportCapture(a.documentId, () => ({ ...viewport, revision: 0 }));
+    transport.selectDocument = request => Promise.resolve(result(request, b));
+    await controller.select();
+    await checkpointTurn();
+    expect(latest()).toMatchObject({ tabs: [{ documentId: a.documentId, viewport }, { documentId: b.documentId }] });
+
+    const lost = deferred<unknown>();
+    response = lost.promise;
+    await controller.closeTab(a.documentId);
+    await controller.activate(entry);
+    await checkpointTurn();
+    const reopened = latest();
+    expect(reopened).toMatchObject({ activeIndex: 1, tabs: [{ documentId: b.documentId }, { documentId: a.documentId, handle: a.handle, resetViewport: true }] });
+    expect("tabs" in reopened && reopened.tabs[1].viewport).toBeUndefined();
+    lost.resolve({ protocolVersion: 1, status: "unknown" });
+    await checkpointTurn();
+
+    const old = deferred<unknown>();
+    response = old.promise;
+    controller.activateTab(a.documentId);
+    await checkpointTurn();
+    expect(latest()).toEqual(reopened);
+    const beforeCloseAgain = requests.length;
+    await controller.closeTab(a.documentId);
+    await controller.activate(entry);
+    response = Promise.resolve(committed);
+    old.resolve(committed);
+    await checkpointTurn();
+    await checkpointTurn();
+    expect(requests).toHaveLength(beforeCloseAgain + 1);
+    expect(latest()).toEqual(reopened);
+    const acknowledged = controller.captureCleanPrimaryTabs(true);
+    expect(acknowledged.ok && acknowledged.tabs[1].resetViewport).toBeUndefined();
+    const measured = controller.registerViewportCapture(a.documentId, () => ({ ...viewport, revision: 0 }));
+    measured.capture();
+    controller.activateTab(b.documentId);
+    await checkpointTurn();
+    const written = latest();
+    expect(written).toMatchObject({ activeIndex: 0, tabs: [{ documentId: b.documentId }, { documentId: a.documentId, viewport }] });
+    expect("tabs" in written && written.tabs[1].resetViewport).toBeUndefined();
+  } finally { stop(); controller.dispose(); }
+});
 
 function multiRootRecoveryFixture(required = 3) {
   const docs = setup();

@@ -254,3 +254,45 @@ test("new checkpoint admission and navigation invalidate an older recovery claim
   expect(calls).toBe(1);
   rpc.dispose();
 });
+
+test("checkpoint optional viewport is bounded source geometry only", () => {
+  const input = request();
+  const withViewport = (viewport: unknown) => ({
+    ...input,
+    tabs: [{ ...input.tabs[0], viewport }],
+  });
+  expect(
+    validMainTabCheckpointRequest(
+      withViewport({ from: 0, offset: -2.5, ratio: 0 })
+    )
+  ).toBe(true);
+  for (const viewport of [
+    undefined,
+    {},
+    { from: -1, offset: 0, ratio: 0 },
+    { from: 0.5, offset: 0, ratio: 0 },
+    { from: 1048577, offset: 0, ratio: 0 },
+    { from: 0, offset: Infinity, ratio: 0 },
+    { from: 0, offset: 0, ratio: 1.1 },
+    { from: 0, offset: -0, ratio: 0 },
+    { from: 0, offset: 0, ratio: 0, text: "body" },
+  ])
+    expect(validMainTabCheckpointRequest(withViewport(viewport))).toBe(false);
+});
+
+test("only literal resetViewport true can retire a retained instance's old geometry", () => {
+  const input = request();
+  expect(
+    validMainTabCheckpointRequest({
+      ...input,
+      tabs: [{ ...input.tabs[0], resetViewport: true }],
+    })
+  ).toBe(true);
+  for (const resetViewport of [false, 1, undefined, null])
+    expect(
+      validMainTabCheckpointRequest({
+        ...input,
+        tabs: [{ ...input.tabs[0], resetViewport }],
+      })
+    ).toBe(false);
+});

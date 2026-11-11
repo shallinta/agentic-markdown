@@ -13,6 +13,7 @@ type CheckpointTarget = Pick<MainTabSourceInput, "documentId" | "handle">;
 type CheckpointIntent = { kind: "record"; target: CheckpointTarget } | { kind: "clear"; close: PrimaryTabLastClose };
 interface CheckpointOptions {
   idleMs?: number;
+  includeViewport?: boolean;
   settlementForRecord?: (target: CheckpointTarget) => Promise<boolean> | undefined;
   settlementForClose?: (close: PrimaryTabLastClose) => Promise<boolean> | undefined;
 }
@@ -22,7 +23,7 @@ export function attachMainTabActivationCheckpoint(
   documents: Documents,
   send: (request: MainTabCheckpointRequest) => Promise<unknown>,
   workspaceScope: () => object | undefined,
-  { idleMs = 120, settlementForRecord, settlementForClose }: CheckpointOptions = {},
+  { idleMs = 120, includeViewport = false, settlementForRecord, settlementForClose }: CheckpointOptions = {},
 ) {
   let pending: CheckpointIntent | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -55,7 +56,7 @@ export function attachMainTabActivationCheckpoint(
       }
       const scope = workspaceScope();
       if (!scope) return;
-      const capture = documents.captureCleanPrimaryTabs();
+      const capture = documents.captureCleanPrimaryTabs(includeViewport);
       if (!capture.ok || capture.activeIndex === null) return;
       const request = { protocolVersion: 1, tabs: capture.tabs, activeIndex: capture.activeIndex } as const;
       if (!validMainTabCheckpointRequest(request)) return;
@@ -68,9 +69,19 @@ export function attachMainTabActivationCheckpoint(
       // An unknown publication can supersede the previously confirmed record.
       confirmed = undefined;
       const response = await send(request);
-      if (!disposed && workspaceScope() === scope &&
-          validMainTabCheckpointResponse(response) && response.status === "committed")
-        confirmed = { scope, key };
+      if (!disposed && validMainTabCheckpointResponse(response) && response.status === "committed") {
+        capture.confirmViewportResets?.();
+        if (workspaceScope() === scope) {
+          const confirmedKey = request.tabs.some(tab => tab.resetViewport)
+            ? JSON.stringify({ ...request, tabs: request.tabs.map(tab => {
+              const captured = { ...tab };
+              delete captured.resetViewport;
+              return captured;
+            }) })
+            : key;
+          confirmed = { scope, key: confirmedKey };
+        }
+      }
     } catch {
       // Checkpoint availability never blocks or retries a document action.
     } finally {

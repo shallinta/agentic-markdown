@@ -267,3 +267,27 @@ test("adopted grant is never released while claim waits or fails across navigati
   expect(f.released).toBe(0);
   f.rpc.dispose();
 });
+
+test("adoption passes only actual delivered snapshot identities to private position claim", async () => {
+  let identities: unknown;
+  const f = fixture(() => (_receipt, current, sources) => {
+    identities = sources;
+    return Promise.resolve(current());
+  });
+  f.rpc.ready(ready);
+  const input = open(),
+    opening = f.rpc.request(input);
+  f.deliver();
+  const delivered = await opening;
+  if (delivered.status !== "ready") throw Error("No snapshot");
+  expect(identities).toBeUndefined();
+  expect((await f.rpc.request(finish(input.requestId, true))).status).toBe(
+    "finished"
+  );
+  const { handle, documentId, revision, hash } = delivered.snapshot;
+  expect(identities).toEqual([
+    { handle, documentId, revision, hash, pinned: true, mode: "source" },
+  ]);
+  expect(f.released).toBe(0);
+  f.rpc.dispose();
+});

@@ -1280,3 +1280,165 @@ test("physical source proof going stale during anchor await rejects the entire c
     await f.close();
   }
 });
+
+test("owned prune preserves positioned peer metadata and updates its row binding", async () => {
+  const f = await fixture();
+  const directory = join(f.dir, "prune");
+  const writer = createGuardedMainTabCheckpoint(directory, f);
+  try {
+    const a = await f.open(f.paths[0]);
+    const b = await f.open(f.paths[1]);
+    const input = {
+      tabs: [
+        a.tab,
+        {
+          ...b.tab,
+          pinned: true,
+          mode: "source" as const,
+          viewport: { from: 2, offset: -3, ratio: 0.5 },
+        },
+      ],
+      activeIndex: 0,
+    };
+    expect(await writer.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    const before = await writer.read();
+    expect(before.status).toBe("valid");
+    if (before.status !== "valid") throw Error("missing record");
+    expect(await writer.prune(a.tab, () => true)).toEqual({
+      status: "committed",
+    });
+    const after = await writer.read();
+    expect(after).toMatchObject({
+      status: "valid",
+      positioned: {
+        schemaVersion: 2,
+        tabs: [before.positioned!.tabs[1]],
+        activeIndex: 0,
+      },
+    });
+    expect(await writer.prune(a.tab, () => true)).toMatchObject({
+      status: "rejected",
+    });
+    expect(await writer.prune(b.tab, () => false)).toMatchObject({
+      status: "rejected",
+    });
+    expect(await writer.prune(b.tab, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await writer.read()).toMatchObject({
+      status: "valid",
+      positioned: { schemaVersion: 2, tabs: [], activeIndex: null },
+    });
+    expect(await writer.clear(() => true)).toEqual({ status: "committed" });
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("prune cannot claim a no-op writer or mutate externally replaced records", async () => {
+  const f = await fixture();
+  const directory = join(f.dir, "prune-ownership");
+  const first = createGuardedMainTabCheckpoint(directory, f);
+  const second = createGuardedMainTabCheckpoint(directory, f);
+  try {
+    const a = await f.open(f.paths[0]);
+    const input = { tabs: [a.tab], activeIndex: 0 };
+    expect(await first.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await second.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await second.prune(a.tab, () => true)).toMatchObject({
+      status: "rejected",
+    });
+    const path = join(directory, "main-tab-session-checkpoint.json");
+    const bytes = await readFile(path, "utf8");
+    await writeFile(path, bytes + " ");
+    expect(await first.prune(a.tab, () => true)).toMatchObject({
+      status: "rejected",
+    });
+    expect(await readFile(path, "utf8")).toBe(bytes + " ");
+  } finally {
+    await first.close();
+    await second.close();
+    await f.close();
+  }
+});
+
+test("a recovery claim binds delivered instances for prune without rewriting peer history", async () => {
+  const f = await fixture();
+  const directory = join(f.dir, "prune-claim");
+  const initial = createGuardedMainTabCheckpoint(directory, f);
+  const recovered = createGuardedMainTabCheckpoint(directory, f);
+  const store = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const a = await f.open(f.paths[0]);
+    const b = await f.open(f.paths[1]);
+    expect(
+      await initial.write({ tabs: [a.tab, b.tab], activeIndex: 1 }, () => true)
+    ).toEqual({ status: "committed" });
+    const receipt = await store.readObserved();
+    expect(await recovered.claim(receipt, () => true, [a.tab])).toBe(false);
+    expect(await recovered.claim(receipt, () => true, [a.tab, b.tab])).toBe(
+      true
+    );
+    expect(await recovered.prune(b.tab, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await recovered.read()).toMatchObject({
+      status: "valid",
+      data: { activeIndex: 0, tabs: [{ relativePath: "a.md" }] },
+    });
+    expect(await recovered.prune(a.tab, () => true)).toEqual({
+      status: "committed",
+    });
+  } finally {
+    await initial.close();
+    await recovered.close();
+    await store.close();
+    await f.close();
+  }
+});
+
+test("prune rechecks exact authority after temporary output was prepared", async () => {
+  const f = await fixture();
+  const directory = join(f.dir, "prune-late");
+  const writer = createGuardedMainTabCheckpoint(directory, f);
+  try {
+    const a = await f.open(f.paths[0]);
+    const b = await f.open(f.paths[1]);
+    expect(
+      await writer.write({ tabs: [a.tab, b.tab], activeIndex: 0 }, () => true)
+    ).toEqual({ status: "committed" });
+    const path = join(directory, "main-tab-session-checkpoint.json");
+    const original = await readFile(path, "utf8");
+    const external = original + " ";
+    let injected = false;
+    const response = await writer.prune(a.tab, () => {
+      if (
+        !injected &&
+        readdirSync(directory).some(
+          (name) =>
+            name.startsWith("main-tab-session-checkpoint.json.") &&
+            !name.includes(".bak.") &&
+            name.endsWith(".tmp")
+        )
+      ) {
+        injected = true;
+        writeFileSync(path, external);
+      }
+      return true;
+    });
+    expect(injected).toBe(true);
+    expect(response.status).toBe("rejected");
+    expect(await readFile(path, "utf8")).toBe(external);
+    expect(await readFile(path + ".bak", "utf8")).toBe(original);
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});

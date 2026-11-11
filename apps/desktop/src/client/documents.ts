@@ -129,6 +129,7 @@ export interface PrimaryTabLastClose {
   readonly handle: string;
   current(): boolean;
 }
+export type PrimaryTabNonLastClose = PrimaryTabLastClose;
 
 export type DocumentEntry = Pick<
   DocumentSnapshot,
@@ -322,7 +323,7 @@ export function createDocumentController(
   const viewports = new Map<string, ViewportMeasurement>();
   const scrolledSessions = new WeakSet<EditorFaultSession>();
   const recoveredViewports = new WeakMap<EditorFaultSession, RecoveredViewport>();
-  const viewportResets = new Map<string, object>();
+  const viewportResets = new Map<string, { reopened: boolean }>();
   function pruneViewportResets(entries: readonly DocumentEntry[]) {
     if (!viewportResets.size) return;
     const retained = new Set(entries.map(entry => entry.documentId));
@@ -512,6 +513,7 @@ export function createDocumentController(
   const primaryTabLayoutListeners = new Set<(target: { handle: string; documentId: string }) => void>();
   const primaryTabViewportListeners = new Set<(target: { handle: string; documentId: string }) => void>();
   const primaryTabLastCloseListeners = new Set<(intent: PrimaryTabLastClose) => void>();
+  const primaryTabNonLastCloseListeners = new Set<(intent: PrimaryTabNonLastClose) => void>();
   const preparePrimaryTabLayoutNotification = (expected = state) => {
     const target = expected.snapshot;
     const incarnation = target && editors.get(target.documentId)?.state.field(editorFaultSession);
@@ -945,7 +947,7 @@ export function createDocumentController(
     protocolVersion: 1,
     requestId: crypto.randomUUID(),
   });
-  function publish(next: DocumentViewState, adoptRecovery?: () => void) {
+  function publish(next: DocumentViewState, adopt?: () => void, notifyClose?: () => void) {
     if (removalGate || folderRemovalGate || duplicateGate || creationGate || (trashGate && !trashGate.cancelled)) next = { ...next, frozen: true };
     if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
       const old = revealPending; revealPending = null;
@@ -996,12 +998,11 @@ export function createDocumentController(
     }
     state = next;
     if (previousEntries !== next.entries) pruneViewportResets(next.entries);
-    adoptRecovery?.();
+    adopt?.();
     syncRecentTabOrder(previousTabs, previousId);
-    if (previousTabs !== next.tabs) {
-      prunePinnedTabs(next.tabs);
-      observation.sync(next.tabs);
-    }
+    if (previousTabs !== next.tabs) prunePinnedTabs(next.tabs);
+    notifyClose?.();
+    if (previousTabs !== next.tabs && state.tabs === next.tabs) observation.sync(next.tabs);
     cancelInvalidRecentTabSwitch();
     checkContentSearch?.();
     tryContentSearchLocation?.();
@@ -1273,6 +1274,7 @@ export function createDocumentController(
         ? { documentId: active.documentId, handle: active.handle }
         : undefined;
       if (recovery?.pinned) pinnedTabs.add(active.documentId);
+      const reset = viewportResets.get(active.documentId);
       publish({
         tabs,
         entries: state.entries.some(
@@ -1290,7 +1292,7 @@ export function createDocumentController(
         stale: staleDocuments.has(active.documentId),
         elapsedMs: performance.now() - start,
         frozen: state.frozen,
-      }, recovery?.adopt);
+      }, reset ? () => { reset.reopened = true; recovery?.adopt(); } : recovery?.adopt);
       searchOpen?.adopt(active, current);
       if (purpose === "user" && current === generation && state.snapshot?.handle === active.handle)
         recordActivation(active);
@@ -1389,6 +1391,7 @@ export function createDocumentController(
     cancelPending();
     const handle = state.tabs[index].handle;
     const tabs = state.tabs.filter((tab) => tab.documentId !== documentId);
+    const reset = removeHandle ? undefined : { reopened: false };
     capabilityLifetimes.delete(handle);
     let snapshot = state.snapshot;
     if (snapshot?.documentId === documentId) {
@@ -1406,7 +1409,7 @@ export function createDocumentController(
     reading.delete(documentId);
     sourceReturn.delete(documentId);
     viewports.delete(documentId);
-    if (!removeHandle) viewportResets.set(documentId, {});
+    if (reset) viewportResets.set(documentId, reset);
     viewportCaptures.delete(documentId);
     scrollCaptures.delete(documentId);
     editorDispatchers.delete(documentId);
@@ -1432,7 +1435,23 @@ export function createDocumentController(
     const closedLast = !removeHandle && tabs.length === 0 && snapshot === null;
     const closedGeneration = generation;
     const closedWindowDiscardEpoch = windowDiscardEpoch;
-    publish(next);
+    const closedMetadataEpoch = metadataEpoch;
+    const notifyNonLast = reset && tabs.length && primaryTabNonLastCloseListeners.size ? () => {
+      const intent: PrimaryTabNonLastClose = {
+        documentId,
+        handle,
+        current: () => !metadataDisposed && metadataEpoch === closedMetadataEpoch &&
+          windowDiscardEpoch === closedWindowDiscardEpoch && viewportResets.get(documentId) === reset &&
+          !reset.reopened && !state.tabs.some(tab => tab.documentId === documentId || tab.handle === handle) &&
+          state.entries.some(entry => entry.documentId === documentId && entry.handle === handle),
+      };
+      for (const listener of primaryTabNonLastCloseListeners) {
+        if (!intent.current()) break;
+        try { listener(intent); }
+        catch { /* Optional metadata observation cannot interrupt document operations. */ }
+      }
+    } : undefined;
+    publish(next, undefined, notifyNonLast);
     notifyLayout?.();
     if (!closedLast || !primaryTabLastCloseListeners.size) return;
     const intent: PrimaryTabLastClose = {
@@ -2637,6 +2656,11 @@ export function createDocumentController(
       primaryTabLastCloseListeners.add(listener);
       return () => { primaryTabLastCloseListeners.delete(listener); };
     },
+    subscribePrimaryTabNonLastClose(listener: (intent: PrimaryTabNonLastClose) => void) {
+      if (metadataDisposed) return () => undefined;
+      primaryTabNonLastCloseListeners.add(listener);
+      return () => { primaryTabNonLastCloseListeners.delete(listener); };
+    },
     subscribeActivation(listener: (target: { handle: string; documentId: string }) => void) {
       activationListeners.add(listener);
       return () => { activationListeners.delete(listener); };
@@ -2725,6 +2749,7 @@ export function createDocumentController(
       primaryTabLayoutListeners.clear();
       primaryTabViewportListeners.clear();
       primaryTabLastCloseListeners.clear();
+      primaryTabNonLastCloseListeners.clear();
       for (const id of faultOwners.keys()) releaseFaultOwner(id);
       search.clear();
       metadataEpoch++;

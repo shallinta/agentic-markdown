@@ -19,10 +19,11 @@ const tabs: readonly MainTabSourceInput[] = Array.from({ length: 3 }, (_, index)
 const clean = (activeIndex: number, current = () => true): CleanPrimaryTabCapture =>
   ({ ok: true, tabs, activeIndex, current });
 
-function fixture() {
+function fixture(settlementForRecord?: (target: Activation) => Promise<boolean> | undefined) {
   let listener: ((target: Activation) => void) | undefined;
   let layoutListener: ((target: Activation) => void) | undefined;
   let closeListener: ((intent: PrimaryTabLastClose) => void) | undefined;
+  let pruneListener: ((intent: PrimaryTabLastClose) => void) | undefined;
   const requests: MainTabCheckpointRequest[] = [];
   const state = {
     capture: clean(0),
@@ -43,6 +44,10 @@ function fixture() {
       closeListener = onClose;
       return () => { closeListener = undefined; };
     },
+    subscribePrimaryTabNonLastClose(onClose) {
+      pruneListener = onClose;
+      return () => { pruneListener = undefined; };
+    },
     captureCleanPrimaryTabs() {
       state.calls++;
       return state.capture;
@@ -50,7 +55,7 @@ function fixture() {
   }, (request) => {
     requests.push(request);
     return state.send();
-  }, () => state.scope, { idleMs: 0 });
+  }, () => state.scope, { idleMs: 0, settlementForRecord });
   return { state, requests, stop, activate(index: number) {
     state.capture = clean(index);
     listener?.(tabs[index]);
@@ -59,9 +64,54 @@ function fixture() {
     state.capture = { ok: true, tabs: [], activeIndex: null, current: () => true };
     closeListener?.({ documentId: tabs[0].documentId, handle: tabs[0].handle, current });
   }, emitClose() { closeListener?.({ documentId: tabs[0].documentId, handle: tabs[0].handle, current: () => true }); },
+    prune(index: number, current = () => true) {
+      const { documentId, handle } = tabs[index];
+      pruneListener?.({ documentId, handle, current });
+    },
     sent: () => requests.map(request => "op" in request ? request.op : request.activeIndex),
-    subscribed: () => !!listener || !!layoutListener || !!closeListener };
+    subscribed: () => !!listener || !!layoutListener || !!closeListener || !!pruneListener };
 }
+
+test("publishes multiple actual closes even while dirty survivors prevent full recording", async () => {
+  const f = fixture();
+  const first = Promise.withResolvers<unknown>();
+  try {
+    f.state.send = () => first.promise;
+    f.activate(0);
+    await turn();
+    f.state.capture = { ok: false, reason: "unavailable" };
+    f.prune(0);
+    f.layout(1);
+    f.prune(1);
+    f.layout(2);
+    expect(f.sent()).toEqual([0]);
+    f.state.send = () => Promise.resolve(committed);
+    first.resolve(committed);
+    for (let index = 0; index < 4; index++) await turn();
+    expect(f.requests.slice(1)).toEqual(tabs.slice(0, 2).map(({ documentId, handle }) =>
+      ({ protocolVersion: 1, op: "prune", documentId, handle })));
+  } finally { f.stop(); }
+});
+
+test("rejects a reopened tab and a retired workspace after waiting for recovery claim", async () => {
+  const settlement = Promise.withResolvers<boolean>();
+  const f = fixture(() => settlement.promise);
+  let current = true;
+  try {
+    f.prune(0, () => current);
+    expect(f.requests).toEqual([]);
+    current = false;
+    settlement.resolve(true);
+    await turn();
+    f.prune(1);
+    f.state.scope = {};
+    await turn();
+    expect(f.requests).toEqual([]);
+    f.prune(2);
+    for (let index = 0; index < 3; index++) await turn();
+    expect(f.sent()).toEqual(["prune"]);
+  } finally { f.stop(); }
+});
 
 test("waits for user activation and captures only the latest activation in a burst", async () => {
   const f = fixture();

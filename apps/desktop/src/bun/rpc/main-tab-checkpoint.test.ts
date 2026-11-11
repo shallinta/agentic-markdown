@@ -296,3 +296,49 @@ test("only literal resetViewport true can retire a retained instance's old geome
       })
     ).toBe(false);
 });
+
+test("prune protocol accepts only the exact opaque pair and follows main-window admission", async () => {
+  const source = request().tabs[0];
+  const input = {
+    protocolVersion: 1,
+    op: "prune",
+    handle: source.handle,
+    documentId: source.documentId,
+  };
+  expect(validMainTabCheckpointRequest(input)).toBe(true);
+  for (const invalid of [
+    { ...input, text: "body" },
+    { ...input, handle: "path" },
+    { ...input, documentId: null },
+    { ...input, protocolVersion: 2 },
+  ])
+    expect(validMainTabCheckpointRequest(invalid)).toBe(false);
+  let calls = 0;
+  const rpc = createMainTabCheckpointRPC(
+    true,
+    () => true,
+    () => ({
+      write: () =>
+        Promise.resolve({ status: "rejected", reason: "unavailable" }),
+      clear: () => Promise.resolve({ status: "rejected", reason: "not-owned" }),
+      close: () => Promise.resolve(),
+      prune: (target, current) => {
+        expect(target).toEqual({
+          handle: source.handle,
+          documentId: source.documentId,
+        });
+        expect(current()).toBe(true);
+        calls++;
+        return Promise.resolve({ status: "committed" });
+      },
+    })
+  );
+  expect((await rpc.request(input)).status).toBe("rejected");
+  rpc.ready(ready);
+  expect((await rpc.request(input)).status).toBe("committed");
+  const resume = rpc.suspend();
+  expect((await rpc.request(input)).status).toBe("rejected");
+  resume();
+  expect(calls).toBe(1);
+  rpc.dispose();
+});

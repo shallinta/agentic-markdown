@@ -38,6 +38,7 @@ export function createGuardedMainTabCheckpoint(
   const binder = createMainTabMetadataBinder(dependencies);
   const store = createMainTabCheckpointMetadataStore(directory);
   let closed = false;
+  let ownedSources: readonly MainTabSourceInput[] = [];
   let known = new Map<string, StoredMainTabPosition>();
   const sourceKey = (tab: MainTabSourceInput) =>
     JSON.stringify([tab.handle, tab.documentId, tab.revision, tab.hash]);
@@ -258,7 +259,19 @@ export function createGuardedMainTabCheckpoint(
                 observation.status === "missing"
               )
             : await store.write(bound.data, currentSource);
-          if (result.status === "committed")
+          if (result.status === "committed") {
+            const data = withPositions
+              ? {
+                  schemaVersion: 2,
+                  tabs: bound.data.tabs.map((tab, index) =>
+                    positions[index]
+                      ? { ...tab, position: positions[index] }
+                      : tab
+                  ),
+                  activeIndex: bound.data.activeIndex,
+                }
+              : bound.data;
+            ownedSources = store.ownsData(data) ? captured.tabs : [];
             known = new Map(
               captured.tabs.flatMap((tab, index) =>
                 positions[index]
@@ -266,13 +279,63 @@ export function createGuardedMainTabCheckpoint(
                   : []
               )
             );
-          else if (result.status === "unknown") known.clear();
+          } else if (result.status === "unknown") {
+            known.clear();
+            ownedSources = [];
+          }
           return result;
         })
-        .catch((): MainTabCheckpointWrite => ({
-          status: "unknown",
-          reason: "io",
-        }));
+        .catch((): MainTabCheckpointWrite => {
+          known.clear();
+          ownedSources = [];
+          return { status: "unknown", reason: "io" };
+        });
+      tail = next.finally(() => {
+        queued--;
+      });
+      return next;
+    },
+    prune(
+      source: { documentId: string; handle: string },
+      current: () => boolean
+    ): Promise<MainTabCheckpointWrite> {
+      if (closed || queued >= 64)
+        return Promise.resolve({
+          status: "rejected",
+          reason: closed ? "closed" : "queue-full",
+        });
+      const target = { documentId: source.documentId, handle: source.handle };
+      queued++;
+      const next = tail
+        .then(async (): Promise<MainTabCheckpointWrite> => {
+          const captured = ownedSources;
+          const index = captured.findIndex(
+            (tab) =>
+              tab.documentId === target.documentId &&
+              tab.handle === target.handle
+          );
+          if (index < 0) return { status: "rejected", reason: "not-owned" };
+          const result = await store.pruneOwned(
+            index,
+            () => captured === ownedSources && current() === true
+          );
+          if (result.status === "committed") {
+            known.delete(sourceKey(captured[index]));
+            ownedSources = captured.filter((_tab, at) => at !== index);
+          } else if (
+            result.status === "unknown" ||
+            result.reason === "not-owned"
+          ) {
+            known.clear();
+            ownedSources = [];
+          }
+          return result;
+        })
+        .catch((): MainTabCheckpointWrite => {
+          known.clear();
+          ownedSources = [];
+          return { status: "unknown", reason: "io" };
+        });
       tail = next.finally(() => {
         queued--;
       });
@@ -288,14 +351,17 @@ export function createGuardedMainTabCheckpoint(
       const next = tail
         .then(async () => {
           const result = await store.clearOwned(current);
-          if (result.status === "committed" || result.status === "unknown")
+          if (result.status === "committed" || result.status === "unknown") {
             known.clear();
+            ownedSources = [];
+          }
           return result;
         })
-        .catch((): MainTabCheckpointWrite => ({
-          status: "unknown",
-          reason: "io",
-        }));
+        .catch((): MainTabCheckpointWrite => {
+          known.clear();
+          ownedSources = [];
+          return { status: "unknown", reason: "io" };
+        });
       tail = next.finally(() => {
         queued--;
       });
@@ -316,7 +382,7 @@ export function createGuardedMainTabCheckpoint(
           : undefined;
       if (
         receipt.status === "valid" &&
-        receipt.positioned &&
+        (receipt.positioned || sources !== undefined) &&
         captured?.tabs.length !== receipt.data.tabs.length
       )
         return Promise.resolve(false);
@@ -324,7 +390,10 @@ export function createGuardedMainTabCheckpoint(
       const next = tail
         .then(async () => {
           const claimed = await store.claimObservation(receipt, current);
-          if (claimed) known.clear();
+          if (claimed) {
+            known.clear();
+            ownedSources = captured?.tabs ?? [];
+          }
           if (
             claimed &&
             receipt.status === "valid" &&

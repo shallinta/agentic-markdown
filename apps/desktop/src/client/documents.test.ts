@@ -34,6 +34,7 @@ import {
   recoveredViewportEditorOffset,
   type DocumentTransport,
   type PrimaryTabLastClose,
+  type PrimaryTabNonLastClose,
 } from "./documents";
 import { createEditingImagePool } from "./editing-image-pool";
 import { editingImageField, editingImagesEffect } from "./editing-images";
@@ -3411,11 +3412,15 @@ test("explicit close records only committed nonempty survivors without extra act
   }
   controller.activateTab(b.documentId);
   const layout: {target:string; tabs:string[]}[] = [];
+  const closed: PrimaryTabNonLastClose[] = [];
+  controller.subscribePrimaryTabNonLastClose(intent => closed.push(intent));
   let activations = 0;
   controller.subscribePrimaryTabLayoutChange(target => layout.push({target:target.documentId,tabs:controller.getVisualTabs().map(tab=>tab.documentId)}));
   controller.subscribeActivation(() => { activations++; });
   await controller.closeTab(c.documentId);
   expect(layout).toEqual([{target:b.documentId,tabs:[a.documentId,b.documentId]}]);
+  expect(closed).toHaveLength(1);
+  expect(closed[0]).toMatchObject({ documentId: c.documentId, handle: c.handle });
   await controller.closeTab(c.documentId);
   expect(layout.length).toBe(1);
   const editor = controller.getEditor(b.documentId)!;
@@ -3423,14 +3428,18 @@ test("explicit close records only committed nonempty survivors without extra act
   await controller.closeActive();
   expect(controller.isDirty(b.documentId)).toBe(true);
   expect(layout.length).toBe(1);
+  expect(closed).toHaveLength(1);
   approve = true;
   await controller.closeActive();
   expect(layout[1]).toEqual({target:a.documentId,tabs:[a.documentId]});
   expect(controller.getEditor(b.documentId)).toBeUndefined();
+  expect(closed[1]).toMatchObject({ documentId: b.documentId, handle: b.handle });
+  expect(closed.map(intent => intent.current())).toEqual([true, true]);
   expect(activations).toBe(0);
   await controller.closeActive();
   expect(layout.length).toBe(2);
   expect(controller.getSnapshot().snapshot).toBeNull();
+  expect(closed).toHaveLength(2);
   controller.dispose();
 });
 
@@ -3446,6 +3455,7 @@ test("standalone removal and clear do not publish explicit-close metadata notifi
   await controller.select();
   let notifications = 0;
   controller.subscribePrimaryTabLayoutChange(() => { notifications++; });
+  controller.subscribePrimaryTabNonLastClose(() => { notifications++; });
   controller.setStandaloneRemovalEligibility(handle => handle === b.handle);
   await controller.removeStandalone(b.handle);
   expect(controller.getSnapshot().tabs.map(tab=>tab.documentId)).toEqual([a.documentId]);
@@ -3462,10 +3472,19 @@ test("close publication invalidated by a subscriber cannot notify the former sur
   const b = snapshot("reentrant-close-B"), c = snapshot("reentrant-close-C");
   for (const tab of [b,c]) { transport.selectDocument = request => Promise.resolve(result(request,tab)); await controller.select(); }
   let notifications = 0, changed = false;
+  const order: string[] = [];
+  const closed: PrimaryTabNonLastClose[] = [];
+  let survivingAtClose: string[] | undefined;
+  controller.subscribePrimaryTabNonLastClose(intent => {
+    order.push("close");
+    closed.push(intent);
+    survivingAtClose = controller.getSnapshot().tabs.map(tab => tab.documentId);
+  });
   controller.subscribePrimaryTabLayoutChange(() => { notifications++; });
   controller.subscribe(() => {
     if (!changed && controller.getSnapshot().tabs.length === 2) {
       changed = true;
+      order.push("subscriber");
       controller.activateTab(a.documentId);
     }
   });
@@ -3473,7 +3492,49 @@ test("close publication invalidated by a subscriber cannot notify the former sur
   expect(changed).toBe(true);
   expect(controller.getSnapshot().snapshot?.documentId).toBe(a.documentId);
   expect(notifications).toBe(0);
+  expect(order).toEqual(["close", "subscriber"]);
+  expect(survivingAtClose).toEqual([a.documentId, b.documentId]);
+  expect(closed[0].current()).toBe(true);
   controller.dispose();
+});
+
+test("non-last close tickets outlive unrelated activations and closes but never revive after reopen or window discard", async () => {
+  const { controller, transport, value: a } = setup();
+  const b = snapshot("close-ticket-B"), c = snapshot("close-ticket-C");
+  const closed: PrimaryTabNonLastClose[] = [];
+  const order: string[] = [];
+  const unsubscribe = controller.subscribePrimaryTabNonLastClose(intent => { closed.push(intent); order.push("close"); });
+  try {
+    await controller.select();
+    for (const tab of [b, c]) {
+      transport.selectDocument = request => Promise.resolve(result(request, tab));
+      await controller.select();
+    }
+    controller.subscribePrimaryTabLayoutChange(() => order.push("layout"));
+    const editor = controller.getEditor(a.documentId)!;
+    controller.updateEditor(a.documentId, editor.state.update({ changes: { from: 0, insert: "dirty survivor" } }));
+    await controller.closeTab(c.documentId);
+    expect(order).toEqual(["close", "layout"]);
+    controller.activateTab(a.documentId);
+    await controller.closeTab(b.documentId);
+    expect(controller.isDirty(a.documentId)).toBe(true);
+    expect(closed.map(intent => intent.documentId)).toEqual([c.documentId, b.documentId]);
+    expect(closed.map(intent => intent.current())).toEqual([true, true]);
+
+    transport.readDocument = request => Promise.resolve(result(request, c));
+    await controller.activate(c);
+    expect(controller.getSnapshot().snapshot?.documentId).toBe(c.documentId);
+    expect(closed.map(intent => intent.current())).toEqual([false, true]);
+    await controller.closeTab(c.documentId);
+    expect(closed.map(intent => intent.current())).toEqual([false, true, true]);
+    expect(controller.beginWindowDiscard()).toBe(true);
+    controller.endDiscard();
+    expect(closed.map(intent => intent.current())).toEqual([false, false, false]);
+    unsubscribe();
+    await controller.activate(c);
+    await controller.closeTab(c.documentId);
+    expect(closed).toHaveLength(3);
+  } finally { controller.dispose(); }
 });
 
 test("only a confirmed last close yields an empty ticket that survives discard thaw", async () => {

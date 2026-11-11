@@ -235,10 +235,17 @@ function exactRecoveryObservation(
 ): boolean {
   const witness = recoveryWitnesses.get(receipt);
   if (witness?.path !== path) return false;
+  return exactCheckpointBytes(path, witness.bytes, () => witness.current());
+}
+function exactCheckpointBytes(
+  path: string,
+  original: string,
+  current: () => boolean
+): boolean {
   let fd: number | undefined;
   try {
-    if (!witness.current()) return false;
-    const expected = Buffer.from(witness.bytes);
+    if (!current()) return false;
+    const expected = Buffer.from(original);
     if (expected.length > MAIN_TAB_METADATA_MAX_BYTES) return false;
     fd = openSync(
       path,
@@ -271,7 +278,7 @@ function exactRecoveryObservation(
       matches &&
       length === expected.length &&
       bytes.subarray(0, length).equals(expected) &&
-      witness.current()
+      current()
     );
   } catch {
     return false;
@@ -598,6 +605,93 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
           return { status: "unknown" as const, reason: "io" as const };
         },
         (reason) => ({ status: "rejected" as const, reason }),
+        true
+      );
+    },
+    ownsData(value: unknown): boolean {
+      return !closed && !!owner && owner.encoded === JSON.stringify(value);
+    },
+    pruneOwned(
+      index: number,
+      current: () => boolean
+    ): Promise<MainTabMetadataWrite> {
+      const capturedOwner = owner;
+      if (
+        !ownedCheckpoint ||
+        !capturedOwner ||
+        !Number.isSafeInteger(index) ||
+        index < 0
+      )
+        return Promise.resolve({ status: "rejected", reason: "not-owned" });
+      let valid = true;
+      const admitted = () => {
+        try {
+          valid = valid && owner === capturedOwner && current() === true;
+        } catch {
+          valid = false;
+        }
+        return valid;
+      };
+      return enqueue<MainTabMetadataWrite>(
+        async () => {
+          if (!admitted()) return { status: "rejected", reason: "stale" };
+          let replacement: StoredSession | undefined;
+          const result = await store.updateObserved(
+            (previous, format, original) => {
+              if (
+                !admitted() ||
+                format !== "version1" ||
+                original !== capturedOwner.bytes ||
+                JSON.stringify(previous) !== capturedOwner.encoded ||
+                index >= previous.tabs.length
+              )
+                throw Error("Checkpoint ownership changed");
+              const tabs = previous.tabs.filter((_tab, at) => at !== index);
+              const oldActive = previous.activeIndex;
+              const activeIndex = !tabs.length
+                ? null
+                : oldActive === null
+                  ? 0
+                  : oldActive > index
+                    ? oldActive - 1
+                    : oldActive === index
+                      ? Math.min(index, tabs.length - 1)
+                      : oldActive;
+              replacement = isPositioned(previous)
+                ? { schemaVersion: 2, tabs, activeIndex }
+                : { tabs, activeIndex };
+              return replacement;
+            },
+            () =>
+              admitted() &&
+              exactCheckpointBytes(path, capturedOwner.bytes, admitted)
+          );
+          if ("stale" in result && result.stale)
+            return { status: "rejected", reason: "stale" };
+          if (
+            result.attempted &&
+            result.confirmed &&
+            replacement &&
+            result.persisted.status === "valid" &&
+            result.persisted.format === "version1" &&
+            JSON.stringify(result.persisted.data) ===
+              JSON.stringify(replacement)
+          ) {
+            const encoded = JSON.stringify(replacement);
+            owner = {
+              encoded,
+              bytes:
+                JSON.stringify({ version: 1, data: replacement }, null, 2) +
+                "\n",
+            };
+            return { status: "committed" };
+          }
+          owner = undefined;
+          return result.attempted
+            ? { status: "unknown", reason: "io" }
+            : { status: "rejected", reason: "not-owned" };
+        },
+        (reason) => ({ status: "rejected", reason }),
         true
       );
     },

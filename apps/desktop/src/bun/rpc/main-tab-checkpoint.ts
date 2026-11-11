@@ -11,7 +11,9 @@ type Writer = Pick<
   ReturnType<typeof createGuardedMainTabCheckpoint>,
   "write" | "clear" | "close"
 > &
-  Partial<Pick<ReturnType<typeof createGuardedMainTabCheckpoint>, "claim">>;
+  Partial<
+    Pick<ReturnType<typeof createGuardedMainTabCheckpoint>, "claim" | "prune">
+  >;
 /** One ordinary packaged main-window lifecycle. No startup or exit writes. */
 export function createMainTabCheckpointRPC(
   enabled: boolean,
@@ -86,7 +88,12 @@ export function createMainTabCheckpointRPC(
         const current = () => ticket === generation && available();
         const result =
           "op" in input
-            ? await writer.clear(current)
+            ? input.op === "prune"
+              ? ((await writer.prune?.(
+                  { documentId: input.documentId, handle: input.handle },
+                  current
+                )) ?? { status: "rejected" as const })
+              : await writer.clear(current)
             : await writer.write(
                 { tabs: input.tabs, activeIndex: input.activeIndex },
                 current

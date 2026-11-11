@@ -87,7 +87,9 @@ export interface MainTabCheckpointWriteRequest {
   activeIndex: number;
 }
 export type MainTabCheckpointRequest =
-  MainTabCheckpointWriteRequest | { protocolVersion: 1; op: "clear" };
+  | MainTabCheckpointWriteRequest
+  | { protocolVersion: 1; op: "clear" }
+  | { protocolVersion: 1; op: "prune"; documentId: string; handle: string };
 export interface MainTabCheckpointResponse {
   protocolVersion: 1;
   status: "committed" | "rejected" | "unknown";
@@ -98,6 +100,16 @@ const object = (value: unknown): value is Record<string, unknown> =>
 export function validMainTabCheckpointRequest(
   value: unknown
 ): value is MainTabCheckpointRequest {
+  if (
+    object(value) &&
+    Object.keys(value).sort().join() ===
+      "documentId,handle,op,protocolVersion" &&
+    value.protocolVersion === 1 &&
+    value.op === "prune" &&
+    validRootRosterId(value.documentId) &&
+    validRootRosterId(value.handle)
+  )
+    return true;
   if (
     object(value) &&
     Object.keys(value).sort().join() === "op,protocolVersion" &&

@@ -64,6 +64,14 @@ const readerImageCandidateWorker = await Bun.build({
 });
 if (!readerImageCandidateWorker.success)
   throw new AggregateError(readerImageCandidateWorker.logs, "Reader image candidate worker build failed");
+const mainTabAnchorWorker = await Bun.build({
+  entrypoints: [join(root, "src/bun/session/main-tab-anchor-worker.ts")],
+  outdir: output,
+  target: "bun",
+  naming: "main-tab-anchor-worker.js",
+});
+if (!mainTabAnchorWorker.success)
+  throw new AggregateError(mainTabAnchorWorker.logs, "Main tab anchor worker build failed");
 const perfWorker = await Bun.build({
   entrypoints: [join(root, "src/bun/perf-lab/worker.ts")],
   outdir: output,

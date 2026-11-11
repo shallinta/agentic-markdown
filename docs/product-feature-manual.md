@@ -56,6 +56,8 @@ alpha.341 支持恢复横跨多个目录的标签。从「待重新授权的目�
 
 在已保存的目录文档中滚动后切换标签，主窗口会记录位置。其余标签都已保存时，关闭一篇会移除该标签的会话记录。自 alpha.349 起，重启后重新授权目录，首次显示恢复的标签时会回到保存位置。原源码坐标不可用时，按原滚动比例定位。键盘或滚轮主动移动后再切换标签，可记录新位置。见[F-037y 迭代](iterations/F-037y-main-window-viewport-checkpoint.md)、[F-037z 迭代](iterations/F-037z-restore-main-window-viewport.md)。
 
+alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。当前重启仍按源码坐标或滚动比例定位，正文变化后按内容块重新定位由后续迭代接入。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

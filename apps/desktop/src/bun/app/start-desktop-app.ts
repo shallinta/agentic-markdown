@@ -123,7 +123,11 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB !== "1",
     () => browserWindow?.url === PACKAGED_VIEW_URL &&
       browserWindow.webview.url === PACKAGED_VIEW_URL && !browserWindow.webview.isRemoved,
-    () => createGuardedMainTabCheckpoint(getSettingsDir(), { workspace, roster: rootRoster })
+    () => createGuardedMainTabCheckpoint(getSettingsDir(), {
+      workspace,
+      roster: rootRoster,
+      captureViewportSource: (tab, current) => documents.captureViewportSource(tab, current),
+    })
   );
   const mainTabRecovery = createMainTabRecoveryRPC(
     !syntheticReader && !perfLabEnabled && !searchLabEnabled &&

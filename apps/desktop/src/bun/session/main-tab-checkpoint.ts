@@ -3,6 +3,7 @@ import {
   type MainTabSourceInput,
 } from "../../shared/main-tab-checkpoint";
 
+import { captureMainTabBlockAnchor } from "./main-tab-anchor-worker-client";
 import {
   captureMainTabMetadataInput,
   createMainTabMetadataBinder,
@@ -11,8 +12,13 @@ import {
   createMainTabCheckpointMetadataStore,
   type MainTabMetadataWrite,
   type MainTabMetadataObservation,
+  MAIN_TAB_METADATA_MAX_BYTES,
+  mainTabMetadataSerializedBytes,
 } from "./main-tab-metadata";
-import type { StoredMainTabPosition } from "./main-tab-position-codec";
+import {
+  copyStoredMainTabPosition,
+  type StoredMainTabPosition,
+} from "./main-tab-position-codec";
 
 export type MainTabCheckpointWrite =
   | MainTabMetadataWrite
@@ -21,7 +27,13 @@ export type MainTabCheckpointWrite =
 /** Internal only: neither opens documents nor chooses when a checkpoint is taken. */
 export function createGuardedMainTabCheckpoint(
   directory: string,
-  dependencies: Parameters<typeof createMainTabMetadataBinder>[0]
+  dependencies: Parameters<typeof createMainTabMetadataBinder>[0] & {
+    captureViewportAnchor?: typeof captureMainTabBlockAnchor;
+    captureViewportSource?(
+      tab: MainTabSourceInput,
+      current: () => boolean
+    ): Promise<{ raw: string; current(): boolean } | undefined>;
+  }
 ) {
   const binder = createMainTabMetadataBinder(dependencies);
   const store = createMainTabCheckpointMetadataStore(directory);
@@ -120,13 +132,27 @@ export function createGuardedMainTabCheckpoint(
           )
             return { status: "rejected", reason: observation.status };
           const ownsObservation = store.ownsObservation(observation);
-          const positions = captured.tabs.map(
-            (tab, index) =>
-              measured[index] ??
-              (ownsObservation && !resets[index]
-                ? known.get(sourceKey(tab))
-                : undefined)
+          const prior = captured.tabs.map((tab, index) =>
+            ownsObservation && !resets[index]
+              ? known.get(sourceKey(tab))
+              : undefined
           );
+          const sameGeometry = (
+            left: StoredMainTabPosition,
+            right: StoredMainTabPosition
+          ) =>
+            left.from === right.from &&
+            left.offset === right.offset &&
+            left.ratio === right.ratio;
+          const positions = captured.tabs.map((_tab, index) => {
+            const measurement = measured[index],
+              previous = prior[index];
+            return measurement
+              ? previous && sameGeometry(measurement, previous)
+                ? previous
+                : measurement
+              : previous;
+          });
           const oldPositions =
             observation.status === "valid" ? observation.positioned : undefined;
           if (
@@ -145,6 +171,76 @@ export function createGuardedMainTabCheckpoint(
             )
           )
             return { status: "rejected", reason: "unavailable" };
+          let sourceProof: (() => boolean) | undefined;
+          let sourceValid = true;
+          const currentSource = () => {
+            try {
+              sourceValid =
+                sourceValid &&
+                admitted() &&
+                bound.current() &&
+                (!sourceProof || sourceProof() === true);
+            } catch {
+              sourceValid = false;
+            }
+            return sourceValid;
+          };
+          if (dependencies.captureViewportSource) {
+            const candidates = captured.tabs
+              .map((_tab, index) => index)
+              .filter(
+                (index) => measured[index] && positions[index] !== prior[index]
+              );
+            const index =
+              candidates.find((candidate) => prior[candidate] !== undefined) ??
+              candidates[0];
+            if (index !== undefined) {
+              try {
+                const source = await dependencies.captureViewportSource(
+                  captured.tabs[index],
+                  () => admitted() && bound.current()
+                );
+                if (source) sourceProof = () => source.current();
+                if (!currentSource())
+                  return { status: "rejected", reason: "stale" };
+                if (source !== undefined) {
+                  const anchor = copyStoredMainTabPosition(
+                    await (
+                      dependencies.captureViewportAnchor ??
+                      captureMainTabBlockAnchor
+                    )(source.raw, measured[index]!, signal)
+                  );
+                  if (!currentSource())
+                    return { status: "rejected", reason: "stale" };
+                  if (
+                    anchor?.block?.contentHash === captured.tabs[index].hash &&
+                    sameGeometry(anchor, measured[index]!)
+                  ) {
+                    const baseline = positions[index];
+                    positions[index] = anchor;
+                    const data = {
+                      schemaVersion: 2 as const,
+                      tabs: bound.data.tabs.map((tab, row) =>
+                        positions[row]
+                          ? { ...tab, position: positions[row] }
+                          : tab
+                      ),
+                      activeIndex: bound.data.activeIndex,
+                    };
+                    if (
+                      mainTabMetadataSerializedBytes(data) >
+                      MAIN_TAB_METADATA_MAX_BYTES
+                    )
+                      positions[index] = baseline;
+                  }
+                }
+              } catch {
+                /* Enrichment is optional; retain the measured source fallback. */
+              }
+              if (!currentSource())
+                return { status: "rejected", reason: "stale" };
+            }
+          }
           const withPositions = !!oldPositions || positions.some(Boolean);
           const result = withPositions
             ? await store.writeViewportPositions(
@@ -157,14 +253,11 @@ export function createGuardedMainTabCheckpoint(
                   ),
                   activeIndex: bound.data.activeIndex,
                 },
-                () => admitted() && bound.current(),
+                currentSource,
                 observation.status === "valid" ? observation : undefined,
                 observation.status === "missing"
               )
-            : await store.write(
-                bound.data,
-                () => admitted() && bound.current()
-              );
+            : await store.write(bound.data, currentSource);
           if (result.status === "committed")
             known = new Map(
               captured.tabs.flatMap((tab, index) =>

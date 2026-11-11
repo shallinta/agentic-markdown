@@ -1,22 +1,29 @@
 import { expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ObservationRequest } from "../../shared/document-observation";
 import type { LocalImageResult } from "../../shared/local-images";
+import type { MainTabSourceInput } from "../../shared/main-tab-checkpoint";
 import { READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import { rawPatch } from "../../shared/save-content";
+import { authorizeRoot, verifyRoot } from "../workspace/authorization";
 
 import { readLocalImage, type ImageJob } from "./local-image-operation";
-import { verifySingleFileAuthorization } from "./path-authorization";
+import { authorizeSingleFile, verifySingleFileAuthorization } from "./path-authorization";
 
 import { createDocumentService } from ".";
 
 const fixtureText = "\uFEFF# 阅读 📖\r\n`反引号` \\\" <script>样本</script>\r\n";
 
-async function fixture(text = fixtureText, options: Pick<Parameters<typeof createDocumentService>[0], "imageReader" | "verify"> = {}) {
+async function fixture(
+  text = fixtureText,
+  { directoryGrant, ...options }: Pick<Parameters<typeof createDocumentService>[0], "imageReader" | "verify" | "onTiming"> &
+    { directoryGrant?: boolean } = {}
+) {
   const directory = await mkdtemp(join(tmpdir(), "agentic-reading-snapshot-"));
   const path = join(directory, "sample.md");
   // Keep watcher timing separate from the real descriptor verification below.
@@ -31,7 +38,11 @@ async function fixture(text = fixtureText, options: Pick<Parameters<typeof creat
   };
   try {
     await writeFile(path, text);
-    const selected = await documents.select({ protocolVersion: 1, requestId: "select" });
+    const request = { protocolVersion: 1 as const, requestId: "select" };
+    const root = directoryGrant ? await authorizeRoot(directory) : undefined;
+    const selected = root
+      ? await documents.openAuthorized(request, () => authorizeSingleFile(path), { verify: () => verifyRoot(root) })
+      : await documents.select(request);
     if (!selected.ok || !selected.snapshot) throw Error("Fixture selection failed");
     const { handle, documentId, revision, hash } = selected.snapshot;
     const source = { handle, documentId, expectedRevision: revision, expectedHash: hash };
@@ -67,6 +78,84 @@ test("reading snapshot preserves exact saved bytes and retires a stopped observa
   } finally {
     await f.cleanup();
   }
+});
+
+test("viewport source returns only the current observed directory text and rejects changed authority", async () => {
+  const f = await fixture(fixtureText, { directoryGrant: true });
+  const { handle, documentId, revision, hash } = f.snapshot;
+  const tab: MainTabSourceInput = { handle, documentId, revision, hash, pinned: false, mode: "editing" };
+  try {
+    expect(await f.documents.captureViewportSource(tab, () => true)).toBeUndefined();
+    expect((await f.documents.observe(f.observer)).ok).toBe(true);
+    const captured = await f.documents.captureViewportSource(tab, () => true);
+    expect(captured?.raw).toBe(fixtureText);
+    expect(captured?.current()).toBe(true);
+    for (const mismatch of [{ handle: randomUUID() }, { documentId: randomUUID() }, { revision: revision + 1 }, { hash: "0".repeat(64) }])
+      expect(await f.documents.captureViewportSource({ ...tab, ...mismatch }, () => true)).toBeUndefined();
+    let current = true;
+    const pending = f.documents.captureViewportSource(tab, () => current);
+    current = false;
+    expect(await pending).toBeUndefined();
+    expect(await f.documents.captureViewportSource(tab, () => { throw Error("stale caller"); })).toBeUndefined();
+    expect(await readFile(f.path)).toEqual(Buffer.from(fixtureText));
+    await writeFile(f.path, fixtureText.replace("样本", "变化"));
+    expect(await f.documents.captureViewportSource(tab, () => true)).toBeUndefined();
+    const prior = join(f.directory, "prior.md");
+    await rename(f.path, prior);
+    await writeFile(prior, fixtureText);
+    await symlink(prior, f.path);
+    expect(await f.documents.captureViewportSource(tab, () => true)).toBeUndefined();
+    expect(f.documents.locations().map((location) => location.handle)).toEqual([handle]);
+  } finally { await f.cleanup(); }
+});
+
+test("a returned viewport source receipt is retired when the same-size file is rewritten in place", async () => {
+  const f = await fixture("old body", { directoryGrant: true });
+  const { handle, documentId, revision, hash } = f.snapshot;
+  try {
+    expect((await f.documents.observe(f.observer)).ok).toBe(true);
+    const tab: MainTabSourceInput = { handle, documentId, revision, hash, pinned: false, mode: "editing" };
+    const captured = await f.documents.captureViewportSource(tab, () => true);
+    expect(captured?.raw).toBe("old body");
+    expect(captured?.current()).toBe(true);
+    const before = await stat(f.path, { bigint: true });
+    await writeFile(f.path, "new body");
+    const after = await stat(f.path, { bigint: true });
+    expect(after.ino).toBe(before.ino);
+    expect(after.size).toBe(before.size);
+    expect(captured?.current()).toBe(false);
+    await writeFile(f.path, "old body");
+    expect(captured?.current()).toBe(false);
+  } finally { await f.cleanup(); }
+});
+
+test("observing a standalone grant never admits viewport source reads", async () => {
+  const f = await fixture();
+  const { handle, documentId, revision, hash } = f.snapshot;
+  try {
+    expect((await f.documents.observe(f.observer)).ok).toBe(true);
+    expect(await f.documents.captureViewportSource({ handle, documentId, revision, hash, pinned: false, mode: "source" }, () => true))
+      .toBeUndefined();
+  } finally { await f.cleanup(); }
+});
+
+test("viewport source checks the physical file again after its descriptor read has settled", async () => {
+  let rewrite: (() => void) | undefined;
+  const f = await fixture("old body", { directoryGrant: true, onTiming(phase) {
+    if (phase === "diskReadMs") rewrite?.();
+  } });
+  const { handle, documentId, revision, hash } = f.snapshot;
+  try {
+    expect((await f.documents.observe(f.observer)).ok).toBe(true);
+    const before = await stat(f.path, { bigint: true });
+    rewrite = () => writeFileSync(f.path, "new body");
+    expect(await f.documents.captureViewportSource({ handle, documentId, revision, hash, pinned: false, mode: "editing" }, () => true))
+      .toBeUndefined();
+    const after = await stat(f.path, { bigint: true });
+    expect(after.ino).toBe(before.ino);
+    expect(after.size).toBe(before.size);
+    expect(await readFile(f.path, "utf8")).toBe("new body");
+  } finally { await f.cleanup(); }
 });
 
 const imageResult = {

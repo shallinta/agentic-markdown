@@ -17,7 +17,7 @@ import {
   type WriteCapability,
 } from "../../shared/documents";
 import { localImageReference, validLocalImageRequest, type LocalImageResult } from "../../shared/local-images";
-import { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
+import { MAIN_TAB_METADATA_MAX_TABS, type MainTabSourceInput } from "../../shared/main-tab-checkpoint";
 import { READER_IMAGE_SNAPSHOT_MAX_SLOTS, type ReaderImageSnapshotSlot } from "../../shared/reader-image-snapshot";
 import { READER_SNAPSHOT_MAX_BYTES } from "../../shared/reader-snapshot";
 import { validMirror } from "../../shared/save-content";
@@ -143,6 +143,8 @@ export interface TrustedDocumentService extends DocumentService {
   ): Promise<ReadingSnapshotCapture>;
   /** Verifies the saved source for a draft image without returning disk body bytes. */
   captureReadingImageProof(source: ReadingSnapshotSource, current: () => boolean): Promise<ReadingSnapshotImageRead | undefined>;
+  /** Exact observed saved text and its physical proof for internal anchor calculation. */
+  captureViewportSource(tab: MainTabSourceInput, current: () => boolean): Promise<{ raw: string; current(): boolean } | undefined>;
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
   beginSearchAdmission(): { current(): boolean } | undefined;
   /** Captures only grants owned by this service. Missing or uncertain grants remain unresolved. */
@@ -885,7 +887,11 @@ export function createDocumentService({
       request.handle
     );
   }
-  async function captureReadingSource(source: ReadingSnapshotSource, callerCurrent: () => boolean, imageMode?: "saved" | "proof") {
+  async function captureReadingSource(
+    source: ReadingSnapshotSource,
+    callerCurrent: () => boolean,
+    mode?: "saved" | "proof" | "viewport"
+  ) {
     const { handle, documentId, expectedRevision, expectedHash } = source;
     const reject = (error: DocumentErrorCode) => ({ ok: false as const, error });
     if (
@@ -895,7 +901,8 @@ export function createDocumentService({
       typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedHash)
     ) return reject("INVALID_REQUEST");
     const grant = grants.get(handle);
-    if (!grant) return reject("INVALID_HANDLE");
+    if (!grant || (mode === "viewport" && (!grant.scope || grant.explicitStandalone !== false)))
+      return reject("INVALID_HANDLE");
     const { identityKey, path, fingerprint, directories, scope, assetScope, assetEpoch } = grant;
     const identity = identities.get(identityKey);
     const observation = observations.get(handle);
@@ -927,7 +934,9 @@ export function createDocumentService({
         observations.get(handle) !== observation ||
         (observation.last !== undefined && observation.last !== "unchanged")
       ) throw new DocumentFailure("CONFLICT");
-      if (imageMode === "proof" && (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch))
+      if (mode === "proof" && (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch))
+        throw new DocumentFailure("CONFLICT");
+      if (mode === "viewport" && grant.explicitStandalone !== false)
         throw new DocumentFailure("CONFLICT");
       if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
     };
@@ -940,7 +949,7 @@ export function createDocumentService({
       let stamp: BigIntStats | undefined;
       try {
         bytes = await stableBytes({ ...grant, file }, check, READER_SNAPSHOT_MAX_BYTES,
-          imageMode ? (observed) => { stamp = observed; } : undefined);
+          mode ? (observed) => { stamp = observed; } : undefined);
       } finally {
         await file.close();
       }
@@ -1032,17 +1041,19 @@ export function createDocumentService({
       return {
         ok: true as const,
         bytes,
-        current() {
+        current(this: void) {
           if (retired) return false;
           try {
             check();
-            return true;
+            if (mode !== "viewport" ||
+              (savedStamp && sameReadingStamp(savedStamp, lstatSync(path, { bigint: true })))) return true;
           } catch {
-            retired = true;
-            return false;
+            // A changed grant or physical source retires the receipt.
           }
+          retired = true;
+          return false;
         },
-        ...(savedStamp && (imageMode === "proof" || bytes.includes("![")) ? { readImage } : {}),
+        ...(savedStamp && (mode === "proof" || (mode === "saved" && bytes.includes("!["))) ? { readImage } : {}),
       };
     } catch (error) {
       return reject(codeOf(error));
@@ -1099,6 +1110,16 @@ export function createDocumentService({
     async captureReadingImageProof(source, current) {
       const captured = await captureReadingSource(source, current, "proof");
       return captured.ok ? captured.readImage : undefined;
+    },
+    async captureViewportSource({ handle, documentId, revision, hash }, current) {
+      const captured = await captureReadingSource(
+        { handle, documentId, expectedRevision: revision, expectedHash: hash },
+        () => current() === true,
+        "viewport"
+      );
+      if (!captured.ok || !captured.current()) return;
+      const { bytes, current: revalidate } = captured;
+      return { raw: bytes.toString("utf8"), current: revalidate };
     },
     beginSearchAdmission() {
       if (!searchAdmissible()) return undefined;

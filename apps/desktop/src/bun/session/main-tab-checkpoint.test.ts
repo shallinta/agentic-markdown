@@ -20,8 +20,27 @@ import {
   type MainTabSourceInput,
 } from "./main-tab-binder";
 import { createGuardedMainTabCheckpoint } from "./main-tab-checkpoint";
-import { createMainTabCheckpointMetadataStore } from "./main-tab-metadata";
+import {
+  createMainTabCheckpointMetadataStore,
+  MAIN_TAB_METADATA_MAX_BYTES,
+  mainTabMetadataSerializedBytes,
+} from "./main-tab-metadata";
+import { encodeMainTabPosition } from "./main-tab-position-codec";
 import { createSingleMainTabRecoveryReader } from "./main-tab-single-recovery";
+import { createMarkdownBlockAnchorProbe } from "./markdown-block-anchor-probe";
+
+// Writer seam uses the actual canonical parser; packaged worker transport is tested separately.
+const captureViewportAnchor = (
+  raw: string,
+  viewport: { from: number; offset: number; ratio: number }
+) => {
+  const probe = createMarkdownBlockAnchorProbe(raw);
+  return Promise.resolve(
+    probe.status === "ready"
+      ? encodeMainTabPosition(probe.capturePosition(viewport))
+      : undefined
+  );
+};
 
 async function fixture() {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "tab-binder-")));
@@ -968,6 +987,296 @@ test("external position changes invalidate in-memory reuse; explicit close/reope
     expect(reset.positioned?.tabs[0].position).toBeUndefined();
   } finally {
     await writer.close();
+    await f.close();
+  }
+});
+
+test("checkpoint enriches at most one measured buffer and reuses identical owned geometry", async () => {
+  const f = await fixture();
+  const a = await f.open(f.paths[0]),
+    b = await f.open(f.paths[1]);
+  const reads: string[] = [];
+  const writer = createGuardedMainTabCheckpoint(join(f.dir, "metadata"), {
+    ...f,
+    captureViewportAnchor,
+    captureViewportSource(tab, current) {
+      expect(current()).toBe(true);
+      reads.push(tab.handle);
+      return Promise.resolve({
+        raw: tab.handle === a.tab.handle ? a.snapshot.text : b.snapshot.text,
+        current: () => true,
+      });
+    },
+  });
+  const first = { from: 0, offset: -3, ratio: 0.2 },
+    second = { from: 3, offset: 4, ratio: 0.5 };
+  try {
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            { ...a.tab, viewport: first },
+            { ...b.tab, viewport: second },
+          ],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(reads).toEqual([a.tab.handle]);
+    let record = await writer.read();
+    if (record.status !== "valid") throw Error("No checkpoint");
+    expect(record.positioned?.tabs[0].position?.block?.contentHash).toBe(
+      a.tab.hash
+    );
+    expect(record.positioned?.tabs[0].position?.block?.offset).toBe(-3);
+    expect(record.positioned?.tabs[1].position?.block).toBeUndefined();
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            { ...a.tab, viewport: first },
+            { ...b.tab, viewport: second },
+          ],
+          activeIndex: 0,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(reads).toHaveLength(1);
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            { ...b.tab, viewport: { ...second, ratio: 0.6 } },
+            { ...a.tab, viewport: first },
+          ],
+          activeIndex: 0,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(reads).toEqual([a.tab.handle, b.tab.handle]);
+    record = await writer.read();
+    if (record.status !== "valid") throw Error("No checkpoint");
+    expect(record.positioned?.tabs[0].position?.block?.contentHash).toBe(
+      b.tab.hash
+    );
+    expect(record.positioned?.tabs[0].position?.block?.offset).toBeUndefined();
+    expect(record.positioned?.tabs[0].position?.offset).toBe(4);
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            { ...a.tab, resetViewport: true, viewport: first },
+            { ...b.tab, viewport: { ...second, ratio: 0.7 } },
+          ],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(reads).toEqual([a.tab.handle, b.tab.handle, b.tab.handle]);
+    record = await writer.read();
+    if (record.status !== "valid") throw Error("No checkpoint");
+    expect(record.positioned?.tabs[0].position?.block).toBeUndefined();
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("optional anchor failures retain source positions while stale source capture rejects the write", async () => {
+  for (const failure of [
+    "throw",
+    "missing",
+    "large",
+    "wrong",
+    "invalid",
+    "gap",
+    "abort",
+    "external",
+  ] as const) {
+    const f = await fixture(),
+      directory = join(f.dir, "metadata");
+    const a = await f.open(f.paths[0]);
+    const controller = new AbortController();
+    const path = join(directory, "main-tab-session-checkpoint.json");
+    const baseline = createMainTabCheckpointMetadataStore(directory);
+    const bound = await f.binder.bind({ tabs: [a.tab], activeIndex: 0 });
+    if (bound.status !== "ready") throw Error("No binding");
+    await baseline.write(bound.data, () => true);
+    const before = await readFile(path, "utf8");
+    const writer = createGuardedMainTabCheckpoint(directory, {
+      ...f,
+      captureViewportAnchor,
+      async captureViewportSource() {
+        if (failure === "throw") throw Error("Unavailable source");
+        if (failure === "missing") return undefined;
+        if (failure === "large")
+          return { raw: "x".repeat(1048577), current: () => true };
+        if (failure === "wrong")
+          return { raw: "wrong source", current: () => true };
+        if (failure === "invalid")
+          return { raw: "\ud800", current: () => true };
+        if (failure === "abort") controller.abort();
+        if (failure === "external") await writeFile(path, before + " ");
+        return { raw: a.snapshot.text, current: () => true };
+      },
+    });
+    const viewport = {
+      from: failure === "gap" ? a.snapshot.text.length : 0,
+      offset: 2,
+      ratio: 0.5,
+    };
+    try {
+      const result = await writer.write(
+        { tabs: [{ ...a.tab, viewport }], activeIndex: 0 },
+        () => true,
+        controller.signal
+      );
+      if (failure === "abort" || failure === "external") {
+        expect(result.status).toBe("rejected");
+        expect(await readFile(path, "utf8")).toBe(
+          before + (failure === "external" ? " " : "")
+        );
+      } else {
+        expect(result).toEqual({ status: "committed" });
+        const record = await writer.read();
+        if (record.status !== "valid") throw Error("No checkpoint");
+        expect(record.positioned?.tabs[0].position).toEqual(viewport);
+      }
+    } finally {
+      await writer.close();
+      await baseline.close();
+      await f.close();
+    }
+  }
+});
+
+test("anchor bytes alone exceeding the checkpoint cap fall back before publication", async () => {
+  const f = await fixture();
+  const opened = await f.open(f.paths[0]);
+  const rootId = crypto.randomUUID(),
+    rootHandle = crypto.randomUUID();
+  const tabs = Array.from({ length: 64 }, () => ({
+    ...opened.tab,
+    handle: crypto.randomUUID(),
+    documentId: crypto.randomUUID(),
+  }));
+  const viewport = { from: 0, offset: 0, ratio: 0.5 };
+  const data = {
+    schemaVersion: 2 as const,
+    tabs: tabs.map((tab, index) => ({
+      rootId,
+      relativePath: `${index}.md`,
+      fingerprint: "1:2:3",
+      mode: tab.mode,
+      pinned: tab.pinned,
+      ...(index === 0 ? { position: viewport } : {}),
+    })),
+    activeIndex: 0,
+  };
+  const length = Math.floor(
+    (MAIN_TAB_METADATA_MAX_BYTES - 20 - mainTabMetadataSerializedBytes(data)) /
+      tabs.length
+  );
+  data.tabs.forEach((tab, index) => {
+    tab.relativePath = "x".repeat(length) + `${index}.md`;
+  });
+  const remaining =
+    MAIN_TAB_METADATA_MAX_BYTES - 20 - mainTabMetadataSerializedBytes(data);
+  data.tabs[0].relativePath = "x".repeat(remaining) + data.tabs[0].relativePath;
+  expect(mainTabMetadataSerializedBytes(data)).toBe(
+    MAIN_TAB_METADATA_MAX_BYTES - 20
+  );
+  const writer = createGuardedMainTabCheckpoint(join(f.dir, "near-cap"), {
+    workspace: {
+      captureMainTabSources: () =>
+        Promise.resolve({
+          sources: data.tabs.map((tab) => ({
+            rootHandle,
+            rootPath: "/synthetic",
+            relativePath: tab.relativePath,
+            fingerprint: tab.fingerprint,
+          })),
+          current: () => true,
+        }),
+    },
+    roster: {
+      confirmExpansionIdentity: () =>
+        Promise.resolve({ id: rootId, current: () => true }),
+    },
+    captureViewportSource: () =>
+      Promise.resolve({ raw: opened.snapshot.text, current: () => true }),
+    captureViewportAnchor,
+  });
+  try {
+    expect(
+      await writer.write(
+        {
+          tabs: tabs.map((tab, index) =>
+            index === 0 ? { ...tab, viewport } : tab
+          ),
+          activeIndex: 0,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const read = await writer.read();
+    if (read.status !== "valid") throw Error("No checkpoint");
+    expect(read.positioned?.tabs[0].position).toEqual(viewport);
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("physical source proof going stale during anchor await rejects the entire checkpoint", async () => {
+  const f = await fixture(),
+    directory = join(f.dir, "metadata");
+  const a = await f.open(f.paths[0]);
+  const baseline = createGuardedMainTabCheckpoint(directory, f);
+  expect(
+    await baseline.write({ tabs: [a.tab], activeIndex: 0 }, () => true)
+  ).toEqual({ status: "committed" });
+  const path = join(directory, "main-tab-session-checkpoint.json"),
+    before = await readFile(path, "utf8");
+  let physicalCurrent = true;
+  let begin!: () => void, resume!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    begin = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const writer = createGuardedMainTabCheckpoint(directory, {
+    ...f,
+    captureViewportSource: () =>
+      Promise.resolve({ raw: a.snapshot.text, current: () => physicalCurrent }),
+    async captureViewportAnchor(raw, viewport) {
+      begin();
+      await waiting;
+      return captureViewportAnchor(raw, viewport);
+    },
+  });
+  try {
+    const pending = writer.write(
+      {
+        tabs: [{ ...a.tab, viewport: { from: 0, offset: 0, ratio: 0.5 } }],
+        activeIndex: 0,
+      },
+      () => true
+    );
+    await entered;
+    physicalCurrent = false;
+    resume();
+    expect(await pending).toEqual({ status: "rejected", reason: "stale" });
+    expect(await readFile(path, "utf8")).toBe(before);
+  } finally {
+    resume();
+    await writer.close();
+    await baseline.close();
     await f.close();
   }
 });

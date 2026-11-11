@@ -27,9 +27,15 @@ type MixedMainTabMetadataRead =
 
 /** Isolated probe only. The ordinary checkpoint file is not a source for this store. */
 export function createMixedMainTabMetadataStore(isolatedDir: string) {
-  return createMixedStore(
+  const store = createMixedStore(
     resolve(isolatedDir, "main-tab-session-mixed-probe.json")
   );
+  return {
+    read: () => store.read(),
+    close: () => store.close(),
+    write: (value: unknown, current: () => boolean) =>
+      store.write(value, current),
+  };
 }
 
 /** Dedicated production candidate slot; not connected to window events. */
@@ -77,7 +83,10 @@ function createMixedStore(path: string) {
     },
     write(
       value: unknown,
-      current: () => boolean
+      current: () => boolean,
+      merge?: (
+        previous: MixedMainTabMetadata | undefined
+      ) => MixedMainTabMetadata
     ): Promise<MainTabMetadataWrite> {
       let live = true;
       const admitted = () => {
@@ -105,11 +114,12 @@ function createMixedStore(path: string) {
         ) > MAIN_TAB_METADATA_MAX_BYTES
       )
         return Promise.resolve({ status: "rejected", reason: "capacity" });
-      const encoded = JSON.stringify(candidate);
+      let encoded = JSON.stringify(candidate);
       return enqueue<MainTabMetadataWrite>(
         async () => {
           if (!admitted()) return { status: "rejected", reason: "stale" };
           let protectedFormat: "legacy" | "future" | undefined;
+          let mergeFailure: "invalid" | "capacity" | undefined;
           let publicationCurrent: (() => boolean) | undefined;
           const result = await store.updateObserved(
             (previous, format, original) => {
@@ -126,7 +136,28 @@ function createMixedStore(path: string) {
                 protectedFormat = "future";
               if (protectedFormat)
                 throw Error("Protected mixed session format");
-              return candidate;
+              if (!merge) return candidate;
+              const decoded =
+                format === "missing"
+                  ? undefined
+                  : decodeMixedMainTabMetadata(previous);
+              const merged = copyMixedMainTabMetadata(
+                merge(decoded?.status === "valid" ? decoded.data : undefined)
+              );
+              if (!merged) {
+                mergeFailure = "invalid";
+                throw Error("Invalid merged checkpoint");
+              }
+              if (
+                Buffer.byteLength(
+                  `${JSON.stringify({ version: 1, data: merged }, null, 2)}\n`
+                ) > MAIN_TAB_METADATA_MAX_BYTES
+              ) {
+                mergeFailure = "capacity";
+                throw Error("Merged checkpoint capacity");
+              }
+              encoded = JSON.stringify(merged);
+              return merged;
             },
             () => publicationCurrent?.() === true
           );
@@ -140,6 +171,7 @@ function createMixedStore(path: string) {
               ? { status: "committed" }
               : { status: "unknown", reason: "io" };
           }
+          if (mergeFailure) return { status: "rejected", reason: mergeFailure };
           if (protectedFormat)
             return { status: "rejected", reason: protectedFormat };
           const observed = await read();

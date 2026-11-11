@@ -1,3 +1,10 @@
+import { resolve } from "node:path";
+
+import {
+  validMainTabCheckpointTabs,
+  type MainTabCheckpointViewport,
+} from "../../shared/main-tab-checkpoint";
+
 import { captureMainTabMetadataInput } from "./main-tab-binder";
 import {
   readMainTabCheckpointCoexistence,
@@ -5,9 +12,14 @@ import {
 } from "./main-tab-checkpoint-coexistence";
 import {
   createMainTabCheckpointMetadataStore,
+  checkpointPublicationGuard,
   type MainTabMetadataWrite,
 } from "./main-tab-metadata";
 import { createMainTabMixedMetadataBinder } from "./main-tab-mixed-binder";
+import {
+  decodeMixedMainTabMetadata,
+  type MixedMainTabRow,
+} from "./main-tab-mixed-metadata";
 import { createMixedMainTabCheckpointMetadataStore } from "./main-tab-mixed-metadata-store";
 
 type MixedCheckpointWrite =
@@ -19,6 +31,7 @@ export function createGuardedMixedMainTabCheckpoint(
   dataDir: string,
   dependencies: Parameters<typeof createMainTabMixedMetadataBinder>[0]
 ) {
+  const directoryPath = resolve(dataDir, "main-tab-session-checkpoint.json");
   const binder = createMainTabMixedMetadataBinder(dependencies);
   const mixed = createMixedMainTabCheckpointMetadataStore(dataDir);
   const directory = createMainTabCheckpointMetadataStore(dataDir);
@@ -46,8 +59,42 @@ export function createGuardedMixedMainTabCheckpoint(
           reason: closed ? "closed" : "queue-full",
         });
       let input: ReturnType<typeof captureMainTabMetadataInput>;
+      const measured: (MainTabCheckpointViewport | undefined)[] = [];
       try {
-        input = captureMainTabMetadataInput(value);
+        if (
+          !value ||
+          typeof value !== "object" ||
+          Array.isArray(value) ||
+          Object.keys(value).sort().join() !== "activeIndex,tabs" ||
+          !("tabs" in value) ||
+          !("activeIndex" in value) ||
+          !validMainTabCheckpointTabs(value.tabs)
+        )
+          return Promise.resolve({ status: "rejected", reason: "invalid" });
+        const tabs = value.tabs.map((tab) => {
+          if (tab.resetViewport) throw Error("Reset requires ownership");
+          measured.push(
+            tab.viewport
+              ? {
+                  from: tab.viewport.from,
+                  offset: tab.viewport.offset,
+                  ratio: tab.viewport.ratio,
+                }
+              : undefined
+          );
+          return {
+            handle: tab.handle,
+            documentId: tab.documentId,
+            revision: tab.revision,
+            hash: tab.hash,
+            pinned: tab.pinned,
+            mode: tab.mode,
+          };
+        });
+        input = captureMainTabMetadataInput({
+          tabs,
+          activeIndex: value.activeIndex,
+        });
       } catch {
         return Promise.resolve({ status: "rejected", reason: "invalid" });
       }
@@ -83,7 +130,63 @@ export function createGuardedMixedMainTabCheckpoint(
           if (!admitted()) return { status: "rejected", reason: "stale" };
           if (bound.status !== "ready")
             return { status: "rejected", reason: bound.status };
-          return mixed.write(bound.data, () => admitted() && bound.current());
+          const legacy = await directory.readObserved();
+          if (!admitted() || !bound.current())
+            return { status: "rejected", reason: "stale" };
+          let requiresDirectory = false;
+          const directoryCurrent =
+            legacy.status === "valid"
+              ? () => directory.exactCurrent(legacy)
+              : legacy.status === "missing"
+                ? checkpointPublicationGuard(
+                    undefined,
+                    directoryPath,
+                    () => true
+                  )
+                : () => false;
+          const key = (row: MixedMainTabRow) =>
+            JSON.stringify(
+              row.kind === "root"
+                ? [row.kind, row.rootId, row.relativePath, row.fingerprint]
+                : [row.kind, row.path, row.fingerprint]
+            );
+          return mixed.write(
+            bound.data,
+            () =>
+              admitted() &&
+              bound.current() &&
+              (!requiresDirectory || directoryCurrent()),
+            (previous) => {
+              requiresDirectory = previous === undefined;
+              const fallback =
+                !previous && legacy.status === "valid" && legacy.positioned
+                  ? decodeMixedMainTabMetadata(legacy.positioned)
+                  : undefined;
+              const old =
+                previous ??
+                (fallback?.status === "valid" ? fallback.data : undefined);
+              const positions = new Map(
+                old?.tabs.map((row) => [key(row), row.position])
+              );
+              return {
+                ...bound.data,
+                tabs: bound.data.tabs.map((row, index) => {
+                  const saved = positions.get(key(row)),
+                    viewport = measured[index];
+                  const reuse =
+                    saved &&
+                    (!viewport ||
+                      (saved.from === viewport.from &&
+                        saved.offset === viewport.offset &&
+                        saved.ratio === viewport.ratio &&
+                        saved.block?.contentHash ===
+                          captured.tabs[index].hash));
+                  const position = reuse ? saved : viewport;
+                  return position ? { ...row, position } : row;
+                }),
+              };
+            }
+          );
         })
         .catch((): MixedCheckpointWrite => ({
           status: "unknown",

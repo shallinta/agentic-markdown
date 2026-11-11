@@ -1,8 +1,16 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { lstat, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  lstat,
+  readFile,
+  readdir,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
 
+import type { DocumentSnapshot } from "../../shared/documents";
 import { fileFingerprint } from "../documents/path-authorization";
 
 import { createGuardedMixedMainTabCheckpoint } from "./main-tab-mixed-checkpoint";
@@ -13,6 +21,8 @@ import {
   request,
   text,
 } from "./main-tab-mixed-test-fixture";
+import { encodeMainTabPosition } from "./main-tab-position-codec";
+import { createMarkdownBlockAnchorProbe } from "./markdown-block-anchor-probe";
 
 const officialName = "main-tab-session-mixed-checkpoint.json";
 const directoryName = "main-tab-session-checkpoint.json";
@@ -265,6 +275,279 @@ test("a late competing publication remains authoritative after a fully bound mix
         .filter((file) => file.startsWith(officialName))
         .sort()
     ).toEqual([officialName, `${officialName}.bak`]);
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+const directoryGeometry = { from: 0, offset: -4.25, ratio: 0.6 };
+const standaloneGeometry = { from: 1, offset: 2.5, ratio: 0.25 };
+
+async function seedPositionedDirectory(
+  f: Awaited<ReturnType<typeof fixture>>,
+  root: DocumentSnapshot
+) {
+  const durable = await f.roster.confirmExpansionIdentity(f.roots[0]);
+  if (!durable) throw Error("Missing durable root fixture");
+  const probe = createMarkdownBlockAnchorProbe(root.text);
+  const position =
+    probe.status === "ready" &&
+    encodeMainTabPosition(probe.capturePosition(directoryGeometry));
+  if (
+    !position ||
+    position.block?.contentHash !== root.hash ||
+    position.block.offset !== directoryGeometry.offset
+  )
+    throw Error("Missing measured block fixture");
+  const row = {
+    rootId: durable.id,
+    relativePath: "a.md",
+    fingerprint: fileFingerprint(await lstat(f.files[0], { bigint: true })),
+    pinned: true,
+    mode: "source" as const,
+    position,
+  };
+  const path = join(f.settingsDir, directoryName);
+  const bytes = envelope({ schemaVersion: 2, tabs: [row], activeIndex: 0 });
+  await writeFile(path, bytes);
+  return { row, path, bytes };
+}
+
+test("mixed positions follow the authorized file through inheritance, reordering and a real content revision", async () => {
+  const f = await fixture();
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  try {
+    const [root, standalone] = await openMixed(f);
+    const old = await seedPositionedDirectory(f, root);
+    const standaloneRow = {
+      kind: "standalone" as const,
+      path: f.explicitPath,
+      fingerprint: fileFingerprint(
+        await lstat(f.explicitPath, { bigint: true })
+      ),
+      mode: "editing" as const,
+      pinned: false,
+      position: standaloneGeometry,
+    };
+    const initial: MixedMainTabMetadata = {
+      schemaVersion: 3,
+      tabs: [{ kind: "root", ...old.row, mode: "editing" }, standaloneRow],
+      activeIndex: 0,
+    };
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            inputTab(root, "editing", true),
+            { ...inputTab(standalone), viewport: standaloneGeometry },
+          ],
+          activeIndex: 0,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      source: "mixed",
+      data: initial,
+    });
+    const officialPath = join(f.settingsDir, officialName);
+    const initialBytes = await readFile(officialPath);
+
+    const reordered: MixedMainTabMetadata = {
+      schemaVersion: 3,
+      tabs: [
+        { ...standaloneRow, mode: "source", pinned: true },
+        { kind: "root", ...old.row, pinned: false },
+      ],
+      activeIndex: 1,
+    };
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            inputTab(standalone, "source", true),
+            { ...inputTab(root, "source"), viewport: directoryGeometry },
+          ],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(await readFile(`${officialPath}.bak`)).toEqual(initialBytes);
+    const expectedPath = join(
+      f.settingsDir,
+      "expected-positioned-fixture.json"
+    );
+    await writeFile(expectedPath, JSON.stringify(reordered));
+    expect(await childRead(f.settingsDir, expectedPath)).toEqual({
+      status: "valid",
+      matches: true,
+    });
+    expect(await readFile(old.path)).toEqual(old.bytes);
+    expect(await readFile(f.files[0])).toEqual(Buffer.from(text));
+    expect(await readFile(f.explicitPath)).toEqual(Buffer.from(text));
+
+    const revisedText = `${text}\n## 外部新增\n`;
+    await writeFile(f.files[0], revisedText);
+    const revised = await f.documents.read({
+      ...request(),
+      handle: root.handle,
+    });
+    if (!revised.ok || !revised.snapshot)
+      throw Error("Could not read changed directory fixture");
+    expect(revised.snapshot.documentId).toBe(root.documentId);
+    expect(revised.snapshot.hash).not.toBe(root.hash);
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            inputTab(standalone, "source", true),
+            {
+              ...inputTab(revised.snapshot, "source"),
+              viewport: directoryGeometry,
+            },
+          ],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      source: "mixed",
+      data: {
+        ...reordered,
+        tabs: [
+          reordered.tabs[0],
+          { ...reordered.tabs[1], position: directoryGeometry },
+        ],
+      },
+    });
+    expect(await readFile(old.path)).toEqual(old.bytes);
+    expect(await readFile(f.files[0])).toEqual(Buffer.from(revisedText));
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("reset intents are rejected and a new file at the same standalone path does not inherit its predecessor's position", async () => {
+  const f = await fixture();
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  try {
+    const path = join(dirname(f.settingsDir), "outside.md");
+    await writeFile(path, text);
+    const root = await f.openFolderTab(0);
+    const former = await f.openExplicit(path);
+    const priorFingerprint = fileFingerprint(
+      await lstat(path, { bigint: true })
+    );
+    const input = {
+      tabs: [
+        inputTab(root),
+        { ...inputTab(former), viewport: standaloneGeometry },
+      ],
+      activeIndex: 1,
+    };
+    expect(await writer.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    const officialPath = join(f.settingsDir, officialName);
+    const before = await readFile(officialPath);
+    expect(await writer.read()).toMatchObject({
+      status: "valid",
+      source: "mixed",
+      data: { tabs: [{}, { position: standaloneGeometry }] },
+    });
+    expect(
+      await writer.write(
+        {
+          tabs: [input.tabs[0], { ...input.tabs[1], resetViewport: true }],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "rejected", reason: "invalid" });
+    expect(await readFile(officialPath)).toEqual(before);
+
+    await rename(path, `${path}.prior`);
+    await writeFile(path, text);
+    const replacement = await f.openExplicit(path);
+    const currentFingerprint = fileFingerprint(
+      await lstat(path, { bigint: true })
+    );
+    expect(replacement.documentId).not.toBe(former.documentId);
+    expect(replacement.displayPath).toBe(former.displayPath);
+    expect(currentFingerprint).not.toBe(priorFingerprint);
+    expect(
+      await writer.write(
+        { tabs: [inputTab(root), inputTab(replacement)], activeIndex: 1 },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const current = await writer.read();
+    if (current.status !== "valid")
+      throw Error("Missing replacement mixed checkpoint");
+    expect(current.data.tabs[1]).toEqual({
+      kind: "standalone",
+      path,
+      fingerprint: currentFingerprint,
+      pinned: false,
+      mode: "editing",
+    });
+    expect(await readFile(`${officialPath}.bak`)).toEqual(before);
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("changing the directory checkpoint during first mixed publication preserves the newer directory bytes", async () => {
+  const f = await fixture();
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  try {
+    const [root, standalone] = await openMixed(f);
+    const old = await seedPositionedDirectory(f, root);
+    const backupBytes = Buffer.from("directory backup sentinel\n");
+    await writeFile(`${old.path}.bak`, backupBytes);
+    const newer = envelope({
+      schemaVersion: 2,
+      tabs: [{ ...old.row, position: { from: 2, offset: 1, ratio: 0.25 } }],
+      activeIndex: 0,
+    });
+    let observed: Buffer | undefined;
+    const result = await writer.write(
+      { tabs: [inputTab(root), inputTab(standalone)], activeIndex: 1 },
+      () => {
+        if (observed) return true;
+        const staged = readdirSync(f.settingsDir).find(
+          (file) =>
+            file.startsWith(`${officialName}.`) &&
+            !file.startsWith(`${officialName}.bak.`) &&
+            file.endsWith(".tmp")
+        );
+        if (!staged) return true;
+        const prepared = readFileSync(join(f.settingsDir, staged));
+        writeFileSync(old.path, newer);
+        observed = prepared;
+        return true;
+      }
+    );
+    if (!observed)
+      throw Error("No staged first mixed write before directory change");
+    expect(JSON.parse(observed.toString("utf8"))).toMatchObject({
+      data: { tabs: [{ position: old.row.position }, {}] },
+    });
+    expect(result).toEqual({ status: "rejected", reason: "stale" });
+    expect(await readFile(old.path)).toEqual(newer);
+    expect(await readFile(`${old.path}.bak`)).toEqual(backupBytes);
+    expect(
+      (await readdir(f.settingsDir)).filter((file) =>
+        file.startsWith(officialName)
+      )
+    ).toEqual([]);
   } finally {
     await writer.close();
     await f.close();

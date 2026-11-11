@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { DocumentSnapshot } from "../../shared/documents";
 import { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
 import { validRootRosterId } from "../../shared/root-roster";
+import { WORKSPACE_MAX_ROOTS } from "../../shared/workspace";
 import type { TrustedDocumentService } from "../documents";
 import type { TrustedWorkspaceService } from "../workspace";
 
@@ -11,6 +12,8 @@ import {
   createMainTabCheckpointMetadataStore,
 } from "./main-tab-metadata";
 import type { SingleMainTabRecoveryInput } from "./main-tab-single-recovery";
+
+const isArray = (value: unknown): boolean => Array.isArray(value);
 
 type Release = "released" | "unknown";
 export interface MainTabGroupRecoveryDependencies {
@@ -47,7 +50,7 @@ export type MainTabGroupRecoveryResult =
   | { status: "rejected"; reason: "invalid" | "busy" | "stale" | "unavailable" }
   | { status: "unknown"; reason: "io" | "release" };
 
-/** Internal group entry; ordinary window callers retain the exact-two wrapper. */
+/** Single-root group recovery for the ordinary window. */
 export function createMainTabGroupRecoveryReader(
   directory: string,
   dependencies: MainTabGroupRecoveryDependencies
@@ -55,31 +58,91 @@ export function createMainTabGroupRecoveryReader(
   return createMainTabRecoveryReaderCore(directory, dependencies, false);
 }
 
-/** Shared implementation, not a transport or authorization entry. */
+export interface MainTabMultiRootRecoveryInput {
+  requestId: string;
+  roots: readonly {
+    root: string;
+    generation: number;
+    expectedRootId: string;
+  }[];
+}
+
+/** Bun-only; every supplied root must already be authorized in this workspace. */
+export function createMainTabMultiRootRecoveryReader(
+  directory: string,
+  dependencies: MainTabGroupRecoveryDependencies
+) {
+  return createRecoveryGroupCore(directory, dependencies, false, 2);
+}
+
+/** Keeps both existing single-root entry points isolated from multi-root input. */
 export function createMainTabRecoveryReaderCore(
   directory: string,
-  { workspace, roster, documents }: MainTabGroupRecoveryDependencies,
+  dependencies: MainTabGroupRecoveryDependencies,
   exactPair: boolean
+) {
+  const core = createRecoveryGroupCore(directory, dependencies, exactPair, 1);
+  return {
+    read(input: SingleMainTabRecoveryInput, current: () => boolean) {
+      const { requestId, root, generation, expectedRootId } = input;
+      return core.read(
+        { requestId, roots: [{ root, generation, expectedRootId }] },
+        current
+      );
+    },
+    close: () => core.close(),
+  };
+}
+
+function createRecoveryGroupCore(
+  directory: string,
+  { workspace, roster, documents }: MainTabGroupRecoveryDependencies,
+  exactPair: boolean,
+  minimumRoots: 1 | 2
 ) {
   const store = createMainTabCheckpointMetadataStore(directory);
   let running = false;
   let closed = false;
   return {
     async read(
-      input: SingleMainTabRecoveryInput,
+      input: MainTabMultiRootRecoveryInput,
       callerCurrent: () => boolean
     ): Promise<MainTabGroupRecoveryResult> {
-      const { requestId, root, generation, expectedRootId } = input;
+      const { requestId } = input;
       if (
         typeof requestId !== "string" ||
         !requestId.length ||
         requestId.length > 80 ||
-        !validRootRosterId(root) ||
-        !validRootRosterId(expectedRootId) ||
-        !Number.isSafeInteger(generation) ||
-        generation < 1
+        !isArray(input.roots) ||
+        input.roots.length < minimumRoots ||
+        input.roots.length > WORKSPACE_MAX_ROOTS
       )
         return { status: "rejected", reason: "invalid" };
+      // Copy only primitives before the first await; caller mutation cannot retarget a read.
+      const roots: MainTabMultiRootRecoveryInput["roots"][number][] = [];
+      const handles = new Set<string>();
+      const rootIds = new Set<string>();
+      for (const item of input.roots) {
+        if (
+          !item ||
+          typeof item !== "object" ||
+          Array.isArray(item) ||
+          !validRootRosterId(item.root) ||
+          !validRootRosterId(item.expectedRootId) ||
+          !Number.isSafeInteger(item.generation) ||
+          item.generation < 1 ||
+          handles.has(item.root) ||
+          rootIds.has(item.expectedRootId)
+        )
+          return { status: "rejected", reason: "invalid" };
+        handles.add(item.root);
+        rootIds.add(item.expectedRootId);
+        roots.push({
+          root: item.root,
+          generation: item.generation,
+          expectedRootId: item.expectedRootId,
+        });
+      }
       if (running) return { status: "rejected", reason: "busy" };
       running = true;
       let valid = true;
@@ -137,14 +200,42 @@ export function createMainTabRecoveryReaderCore(
       let opening = false;
       try {
         check();
-        const scope = workspace.captureMainTabCandidates(root, generation);
-        if (!scope) return await fail({ status: "rejected", reason: "stale" });
-        guards.push(() => scope.current());
-        const identity = await roster.confirmExpansionIdentity(scope.path);
-        check();
-        if (identity?.id !== expectedRootId)
-          return await fail({ status: "rejected", reason: "unavailable" });
-        guards.push(() => identity.current());
+        const captured = new Map<
+          string,
+          {
+            root: string;
+            generation: number;
+            scope: NonNullable<
+              ReturnType<typeof workspace.captureMainTabCandidates>
+            >;
+          }
+        >();
+        // Capture every participant before asynchronous identity or filesystem checks.
+        for (const item of roots) {
+          const scope = workspace.captureMainTabCandidates(
+            item.root,
+            item.generation
+          );
+          if (!scope)
+            return await fail({ status: "rejected", reason: "stale" });
+          guards.push(() => scope.current());
+          captured.set(item.expectedRootId, {
+            root: item.root,
+            generation: item.generation,
+            scope,
+          });
+        }
+        for (const item of roots) {
+          check();
+          const selected = captured.get(item.expectedRootId)!;
+          const identity = await roster.confirmExpansionIdentity(
+            selected.scope.path
+          );
+          check();
+          if (identity?.id !== item.expectedRootId)
+            return await fail({ status: "rejected", reason: "unavailable" });
+          guards.push(() => identity.current());
+        }
         const observed = await store.readObserved();
         check();
         if (
@@ -154,13 +245,17 @@ export function createMainTabRecoveryReaderCore(
             : observed.data.tabs.length < 2 ||
               observed.data.tabs.length > MAIN_TAB_METADATA_MAX_TABS) ||
           observed.data.activeIndex === null ||
-          observed.data.tabs.some((tab) => tab.rootId !== expectedRootId)
+          observed.data.tabs.some((tab) => !captured.has(tab.rootId)) ||
+          new Set(observed.data.tabs.map((tab) => tab.rootId)).size !==
+            captured.size
         )
           return await fail({ status: "rejected", reason: "unavailable" });
         guards.push(() => observed.current());
         const saved = observed.data.tabs;
         if (
-          new Set(saved.map((tab) => tab.relativePath)).size !== saved.length ||
+          new Set(
+            saved.map((tab) => JSON.stringify([tab.rootId, tab.relativePath]))
+          ).size !== saved.length ||
           new Set(saved.map((tab) => tab.fingerprint)).size !== saved.length
         )
           return await fail({ status: "rejected", reason: "unavailable" });
@@ -181,11 +276,9 @@ export function createMainTabRecoveryReaderCore(
         };
         const entries: string[] = [];
         for (const tab of saved) {
-          const entry = await scope.resolve(
-            tab.relativePath,
-            tab.fingerprint,
-            check
-          );
+          const entry = await captured
+            .get(tab.rootId)!
+            .scope.resolve(tab.relativePath, tab.fingerprint, check);
           check();
           if (!entry || entries.includes(entry))
             return await fail({ status: "rejected", reason: "unavailable" });
@@ -197,8 +290,8 @@ export function createMainTabRecoveryReaderCore(
           const id = randomUUID();
           const response = await workspace.openMainTabCandidate(
             {
-              root,
-              generation,
+              root: captured.get(tab.rootId)!.root,
+              generation: captured.get(tab.rootId)!.generation,
               entry: entries[index],
               fingerprint: tab.fingerprint,
               requestId: id,
@@ -260,7 +353,7 @@ export function createMainTabRecoveryReaderCore(
           sources?.sources.length !== saved.length ||
           sources.sources.some(
             (source, index) =>
-              source.rootHandle !== root ||
+              source.rootHandle !== captured.get(saved[index].rootId)!.root ||
               source.relativePath !== saved[index].relativePath ||
               source.fingerprint !== saved[index].fingerprint
           )

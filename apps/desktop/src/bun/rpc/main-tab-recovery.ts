@@ -24,6 +24,7 @@ interface Slot {
   id: string;
   epoch: number;
   cancelled: boolean;
+  singleAbort: AbortController;
   result?: Ready | Group;
   delivered?: number;
   itemPending?: boolean;
@@ -73,6 +74,7 @@ export function createMainTabRecoveryRPC(
     enabled && !closed && ready && !suspensions && isPackagedMain();
   const release = async (target: Slot): Promise<MainTabRecoveryResponse> => {
     target.cancelled = true;
+    target.singleAbort.abort();
     if (target.quarantined) return response(target.id, "unknown");
     const outcome = target.result
       ? await (target.releasing ??= target.result
@@ -93,6 +95,7 @@ export function createMainTabRecoveryRPC(
     slot = undefined;
     if (old && !old.adopted) {
       old.cancelled = true;
+      old.singleAbort.abort();
       void old.opening.then(() => release(old)).catch(() => undefined);
     }
     const oldReader = reader;
@@ -123,6 +126,7 @@ export function createMainTabRecoveryRPC(
     navigate: retire,
     suspend() {
       suspensions++;
+      if (slot && !slot.adopted) slot.singleAbort.abort();
       epoch++;
       let done = false;
       return () => {
@@ -266,6 +270,7 @@ export function createMainTabRecoveryRPC(
           return target.finishing;
         }
         target.cancelled = true;
+        target.singleAbort.abort();
         target.finishing = (async () => {
           await target.opening;
           const result = await release(target);
@@ -287,6 +292,7 @@ export function createMainTabRecoveryRPC(
         id: requestId,
         epoch,
         cancelled: false,
+        singleAbort: new AbortController(),
         claim: prepareClaim?.(),
         opening: Promise.resolve(response(requestId, "rejected")),
       };
@@ -305,7 +311,11 @@ export function createMainTabRecoveryRPC(
             result = await multiReader.read(input, current);
           } else {
             reader ??= createReader();
-            result = await reader.read(input, current);
+            result = await reader.read(
+              input,
+              current,
+              target.singleAbort.signal
+            );
             if (
               result.status === "rejected" &&
               result.reason === "unavailable" &&

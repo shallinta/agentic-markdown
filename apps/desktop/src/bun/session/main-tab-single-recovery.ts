@@ -1,11 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import type { DocumentResponse, DocumentSnapshot } from "../../shared/documents";
-import type { MainTabCheckpointViewport } from "../../shared/main-tab-checkpoint";
+import type {
+  DocumentResponse,
+  DocumentSnapshot,
+} from "../../shared/documents";
+import {
+  validMainTabCheckpointViewport,
+  type MainTabCheckpointViewport,
+} from "../../shared/main-tab-checkpoint";
 import { validRootRosterId } from "../../shared/root-roster";
 import type { TrustedDocumentService } from "../documents";
 import type { TrustedWorkspaceService } from "../workspace";
 
+import { resolveMainTabBlockAnchor } from "./main-tab-anchor-worker-client";
 import {
   createMainTabCheckpointMetadataStore,
   validMainTabSessionMetadata,
@@ -14,11 +21,23 @@ import {
 } from "./main-tab-metadata";
 
 interface Dependencies {
-  workspace: Pick<TrustedWorkspaceService, "captureMainTabCandidates" | "openMainTabCandidate">;
+  workspace: Pick<
+    TrustedWorkspaceService,
+    "captureMainTabCandidates" | "openMainTabCandidate"
+  >;
   roster: {
-    confirmExpansionIdentity(path: string): Promise<{ id: string; current(): boolean } | undefined>;
+    confirmExpansionIdentity(
+      path: string
+    ): Promise<{ id: string; current(): boolean } | undefined>;
   };
-  documents: Pick<TrustedDocumentService, "release">;
+  documents: Pick<TrustedDocumentService, "release"> &
+    Partial<
+      Pick<
+        TrustedDocumentService,
+        "verifyRecoverySnapshots" | "currentRecoverySnapshot"
+      >
+    >;
+  resolveViewport?: typeof resolveMainTabBlockAnchor;
 }
 
 export interface SingleMainTabRecoveryInput {
@@ -30,35 +49,83 @@ export interface SingleMainTabRecoveryInput {
 
 type RecoveryRelease = "released" | "unknown";
 export type SingleMainTabRecoveryResult =
-  | { status: "ready"; snapshot: DocumentSnapshot; mode: "editing" | "source"; pinned: boolean; viewport?: MainTabCheckpointViewport;
-      verifyDelivery?(): boolean; current(): boolean; release(): Promise<RecoveryRelease>; ownership?: MainTabMetadataObservation }
+  | {
+      status: "ready";
+      snapshot: DocumentSnapshot;
+      mode: "editing" | "source";
+      pinned: boolean;
+      viewport?: MainTabCheckpointViewport;
+      verifyDelivery?(): boolean;
+      current(): boolean;
+      release(): Promise<RecoveryRelease>;
+      ownership?: MainTabMetadataObservation;
+    }
   | { status: "rejected"; reason: "invalid" | "stale" | "unavailable" | "busy" }
   | { status: "unknown"; reason: "io" | "release" };
 
 function singleTab(record: MainTabMetadataRead) {
-  if (record.status === "valid" && validMainTabSessionMetadata(record.data) &&
-      record.data.activeIndex === 0 && record.data.tabs.length === 1) return record.data.tabs[0];
+  if (
+    record.status === "valid" &&
+    validMainTabSessionMetadata(record.data) &&
+    record.data.activeIndex === 0 &&
+    record.data.tabs.length === 1
+  )
+    return record.data.tabs[0];
 }
 
 /** Internal recovery read. A historical path never becomes a file authority. */
-export function createSingleMainTabRecoveryReader(directory: string, { workspace, roster, documents }: Dependencies) {
+export function createSingleMainTabRecoveryReader(
+  directory: string,
+  {
+    workspace,
+    roster,
+    documents,
+    resolveViewport = resolveMainTabBlockAnchor,
+  }: Dependencies
+) {
   const store = createMainTabCheckpointMetadataStore(directory);
   let running = false;
   let closed = false;
+  let pendingResolution: AbortController | undefined;
 
   return {
-    async read(input: SingleMainTabRecoveryInput, callerCurrent: () => boolean): Promise<SingleMainTabRecoveryResult> {
+    async read(
+      input: SingleMainTabRecoveryInput,
+      callerCurrent: () => boolean,
+      signal?: AbortSignal
+    ): Promise<SingleMainTabRecoveryResult> {
       const { requestId, root, generation, expectedRootId } = input;
-      if (typeof requestId !== "string" || !requestId.length || requestId.length > 80 ||
-          !validRootRosterId(root) || !validRootRosterId(expectedRootId) || !Number.isSafeInteger(generation) || generation < 1)
+      if (
+        typeof requestId !== "string" ||
+        !requestId.length ||
+        requestId.length > 80 ||
+        !validRootRosterId(root) ||
+        !validRootRosterId(expectedRootId) ||
+        !Number.isSafeInteger(generation) ||
+        generation < 1
+      )
         return { status: "rejected", reason: "invalid" };
       if (running) return { status: "rejected", reason: "busy" };
+      const resolution = new AbortController();
+      const abort = () => resolution.abort();
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+      pendingResolution = resolution;
       let valid = true;
       let scopeCurrent = () => true;
       let recordCurrent = () => true;
       const current = () => {
-        try { valid = valid && !closed && callerCurrent() === true && scopeCurrent() === true && recordCurrent() === true; }
-        catch { valid = false; }
+        try {
+          valid =
+            valid &&
+            !closed &&
+            !resolution.signal.aborted &&
+            callerCurrent() === true &&
+            scopeCurrent() === true &&
+            recordCurrent() === true;
+        } catch {
+          valid = false;
+        }
         return valid;
       };
       const check = () => {
@@ -74,41 +141,70 @@ export function createSingleMainTabRecoveryReader(directory: string, { workspace
         check();
         const identity = await roster.confirmExpansionIdentity(captured.path);
         check();
-        if (identity?.id !== expectedRootId) return { status: "rejected", reason: "unavailable" };
-        scopeCurrent = () => captured.current() === true && identity.current() === true;
+        if (identity?.id !== expectedRootId)
+          return { status: "rejected", reason: "unavailable" };
+        scopeCurrent = () =>
+          captured.current() === true && identity.current() === true;
         check();
         const observed = await store.readObserved();
         check();
-        if (observed.status === "stale") return { status: "rejected", reason: "stale" };
+        if (observed.status === "stale")
+          return { status: "rejected", reason: "stale" };
         const saved = singleTab(observed);
-        if (observed.status !== "valid" || saved?.rootId !== identity.id) return { status: "rejected", reason: "unavailable" };
+        if (observed.status !== "valid" || saved?.rootId !== identity.id)
+          return { status: "rejected", reason: "unavailable" };
         recordCurrent = () => observed.current();
         check();
         const { relativePath, fingerprint, mode, pinned } = saved;
+        const position = observed.positioned?.tabs[0].position;
         const entry = await captured.resolve(relativePath, fingerprint, check);
         check();
         if (!entry) return { status: "rejected", reason: "unavailable" };
 
         opening = true;
-        const response = await workspace.openMainTabCandidate({ root, generation, entry, fingerprint, requestId }, {
-          check,
-          async verify(openCurrent) {
-            openCurrent();
-            const verified = await store.readObserved();
-            const latest = singleTab(verified);
-            if (verified.status !== "valid" || latest?.rootId !== expectedRootId || latest.relativePath !== relativePath ||
-                latest.fingerprint !== fingerprint || latest.mode !== mode || latest.pinned !== pinned ||
-                ((observed.positioned || verified.positioned) && !store.sameObservation(observed, verified))) valid = false;
-            else recordCurrent = () => observed.current() && verified.current();
-            openCurrent();
-          },
-        });
+        const response = await workspace.openMainTabCandidate(
+          { root, generation, entry, fingerprint, requestId },
+          {
+            ...(position?.block ? { retainRecoveryStamp: true } : {}),
+            check,
+            async verify(openCurrent) {
+              openCurrent();
+              const verified = await store.readObserved();
+              const latest = singleTab(verified);
+              if (
+                verified.status !== "valid" ||
+                latest?.rootId !== expectedRootId ||
+                latest.relativePath !== relativePath ||
+                latest.fingerprint !== fingerprint ||
+                latest.mode !== mode ||
+                latest.pinned !== pinned ||
+                ((observed.positioned || verified.positioned) &&
+                  !store.sameObservation(observed, verified))
+              )
+                valid = false;
+              else
+                recordCurrent = () => observed.current() && verified.current();
+              openCurrent();
+            },
+          }
+        );
         if (response.protocolVersion !== 1 || response.requestId !== requestId)
           return { status: "unknown", reason: "io" };
-        if (!response.ok) return { status: "rejected", reason: !current() ? "stale" :
-          response.error === "BUSY" ? "busy" : "unavailable" };
+        if (!response.ok)
+          return {
+            status: "rejected",
+            reason: !current()
+              ? "stale"
+              : response.error === "BUSY"
+                ? "busy"
+                : "unavailable",
+          };
         const snapshot = response.snapshot;
-        if (!snapshot || !validRootRosterId(snapshot.handle) || snapshot.explicitStandalone !== false)
+        if (
+          !snapshot ||
+          !validRootRosterId(snapshot.handle) ||
+          snapshot.explicitStandalone !== false
+        )
           return { status: "unknown", reason: "io" };
 
         // This guarded path only returns a newly created grant for this request.
@@ -120,42 +216,113 @@ export function createSingleMainTabRecoveryReader(directory: string, { workspace
           return releasing;
         };
         if (observed.positioned && !store.exactCurrent(observed)) valid = false;
-        if (!current()) return await release() === "released"
-          ? { status: "rejected", reason: "stale" }
-          : { status: "unknown", reason: "release" };
-        const position = observed.positioned?.tabs[0].position;
-        const viewport = position ? { from: position.from, offset: position.offset, ratio: position.ratio } : undefined;
+        if (!current())
+          return (await release()) === "released"
+            ? { status: "rejected", reason: "stale" }
+            : { status: "unknown", reason: "release" };
+        let viewport = position
+          ? {
+              from: position.from,
+              offset: position.offset,
+              ratio: position.ratio,
+            }
+          : undefined;
+        const changedBlock =
+          !!position?.block && position.block.contentHash !== snapshot.hash;
+        const physicalCurrent = () => {
+          try {
+            return (
+              !changedBlock ||
+              documents.currentRecoverySnapshot?.(snapshot, requestId) === true
+            );
+          } catch {
+            return false;
+          }
+        };
+        if (changedBlock && position) {
+          try {
+            const resolved = await resolveViewport(
+              snapshot.text,
+              position,
+              resolution.signal
+            );
+            if (validMainTabCheckpointViewport(resolved)) viewport = resolved;
+          } catch {
+            /* Optional resolution failure preserves the saved source geometry. */
+          }
+          try {
+            if (
+              !current() ||
+              !physicalCurrent() ||
+              !(await documents.verifyRecoverySnapshots?.([snapshot], check))
+            )
+              valid = false;
+          } catch {
+            valid = false;
+          }
+          if (!physicalCurrent() || !store.exactCurrent(observed))
+            valid = false;
+          if (!current())
+            return (await release()) === "released"
+              ? { status: "rejected", reason: "stale" }
+              : { status: "unknown", reason: "release" };
+        }
         return {
-          status: "ready", snapshot, mode, pinned, current, release,
+          status: "ready",
+          snapshot,
+          mode,
+          pinned,
+          current,
+          release,
           ownership: observed,
-          ...(observed.positioned ? {
-            verifyDelivery() {
-              valid = current() && store.exactCurrent(observed);
-              return valid;
-            },
-          } : {}),
+          ...(observed.positioned
+            ? {
+                verifyDelivery() {
+                  valid =
+                    current() &&
+                    physicalCurrent() &&
+                    store.exactCurrent(observed);
+                  return valid;
+                },
+              }
+            : {}),
           ...(viewport ? { viewport } : {}),
         };
       } catch {
-        return opening ? { status: "unknown", reason: "io" }
+        return opening
+          ? { status: "unknown", reason: "io" }
           : { status: "rejected", reason: current() ? "unavailable" : "stale" };
       } finally {
+        signal?.removeEventListener("abort", abort);
+        pendingResolution = undefined;
         running = false;
       }
     },
     async close() {
       closed = true;
+      pendingResolution?.abort();
       await store.close();
     },
   };
 }
 
-async function releaseGrant(documents: Dependencies["documents"], handle: string): Promise<RecoveryRelease> {
+async function releaseGrant(
+  documents: Dependencies["documents"],
+  handle: string
+): Promise<RecoveryRelease> {
   const requestId = randomUUID();
   try {
-    const released: DocumentResponse = await documents.release({ protocolVersion: 1, requestId, handle });
-    return released.protocolVersion === 1 && released.requestId === requestId && released.ok && released.snapshot === null
-      ? "released" : "unknown";
+    const released: DocumentResponse = await documents.release({
+      protocolVersion: 1,
+      requestId,
+      handle,
+    });
+    return released.protocolVersion === 1 &&
+      released.requestId === requestId &&
+      released.ok &&
+      released.snapshot === null
+      ? "released"
+      : "unknown";
   } catch {
     return "unknown";
   }

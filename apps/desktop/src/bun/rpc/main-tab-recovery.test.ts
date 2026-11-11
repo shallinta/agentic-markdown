@@ -330,3 +330,40 @@ test("single recovery transport preserves optional geometry and validates its ex
   await f.rpc.request(finish(input.requestId, false));
   f.rpc.dispose();
 });
+
+test("cancel, navigation and suspension abort the held single-reader operation", async () => {
+  for (const action of ["cancel", "navigate", "suspend"] as const) {
+    let aborted = false;
+    const rpc = createMainTabRecoveryRPC(
+      true,
+      () => true,
+      () => ({
+        read(_input, _current, signal) {
+          return new Promise((resolve) => {
+            signal!.addEventListener(
+              "abort",
+              () => {
+                aborted = true;
+                resolve({ status: "rejected", reason: "stale" });
+              },
+              { once: true }
+            );
+          });
+        },
+        close: () => Promise.resolve(),
+      })
+    );
+    rpc.ready(ready);
+    const input = open(),
+      opening = rpc.request(input);
+    if (action === "cancel")
+      expect((await rpc.request(finish(input.requestId, false))).status).toBe(
+        "finished"
+      );
+    if (action === "navigate") rpc.navigate();
+    if (action === "suspend") rpc.suspend()();
+    expect(aborted).toBe(true);
+    expect((await opening).status).toBe("rejected");
+    rpc.dispose();
+  }
+});

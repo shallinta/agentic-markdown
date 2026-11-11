@@ -1,19 +1,33 @@
 import { validMainTabCheckpointViewport } from "../../shared/main-tab-checkpoint";
 
-import { encodeMainTabPosition } from "./main-tab-position-codec";
+import { decodeMainTabPosition, encodeMainTabPosition } from "./main-tab-position-codec";
 import { createMarkdownBlockAnchorProbe } from "./markdown-block-anchor-probe";
 
 self.onmessage = (event: MessageEvent<unknown>) => {
   self.onmessage = null;
-  const input = event.data;
-  if (!input || typeof input !== "object" || !("raw" in input) ||
-    !("viewport" in input) || typeof input.raw !== "string" ||
-    !validMainTabCheckpointViewport(input.viewport)) {
-    self.postMessage(undefined);
-    return;
-  }
-  const probe = createMarkdownBlockAnchorProbe(input.raw);
-  const position = probe.status === "ready" ? probe.capturePosition(input.viewport) : undefined;
-  const stored = position?.anchor && encodeMainTabPosition(position);
-  self.postMessage(stored);
+  self.postMessage(handleAnchorRequest(event.data));
 };
+
+function handleAnchorRequest(input: unknown) {
+  if (!input || typeof input !== "object" || !("raw" in input) ||
+      typeof input.raw !== "string" || Object.keys(input).length !== 2) return;
+  if ("viewport" in input && validMainTabCheckpointViewport(input.viewport)) {
+    const probe = createMarkdownBlockAnchorProbe(input.raw);
+    if (probe.status !== "ready") return;
+    const position = probe.capturePosition(input.viewport);
+    if (position?.anchor) return encodeMainTabPosition(position);
+  } else if ("position" in input) {
+    const receipt = decodeMainTabPosition(input.position);
+    if (!receipt?.anchor) return;
+    const probe = createMarkdownBlockAnchorProbe(input.raw);
+    if (probe.status !== "ready") return;
+    const resolved = probe.resolvePosition(receipt);
+    if (resolved.status === "block" || resolved.status === "neighbor") {
+      return {
+        from: resolved.from,
+        offset: resolved.status === "block" ? resolved.offset ?? 0 : 0,
+        ratio: receipt.ratio,
+      };
+    }
+  }
+}

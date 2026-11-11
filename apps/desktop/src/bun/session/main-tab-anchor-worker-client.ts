@@ -2,7 +2,10 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { MAX_DOCUMENT_BYTES } from "../../shared/documents";
-import type { MainTabCheckpointViewport } from "../../shared/main-tab-checkpoint";
+import {
+  validMainTabCheckpointViewport,
+  type MainTabCheckpointViewport,
+} from "../../shared/main-tab-checkpoint";
 
 import {
   copyStoredMainTabPosition,
@@ -21,12 +24,18 @@ export function resolveMainTabAnchorWorkerEntry(moduleDirectory: string) {
     : join(moduleDirectory, "../native/main-tab-anchor-worker.js");
 }
 
-/** Bound parsing across checkpoint writers, including a writer retiring on navigation. */
-export function captureMainTabBlockAnchor(
-  raw: string,
-  viewport: MainTabCheckpointViewport,
+type AnchorWorkerRequest = { raw: string } & (
+  | { viewport: MainTabCheckpointViewport }
+  | { position: StoredMainTabPosition }
+);
+
+/** Bound the work shared by saving and restoring positions in all window lifetimes. */
+function runAnchorWorker<T>(
+  request: AnchorWorkerRequest,
+  parseResponse: (value: unknown) => T | undefined,
   signal?: AbortSignal
-): Promise<StoredMainTabPosition | undefined> {
+): Promise<T | undefined> {
+  const { raw } = request;
   if (
     anchorInFlight ||
     signal?.aborted ||
@@ -46,7 +55,7 @@ export function captureMainTabBlockAnchor(
     }
     anchorInFlight = true;
     let settled = false;
-    const finish = (value?: StoredMainTabPosition) => {
+    const finish = (value?: T) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -61,11 +70,31 @@ export function captureMainTabBlockAnchor(
     const abandon = () => finish();
     const timer = setTimeout(abandon, 5_000);
     worker.onmessage = (event: MessageEvent<unknown>) =>
-      finish(signal?.aborted ? undefined : copyStoredMainTabPosition(event.data));
+      finish(signal?.aborted ? undefined : parseResponse(event.data));
     worker.onerror = (event) => { event.preventDefault(); abandon(); };
     worker.onmessageerror = abandon;
     signal?.addEventListener("abort", abandon, { once: true });
     if (signal?.aborted) { abandon(); return; }
-    try { worker.postMessage({ raw, viewport }); } catch { abandon(); }
+    try { worker.postMessage(request); } catch { abandon(); }
   });
+}
+
+export function captureMainTabBlockAnchor(
+  raw: string,
+  viewport: MainTabCheckpointViewport,
+  signal?: AbortSignal
+) {
+  return runAnchorWorker({ raw, viewport }, copyStoredMainTabPosition, signal);
+}
+
+export function resolveMainTabBlockAnchor(
+  raw: string,
+  position: StoredMainTabPosition,
+  signal?: AbortSignal
+) {
+  return runAnchorWorker(
+    { raw, position },
+    (value) => validMainTabCheckpointViewport(value) ? value : undefined,
+    signal
+  );
 }

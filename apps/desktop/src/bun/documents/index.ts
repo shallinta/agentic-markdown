@@ -135,6 +135,8 @@ export interface TrustedDocumentService extends DocumentService {
   /** Internal recovery snapshots only; stat/identity revalidation, not a second body read. */
   ownsRecoverySnapshot(snapshot: DocumentSnapshot, requestId: string): boolean;
   verifyRecoverySnapshots(snapshots: readonly DocumentSnapshot[], check: () => void): Promise<boolean>;
+  /** Final same-tick check after asynchronous verification and before delivery. */
+  currentRecoverySnapshot(snapshot: DocumentSnapshot, requestId: string): boolean;
   /** Existing observed grant only. The receipt checks logical ownership after capture. */
   captureReadingSnapshot(
     source: ReadingSnapshotSource,
@@ -348,7 +350,7 @@ export function createDocumentService({
     })();
   };
   const grants = new Map<string, Grant>();
-  const recoveryStamps = new WeakMap<DocumentSnapshot, { stamp: BigIntStats; grant: Grant; requestId: string }>();
+  const recoveryStamps = new WeakMap<DocumentSnapshot, { stamp: BigIntStats; grant: Grant; scope: DocumentScope | undefined; requestId: string }>();
   let trashGuard: (path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]) => boolean = () => false;
   const observations = new Map<string, ObservationBinding & { last?: string }>();
   const observationEpochs = new Map<string, { epoch: number; token: string; active: boolean }>();
@@ -1065,7 +1067,7 @@ export function createDocumentService({
       return !!proof && proof.requestId === requestId && grants.get(value.handle) === proof.grant;
     },
     async verifyRecoverySnapshots(snapshots, check) {
-      if (snapshots.length < 2 || snapshots.length > MAIN_TAB_METADATA_MAX_TABS) return false;
+      if (snapshots.length < 1 || snapshots.length > MAIN_TAB_METADATA_MAX_TABS) return false;
       const bindings = service.captureContentSearchBindings(snapshots.map(value => value.handle));
       if (!bindings) return false;
       const verifyCurrent = () => {
@@ -1099,6 +1101,19 @@ export function createDocumentService({
         }
         verifyCurrent();
         return true;
+      } catch { return false; }
+    },
+    currentRecoverySnapshot(value, requestId) {
+      try {
+        const proof = recoveryStamps.get(value);
+        if (proof?.requestId !== requestId || !searchIdle()) return false;
+        const { grant, scope, stamp } = proof;
+        const identity = identities.get(grant.identityKey);
+        return grants.get(value.handle) === grant && !!scope && grant.scope === scope &&
+          grant.explicitStandalone === false && identity?.documentId === value.documentId &&
+          identity.revision === value.revision && identity.hash === value.hash &&
+          !uncertain.has(value.documentId) && !trashGuard(grant.path, grant.fingerprint, grant.directories) &&
+          sameReadingStamp(stamp, lstatSync(grant.path, { bigint: true }));
       } catch { return false; }
     },
     async captureReadingSnapshot(source, callerCurrent = () => true, options) {
@@ -1698,7 +1713,9 @@ export function createDocumentService({
           }
           commit(candidate, next, task, generation);
           grants.set(candidate.handle, candidate);
-          if (recoveryStamp) recoveryStamps.set(next, { stamp: recoveryStamp, grant: candidate, requestId: request.requestId });
+          if (recoveryStamp) recoveryStamps.set(next, {
+            stamp: recoveryStamp, grant: candidate, scope: candidate.scope, requestId: request.requestId,
+          });
           if (candidate.explicitStandalone) scope.release?.();
           watchGrant(candidate);
           return result(request.requestId, next);

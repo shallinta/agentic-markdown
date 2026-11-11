@@ -5,6 +5,7 @@ import { MAX_DOCUMENT_BYTES } from "../../shared/documents";
 
 import {
   captureMainTabBlockAnchor,
+  resolveMainTabBlockAnchor,
   resolveMainTabAnchorWorkerEntry,
 } from "./main-tab-anchor-worker-client";
 
@@ -43,4 +44,25 @@ test("an aborted anchor worker does not publish and releases the single slot", a
   abort.abort();
   expect(await result).toBeUndefined();
   expect((await captureMainTabBlockAnchor("# Heading", viewport))?.block).toBeDefined();
+});
+
+test("anchor worker projects moved blocks or a unique neighbor to the three viewport fields", async () => {
+  const raw = "\uFEFF前段 😀\r\n\r\n## 目标\r\n\r\n后段";
+  const viewport = { from: raw.indexOf("##"), offset: -8.5, ratio: 0.5 };
+  const position = await captureMainTabBlockAnchor(raw, viewport);
+  if (!position?.block) throw Error("expected saved anchor");
+  const prefix = "# 前插\r\n\r\n";
+  const prefixed = raw[0] + prefix + raw.slice(1);
+  expect(await resolveMainTabBlockAnchor(prefixed, position)).toEqual({
+    ...viewport,
+    from: viewport.from + prefix.length,
+  });
+  const removed = prefixed.replace("## 目标\r\n\r\n", "");
+  expect(await resolveMainTabBlockAnchor(removed, position)).toEqual({
+    from: removed.indexOf("后段"),
+    offset: 0,
+    ratio: viewport.ratio,
+  });
+  expect(await resolveMainTabBlockAnchor("## 目标\n\n## 目标", position)).toBeUndefined();
+  expect(await resolveMainTabBlockAnchor("短", position)).toBeUndefined();
 });

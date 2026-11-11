@@ -56,7 +56,7 @@ alpha.341 支持恢复横跨多个目录的标签。从「待重新授权的目�
 
 在已保存的目录文档中滚动后切换标签，主窗口会记录位置。其余标签都已保存时，关闭一篇会移除该标签的会话记录。自 alpha.349 起，重启后重新授权目录，首次显示恢复的标签时会回到保存位置。原源码坐标不可用时，按原滚动比例定位。键盘或滚轮主动移动后再切换标签，可记录新位置。见[F-037y 迭代](iterations/F-037y-main-window-viewport-checkpoint.md)、[F-037z 迭代](iterations/F-037z-restore-main-window-viewport.md)。
 
-alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。当前重启仍按源码坐标或滚动比例定位，正文变化后按内容块重新定位由后续迭代接入。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)。
+alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。alpha.352 起，重新授权后恢复单篇主区文档时，即使在原位置前插入了内容，也能回到仍可辨认的原段落。原段落已删除时，优先定位到可辨认的邻近块，再按源码坐标和滚动比例回退。成组标签仍按源码坐标和比例恢复。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)、[F-037ab 迭代](iterations/F-037ab-restore-single-tab-by-markdown-block.md)。
 
 ## 主窗原生全屏（F-038a）
 

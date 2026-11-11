@@ -66,6 +66,8 @@ alpha.359 已回归旧目录的标签恢复。混合会话的写入保护仍在�
 
 alpha.360 在替换目录会话记录前复核磁盘内容。终检发现记录已变化时，本次写入会放弃。见[F-037aj 迭代](iterations/F-037aj-guard-directory-checkpoint-writers.md)。
 
+alpha.361 已回归读取旧版更新的目录会话。混合会话的优先读取及旧版共存已完成隔离验证，普通窗口的混合保存和恢复仍在开发。见[F-037ak 迭代](iterations/F-037ak-mixed-checkpoint-coexistence.md)。
+
 alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。重新授权并恢复主区文档时，即使在原位置前插入了内容，也能回到仍可辨认的原段落。原段落已删除时，优先定位到可辨认的邻近块，再按源码坐标和滚动比例回退。alpha.352 支持单篇恢复，alpha.353 扩展到成组标签。若组内有多篇正文变化，优先处理原活动标签，共用计算时限用完后，其余标签按源码坐标或比例恢复。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)、[F-037ab 迭代](iterations/F-037ab-restore-single-tab-by-markdown-block.md)、[F-037ac 迭代](iterations/F-037ac-restore-group-tabs-by-markdown-block.md)。
 
 ## 主窗原生全屏（F-038a）

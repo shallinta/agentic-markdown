@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import type { DocumentSnapshot } from "../../shared/documents";
-import { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
+import {
+  type MainTabCheckpointViewport,
+  MAIN_TAB_METADATA_MAX_TABS,
+} from "../../shared/main-tab-checkpoint";
 import { validRootRosterId } from "../../shared/root-roster";
 import { WORKSPACE_MAX_ROOTS } from "../../shared/workspace";
 import type { TrustedDocumentService } from "../documents";
@@ -40,10 +43,12 @@ export type MainTabGroupRecoveryResult =
         snapshot: DocumentSnapshot;
         mode: "editing" | "source";
         pinned: boolean;
+        viewport?: MainTabCheckpointViewport;
       }[];
       activeIndex: number;
       ownership: MainTabMetadataObservation;
       revalidate(): Promise<boolean>;
+      verifyDelivery?(): boolean;
       current(): boolean;
       release(): Promise<Release>;
     }
@@ -381,14 +386,34 @@ function createRecoveryGroupCore(
         };
         return {
           status: "ready",
-          tabs: owned.map((snapshot, index) => ({
-            snapshot,
-            mode: saved[index].mode,
-            pinned: saved[index].pinned,
-          })),
+          tabs: owned.map((snapshot, index) => {
+            const position = observed.positioned?.tabs[index].position;
+            return {
+              snapshot,
+              mode: saved[index].mode,
+              pinned: saved[index].pinned,
+              ...(position
+                ? {
+                    viewport: {
+                      from: position.from,
+                      offset: position.offset,
+                      ratio: position.ratio,
+                    },
+                  }
+                : {}),
+            };
+          }),
           activeIndex: observed.data.activeIndex,
           current: resultCurrent,
           ownership: observed,
+          ...(observed.positioned
+            ? {
+                verifyDelivery() {
+                  valid = resultCurrent() && store.exactCurrent(observed);
+                  return valid;
+                },
+              }
+            : {}),
           async revalidate() {
             try {
               if (!resultCurrent()) return false;

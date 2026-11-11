@@ -31,6 +31,7 @@ import {
   createDocumentController,
   CLEAN_PRIMARY_TAB_CAPTURE_LIMIT,
   isDocumentResponse,
+  recoveredViewportEditorOffset,
   type DocumentTransport,
   type PrimaryTabLastClose,
 } from "./documents";
@@ -345,6 +346,7 @@ test("pending folder recovery waits for the same scan and publishes saved mode a
     expect(observed[0]).toEqual({ mode: "source", pinned: true });
     expect(controller.getSnapshot().snapshot).toEqual(saved);
     expect(controller.getEditor(saved.documentId)?.state.field(rawText)).toBe(saved.text);
+    expect(controller.registerViewportCapture(saved.documentId, () => undefined).recover()).toBeUndefined();
     expect(activations).toEqual([]);
     expect(layoutChanges).toEqual([]);
     expect(fixture.released).toEqual([]);
@@ -355,6 +357,56 @@ test("pending folder recovery waits for the same scan and publishes saved mode a
     expect(controller.finishRecentTabSwitch()).toBe(true);
     expect(controller.getSnapshot().snapshot?.documentId).toBe(saved.documentId);
   } finally { fixture.dispose(); }
+});
+
+test("single recovery delivers a position to one live view without recording the automatic scroll as user movement", async () => {
+  const f = recoveryFixture();
+  const { controller, saved } = f;
+  const position = { from: 2, offset: -4, ratio: 0.5 };
+  const viewport = () => {
+    const captured = controller.captureCleanPrimaryTabs(true);
+    return captured.ok ? captured.tabs[0].viewport : undefined;
+  };
+  try {
+    const restoring = f.recovery.reselect(f.expectedRootId);
+    const { requestId } = await f.entered.promise;
+    f.reply.resolve({ protocolVersion: 1, requestId, status: "ready", snapshot: saved, mode: "source", pinned: true, viewport: position });
+    await restoring;
+    const id = saved.documentId;
+    const expected = controller.getEditor(id)!.state;
+    const stale = controller.registerViewportCapture(id, () => undefined);
+    const staleRestore = stale.recover()!;
+    const owner = controller.registerViewportCapture(id, () => ({ ...position, revision: 0 }));
+    const restore = owner.recover()!;
+    const scroll = controller.registerEditorScroll(id, () => undefined);
+    stale.release();
+    expect(staleRestore.consume(expected)).toBe(false);
+    expect(restore.position).toEqual(position);
+    expect(restore.position).not.toBe(position);
+    expect(scroll.requiresUserMovement).toBe(true);
+    scroll.savePosition(expected, 200);
+    owner.capture();
+    expect(viewport()).toBeUndefined();
+    expect(restore.consume(expected)).toBe(true);
+    expect(owner.recover()).toBeUndefined();
+    scroll.savePosition(expected, 200);
+    owner.capture();
+    expect(viewport()).toBeUndefined();
+    scroll.savePosition(expected, 207);
+    owner.capture();
+    expect(viewport()).toBeUndefined();
+    expect(controller.getScrollPosition(id)).toBe(207);
+    scroll.savePosition(expected, 0, true);
+    owner.capture();
+    expect(viewport()).toEqual(position);
+  } finally { f.dispose(); }
+});
+
+test("recovery source offsets retain BOM and map CRLF without splitting line separators or surrogate pairs", () => {
+  const raw = "\uFEFFa\r\n😀z";
+  expect([0, 1, 2, 4, 6, 7].map(from => recoveredViewportEditorOffset(raw, from))).toEqual([0, 1, 2, 3, 5, 6]);
+  for (const from of [-1, 0.5, 3, 5, 8, 1024 * 1024])
+    expect(recoveredViewportEditorOffset(raw, from)).toBeUndefined();
 });
 
 test("competing document open rejects a late recovery and releases through the recovery receipt only", async () => {
@@ -752,6 +804,40 @@ function groupRecoveryFixture(count = 2) {
   };
   return { ...f, tabs, begin, replyItem, asked, acknowledgement };
 }
+
+test("group positions wait for their own active view and cannot cross a close or editor reload", async () => {
+  const f = groupRecoveryFixture();
+  const { controller } = f;
+  const [first, second] = f.tabs;
+  const firstViewport = { from: 1024 * 1024, offset: -4.5, ratio: 0.8 };
+  const secondViewport = { from: 1, offset: 4, ratio: 0.2 };
+  try {
+    const { restoring, requestId } = await f.begin();
+    await f.replyItem(0, { viewport: firstViewport });
+    await f.replyItem(1, { viewport: secondViewport });
+    expect(await f.finished.promise).toBe(true);
+    f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "finished" });
+    await restoring;
+    const firstView = controller.registerViewportCapture(first.documentId, () => undefined);
+    const secondView = controller.registerViewportCapture(second.documentId, () => undefined);
+    expect(firstView.recover()).toBeUndefined();
+    const secondRestore = secondView.recover()!;
+    expect(secondRestore.position).toEqual(secondViewport);
+    controller.activateTab(first.documentId);
+    expect(controller.getSnapshot().snapshot?.documentId).toBe(first.documentId);
+    expect(secondRestore.consume(controller.getEditor(second.documentId)!.state)).toBe(false);
+    const firstRestore = firstView.recover()!;
+    expect(firstRestore.position).toEqual(firstViewport);
+    await controller.closeTab(second.documentId);
+    expect(secondView.recover()).toBeUndefined();
+    expect(secondRestore.consume(controller.getEditor(first.documentId)!.state)).toBe(false);
+    const oldFirstEditor = controller.getEditor(first.documentId)!.state;
+    f.transport.readDocument = request => Promise.resolve(result(request, first));
+    await controller.reload();
+    expect(firstRestore.consume(oldFirstEditor)).toBe(false);
+    expect(controller.registerViewportCapture(first.documentId, () => undefined).recover()).toBeUndefined();
+  } finally { f.dispose(); }
+});
 
 test("recovery publishes two ordered tabs together, initializes only the active parser, and seeds local switching", async () => {
   const f = groupRecoveryFixture();

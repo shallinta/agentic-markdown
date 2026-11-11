@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { DocumentResponse, DocumentSnapshot } from "../../shared/documents";
+import type { MainTabCheckpointViewport } from "../../shared/main-tab-checkpoint";
 import { validRootRosterId } from "../../shared/root-roster";
 import type { TrustedDocumentService } from "../documents";
 import type { TrustedWorkspaceService } from "../workspace";
@@ -29,8 +30,8 @@ export interface SingleMainTabRecoveryInput {
 
 type RecoveryRelease = "released" | "unknown";
 export type SingleMainTabRecoveryResult =
-  | { status: "ready"; snapshot: DocumentSnapshot; mode: "editing" | "source"; pinned: boolean;
-      current(): boolean; release(): Promise<RecoveryRelease>; ownership?: MainTabMetadataObservation }
+  | { status: "ready"; snapshot: DocumentSnapshot; mode: "editing" | "source"; pinned: boolean; viewport?: MainTabCheckpointViewport;
+      verifyDelivery?(): boolean; current(): boolean; release(): Promise<RecoveryRelease>; ownership?: MainTabMetadataObservation }
   | { status: "rejected"; reason: "invalid" | "stale" | "unavailable" | "busy" }
   | { status: "unknown"; reason: "io" | "release" };
 
@@ -122,7 +123,19 @@ export function createSingleMainTabRecoveryReader(directory: string, { workspace
         if (!current()) return await release() === "released"
           ? { status: "rejected", reason: "stale" }
           : { status: "unknown", reason: "release" };
-        return { status: "ready", snapshot, mode, pinned, current, release, ownership: observed };
+        const position = observed.positioned?.tabs[0].position;
+        const viewport = position ? { from: position.from, offset: position.offset, ratio: position.ratio } : undefined;
+        return {
+          status: "ready", snapshot, mode, pinned, current, release,
+          ownership: observed,
+          ...(observed.positioned ? {
+            verifyDelivery() {
+              valid = current() && store.exactCurrent(observed);
+              return valid;
+            },
+          } : {}),
+          ...(viewport ? { viewport } : {}),
+        };
       } catch {
         return opening ? { status: "unknown", reason: "io" }
           : { status: "rejected", reason: current() ? "unavailable" : "stale" };

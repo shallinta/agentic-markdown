@@ -1,6 +1,10 @@
 import { isDocumentSnapshot } from "./document-snapshot";
 import type { DocumentSnapshot } from "./documents";
-import { MAIN_TAB_METADATA_MAX_TABS } from "./main-tab-checkpoint";
+import {
+  MAIN_TAB_METADATA_MAX_TABS,
+  validMainTabCheckpointViewport,
+  type MainTabCheckpointViewport,
+} from "./main-tab-checkpoint";
 import { validRootRosterId } from "./root-roster";
 import { WORKSPACE_MAX_ROOTS } from "./workspace";
 
@@ -29,6 +33,7 @@ export type MainTabRecoveryResponse = {
       snapshot: DocumentSnapshot;
       mode: "editing" | "source";
       pinned: boolean;
+      viewport?: MainTabCheckpointViewport;
     }
   | { status: "group"; count: number; activeIndex: number }
   | {
@@ -37,6 +42,7 @@ export type MainTabRecoveryResponse = {
       snapshot: DocumentSnapshot;
       mode: "editing" | "source";
       pinned: boolean;
+      viewport?: MainTabCheckpointViewport;
     }
   | { status: "finished" | "rejected" | "unknown" }
 );
@@ -126,7 +132,12 @@ export function validMainTabRecoveryResponse(
       Object.keys(v).sort().join() ===
         (v.status === "ready"
           ? "mode,pinned,protocolVersion,requestId,snapshot,status"
-          : "index,mode,pinned,protocolVersion,requestId,snapshot,status") &&
+          : "index,mode,pinned,protocolVersion,requestId,snapshot,status") +
+          (Object.prototype.hasOwnProperty.call(v, "viewport")
+            ? ",viewport"
+            : "") &&
+      (!Object.prototype.hasOwnProperty.call(v, "viewport") ||
+        validMainTabCheckpointViewport(v.viewport)) &&
       (v.status === "ready" ||
         (Number.isSafeInteger(v.index) &&
           Number(v.index) >= 0 &&

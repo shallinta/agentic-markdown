@@ -165,6 +165,7 @@ export function createMainTabRecoveryRPC(
           if (
             !valid ||
             !result.current() ||
+            (input.index === result.tabs.length - 1 && result.verifyDelivery && !result.verifyDelivery()) ||
             slot !== target ||
             target.cancelled ||
             target.finishing ||
@@ -323,7 +324,11 @@ export function createMainTabRecoveryRPC(
             );
           }
           target.result = result;
-          if (!current() || !result.current()) {
+          if (
+            !current() ||
+            !result.current() ||
+            (!("tabs" in result) && result.verifyDelivery && !result.verifyDelivery())
+          ) {
             const freed = await release(target);
             if (freed.status === "finished") settleClean(target);
             return response(
@@ -346,6 +351,7 @@ export function createMainTabRecoveryRPC(
             snapshot: result.snapshot,
             mode: result.mode,
             pinned: result.pinned,
+            ...(result.viewport ? { viewport: result.viewport } : {}),
           };
         } catch {
           target.quarantined = true;

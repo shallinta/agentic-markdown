@@ -139,7 +139,7 @@ export function createMainTabRecovery(
       if (reply.status === "ready" && !multi) {
         gathered.adoptingSingle = true;
         adopted = await documents.adoptRecoveredPrimaryTab(reply.snapshot, reply.mode, reply.pinned, current,
-          () => registerAdoption([reply.snapshot]));
+          () => registerAdoption([reply.snapshot]), reply.viewport);
       } else if (reply.status === "group") {
         adopted = await documents.adoptRecoveredPrimaryGroup(reply.count, reply.activeIndex, groupItem,
           () => !finishing && current(), registerAdoption);

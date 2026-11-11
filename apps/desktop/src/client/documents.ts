@@ -21,7 +21,7 @@ import {
   type SaveDocumentRequest,
 } from "../shared/documents";
 import type { FolderRemovalPublication, FolderRemovalDocument } from "../shared/folder-removal";
-import { validMainTabCheckpointViewport, type MainTabCheckpointSourceInput } from "../shared/main-tab-checkpoint";
+import { validMainTabCheckpointViewport, type MainTabCheckpointSourceInput, type MainTabCheckpointViewport } from "../shared/main-tab-checkpoint";
 import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
 import type { BufferReadingSnapshotSource, ReadingSnapshotSource } from "../shared/rpc";
 import { validRemovalResponse, type RemovalRequest, type RemovalOperation } from "../shared/standalone-removal";
@@ -56,7 +56,7 @@ import {
   sourceWrappingEffect,
 } from "./editor-mode";
 import type { HeadingAction } from "./heading-folding";
-import { createRawEditorState, rawText, sourceSearchPresentation } from "./raw-buffer";
+import { createRawEditorState, editorOffset, rawText, sourceSearchPresentation } from "./raw-buffer";
 import { incrementalSave } from "./save-channel";
 import { createSearchStore } from "./source-search-store";
 
@@ -88,6 +88,22 @@ interface ViewportMeasurement {
   incarnation: EditorFaultSession;
   baseline?: Pick<DocumentSnapshot, "handle" | "hash" | "revision">;
   moved: boolean;
+}
+interface RecoveredViewport {
+  position?: MainTabCheckpointViewport;
+  readonly documentId: string;
+  readonly handle: string;
+  readonly revision: number;
+  readonly hash: string;
+}
+
+/** Historical offsets are raw UTF-16. Split CRLF and surrogate pairs have no usable anchor. */
+export function recoveredViewportEditorOffset(raw: string, from: number): number | undefined {
+  if (!Number.isSafeInteger(from) || from < 0 || from > raw.length) return;
+  const before = raw.charCodeAt(from - 1), after = raw.charCodeAt(from);
+  if ((before === 13 && after === 10) ||
+    (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff)) return;
+  return editorOffset(raw, from);
 }
 
 export interface DocumentViewState {
@@ -128,6 +144,7 @@ interface RecoveredPrimaryTab {
   snapshot: DocumentSnapshot;
   mode: "editing" | "source";
   pinned: boolean;
+  viewport?: MainTabCheckpointViewport;
 }
 function documentEntry({ handle, documentId, fileName, locationId, displayPath, explicitStandalone, writeCapability }: DocumentSnapshot): DocumentEntry {
   return { handle, documentId, fileName, locationId, displayPath, explicitStandalone, writeCapability };
@@ -304,6 +321,7 @@ export function createDocumentController(
   const sourceReturn = new Map<string, "editing" | "reading">();
   const viewports = new Map<string, ViewportMeasurement>();
   const scrolledSessions = new WeakSet<EditorFaultSession>();
+  const recoveredViewports = new WeakMap<EditorFaultSession, RecoveredViewport>();
   const viewportResets = new Map<string, object>();
   function pruneViewportResets(entries: readonly DocumentEntry[]) {
     if (!viewportResets.size) return;
@@ -330,7 +348,7 @@ export function createDocumentController(
     } finally { dispatchAttempt = previousAttempt; }
   };
   const scrollCaptures = new Map<string, {
-    savePosition(expectedState: EditorState, offset: number): void;
+    savePosition(expectedState: EditorState, offset: number, userMovement?: boolean): void;
     captureSnapshot(): StateEffect<unknown> | undefined;
     release(): void;
   }>();
@@ -1013,6 +1031,13 @@ export function createDocumentController(
     return initial.update({ effects: mode === "source"
       ? switchEditorMode("source", sourceWrapping)
       : sourceWrappingEffect(initial, sourceWrapping) }).state;
+  }
+  function prepareRecoveredViewport(snapshot: DocumentSnapshot, editor: EditorState, position?: MainTabCheckpointViewport) {
+    if (!validMainTabCheckpointViewport(position)) return;
+    const { documentId, handle, revision, hash } = snapshot;
+    recoveredViewports.set(editor.field(editorFaultSession), {
+      documentId, handle, revision, hash, position: { ...position },
+    });
   }
 
   async function load(
@@ -2183,7 +2208,31 @@ export function createDocumentController(
     },
     registerViewportCapture: (documentId: string, collect: () => DocumentViewport | undefined) => {
       const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      const recovery = incarnation && recoveredViewports.get(incarnation);
       const registration = {
+        recover() {
+          const position = recovery?.position;
+          if (!recovery || !position || !incarnation) return;
+          const current = (expected: EditorState) => {
+            const active = state.snapshot;
+            const editor = editors.get(documentId);
+            return !metadataDisposed && !incarnation.fault && viewportCaptures.get(documentId) === registration &&
+              recovery.position === position && active?.documentId === recovery.documentId &&
+              active.handle === recovery.handle && active.revision === recovery.revision && active.hash === recovery.hash &&
+              editor?.state === expected && editor.revision === 0 && expected.field(editorFaultSession) === incarnation;
+          };
+          const editor = editors.get(documentId);
+          if (!editor || !current(editor.state)) return;
+          return {
+            position,
+            current,
+            consume(expected: EditorState) {
+              if (!current(expected)) return false;
+              recovery.position = undefined;
+              return true;
+            },
+          };
+        },
         capture() {
           try {
             const before = editors.get(documentId);
@@ -2200,7 +2249,7 @@ export function createDocumentController(
               after.state.field(editorFaultSession) !== incarnation || revision !== after.revision ||
               !Number.isSafeInteger(from) || from < 0 || from > after.state.field(rawText).length ||
               !Number.isFinite(offset) || !Number.isFinite(ratio)) return;
-            if (ratio > 0 && ratio <= 1) scrolledSessions.add(incarnation);
+            if (!recovery && ratio > 0 && ratio <= 1) scrolledSessions.add(incarnation);
             viewports.set(documentId, {
               geometry: { from, offset, ratio, revision }, incarnation,
               baseline: baseline && { handle: baseline.handle, hash: baseline.hash, revision: baseline.revision },
@@ -2266,15 +2315,19 @@ export function createDocumentController(
     },
     registerEditorScroll: (documentId: string, collect: () => { state: EditorState; effect?: StateEffect<unknown>; offset?: number } | undefined) => {
       const incarnation = editors.get(documentId)?.state.field(editorFaultSession);
+      const recovery = incarnation && recoveredViewports.get(incarnation);
       let collecting = false;
       const current = (expected: EditorState) => !metadataDisposed && !!incarnation &&
         scrollCaptures.get(documentId) === registration &&
         editors.get(documentId)?.state === expected && expected.field(editorFaultSession) === incarnation;
       const registration = {
-        savePosition(expectedState: EditorState, offset: number) {
+        requiresUserMovement: !!recovery,
+        savePosition(expectedState: EditorState, offset: number, userMovement = false) {
           if (current(expectedState) && Number.isFinite(offset) && offset >= 0) {
             scrollPositions.set(documentId, offset);
-            if (incarnation && offset > 0 && !scrolledSessions.has(incarnation)) scrolledSessions.add(incarnation);
+            if (recovery && userMovement) recovery.position = undefined;
+            const moved = recovery ? userMovement : offset > 0;
+            if (incarnation && moved && !scrolledSessions.has(incarnation)) scrolledSessions.add(incarnation);
           }
         },
         captureSnapshot(): StateEffect<unknown> | undefined {
@@ -2384,7 +2437,8 @@ export function createDocumentController(
       mode: "editing" | "source",
       pinned: boolean,
       current: () => boolean,
-      onAdopt?: () => void
+      onAdopt?: () => void,
+      viewport?: MainTabCheckpointViewport,
     ) {
       if (!current() || !pristinePrimaryTabRecovery() || !isDocumentSnapshot(snapshot) || snapshot.explicitStandalone !== false)
         return false;
@@ -2396,6 +2450,7 @@ export function createDocumentController(
       try {
         await load(true, undefined, undefined, undefined, "background", undefined, undefined,
           { snapshot, editor, pinned, current, adopt: () => {
+            prepareRecoveredViewport(snapshot, editor, viewport);
             adopted = true;
             onAdopt?.();
           } });
@@ -2416,7 +2471,7 @@ export function createDocumentController(
       const eligible = () => current() && pristinePrimaryTabRecovery();
       const started = performance.now();
       const tabs: DocumentSnapshot[] = [];
-      const prepared: { editor: EditorState; pinned: boolean }[] = [];
+      const prepared: { editor: EditorState; pinned: boolean; viewport?: MainTabCheckpointViewport }[] = [];
       let seenUnpinned = false;
       let stateCreateMs = 0;
       for (let index = 0; index < count; index++) {
@@ -2425,14 +2480,14 @@ export function createDocumentController(
         if (!eligible()) return false;
         const tab = await read(index);
         if (!tab || !eligible()) return false;
-        const { snapshot, mode, pinned } = tab;
+        const { snapshot, mode, pinned, viewport } = tab;
         if (!isDocumentSnapshot(snapshot) || snapshot.explicitStandalone !== false || !snapshot.locationId || !snapshot.displayPath ||
             tabs.some(peer => sharesDocumentLocation(peer, snapshot)) || (seenUnpinned && pinned)) return false;
         seenUnpinned ||= !pinned;
         const stateStarted = performance.now();
         const editor = prepareRecoveredEditor(snapshot, mode, index !== activeIndex);
         stateCreateMs += performance.now() - stateStarted;
-        prepared.push({ editor, pinned });
+        prepared.push({ editor, pinned, viewport });
         tabs.push(snapshot);
       }
       onTiming?.("stateCreateMs", stateCreateMs);
@@ -2446,6 +2501,7 @@ export function createDocumentController(
           for (const [index, tab] of tabs.entries()) {
             capabilityLifetimes.set(tab.handle, {});
             editors.set(tab.documentId, { state: prepared[index].editor, revision: 0 });
+            prepareRecoveredViewport(tab, prepared[index].editor, prepared[index].viewport);
             if (prepared[index].pinned) pinnedTabs.add(tab.documentId);
             bindFaultOwner(tab.documentId);
           }

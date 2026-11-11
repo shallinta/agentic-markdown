@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { registerCalloutView } from "@/client/callout-presentation";
 import { CALLOUT_SUMMARY_CONFIG } from "@/client/callout-summary-protocol";
 import { registerPairingView } from "@/client/contextual-pairing";
-import type { createDocumentController } from "@/client/documents";
+import { recoveredViewportEditorOffset, type createDocumentController } from "@/client/documents";
 import {
   registerEditingImages,
   observeEditingImages,
@@ -181,19 +181,34 @@ export function MemoryEditor({
     view.contentDOM.setAttribute("aria-label", "Markdown 编辑区");
     if (!scrollTo)
       view.scrollDOM.scrollTop = controller.getScrollPosition(documentId);
+    let scrollIntent: { offset: number; direction?: 1 | -1; expires: number } | undefined;
+    const consumeScrollMovement = (offset: number) => {
+      if (!scrollIntent) return false;
+      if (performance.now() > scrollIntent.expires) {
+        scrollIntent = undefined;
+        return false;
+      }
+      const delta = offset - scrollIntent.offset;
+      if ((scrollIntent.direction ? delta * scrollIntent.direction : Math.abs(delta)) < 1) return false;
+      scrollIntent = undefined;
+      return true;
+    };
     const collectViewport = () => {
       const current = controller.getEditor(documentId);
       const viewState = view.state;
       if (!view.scrollDOM.isConnected || current?.state !== viewState) return;
+      const beforeMeasure = view.scrollDOM.scrollTop;
       const top = view.scrollDOM.getBoundingClientRect().top;
       const documentTop = view.documentTop;
       const block = view.lineBlockAtHeight(Math.max(0, top - documentTop));
       if (view.state !== viewState) return;
+      const offset = view.scrollDOM.scrollTop;
+      if (consumeScrollMovement(beforeMeasure)) scrollCapture.savePosition(viewState, offset, true);
       return {
         from: rawOffset(viewState.field(rawText), block.from),
         offset: view.documentTop + block.top - top,
         ratio:
-          view.scrollDOM.scrollTop /
+          offset /
           Math.max(1, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight),
         revision: current.revision,
       };
@@ -217,7 +232,8 @@ export function MemoryEditor({
     let releaseEditorDispatch = controller.registerEditorDispatch(documentId, dispatchOwnedTransaction);
     const checkInteraction = () => !view.compositionStarted;
     let interaction = controller.registerEditorInteraction(documentId, checkInteraction);
-    const viewport = controller.getViewport(documentId);
+    const recovery = viewportCapture.recover();
+    const viewport = recovery?.position ?? controller.getViewport(documentId);
     let wrappingReady = !viewport;
     const calloutToast = `callout-${documentId}`;
     const headingReady = () => {
@@ -593,8 +609,10 @@ export function MemoryEditor({
     };
     const commandTargets = { sourceSelection, listInput, indentation, scheduleWrapping, folding };
     let releaseCommandTargets = controller.registerEditorCommandTargets(documentId, commandTargets);
-    const viewportPosition = viewport ? editorOffset(editor.state.field(rawText), viewport.from) : undefined;
-    if (viewportPosition !== undefined)
+    const viewportPosition = viewport && (recovery
+      ? recoveredViewportEditorOffset(view.state.field(rawText), viewport.from)
+      : editorOffset(editor.state.field(rawText), viewport.from));
+    if (!recovery && viewportPosition !== undefined)
       view.dispatch({
         effects: EditorView.scrollIntoView(viewportPosition, { y: "start" }),
       });
@@ -637,6 +655,7 @@ export function MemoryEditor({
       contentSearch.release();
       releaseQuickFocus();
       registeredSession = nextSession;
+      scrollIntent = undefined;
       // Initial viewport measurement belongs to the old editor session.
       wrappingReady = true;
       viewportCapture = controller.registerViewportCapture(documentId, collectViewport);
@@ -649,7 +668,38 @@ export function MemoryEditor({
       return contentSearch.notifyReady;
     };
     refreshViewSession.current = refreshSession;
-    if (viewport && viewportPosition !== undefined) {
+    let recoveryFrame: number | undefined;
+    const readyAfterRecovery = () => {
+      if (wrappingReady) return;
+      wrappingReady = true;
+      scheduleWrapping();
+      contentSearch.notifyReady();
+    };
+    if (recovery) {
+      const mounted = () => currentView() && view.scrollDOM.isConnected && view.state.field(editorFaultSession) === session;
+      recoveryFrame = requestAnimationFrame(() => {
+        recoveryFrame = undefined;
+        if (!mounted()) return;
+        const scroller = view.scrollDOM;
+        try {
+          if (!recovery.current(view.state) || !scroller.clientHeight) return;
+          let anchor: number | undefined;
+          if (viewportPosition !== undefined) {
+            try {
+              view.dispatch({ effects: EditorView.scrollIntoView(viewportPosition, { y: "start" }) });
+              // The public geometry read flushes CodeMirror's queued anchor while the view is idle.
+              if (mounted() && recovery.current(view.state) && view.coordsAtPos(viewportPosition))
+                anchor = scroller.scrollTop + view.documentTop + view.lineBlockAt(viewportPosition).top -
+                  scroller.getBoundingClientRect().top - recovery.position.offset;
+            } catch { /* The actual scroll range remains available if anchor geometry fails. */ }
+          }
+          if (mounted() && recovery.consume(view.state))
+            scroller.scrollTop = anchor ?? recovery.position.ratio * Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+        } finally {
+          if (mounted()) readyAfterRecovery();
+        }
+      });
+    } else if (viewport && viewportPosition !== undefined) {
       const owner = contentSearch;
       const currentRestore = () => currentView() &&
         view.state.field(editorFaultSession) === session &&
@@ -676,9 +726,43 @@ export function MemoryEditor({
         },
       });
     }
+    const noteScrollIntent = (event: Event, direction?: 1 | -1) => {
+      if (!event.isTrusted || event.defaultPrevented || !currentView() ||
+        controller.getEditor(documentId)?.state !== view.state) return;
+      const offset = view.scrollDOM.scrollTop;
+      if (consumeScrollMovement(offset)) scrollCapture.savePosition(view.state, offset, true);
+      scrollIntent = { offset, direction, expires: performance.now() + 1000 };
+      if (recovery?.consume(view.state)) {
+        if (recoveryFrame !== undefined) cancelAnimationFrame(recoveryFrame);
+        recoveryFrame = undefined;
+        readyAfterRecovery();
+      }
+    };
+    const wheelIntent = (event: WheelEvent) => {
+      if (event.deltaY && !event.ctrlKey) noteScrollIntent(event, event.deltaY < 0 ? -1 : 1);
+    };
+    const keyboardIntent = (event: KeyboardEvent) => {
+      if (event.isComposing || view.compositionStarted) return;
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key)) noteScrollIntent(event, -1);
+      else if (["ArrowDown", "PageDown", "End"].includes(event.key)) noteScrollIntent(event, 1);
+    };
+    const scrollbarIntent = (event: PointerEvent) => {
+      const scroller = view.scrollDOM;
+      if (event.isPrimary && event.button === 0 && event.target === scroller &&
+        event.clientX >= scroller.getBoundingClientRect().left + scroller.clientLeft + scroller.clientWidth)
+        noteScrollIntent(event);
+    };
+    const trackScrollIntent = scrollCapture.requiresUserMovement;
+    if (trackScrollIntent) {
+      view.scrollDOM.addEventListener("wheel", wheelIntent, { capture: true, passive: true });
+      view.scrollDOM.addEventListener("keydown", keyboardIntent, true);
+      view.scrollDOM.addEventListener("pointerdown", scrollbarIntent, true);
+    }
     const saveScroll = () => {
-      if (view.scrollDOM.isConnected)
-        scrollCapture.savePosition(view.state, view.scrollDOM.scrollTop);
+      if (view.scrollDOM.isConnected) {
+        const offset = view.scrollDOM.scrollTop;
+        scrollCapture.savePosition(view.state, offset, consumeScrollMovement(offset));
+      }
     };
     view.scrollDOM.addEventListener("scroll", saveScroll);
     const listKey = (event: KeyboardEvent) =>
@@ -804,6 +888,7 @@ export function MemoryEditor({
       removeNativeFormat();
       removeListInput();
       removeIndentation();
+      if (recoveryFrame !== undefined) cancelAnimationFrame(recoveryFrame);
       viewportCapture.capture();
       viewportCapture.release();
       if (refreshViewSession.current === refreshSession)
@@ -827,6 +912,11 @@ export function MemoryEditor({
         compositionChanged
       );
       view.contentDOM.removeEventListener("compositionend", compositionChanged);
+      if (trackScrollIntent) {
+        view.scrollDOM.removeEventListener("wheel", wheelIntent, true);
+        view.scrollDOM.removeEventListener("keydown", keyboardIntent, true);
+        view.scrollDOM.removeEventListener("pointerdown", scrollbarIntent, true);
+      }
       view.scrollDOM.removeEventListener("scroll", saveScroll);
       view.destroy();
       viewRef.current = null;

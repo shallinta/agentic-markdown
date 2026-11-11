@@ -54,7 +54,7 @@ alpha.339 将同目录恢复扩到会话上限 64 篇。重新授权后，应用
 
 alpha.341 支持恢复横跨多个目录的标签。从「待重新授权的目录」逐一重选原目录，选齐后应用恢复整组标签。重选顺序不影响标签的原顺序。取消一次选择后，可以继续选择余下目录。见[F-037t 迭代](iterations/F-037t-restore-tabs-across-directories.md)。
 
-alpha.347 起，在已保存的目录文档中滚动后切换标签，主窗口会记录已测得的位置。其余标签都已保存时，关闭一篇会移除该标签的会话记录。重启后将位置应用到编辑区仍待接入。见[F-037y 迭代](iterations/F-037y-main-window-viewport-checkpoint.md)。
+在已保存的目录文档中滚动后切换标签，主窗口会记录位置。其余标签都已保存时，关闭一篇会移除该标签的会话记录。自 alpha.349 起，重启后重新授权目录，首次显示恢复的标签时会回到保存位置。原源码坐标不可用时，按原滚动比例定位。键盘或滚轮主动移动后再切换标签，可记录新位置。见[F-037y 迭代](iterations/F-037y-main-window-viewport-checkpoint.md)、[F-037z 迭代](iterations/F-037z-restore-main-window-viewport.md)。
 
 ## 主窗原生全屏（F-038a）
 

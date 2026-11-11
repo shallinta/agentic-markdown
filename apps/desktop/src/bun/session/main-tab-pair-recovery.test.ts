@@ -10,9 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
 import { createDocumentService } from "../documents";
 import { verifySingleFileAuthorization } from "../documents/path-authorization";
+import { createMainTabRecoveryRPC } from "../rpc/main-tab-recovery";
 import { createWorkspaceService } from "../workspace";
 import { createRootRosterService } from "../workspace/root-roster-service";
 
@@ -788,5 +790,277 @@ test("v2 single, pair and group reject position-only changes before verification
         await f.close();
       }
     }
+  }
+});
+
+test("verified single, pair and group deliver only each saved row's source geometry", async () => {
+  for (const kind of ["single", "pair", "group"] as const) {
+    const f = await fixture(kind === "group" ? 5 : 2);
+    const saved = await f.store.read();
+    if (saved.status !== "valid") throw Error("No history");
+    const tabs =
+      kind === "single" ? saved.data.tabs.slice(0, 1) : saved.data.tabs;
+    const positions = tabs.map((_, index) =>
+      index === 1
+        ? undefined
+        : {
+            from: index + 2,
+            offset: index - 0.5,
+            ratio: index / 5,
+            block: {
+              contentHash: "a".repeat(64),
+              hash: "b".repeat(64),
+              occurrence: 0,
+              uniqueAtCapture: true,
+              offset: 3,
+            },
+          }
+    );
+    expect(
+      await f.store.writePositions(
+        {
+          schemaVersion: 2,
+          tabs: tabs.map((tab, index) =>
+            positions[index] ? { ...tab, position: positions[index] } : tab
+          ),
+          activeIndex: kind === "single" ? 0 : 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const bytes = await readFile(f.path);
+    const reader =
+      kind === "single"
+        ? createSingleMainTabRecoveryReader(f.directory, f)
+        : kind === "pair"
+          ? createMainTabPairRecoveryReader(f.directory, f)
+          : createMainTabGroupRecoveryReader(f.directory, f);
+    try {
+      const result = await reader.read(f.input, () => true);
+      if (result.status !== "ready") throw Error(JSON.stringify(result));
+      const items = "tabs" in result ? result.tabs : [result];
+      expect(items).toHaveLength(tabs.length);
+      for (let index = 0; index < items.length; index++) {
+        expect(items[index].snapshot.fileName).toBe(tabs[index].relativePath);
+        const position = positions[index];
+        expect(items[index].viewport).toEqual(
+          position
+            ? {
+                from: position.from,
+                offset: position.offset,
+                ratio: position.ratio,
+              }
+            : undefined
+        );
+        if (!position)
+          expect(
+            Object.prototype.hasOwnProperty.call(items[index], "viewport")
+          ).toBe(false);
+      }
+      expect(await readFile(f.path)).toEqual(bytes);
+      expect(await result.release()).toBe("released");
+      expect(f.documents.locations()).toHaveLength(0);
+    } finally {
+      await reader.close();
+      await f.close();
+    }
+  }
+});
+
+test("actual group RPC transfers each verified viewport beside its corresponding snapshot", async () => {
+  const f = await fixture();
+  const saved = await f.store.read();
+  if (saved.status !== "valid") throw Error("No history");
+  const first = { from: 3, offset: -2, ratio: 0.3 },
+    second = { from: 5, offset: 4, ratio: 0.6 };
+  expect(
+    await f.store.writePositions(
+      {
+        schemaVersion: 2,
+        tabs: saved.data.tabs.map((tab, index) => ({
+          ...tab,
+          position: index === 0 ? first : second,
+        })),
+        activeIndex: 1,
+      },
+      () => true
+    )
+  ).toEqual({ status: "committed" });
+  const rpc = createMainTabRecoveryRPC(
+    true,
+    () => true,
+    () => createSingleMainTabRecoveryReader(f.directory, f),
+    undefined,
+    () => createMainTabGroupRecoveryReader(f.directory, f)
+  );
+  try {
+    rpc.ready({ data: { detail: PACKAGED_VIEW_URL } });
+    const opened = await rpc.request({
+      ...f.input,
+      protocolVersion: 1,
+      op: "open",
+    });
+    expect(opened.status).toBe("group");
+    for (const index of [0, 1]) {
+      const item = await rpc.request({
+        protocolVersion: 1,
+        requestId: f.input.requestId,
+        op: "group-item",
+        index,
+      });
+      if (item.status !== "group-item") throw Error(JSON.stringify(item));
+      expect(item.viewport).toEqual(index === 0 ? first : second);
+      expect(item.snapshot.fileName).toBe(saved.data.tabs[index].relativePath);
+    }
+    expect(
+      (
+        await rpc.request({
+          protocolVersion: 1,
+          requestId: f.input.requestId,
+          op: "finish",
+          adopted: false,
+        })
+      ).status
+    ).toBe("finished");
+    expect(f.documents.locations()).toHaveLength(0);
+  } finally {
+    rpc.dispose();
+    await f.close();
+  }
+});
+
+test("single RPC rejects v2 modified after service await and releases the late snapshot", async () => {
+  const f = await fixture();
+  const saved = await f.store.read();
+  if (saved.status !== "valid") throw Error("No history");
+  const data = {
+    schemaVersion: 2 as const,
+    tabs: [
+      { ...saved.data.tabs[0], position: { from: 2, offset: 0, ratio: 0.3 } },
+    ],
+    activeIndex: 0,
+  };
+  expect(await f.store.writePositions(data, () => true)).toEqual({
+    status: "committed",
+  });
+  const reader = createSingleMainTabRecoveryReader(f.directory, f);
+  const rpc = createMainTabRecoveryRPC(
+    true,
+    () => true,
+    () => ({
+      ...reader,
+      async read(...args: Parameters<typeof reader.read>) {
+        const result = await reader.read(...args);
+        expect(result.status).toBe("ready");
+        data.tabs[0].position.ratio = 0.9;
+        await writeFile(f.path, JSON.stringify({ version: 1, data }));
+        return result;
+      },
+    })
+  );
+  try {
+    rpc.ready({ data: { detail: PACKAGED_VIEW_URL } });
+    const response = await rpc.request({
+      protocolVersion: 1,
+      op: "open",
+      ...f.input,
+    });
+    expect(response).toEqual({
+      protocolVersion: 1,
+      requestId: f.input.requestId,
+      status: "rejected",
+    });
+    expect(f.documents.locations()).toHaveLength(0);
+    expect(await readFile(f.path, "utf8")).toBe(
+      JSON.stringify({ version: 1, data })
+    );
+  } finally {
+    rpc.dispose();
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("group last-item delivery rejects position changed after async revalidation", async () => {
+  const f = await fixture();
+  const saved = await f.store.read();
+  if (saved.status !== "valid") throw Error("No history");
+  const data = {
+    schemaVersion: 2 as const,
+    tabs: saved.data.tabs.map((tab) => ({
+      ...tab,
+      position: { from: 1, offset: 0, ratio: 0.3 },
+    })),
+    activeIndex: 1,
+  };
+  expect(await f.store.writePositions(data, () => true)).toEqual({
+    status: "committed",
+  });
+  const group = createMainTabGroupRecoveryReader(f.directory, f);
+  let deliveryChecks = 0;
+  const rpc = createMainTabRecoveryRPC(
+    true,
+    () => true,
+    () => createSingleMainTabRecoveryReader(f.directory, f),
+    undefined,
+    () => ({
+      ...group,
+      async read(...args: Parameters<typeof group.read>) {
+        const result = await group.read(...args);
+        if (result.status !== "ready") return result;
+        return {
+          ...result,
+          verifyDelivery() {
+            deliveryChecks++;
+            return result.verifyDelivery!();
+          },
+          async revalidate() {
+            const valid = await result.revalidate();
+            expect(valid).toBe(true);
+            data.tabs[0].position.ratio = 0.9;
+            await writeFile(f.path, JSON.stringify({ version: 1, data }));
+            return valid;
+          },
+        };
+      },
+    })
+  );
+  try {
+    rpc.ready({ data: { detail: PACKAGED_VIEW_URL } });
+    expect(
+      (await rpc.request({ protocolVersion: 1, op: "open", ...f.input })).status
+    ).toBe("group");
+    expect(
+      (
+        await rpc.request({
+          protocolVersion: 1,
+          op: "group-item",
+          requestId: f.input.requestId,
+          index: 0,
+        })
+      ).status
+    ).toBe("group-item");
+    expect(deliveryChecks).toBe(0);
+    expect(
+      await rpc.request({
+        protocolVersion: 1,
+        op: "group-item",
+        requestId: f.input.requestId,
+        index: 1,
+      })
+    ).toEqual({
+      protocolVersion: 1,
+      requestId: f.input.requestId,
+      status: "rejected",
+    });
+    expect(deliveryChecks).toBe(1);
+    expect(f.documents.locations()).toHaveLength(0);
+    expect(await readFile(f.path, "utf8")).toBe(
+      JSON.stringify({ version: 1, data })
+    );
+  } finally {
+    rpc.dispose();
+    await group.close();
+    await f.close();
   }
 });

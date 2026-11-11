@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 
 import { PACKAGED_VIEW_URL } from "../../security/shell-policy";
 import type { DocumentSnapshot } from "../../shared/documents";
-import { validMainTabRecoveryRequest } from "../../shared/main-tab-recovery";
+import {
+  validMainTabRecoveryResponse,
+  validMainTabRecoveryRequest,
+} from "../../shared/main-tab-recovery";
 import { analyzeTextFidelity } from "../../shared/text-fidelity";
 import type { SingleMainTabRecoveryResult } from "../session/main-tab-single-recovery";
 
@@ -24,7 +27,8 @@ const finish = (id: string, adopted: boolean) => ({
 });
 const ready = { data: { detail: PACKAGED_VIEW_URL } };
 function fixture(
-  prepareClaim?: Parameters<typeof createMainTabRecoveryRPC>[3]
+  prepareClaim?: Parameters<typeof createMainTabRecoveryRPC>[3],
+  viewport?: { from: number; offset: number; ratio: number }
 ) {
   let resolve!: (value: SingleMainTabRecoveryResult) => void;
   let current = () => true,
@@ -66,6 +70,7 @@ function fixture(
         current: () => true,
       },
       snapshot,
+      ...(viewport ? { viewport } : {}),
       mode: "source",
       pinned: true,
       current: () => current(),
@@ -289,5 +294,39 @@ test("adoption passes only actual delivered snapshot identities to private posit
     { handle, documentId, revision, hash, pinned: true, mode: "source" },
   ]);
   expect(f.released).toBe(0);
+  f.rpc.dispose();
+});
+
+test("single recovery transport preserves optional geometry and validates its exact shape", async () => {
+  const viewport = { from: 3, offset: -4.25, ratio: 0.7 };
+  const f = fixture(undefined, viewport);
+  f.rpc.ready(ready);
+  const input = open(),
+    opening = f.rpc.request(input);
+  f.deliver();
+  const result = await opening;
+  expect(validMainTabRecoveryResponse(result, input.requestId)).toBe(true);
+  if (result.status !== "ready") throw Error("No snapshot");
+  expect(result.viewport).toEqual(viewport);
+  for (const value of [
+    undefined,
+    { ...viewport, hash: "a".repeat(64) },
+    { ...viewport, from: -1 },
+    { ...viewport, offset: Infinity },
+    { ...viewport, ratio: 2 },
+  ])
+    expect(
+      validMainTabRecoveryResponse(
+        { ...result, viewport: value },
+        input.requestId
+      )
+    ).toBe(false);
+  expect(
+    validMainTabRecoveryResponse(
+      { ...result, status: "group-item", index: 0 },
+      input.requestId
+    )
+  ).toBe(true);
+  await f.rpc.request(finish(input.requestId, false));
   f.rpc.dispose();
 });

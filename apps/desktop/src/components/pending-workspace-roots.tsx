@@ -33,7 +33,7 @@ export function PendingWorkspaceRoots({
   state: WorkspaceRootRosterState;
   disabled: boolean;
   canReselect: boolean;
-  reselect: () => void;
+  reselect: (id: string) => void;
   remove: (id: string) => void;
   refresh: () => void;
 }) {
@@ -88,7 +88,7 @@ export function PendingWorkspaceRoots({
                   className={buttonClass}
                   aria-label={`重新选择目录 ${path}`}
                   disabled={!canReselect || actionsDisabled}
-                  onClick={reselect}
+                  onClick={() => reselect(id)}
                 >
                   重新选择
                 </button>

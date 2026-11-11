@@ -57,6 +57,10 @@ export interface DesktopRPCType {
         params: import("./recent-files").RecentRequest;
         response: import("./recent-files").RecentResponse;
       };
+      mainTabRecovery: {
+        params: import("./main-tab-recovery").MainTabRecoveryRequest;
+        response: import("./main-tab-recovery").MainTabRecoveryResponse;
+      };
       mainTabCheckpoint: {
         params: import("./main-tab-checkpoint").MainTabCheckpointRequest;
         response: import("./main-tab-checkpoint").MainTabCheckpointResponse;

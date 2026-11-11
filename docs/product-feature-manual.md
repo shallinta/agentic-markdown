@@ -42,6 +42,8 @@ F-037k 核对原生选择确实新增的目录，供后续恢复使用。取消�
 
 F-037l 已验证单篇历史标签的受保护读取。目录重新授权后，文件身份匹配才可读取当前正文。普通窗口的恢复入口由下一片承接。见[F-037l 迭代](iterations/F-037l-authorized-single-tab-recovery-read.md)。
 
+alpha.334 启动后，从「待重新授权的目录」选择原目录。如果当前窗口尚未发起打开文件或加入其他目录，且上次只记录了该目录中一篇身份匹配的文档，应用会恢复该标签、编辑或源码模式及固定状态，并读取磁盘上的当前正文。选错目录时照常加入新目录，取消则保留当前窗口。见[F-037m 迭代](iterations/F-037m-restore-one-tab-after-folder-reauthorization.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

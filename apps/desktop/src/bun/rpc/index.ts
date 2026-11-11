@@ -45,6 +45,7 @@ export interface MainWindowRPCDependencies {
       input: unknown
     ): Promise<import("../../shared/documents").DocumentResponse>;
   };
+  mainTabRecovery?: (input: unknown) => Promise<import("../../shared/main-tab-recovery").MainTabRecoveryResponse>;
   mainTabCheckpoint?: (input: unknown) => Promise<import("../../shared/main-tab-checkpoint").MainTabCheckpointResponse>;
   workspaceRootRoster?: (input: unknown) => Promise<import("../../shared/root-roster").RootRosterResponse>;
   workspaceExpansion?: (input: unknown) => Promise<WorkspaceExpansionResponse>;
@@ -70,6 +71,7 @@ export function createMainWindowRPC({
   documents,
   documentMRU,
   recentFiles,
+  mainTabRecovery,
   mainTabCheckpoint,
   workspaceRootRoster,
   workspaceExpansion,
@@ -110,6 +112,7 @@ export function createMainWindowRPC({
                 available: false as const,
                 reason: "io" as const,
               }),
+        mainTabRecovery: input => mainTabRecovery?.(input) ?? Promise.resolve({protocolVersion:1 as const,requestId:input.requestId,status:"rejected" as const}),
         mainTabCheckpoint: input => mainTabCheckpoint?.(input) ?? Promise.resolve({ protocolVersion: 1 as const, status: "rejected" as const }),
         workspaceRootRoster: input => workspaceRootRoster?.(input) ?? Promise.resolve({ protocolVersion: 1 as const, pending: [], readOnly: true, failure: "io" as const }),
         workspaceExpansion: (input) =>

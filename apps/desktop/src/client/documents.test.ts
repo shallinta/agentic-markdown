@@ -17,8 +17,10 @@ import type {
   DocumentResponse,
   DocumentSnapshot,
 } from "../shared/documents";
+import type { MainTabRecoveryRequest } from "../shared/main-tab-recovery";
 import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
+import type { WorkspaceRoot } from "../shared/workspace";
 
 import { documentCapabilitySuffix } from "./document-status-label";
 import {
@@ -47,7 +49,9 @@ import {
 } from "./heading-folding";
 import { headingStructureSteps } from "./heading-structure";
 import { summarizeImages } from "./image-summary";
+import { createMainTabRecovery } from "./main-tab-recovery";
 import { rawText } from "./raw-buffer";
+import { createFolderWorkspace } from "./workspace";
 
 test("Emoji completion uses actual controller dirty/history and refuses stale readonly apply", async () => {
   for (const readonly of [false, true]) {
@@ -260,6 +264,118 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
     controller: createDocumentController(transport, confirmDiscard),
   };
 }
+
+function recoveryFixture(status: WorkspaceRoot["status"] = "complete") {
+  const documents = setup();
+  const saved = { ...snapshot("# 当前磁盘正文"), explicitStandalone: false };
+  const expectedRootId = crypto.randomUUID();
+  let root: WorkspaceRoot = {
+    handle: crypto.randomUUID(), generation: 1, status, name: "测试目录",
+    displayPath: "/test-directory", examined: 0, errors: 0, entries: 0,
+  };
+  let selected = false;
+  let cancelled = false;
+  const folders = createFolderWorkspace((request) => {
+    if (request.op === "select" && !cancelled) selected = true;
+    const envelope = { protocolVersion: 1 as const, requestId: request.requestId };
+    return Promise.resolve({
+      ...envelope, ok: true, roots: selected ? [root] : [], coveredHandles: [], cacheBytes: 0,
+      ...(request.op === "select" && !cancelled ? { selectedRoot: { handle: root.handle, generation: root.generation } } : {}),
+    });
+  });
+  const entered = deferred<Extract<MainTabRecoveryRequest, { op: "open" }>>();
+  const reply = deferred<unknown>();
+  const finished = deferred<boolean>();
+  const requests: MainTabRecoveryRequest[] = [];
+  const recovery = createMainTabRecovery(documents.controller, folders, async (request) => {
+    requests.push(request);
+    if (request.op === "open") {
+      entered.resolve(request);
+      return reply.promise;
+    }
+    finished.resolve(request.adopted);
+    throw new Error("finish reply unavailable");
+  }, () => true);
+  return {
+    ...documents, folders, recovery, expectedRootId, requests, entered, reply, finished, saved,
+    updateRoot: (change: Partial<WorkspaceRoot>) => { root = { ...root, ...change }; return folders.refresh(); },
+    cancelPicker: () => { cancelled = true; },
+    dispose: () => { recovery.cancel(); folders.dispose(); documents.controller.dispose(); },
+  };
+}
+
+test("pending folder recovery waits for the same scan and publishes saved mode and pin without activation", async () => {
+  const fixture = recoveryFixture("scanning");
+  const { controller, saved, requests, entered, reply, finished, folders, recovery, expectedRootId } = fixture;
+  const activations: string[] = [];
+  const layoutChanges: string[] = [];
+  const observed: { mode: string; pinned: boolean }[] = [];
+  controller.subscribeActivation((entry) => activations.push(entry.documentId));
+  controller.subscribePrimaryTabLayoutChange((entry) => layoutChanges.push(entry.documentId));
+  controller.subscribe(() => {
+    if (controller.getSnapshot().snapshot?.documentId === saved.documentId)
+      observed.push({ mode: controller.getMode(saved.documentId), pinned: controller.isTabPinned(saved.documentId) });
+  });
+  try {
+    const restoring = recovery.reselect(expectedRootId);
+    await folders.refresh();
+    expect(folders.getSnapshot().roots[0]?.status).toBe("scanning");
+    expect(requests).toEqual([]);
+    await fixture.updateRoot({ status: "complete" });
+    const opening = await entered.promise;
+    expect(opening).toMatchObject({ expectedRootId, root: folders.getSnapshot().roots[0].handle, generation: 1 });
+    reply.resolve({ protocolVersion: 1, requestId: opening.requestId, status: "ready", snapshot: saved, mode: "source", pinned: true });
+    await restoring;
+    expect(await finished.promise).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual({ protocolVersion: 1, requestId: opening.requestId, op: "finish", adopted: true });
+    expect(observed[0]).toEqual({ mode: "source", pinned: true });
+    expect(controller.getSnapshot().snapshot).toEqual(saved);
+    expect(controller.getEditor(saved.documentId)?.state.field(rawText)).toBe(saved.text);
+    expect(activations).toEqual([]);
+    expect(layoutChanges).toEqual([]);
+    expect(fixture.released).toEqual([]);
+    await controller.select();
+    expect(activations).toEqual([fixture.value.documentId]);
+    expect(controller.canCycleRecentTabs()).toBe(false);
+  } finally { fixture.dispose(); }
+});
+
+test("competing document open rejects a late recovery and releases through the recovery receipt only", async () => {
+  const fixture = recoveryFixture();
+  const { controller, saved, entered, reply, finished, requests, recovery, expectedRootId } = fixture;
+  try {
+    const restoring = recovery.reselect(expectedRootId);
+    const opening = await entered.promise;
+    await controller.select();
+    expect(await finished.promise).toBe(false);
+    reply.resolve({ protocolVersion: 1, requestId: opening.requestId, status: "ready", snapshot: saved, mode: "source", pinned: true });
+    await restoring;
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual({ protocolVersion: 1, requestId: opening.requestId, op: "finish", adopted: false });
+    expect(controller.getSnapshot().tabs).toEqual([fixture.value]);
+    expect(fixture.released).toEqual([]);
+  } finally { fixture.dispose(); }
+});
+
+test("cancelled pickers and changed scan generations never issue a recovery read", async () => {
+  const cancelled = recoveryFixture();
+  try {
+    cancelled.cancelPicker();
+    await cancelled.recovery.reselect(cancelled.expectedRootId);
+    expect(cancelled.folders.getSnapshot().roots).toEqual([]);
+    expect(cancelled.requests).toEqual([]);
+  } finally { cancelled.dispose(); }
+  const changed = recoveryFixture("scanning");
+  try {
+    const restoring = changed.recovery.reselect(changed.expectedRootId);
+    await changed.folders.refresh();
+    await changed.updateRoot({ generation: 2, status: "complete" });
+    await restoring;
+    expect(changed.folders.getSnapshot().roots[0]?.generation).toBe(2);
+    expect(changed.requests).toEqual([]);
+  } finally { changed.dispose(); }
+});
 
 test("inactive controller slots release image widgets while retaining text history selection and folds", async () => {
   const { controller, transport, value: first } = setup();

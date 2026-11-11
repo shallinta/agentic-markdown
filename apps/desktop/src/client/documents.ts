@@ -880,7 +880,7 @@ export function createDocumentController(
     protocolVersion: 1,
     requestId: crypto.randomUUID(),
   });
-  function publish(next: DocumentViewState) {
+  function publish(next: DocumentViewState, adoptRecovery?: () => void) {
     if (removalGate || folderRemovalGate || duplicateGate || creationGate || (trashGate && !trashGate.cancelled)) next = { ...next, frozen: true };
     if (revealPending && (next.snapshot?.handle !== revealPending.handle || next.busy || next.frozen || !canLeaveEditor())) {
       const old = revealPending; revealPending = null;
@@ -929,7 +929,8 @@ export function createDocumentController(
       }
     }
     state = next;
-    syncRecentTabOrder(previousTabs, previousId);
+    if (adoptRecovery) adoptRecovery();
+    else syncRecentTabOrder(previousTabs, previousId);
     if (previousTabs !== next.tabs) {
       prunePinnedTabs(next.tabs);
       observation.sync(next.tabs);
@@ -955,6 +956,10 @@ export function createDocumentController(
       sameRetainedIdentity(entry, peers[0]) &&
       !state.tabs.some((peer) => sharesDocumentLocation(entry, peer));
   }
+  const pristinePrimaryTabRecovery = () => generation === 0 && !metadataDisposed &&
+    !state.snapshot && !state.tabs.length && !state.entries.length && !state.busy && !state.frozen &&
+    !state.removalPending && !state.folderRemovalPending && !saving.size && !editorInputBlocked && canLeaveEditor();
+
   async function load(
     select: boolean,
     entry?: DocumentEntry,
@@ -967,7 +972,8 @@ export function createDocumentController(
       retained?: DocumentEntry;
       adopt(snapshot: DocumentSnapshot, generation: number): void;
     },
-    receiptOpen?: { current(): boolean; adopt(receipt: DocumentOpenReceipt, generation: number): void }
+    receiptOpen?: { current(): boolean; adopt(receipt: DocumentOpenReceipt, generation: number): void },
+    recovery?: { snapshot: DocumentSnapshot; editor: EditorState; pinned: boolean; current: () => boolean; adopt: () => void }
   ) {
     const previous = state.snapshot;
     const target = entry ?? previous;
@@ -975,21 +981,25 @@ export function createDocumentController(
     const current = ++generation;
     cancelPending();
     const params = request();
-    pending = params;
+    if (!recovery) pending = params;
     const start = performance.now();
     publish({ ...state, busy: true, error: null });
     try {
-      const response = select
-        ? await (open ?? transport.selectDocument)(params)
-        : await transport.readDocument({ ...params, handle: target!.handle });
-      if (!isDocumentResponse(response, params.requestId))
-        throw new Error("invalid-response");
+      let response: DocumentResponse;
+      if (recovery) response = { ...params, ok: true, snapshot: recovery.snapshot };
+      else {
+        const reply = select
+          ? await (open ?? transport.selectDocument)(params)
+          : await transport.readDocument({ ...params, handle: target!.handle });
+        if (!isDocumentResponse(reply, params.requestId)) throw new Error("invalid-response");
+        response = reply;
+      }
       if (current !== generation) {
         if (
           select &&
           response.ok &&
           response.snapshot &&
-          !createdIntent && !searchOpen && !state.entries.some(
+          !createdIntent && !searchOpen && !recovery && !state.entries.some(
             (value) => value.handle === response.snapshot?.handle
           )
         )
@@ -1019,6 +1029,11 @@ export function createDocumentController(
       if (!snapshot) {
         if (!select) throw new Error("empty-read");
         publish({ ...state, busy: false });
+        return;
+      }
+      if (recovery && (!recovery.current() || metadataDisposed || current !== generation || state.frozen ||
+          state.snapshot || state.tabs.length || state.entries.length || editorInputBlocked || !canLeaveEditor())) {
+        if (current === generation) publish({ ...state, busy: false });
         return;
       }
       if (receiptOpen && (!receiptOpen.current() || metadataDisposed || current !== generation || editorInputBlocked || !canLeaveEditor())) {
@@ -1138,7 +1153,7 @@ export function createDocumentController(
         const previousMode = editors.get(active.documentId)?.state;
         const previousFault = previousMode?.field(editorFaultSession);
         const stateStart = onTiming ? performance.now() : 0;
-        const nextEditor = createRawEditorState(
+        const nextEditor = recovery?.editor ?? createRawEditorState(
           active.text,
           [],
           !!previousFault?.fault
@@ -1147,7 +1162,7 @@ export function createDocumentController(
           nextEditor.field(editorFaultSession).fault = previousFault.fault;
         editors.set(active.documentId, {
           state:
-            previousMode &&
+            recovery ? nextEditor : previousMode &&
             !previousFault?.fault &&
             getEditorMode(previousMode) === "source"
               ? nextEditor.update({
@@ -1158,7 +1173,7 @@ export function createDocumentController(
                 }).state,
           revision: 0,
         });
-        onTiming?.("stateCreateMs", performance.now() - stateStart);
+        if (!recovery) onTiming?.("stateCreateMs", performance.now() - stateStart);
         bindFaultOwner(active.documentId);
       }
       const tabs = state.tabs.some(
@@ -1176,6 +1191,7 @@ export function createDocumentController(
       preserveSearchFocus = searchOpen
         ? { documentId: active.documentId, handle: active.handle }
         : undefined;
+      if (recovery?.pinned) pinnedTabs.add(active.documentId);
       publish({
         tabs,
         entries: state.entries.some(
@@ -1212,7 +1228,7 @@ export function createDocumentController(
         stale: staleDocuments.has(active.documentId),
         elapsedMs: performance.now() - start,
         frozen: state.frozen,
-      });
+      }, recovery?.adopt);
       searchOpen?.adopt(active, current);
       if (purpose === "user" && current === generation && state.snapshot?.handle === active.handle)
         recordActivation(active);
@@ -1229,7 +1245,7 @@ export function createDocumentController(
         publish({
           ...state,
           busy: false,
-          error: "文档通信失败或返回结果无效，请重试或重新选择文件。",
+          error: recovery ? state.error : "文档通信失败或返回结果无效，请重试或重新选择文件。",
           stale:
             select || target?.handle !== state.snapshot?.handle
               ? state.stale
@@ -1239,7 +1255,7 @@ export function createDocumentController(
     } finally {
       if (pending === params) pending = null;
       // Replacement confirmation owns this lock only inside a selecting request.
-      if (select && current === generation && state.frozen) endDiscard();
+      if (select && !recovery && current === generation && state.frozen) endDiscard();
     }
   }
   function clear() {
@@ -2304,6 +2320,31 @@ export function createDocumentController(
     },
     canSelectFolder: () =>
       !state.frozen && !state.busy && !saving.size && canLeaveEditor(),
+    canRestorePrimaryTab: pristinePrimaryTabRecovery,
+    async adoptRecoveredPrimaryTab(
+      snapshot: DocumentSnapshot,
+      mode: "editing" | "source",
+      pinned: boolean,
+      current: () => boolean
+    ) {
+      if (!current() || !pristinePrimaryTabRecovery() || !isDocumentSnapshot(snapshot) || snapshot.explicitStandalone !== false)
+        return false;
+      const started = performance.now();
+      const initial = createRawEditorState(snapshot.text, []);
+      const editor = initial.update({ effects: mode === "source"
+        ? switchEditorMode("source", sourceWrapping)
+        : sourceWrappingEffect(initial, sourceWrapping) }).state;
+      onTiming?.("stateCreateMs", performance.now() - started);
+      if (!current() || !pristinePrimaryTabRecovery()) return false;
+      let adopted = false;
+      try {
+        await load(true, undefined, undefined, undefined, "background", undefined, undefined,
+          { snapshot, editor, pinned, current, adopt: () => { adopted = true; } });
+      } catch {
+        // A subscriber failure after publication cannot return the adopted grant to Bun.
+      }
+      return adopted;
+    },
     adoptCreatedDocument: async (snapshot: DocumentSnapshot, current: () => boolean) => {
       if (metadataDisposed || !current() || !controller.canSelectFolder()) return false;
       let ready = false;

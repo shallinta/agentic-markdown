@@ -30,6 +30,7 @@ import {
 } from "@/client/inline-format-input";
 import { longLineProtection } from "@/client/long-line-protection";
 import { attachMainTabActivationCheckpoint } from "@/client/main-tab-activation-checkpoint";
+import { createMainTabRecovery } from "@/client/main-tab-recovery";
 import { createQuickOpen } from "@/client/quick-open";
 import type { RasterPasteSource } from "@/client/raster-paste-intent";
 import { captureRasterWorkspaceAuthority, createRasterPasteTransport } from "@/client/raster-paste-workspace";
@@ -111,6 +112,22 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folders.subscribe,
     folders.getSnapshot
   );
+  const [mainTabRecovery] = useState(() => createMainTabRecovery(controller, folders,
+    (request) => {
+      const rpc = electrobun.rpc;
+      if (!rpc) return Promise.reject(new Error("RPC unavailable"));
+      return rpc.request.mainTabRecovery(request, { maxRequestTime: request.op === "open" ? 12000 : 4000 });
+    },
+    () => {
+      const flags = globalThis as typeof globalThis & { __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean };
+      return window.location.href === PACKAGED_VIEW_URL && !flags.__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__;
+    }));
+  useEffect(() => mainTabRecovery.cancel, [mainTabRecovery]);
+  const reselectWorkspaceRoot = (id: string) => {
+    const roster = rootRoster.model.getSnapshot();
+    if (roster.busy || roster.readOnly || !roster.pending.some((root) => root.id === id)) return;
+    void mainTabRecovery.reselect(id);
+  };
   useEffect(() => {
     const flags = globalThis as typeof globalThis & { __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean };
     if (window.location.href !== PACKAGED_VIEW_URL || flags.__AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__) return;
@@ -283,14 +300,20 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
       selectDocument: controller.select,
       revealDocument: () => controller.revealCurrentDocument(),
       openDefaultDocument: () => controller.openDefaultDocument(),
-      selectFolder: () => controller.runWorkspaceAction(folders.select),
+      selectFolder: () => {
+        mainTabRecovery.cancel();
+        return controller.runWorkspaceAction(folders.select);
+      },
       setRootHidden: ({ root, showHidden }) =>
         controller.runWorkspaceAction(() =>
           folders.setHidden(root, showHidden)
         ),
       reloadDocument: controller.reload,
       saveDocument: controller.save,
-      clearDocument: () => controller.clear(folders.clear),
+      clearDocument: () => {
+        mainTabRecovery.cancel();
+        return controller.clear(folders.clear);
+      },
       closeDocument: controller.closeActive,
       pinCurrentTab: () => { controller.setActiveTabPinned(true); },
       moveCurrentTabLeft: () => { controller.moveActiveTab(-1); },
@@ -521,6 +544,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     folderRemovalDialog,
     rootOrder,
     rootRoster,
+    reselectWorkspaceRoot,
     controller,
     folders,
     folderState,
@@ -986,7 +1010,7 @@ export function DocumentServicePanel({ workspace }: { workspace: Workspace }) {
         state={workspace.rootRoster.state}
         disabled={state.busy || state.frozen || workspace.folderState.busy}
         canReselect={isCommandEnabled("selectFolder")}
-        reselect={() => { void executeCommand({ type: "selectFolder", args: {} }); }}
+        reselect={workspace.reselectWorkspaceRoot}
         remove={(id) => { void workspace.rootRoster.model.remove(id); }}
         refresh={workspace.rootRoster.model.refresh}
       />

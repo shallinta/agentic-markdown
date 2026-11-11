@@ -32,7 +32,9 @@ import { createRecentReopener } from "../reopen-recent-file";
 import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { createContentSearchRPC } from "../rpc/content-search";
 import { createMainTabCheckpointRPC } from "../rpc/main-tab-checkpoint";
+import { createMainTabRecoveryRPC } from "../rpc/main-tab-recovery";
 import { createGuardedMainTabCheckpoint } from "../session/main-tab-checkpoint";
+import { createSingleMainTabRecoveryReader } from "../session/main-tab-single-recovery";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
 import { createExpansionService } from "../workspace/expansion-service";
@@ -122,6 +124,13 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       browserWindow.webview.url === PACKAGED_VIEW_URL && !browserWindow.webview.isRemoved,
     () => createGuardedMainTabCheckpoint(getSettingsDir(), { workspace, roster: rootRoster })
   );
+  const mainTabRecovery = createMainTabRecoveryRPC(
+    !syntheticReader && !perfLabEnabled && !searchLabEnabled &&
+      process.env.AGENTIC_MARKDOWN_REGION_DOCUMENT_LAB !== "1" &&
+      process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB !== "1",
+    () => browserWindow?.url === PACKAGED_VIEW_URL && browserWindow.webview.url === PACKAGED_VIEW_URL && !browserWindow.webview.isRemoved,
+    () => createSingleMainTabRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents})
+  );
   const expansion = createExpansionService({
     workspace,
     roster: rootRoster,
@@ -196,6 +205,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   });
   const lifecycle = createLifecycleGuard({
     guard: async (reason, execute) => {
+      const resumeRecovery = mainTabRecovery.suspend();
       const resumeCheckpoint = mainTabCheckpoint.suspend();
       expansionAdmissionSuspensions++;
       try {
@@ -223,6 +233,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       } finally {
         expansionAdmissionSuspensions--;
         resumeCheckpoint();
+        resumeRecovery();
       }
     },
     // Flush is non-destructive. Another SDK listener can still veto quit;
@@ -266,6 +277,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
   const runtime: DesktopAppRuntime = {
     stop() {
       stopPromise ??= stopDesktopApp([
+        ["main tab recovery", () => mainTabRecovery.dispose()],
         ["main tab checkpoint", () => mainTabCheckpoint.dispose()],
         ["reader lab", () => readerLab?.dispose()],
         ["content search", async () => {
@@ -320,6 +332,7 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         reopen: createRecentReopener(documents, (id) => recent.find(id)),
       },
       workspace,
+      mainTabRecovery: input => mainTabRecovery.request(input),
       mainTabCheckpoint: input => mainTabCheckpoint.request(input),
       workspaceRootRoster: input => rootRoster.request(input),
       workspaceExpansion: requestExpansion,
@@ -345,11 +358,12 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
         browserWindow = window;
         if (window.url === PACKAGED_VIEW_URL) readerLab?.bindMain(window);
         mru.bindWindow();
-        window.webview.on("did-commit-navigation", () => mainTabCheckpoint.navigate());
+        window.webview.on("did-commit-navigation", () => {mainTabCheckpoint.navigate();mainTabRecovery.navigate();});
         if (readerSnapshotEnabled && window.url === PACKAGED_VIEW_URL)
           window.webview.on("did-commit-navigation", () => readerLab?.retireMainReady(window));
         window.webview.on("dom-ready",(event)=>{
           mainTabCheckpoint.ready(event);
+          mainTabRecovery.ready(event);
           mru.domReady();
           contentSearch?.setReady(true);
           readerLab?.openAfterMainReady(window, event);

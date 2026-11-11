@@ -224,7 +224,7 @@ export interface TrustedWorkspaceService extends WorkspaceService {
   rootMutationGeneration(): number;
   openMainTabCandidate(
     input: { root: string; generation: number; entry: string; fingerprint: string; requestId: string },
-    proof: { check(): void; verify(check: () => void): Promise<void> }
+    proof: { retainRecoveryStamp?: boolean; check(): void; verify(check: () => void): Promise<void> }
   ): Promise<DocumentResponse>;
   captureMainTabCandidates(rootHandle: string, generation: number): {
     path: string;
@@ -2472,6 +2472,7 @@ export function createWorkspaceService({
         check();
         return await openWorkspaceFile(root, entry, file, envelope, {
           maxBytes: MAX_DOCUMENT_BYTES,
+          retainRecoveryStamp: proof.retainRecoveryStamp,
           check,
           async verify(authorization, _snapshot, current) {
             await proof.verify(current);

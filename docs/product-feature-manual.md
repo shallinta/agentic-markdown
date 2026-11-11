@@ -46,6 +46,8 @@ alpha.334 启动后，从「待重新授权的目录」选择原目录。如果�
 
 alpha.335 显式关闭最后一篇恢复的标签时，会清空与本次恢复匹配的会话记录。清空提交后，下次重新授权仍能在文件树看到该文档，主区保持为空。取消关闭、直接退出或清空发出前开始退出，旧会话记录仍保留。见[F-037n 迭代](iterations/F-037n-invalidate-restored-tab-on-explicit-close.md)。
 
+F-037o 已验证同目录两篇历史标签的受保护读取，包括原顺序、模式、固定状态和活动项。普通窗口目前仍恢复单篇标签。见[F-037o 迭代](iterations/F-037o-authorized-two-tab-recovery-read.md)。
+
 ## 主窗原生全屏（F-038a）
 
 点击 macOS 窗口绿钮进入全屏，也可用「窗口 → 切换全屏」或 ⌘⇧F 切换。主窗的命令面板也可搜索并执行「切换全屏」。切换后保留活动文档、各标签的编辑或源码模式和未保存内容。退出全屏后，侧栏恢复原来的开合状态和宽度。即使在全屏状态退出后重开，无保存偏好时仍按普通窗口尺寸恢复侧栏默认宽度。见[F-038a 迭代](iterations/F-038a-native-primary-full-screen.md)、[F-038c 迭代](iterations/F-038c-fullscreen-restore-regression.md)。

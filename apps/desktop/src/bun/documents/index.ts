@@ -131,6 +131,9 @@ type PastedRasterSourceResult<T> =
   | { ok: false; error: DocumentErrorCode | "UNKNOWN" };
 
 export interface TrustedDocumentService extends DocumentService {
+  /** Internal recovery snapshots only; stat/identity revalidation, not a second body read. */
+  ownsRecoverySnapshot(snapshot: DocumentSnapshot, requestId: string): boolean;
+  verifyRecoverySnapshots(snapshots: readonly DocumentSnapshot[], check: () => void): Promise<boolean>;
   /** Existing observed grant only. The receipt checks logical ownership after capture. */
   captureReadingSnapshot(
     source: ReadingSnapshotSource,
@@ -191,6 +194,7 @@ export interface TrustedDocumentService extends DocumentService {
     scope: DocumentScope,
     proof?: {
       maxBytes: number;
+      retainRecoveryStamp?: boolean;
       check(this: void): void;
       verify(
         authorization: SingleFileAuthorization,
@@ -341,6 +345,7 @@ export function createDocumentService({
     })();
   };
   const grants = new Map<string, Grant>();
+  const recoveryStamps = new WeakMap<DocumentSnapshot, { stamp: BigIntStats; grant: Grant; requestId: string }>();
   let trashGuard: (path: string, fingerprint?: string, directories?: SingleFileAuthorization["directories"]) => boolean = () => false;
   const observations = new Map<string, ObservationBinding & { last?: string }>();
   const observationEpochs = new Map<string, { epoch: number; token: string; active: boolean }>();
@@ -703,10 +708,10 @@ export function createDocumentService({
     }
   }
   async function snapshot(
-    grant: Grant, generation: number, task: Task, maxBytes?: number, guard?: () => void
+    grant: Grant, generation: number, task: Task, maxBytes?: number, guard?: () => void, captureStamp?: (stamp: BigIntStats) => void
   ): Promise<DocumentSnapshot> {
     if (trashGuard(grant.path, grant.fingerprint, grant.directories)) throw new DocumentFailure("BUSY");
-    const content = await stableBytes(grant, guard ?? (() => checkTask(task, generation)), maxBytes);
+    const content = await stableBytes(grant, guard ?? (() => checkTask(task, generation)), maxBytes, captureStamp);
     const length = content.length;
     const decodeStart = onTiming ? performance.now() : 0;
     let text: string;
@@ -1043,6 +1048,47 @@ export function createDocumentService({
     }
   }
   const service: TrustedDocumentService = {
+    ownsRecoverySnapshot(value, requestId) {
+      const proof = recoveryStamps.get(value);
+      return !!proof && proof.requestId === requestId && grants.get(value.handle) === proof.grant;
+    },
+    async verifyRecoverySnapshots(snapshots, check) {
+      if (snapshots.length !== 2) return false;
+      const bindings = service.captureContentSearchBindings(snapshots.map(value => value.handle));
+      if (!bindings) return false;
+      const verifyCurrent = () => {
+        check();
+        if (!bindings.current()) throw Error("RECOVERY_STALE");
+      };
+      try {
+        for (const [index, value] of snapshots.entries()) {
+          verifyCurrent();
+          const proof = recoveryStamps.get(value);
+          const binding = bindings.bindings[index];
+          if (!proof || grants.get(value.handle) !== proof.grant ||
+              binding?.documentId !== value.documentId || binding.hash !== value.hash ||
+              binding.revision !== value.revision) return false;
+          const file = await open(proof.grant.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          try {
+            verifyCurrent();
+            const stamp = await verify({ ...proof.grant, file });
+            verifyCurrent();
+            if (!sameReadingStamp(proof.stamp, stamp) ||
+                !sameReadingStamp(proof.stamp, fstatSync(file.fd, { bigint: true }))) return false;
+          } finally { await file.close(); }
+          verifyCurrent();
+        }
+        // No await between these terminal observations and the logical fence.
+        // This closes JS-await races, not concurrent external filesystem writes.
+        for (const value of snapshots) {
+          const proof = recoveryStamps.get(value);
+          if (!proof || grants.get(value.handle) !== proof.grant ||
+              !sameReadingStamp(proof.stamp, lstatSync(proof.grant.path, { bigint: true }))) return false;
+        }
+        verifyCurrent();
+        return true;
+      } catch { return false; }
+    },
     async captureReadingSnapshot(source, callerCurrent = () => true, options) {
       const captured = await captureReadingSource(source, callerCurrent, options?.includeImage ? "saved" : undefined);
       if (!captured.ok) return captured;
@@ -1618,7 +1664,9 @@ export function createDocumentService({
           if (proof) checkFreshTarget(candidate.path);
           check();
           await scope.verify();
-          const next = await snapshot(candidate, generation, task, proof?.maxBytes, proof ? check : undefined);
+          let recoveryStamp: BigIntStats | undefined;
+          const next = await snapshot(candidate, generation, task, proof?.maxBytes, proof ? check : undefined,
+            proof?.retainRecoveryStamp ? stamp => { recoveryStamp = stamp; } : undefined);
           await scope.verify();
           check();
           if (proof) {
@@ -1628,6 +1676,7 @@ export function createDocumentService({
           }
           commit(candidate, next, task, generation);
           grants.set(candidate.handle, candidate);
+          if (recoveryStamp) recoveryStamps.set(next, { stamp: recoveryStamp, grant: candidate, requestId: request.requestId });
           if (candidate.explicitStandalone) scope.release?.();
           watchGrant(candidate);
           return result(request.requestId, next);

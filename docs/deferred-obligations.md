@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037w Markdown 位置恢复回退实验（2026-11-12）
+
+已验证原块、邻近块、源码位置和比例的回退顺序。OBL-034 继续承接正式位置字段、版本兼容和备份、关闭清理及窗口采纳。OBL-054 和最终离线仍开放。见[F-037w 迭代](iterations/F-037w-markdown-position-fallback.md)。
+
 ## F-037v Markdown 内容块锚点实验（2026-11-11）
 
 已用真实解析验证前插后重新定位及重复块歧义。OBL-034 继续承接逐级回退、正式会话格式、关闭清理和窗口恢复。OBL-054 和最终离线仍开放。见[F-037v 迭代](iterations/F-037v-markdown-block-anchor-probe.md)。
@@ -7,6 +11,8 @@
 ## FINAL-ISSUE-008 原生目录选择器提交后偶发未返回（开放，2026-11-11）
 
 alpha.344 普通窗口用五篇合成文档夹具。首轮在系统选择器定位原目录后按 Return，窗口提示「目录更新未完成」，正常退出操作未生效。进程采样仍可见原生模态调用，根因待查。终止隔离实例后用同包复跑，定位原目录并点击 Open，五篇恢复及退出通过。集中验收用保有历史标签的合成目录，分别用 Return 和 Open 提交选择，再试取消、重选及 ⌘Q。预期选择后可恢复，取消后可重选，退出正常。见[F-037v 迭代](iterations/F-037v-markdown-block-anchor-probe.md)。
+
+alpha.345 用同一夹具验证 Cancel、重新打开选择器、点击 Open 及 ⌘Q 退出。以 Return 确认目录的复验仍待集中验收。见[F-037w 迭代](iterations/F-037w-markdown-position-fallback.md)。
 
 ## F-037u 主区会话位置存储实验（2026-11-11）
 

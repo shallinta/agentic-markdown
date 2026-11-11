@@ -168,3 +168,215 @@ test("dense actual parser index resolves first, middle and last without partial 
     });
   }
 });
+
+test("fallback retains exact block priority and follows unique immediate neighbors", () => {
+  const receipt = ready("before\n\ntarget\n\nafter").capturePosition({
+    from: 9,
+    offset: 11,
+    ratio: 0.4,
+    blockOffset: -3.5,
+  })!;
+  expect(
+    ready("intro\n\nbefore\n\ntarget\n\nafter").resolvePosition(receipt)
+  ).toEqual({ status: "block", from: 15, to: 21, offset: -3.5 });
+  expect(ready("before\n\nafter").resolvePosition(receipt)).toEqual({
+    status: "neighbor",
+    side: "after",
+    from: 8,
+    to: 13,
+  });
+  expect(ready("before").resolvePosition(receipt)).toEqual({
+    status: "neighbor",
+    side: "before",
+    from: 0,
+    to: 6,
+  });
+  expect(ready("after").resolvePosition(receipt)).toEqual({
+    status: "neighbor",
+    side: "after",
+    from: 0,
+    to: 5,
+  });
+});
+
+test("reordered or repeated neighbors never guess; source and ratio retain supplied geometry", () => {
+  const receipt = ready("before\n\ntarget\n\nafter").capturePosition({
+    from: 9,
+    offset: 2.25,
+    ratio: 0.6,
+  })!;
+  expect(ready("after\n\nbefore").resolvePosition(receipt)).toEqual({
+    status: "source",
+    from: 9,
+    offset: 2.25,
+  });
+  expect(
+    ready("before\n\nbefore\n\nafter\n\nafter").resolvePosition(receipt)
+  ).toEqual({ status: "source", from: 9, offset: 2.25 });
+  expect(ready("tiny").resolvePosition(receipt)).toEqual({
+    status: "ratio",
+    ratio: 0.6,
+  });
+  const repeated = ready("same\n\nsame\n\ntarget\n\nsame").capturePosition({
+    from: 13,
+    offset: 0,
+    ratio: 0.2,
+  })!;
+  expect(repeated.before).toBeUndefined();
+  expect(repeated.after).toBeUndefined();
+  expect(ready("same").resolvePosition(repeated)).toEqual({
+    status: "ratio",
+    ratio: 0.2,
+  });
+});
+
+test("source fallback validates CRLF and surrogate boundaries and permits gaps and EOF", () => {
+  const receipt = ready("abcd").capturePosition({
+    from: 2,
+    offset: 8.5,
+    ratio: 0.75,
+  })!;
+  expect(ready("x\r\ny").resolvePosition(receipt)).toEqual({
+    status: "ratio",
+    ratio: 0.75,
+  });
+  expect(ready("x😀y").resolvePosition(receipt)).toEqual({
+    status: "ratio",
+    ratio: 0.75,
+  });
+  expect(ready("xy").resolvePosition(receipt)).toEqual({
+    status: "source",
+    from: 2,
+    offset: 8.5,
+  });
+  const raw = "\uFEFFa\r\n\r\n😀";
+  const probe = ready(raw);
+  expect(
+    probe.capturePosition({ from: 3, offset: 0, ratio: 0 })
+  ).toBeUndefined();
+  expect(
+    probe.capturePosition({ from: raw.length - 1, offset: 0, ratio: 0 })
+  ).toBeUndefined();
+  for (const from of [0, 4, raw.length]) {
+    const gap = probe.capturePosition({ from: from, offset: 4, ratio: 1 })!;
+    expect(gap.anchor).toBeUndefined();
+    expect(probe.resolvePosition(gap)).toEqual({
+      status: "source",
+      from,
+      offset: 4,
+    });
+  }
+  const empty = ready("");
+  expect(
+    empty.resolvePosition(
+      empty.capturePosition({ from: 0, offset: 0, ratio: 0 })
+    )
+  ).toEqual({
+    status: "source",
+    from: 0,
+    offset: 0,
+  });
+});
+
+test("fallback receipts reject malformed geometry and anchors", () => {
+  const probe = ready("block");
+  const receipt = probe.capturePosition({ from: 0, offset: 0, ratio: 0.5 })!;
+  for (const ratio of [-0, -1, 1.1, NaN, Infinity])
+    expect(
+      probe.capturePosition({ from: 0, offset: 0, ratio: ratio })
+    ).toBeUndefined();
+  for (const value of [
+    null,
+    {},
+    { ...receipt, from: -1 },
+    { ...receipt, ratio: 2 },
+    { ...receipt, after: "invalid" },
+    { ...receipt, anchor: {} },
+    { ...receipt, anchor: undefined, before: "a".repeat(64) },
+  ])
+    expect(probe.resolvePosition(value)).toEqual({ status: "invalid" });
+});
+
+test("block-interior source geometry is not reused for the block start", () => {
+  const probe = ready("paragraph");
+  expect(
+    probe.resolvePosition(
+      probe.capturePosition({ from: 3, offset: 12, ratio: 0.2 })
+    )
+  ).toEqual({ status: "block", from: 0, to: 9 });
+  expect(
+    probe.resolvePosition(
+      probe.capturePosition({
+        from: 3,
+        offset: 12,
+        ratio: 0.2,
+        blockOffset: -8,
+      })
+    )
+  ).toEqual({ status: "block", from: 0, to: 9, offset: -8 });
+  expect(
+    probe.resolvePosition(
+      probe.capturePosition({ from: 0, offset: 12, ratio: 0.2 })
+    )
+  ).toEqual({ status: "block", from: 0, to: 9, offset: 12 });
+});
+
+test("fallback receipt rejects impossible neighbor and offset combinations", () => {
+  const old = ready("same\n\nsame");
+  const receipt = old.capturePosition({ from: 0, offset: 4, ratio: 0.5 })!;
+  const target = ready("same");
+  const hash = receipt.anchor!.position.anchor.hash;
+  for (const forged of [
+    { ...receipt, before: hash },
+    { ...receipt, after: hash },
+    { ...receipt, before: "a".repeat(64), after: "a".repeat(64) },
+    { ...receipt, blockOffset: 5 },
+    { ...receipt, blockOffset: undefined },
+  ])
+    expect(target.resolvePosition(forged)).toEqual({ status: "invalid" });
+  const interior = old.capturePosition({ from: 1, offset: 4, ratio: 0.5 })!;
+  expect(
+    target.resolvePosition({
+      ...interior,
+      anchor: {
+        ...interior.anchor!,
+        position: { ...interior.anchor!.position, offset: 1 },
+      },
+    })
+  ).toEqual({ status: "invalid" });
+});
+
+test("unchanged receipt source must be a valid boundary inside its original block", () => {
+  const probe = ready("😀target\r\nnext\n\nother");
+  const receipt = probe.capturePosition({ from: 0, offset: 2, ratio: 0.5 })!;
+  for (const from of [1, 9, 16, 999])
+    expect(probe.resolvePosition({ ...receipt, from })).toEqual({
+      status: "invalid",
+    });
+  expect(probe.resolvePosition({ ...receipt, from: 2 })).toMatchObject({
+    status: "block",
+    from: 0,
+  });
+  // Changed documents locate the stable block, not the now-unrelated source coordinate.
+  expect(
+    ready("intro\n\n😀target\r\nnext\n\nother").resolvePosition(receipt)
+  ).toMatchObject({ status: "block", from: 7 });
+});
+
+test("same-content receipt cannot fall back from unknown hash or invalid occurrence", () => {
+  const probe = ready("same\n\nsame");
+  const receipt = probe.capturePosition({ from: 0, offset: 0, ratio: 0.5 })!;
+  for (const anchor of [
+    { ...receipt.anchor!.position.anchor, hash: "a".repeat(64) },
+    { ...receipt.anchor!.position.anchor, occurrence: 2 },
+  ]) {
+    const forged = {
+      ...receipt,
+      anchor: {
+        ...receipt.anchor!,
+        position: { ...receipt.anchor!.position, anchor },
+      },
+    };
+    expect(probe.resolvePosition(forged)).toEqual({ status: "invalid" });
+  }
+});

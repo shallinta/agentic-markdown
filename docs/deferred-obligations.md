@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037aj 目录会话写入前核对原字节（2026-11-12）
+
+包内 Bun 已验目录写入和清空前的竞争拒绝，普通 WK 已验旧记录恢复及新检查点写入。OBL-034 继续承接此前分发版本的共存、正式混合写入及独立文件恢复。OBL-054 和最终离线仍开放。见[F-037aj 迭代](iterations/F-037aj-guard-directory-checkpoint-writers.md)。
+
 ## F-037ai 混合会话写入前核对原字节（2026-11-12）
 
 隔离 Bun 已验原记录变化和缺失路径被占用时的写入拒绝。普通 WK 已验旧目录恢复。OBL-034 继续承接在途旧写入方保护、正式混合记录及独立文件恢复。OBL-054 和最终离线仍开放。见[F-037ai 迭代](iterations/F-037ai-guard-mixed-checkpoint-publication.md)。

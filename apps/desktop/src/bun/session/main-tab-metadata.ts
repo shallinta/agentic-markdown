@@ -237,7 +237,7 @@ function exactRecoveryObservation(
   if (witness?.path !== path) return false;
   return exactCheckpointBytes(path, witness.bytes, () => witness.current());
 }
-export function exactCheckpointBytes(
+function exactCheckpointBytes(
   path: string,
   original: string,
   current: () => boolean
@@ -291,6 +291,38 @@ export function exactCheckpointBytes(
       }
     }
   }
+}
+
+/** Check the caller first; no mutable caller callback follows the disk proof. */
+export function checkpointPublicationGuard(
+  original: string | undefined,
+  path: string,
+  current?: () => boolean
+) {
+  let live = true;
+  return () => {
+    try {
+      live = live && typeof current === "function" && current() === true;
+      if (!live) return false;
+      if (original !== undefined) {
+        live = exactCheckpointBytes(path, original, () => true);
+      } else {
+        try {
+          lstatSync(path);
+          live = false;
+        } catch (error) {
+          live =
+            !!error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "ENOENT";
+        }
+      }
+    } catch {
+      live = false;
+    }
+    return live;
+  };
 }
 
 /** Isolated precursor only. No startup consumer, path lookup, or authority restoration. */
@@ -537,9 +569,16 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
           let protectedPositions = false;
           let notOwned = false;
           let changedBytes = false;
+          let publicationCurrent: (() => boolean) | undefined;
           const bytes = `${JSON.stringify({ version: 1, data: captured }, null, 2)}\n`;
           const result = await store.updateObserved(
             (previous, format, original) => {
+              if (ownedCheckpoint)
+                publicationCurrent = checkpointPublicationGuard(
+                  original,
+                  path,
+                  current
+                );
               if (
                 requirePositionOwner &&
                 (expectedPositionBytes !== undefined || expectedPositionMissing
@@ -563,7 +602,7 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
               }
               return captured;
             },
-            current
+            ownedCheckpoint ? () => publicationCurrent?.() === true : current
           );
           if ("stale" in result && result.stale)
             return { status: "rejected" as const, reason: "stale" as const };
@@ -662,9 +701,7 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
                 : { tabs, activeIndex };
               return replacement;
             },
-            () =>
-              admitted() &&
-              exactCheckpointBytes(path, capturedOwner.bytes, admitted)
+            checkpointPublicationGuard(capturedOwner.bytes, path, admitted)
           );
           if ("stale" in result && result.stale)
             return { status: "rejected", reason: "stale" };
@@ -733,7 +770,7 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
                 empty = { schemaVersion: 2, tabs: [], activeIndex: null };
               return empty;
             },
-            admitted
+            checkpointPublicationGuard(capturedOwner.bytes, path, admitted)
           );
           if (stale || ("stale" in result && result.stale))
             return { status: "rejected" as const, reason: "stale" as const };

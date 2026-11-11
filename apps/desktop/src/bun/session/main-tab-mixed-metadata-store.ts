@@ -1,11 +1,10 @@
-import { lstatSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { createSettingsStore } from "@agentic-markdown/shared/server";
 
 import {
   MAIN_TAB_METADATA_MAX_BYTES,
-  exactCheckpointBytes,
+  checkpointPublicationGuard,
   type MainTabMetadataWrite,
 } from "./main-tab-metadata";
 import {
@@ -99,30 +98,14 @@ export function createMixedMainTabMetadataStore(isolatedDir: string) {
         async () => {
           if (!admitted()) return { status: "rejected", reason: "stale" };
           let protectedFormat: "legacy" | "future" | undefined;
-          let originalBytes: string | undefined;
-          let observedOriginal = false;
-          const publicationCurrent = () => {
-            if (!admitted() || !observedOriginal) return false;
-            if (originalBytes !== undefined) {
-              live = exactCheckpointBytes(path, originalBytes, () => live);
-              return live;
-            }
-            try {
-              lstatSync(path);
-              live = false;
-            } catch (error) {
-              live =
-                !!error &&
-                typeof error === "object" &&
-                "code" in error &&
-                error.code === "ENOENT";
-            }
-            return live;
-          };
+          let publicationCurrent: (() => boolean) | undefined;
           const result = await store.updateObserved(
             (previous, format, original) => {
-              originalBytes = original;
-              observedOriginal = true;
+              publicationCurrent = checkpointPublicationGuard(
+                original,
+                path,
+                admitted
+              );
               if (format === "legacy") protectedFormat = "legacy";
               else if (
                 format === "version1" &&
@@ -133,7 +116,7 @@ export function createMixedMainTabMetadataStore(isolatedDir: string) {
                 throw Error("Protected mixed session format");
               return candidate;
             },
-            publicationCurrent
+            () => publicationCurrent?.() === true
           );
           if ("stale" in result && result.stale)
             return { status: "rejected", reason: "stale" };

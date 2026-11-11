@@ -4,13 +4,20 @@ import {
   type MainTabRecoveryRequest,
 } from "../shared/main-tab-recovery";
 
-import type { createDocumentController } from "./documents";
+import type { createDocumentController, PrimaryTabLastClose } from "./documents";
 import type { createFolderWorkspace, WorkspaceSelectionReceipt } from "./workspace";
 
 type Documents = Pick<ReturnType<typeof createDocumentController>,
   "canRestorePrimaryTab" | "adoptRecoveredPrimaryTab" | "runWorkspaceAction" | "subscribe">;
 type Folders = Pick<ReturnType<typeof createFolderWorkspace>, "getSnapshot" | "select" | "selectWithReceipt" | "subscribe">;
 interface Intent { cancel?: () => void }
+interface AdoptionSettlement {
+  documentId: string;
+  handle: string;
+  pending: boolean;
+  result: Promise<boolean>;
+}
+type Target = Pick<PrimaryTabLastClose, "documentId" | "handle">;
 
 /** The existing folder selection succeeds independently of optional tab recovery. */
 export function createMainTabRecovery(
@@ -20,6 +27,9 @@ export function createMainTabRecovery(
   available: () => boolean,
 ) {
   let active: Intent | undefined;
+  let adoption: AdoptionSettlement | undefined;
+  const matchingAdoption = ({ documentId, handle }: Target) =>
+    adoption?.documentId === documentId && adoption.handle === handle ? adoption : undefined;
 
   function cancel() {
     const previous = active;
@@ -73,7 +83,14 @@ export function createMainTabRecovery(
       detach();
       if (finishing || !current() || !documents.canRestorePrimaryTab() ||
           !validMainTabRecoveryResponse(reply, requestId) || reply.status !== "ready") return;
-      adopted = await documents.adoptRecoveredPrimaryTab(reply.snapshot, reply.mode, reply.pinned, current);
+      adopted = await documents.adoptRecoveredPrimaryTab(reply.snapshot, reply.mode, reply.pinned, current, () => {
+        const result = finish(true).then((acknowledgement) => {
+          ticket.pending = false;
+          return validMainTabRecoveryResponse(acknowledgement, requestId) && acknowledgement.status === "finished";
+        });
+        const ticket = { documentId: reply.snapshot.documentId, handle: reply.snapshot.handle, pending: true, result };
+        adoption = ticket;
+      });
     } finally {
       detach();
       await finish(adopted);
@@ -82,6 +99,16 @@ export function createMainTabRecovery(
 
   return {
     cancel,
+    settlementForRecord(this: void, target: Target) {
+      const matching = matchingAdoption(target);
+      return matching?.pending ? matching.result : undefined;
+    },
+    settlementForClose(this: void, close: PrimaryTabLastClose) {
+      const matching = matchingAdoption(close);
+      if (!matching) return;
+      adoption = undefined;
+      return matching.result;
+    },
     async reselect(expectedRootId: string) {
       cancel();
       if (folders.getSnapshot().busy) return;

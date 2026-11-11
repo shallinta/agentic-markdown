@@ -1,5 +1,9 @@
 # 迁出能力承接登记
 
+## F-037n 恢复标签的显式关闭（2026-11-11）
+
+普通 WK 已验最后一篇恢复标签关闭后清空匹配记录，并保留原记录备份。OBL-034 的多标签、跨根、草稿、副区及完整会话继续跟踪。OBL-054 与最终离线保持开放。见[F-037n 迭代](iterations/F-037n-invalidate-restored-tab-on-explicit-close.md)。
+
 ## F-037m 普通窗口重新授权恢复（2026-11-11）
 
 普通 WK 已验单篇标签的重新授权、当前正文、固定及模式。OBL-034 继续承接恢复标签显式关闭后历史失效及完整会话。OBL-054 与最终离线继续跟踪。见[F-037m 迭代](iterations/F-037m-restore-one-tab-after-folder-reauthorization.md)。

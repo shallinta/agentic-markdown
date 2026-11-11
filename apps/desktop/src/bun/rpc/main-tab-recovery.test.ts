@@ -23,7 +23,9 @@ const finish = (id: string, adopted: boolean) => ({
   adopted,
 });
 const ready = { data: { detail: PACKAGED_VIEW_URL } };
-function fixture() {
+function fixture(
+  prepareClaim?: Parameters<typeof createMainTabRecoveryRPC>[3]
+) {
   let resolve!: (value: SingleMainTabRecoveryResult) => void;
   let current = () => true,
     released = 0,
@@ -52,11 +54,17 @@ function fixture() {
         });
       },
       close: () => Promise.resolve(),
-    })
+    }),
+    prepareClaim
   );
   const deliver = () =>
     resolve({
       status: "ready",
+      ownership: {
+        status: "valid",
+        data: { tabs: [], activeIndex: null },
+        current: () => true,
+      },
       snapshot,
       mode: "source",
       pinned: true,
@@ -222,5 +230,40 @@ test("bounded page tombstones never evict older cancellations to admit delayed o
   );
   expect((await f.rpc.request(extra)).status).toBe("rejected");
   expect(f.reads).toBe(0);
+  f.rpc.dispose();
+});
+
+test("adopted grant is never released while claim waits or fails across navigation", async () => {
+  let finishClaim!: (value: boolean) => void;
+  let current = () => false,
+    claims = 0;
+  const f = fixture(() => (_receipt, check) => {
+    claims++;
+    current = check;
+    return new Promise<boolean>((resolve) => {
+      finishClaim = resolve;
+    });
+  });
+  f.rpc.ready(ready);
+  const input = open(),
+    opening = f.rpc.request(input);
+  f.deliver();
+  await opening;
+  let acknowledged = false;
+  const finishTask = f.rpc
+    .request(finish(input.requestId, true))
+    .then((value) => {
+      acknowledged = true;
+      return value;
+    });
+  expect(claims).toBe(1);
+  expect(current()).toBe(true);
+  expect(acknowledged).toBe(false);
+  f.rpc.navigate();
+  expect(current()).toBe(false);
+  expect(f.released).toBe(0);
+  finishClaim(false);
+  expect((await finishTask).status).toBe("finished");
+  expect(f.released).toBe(0);
   f.rpc.dispose();
 });

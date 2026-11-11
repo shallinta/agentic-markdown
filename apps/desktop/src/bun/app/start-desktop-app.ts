@@ -129,7 +129,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       process.env.AGENTIC_MARKDOWN_REGION_DOCUMENT_LAB !== "1" &&
       process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB !== "1",
     () => browserWindow?.url === PACKAGED_VIEW_URL && browserWindow.webview.url === PACKAGED_VIEW_URL && !browserWindow.webview.isRemoved,
-    () => createSingleMainTabRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents})
+    () => createSingleMainTabRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents}),
+    () => mainTabCheckpoint.prepareClaim()
   );
   const expansion = createExpansionService({
     workspace,

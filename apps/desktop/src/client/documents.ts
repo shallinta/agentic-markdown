@@ -102,6 +102,8 @@ export interface DocumentOpenReceipt {
 }
 
 export interface PrimaryTabLastClose {
+  readonly documentId: string;
+  readonly handle: string;
   current(): boolean;
 }
 
@@ -419,6 +421,7 @@ export function createDocumentController(
   let saveDrainRequired = false;
   let metadataEpoch = 0;
   let metadataDisposed = false;
+  let windowDiscardEpoch = 0;
   const waitForSaves = async () => {
     await Promise.all([...saving.values()]);
     if (!saveDrainRequired) return;
@@ -1324,8 +1327,9 @@ export function createDocumentController(
     }
     ++generation;
     cancelPending();
+    const handle = state.tabs[index].handle;
     const tabs = state.tabs.filter((tab) => tab.documentId !== documentId);
-    capabilityLifetimes.delete(state.tabs[index].handle);
+    capabilityLifetimes.delete(handle);
     let snapshot = state.snapshot;
     if (snapshot?.documentId === documentId) {
       // Standalone removal keeps its existing underlying-order fallback.
@@ -1366,11 +1370,15 @@ export function createDocumentController(
       ? preparePrimaryTabLayoutNotification(next) : undefined;
     const closedLast = !removeHandle && tabs.length === 0 && snapshot === null;
     const closedGeneration = generation;
+    const closedWindowDiscardEpoch = windowDiscardEpoch;
     publish(next);
     notifyLayout?.();
     if (!closedLast || !primaryTabLastCloseListeners.size) return;
     const intent: PrimaryTabLastClose = {
-      current: () => !metadataDisposed && generation === closedGeneration && state.tabs.length === 0 && state.snapshot === null,
+      documentId,
+      handle,
+      current: () => !metadataDisposed && generation === closedGeneration &&
+        windowDiscardEpoch === closedWindowDiscardEpoch && state.tabs.length === 0 && state.snapshot === null,
     };
     for (const listener of primaryTabLastCloseListeners) {
       if (state !== next || !intent.current()) break;
@@ -1794,8 +1802,13 @@ export function createDocumentController(
     // old auto-activation intent or send an as-yet unsent publication.
     beginWindowDiscard: () => {
       if (trashGate && !trashGate.cancelled) { trashGate.cancelled = true; publish({ ...state, frozen: discardActive }); }
-      if (!duplicateGate && !creationGate) return beginDiscard();
+      if (!duplicateGate && !creationGate) {
+        if (!beginDiscard()) return false;
+        windowDiscardEpoch++;
+        return true;
+      }
       if (removalGate || folderRemovalGate || discardActive || state.busy || !canLeaveEditor()) return false;
+      windowDiscardEpoch++;
       if (duplicateGate) duplicateGate.cancelled = true;
       if (creationGate) creationGate.cancelled = true;
       discardActive = true;
@@ -2325,7 +2338,8 @@ export function createDocumentController(
       snapshot: DocumentSnapshot,
       mode: "editing" | "source",
       pinned: boolean,
-      current: () => boolean
+      current: () => boolean,
+      onAdopt?: () => void
     ) {
       if (!current() || !pristinePrimaryTabRecovery() || !isDocumentSnapshot(snapshot) || snapshot.explicitStandalone !== false)
         return false;
@@ -2339,7 +2353,10 @@ export function createDocumentController(
       let adopted = false;
       try {
         await load(true, undefined, undefined, undefined, "background", undefined, undefined,
-          { snapshot, editor, pinned, current, adopt: () => { adopted = true; } });
+          { snapshot, editor, pinned, current, adopt: () => {
+            adopted = true;
+            onAdopt?.();
+          } });
       } catch {
         // A subscriber failure after publication cannot return the adopted grant to Bun.
       }

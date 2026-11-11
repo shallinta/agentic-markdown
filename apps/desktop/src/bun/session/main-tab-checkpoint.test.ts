@@ -21,6 +21,7 @@ import {
 } from "./main-tab-binder";
 import { createGuardedMainTabCheckpoint } from "./main-tab-checkpoint";
 import { createMainTabCheckpointMetadataStore } from "./main-tab-metadata";
+import { createSingleMainTabRecoveryReader } from "./main-tab-single-recovery";
 
 async function fixture() {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "tab-binder-")));
@@ -676,5 +677,141 @@ test("rewriting equal fields from noncanonical bytes is a new publication and gr
   } finally {
     await store.close();
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("private recovery observation claims exact historical bytes without a write, then owned clear works", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-claim-"));
+  const prior = createMainTabCheckpointMetadataStore(directory),
+    reader = createMainTabCheckpointMetadataStore(directory),
+    writer = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const data = {
+      tabs: [
+        {
+          rootId: crypto.randomUUID(),
+          relativePath: "a.md",
+          fingerprint: "1:2:3",
+          pinned: true,
+          mode: "source" as const,
+        },
+      ],
+      activeIndex: 0,
+    };
+    await prior.write(data, () => true);
+    await prior.close();
+    const path = join(directory, "main-tab-session-checkpoint.json"),
+      bytes = await readFile(path);
+    const observation = await reader.readObserved();
+    expect(observation.status).toBe("valid");
+    expect(
+      await writer.claimObservation(
+        { status: "valid", data, current: () => true },
+        () => true
+      )
+    ).toBe(false);
+    expect(await writer.claimObservation(observation, () => true)).toBe(true);
+    expect(await readFile(path)).toEqual(bytes);
+    expect(readdirSync(directory)).toEqual([
+      "main-tab-session-checkpoint.json",
+    ]);
+    expect(await writer.clearOwned(() => true)).toEqual({
+      status: "committed",
+    });
+    expect(await readFile(`${path}.bak`)).toEqual(bytes);
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      data: { tabs: [], activeIndex: null },
+    });
+  } finally {
+    await prior.close();
+    await reader.close();
+    await writer.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("recovery claims reject replaced bytes, expired lifecycle and queued checkpoint generations", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "checkpoint-claim-stale-"));
+  const reader = createMainTabCheckpointMetadataStore(directory),
+    writer = createMainTabCheckpointMetadataStore(directory);
+  try {
+    const data = {
+      tabs: [
+        {
+          rootId: crypto.randomUUID(),
+          relativePath: "a.md",
+          fingerprint: "1:2:3",
+          pinned: false,
+          mode: "editing" as const,
+        },
+      ],
+      activeIndex: 0,
+    };
+    await reader.write(data, () => true);
+    const observation = await reader.readObserved();
+    expect(await writer.claimObservation(observation, () => false)).toBe(false);
+    const write = reader.write(data, () => true);
+    expect(await writer.claimObservation(observation, () => true)).toBe(false);
+    await write;
+    const fresh = await reader.readObserved();
+    const path = join(directory, "main-tab-session-checkpoint.json");
+    const altered = JSON.stringify({ version: 1, data });
+    await writeFile(path, altered);
+    expect(await writer.claimObservation(fresh, () => true)).toBe(false);
+    expect(await writer.clearOwned(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(path, "utf8")).toBe(altered);
+  } finally {
+    await reader.close();
+    await writer.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("actual single recovery observation transfers ownership to a fresh writer without rewriting history", async () => {
+  const f = await fixture();
+  const directory = join(f.dir, "metadata");
+  const initial = createGuardedMainTabCheckpoint(directory, f),
+    writer = createGuardedMainTabCheckpoint(directory, f);
+  const reader = createSingleMainTabRecoveryReader(directory, f);
+  try {
+    const { tab, root } = await f.open(f.paths[0]);
+    await initial.write({ tabs: [tab], activeIndex: 0 }, () => true);
+    await initial.close();
+    const record = await writer.read();
+    if (record.status !== "valid") throw Error("No history");
+    await f.documents.release({ ...f.request(), handle: tab.handle });
+    const path = join(directory, "main-tab-session-checkpoint.json"),
+      before = await readFile(path);
+    const recovered = await reader.read(
+      {
+        requestId: crypto.randomUUID(),
+        root: root.handle,
+        generation: root.generation,
+        expectedRootId: record.data.tabs[0].rootId,
+      },
+      () => true
+    );
+    if (recovered.status !== "ready" || !recovered.ownership)
+      throw Error("No recovery observation");
+    expect(
+      await writer.claim(recovered.ownership, () => recovered.current())
+    ).toBe(true);
+    expect(await readFile(path)).toEqual(before);
+    expect(await recovered.release()).toBe("released");
+    expect(await writer.clear(() => true)).toEqual({ status: "committed" });
+    expect(await readFile(`${path}.bak`)).toEqual(before);
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      data: { tabs: [], activeIndex: null },
+    });
+  } finally {
+    await initial.close();
+    await writer.close();
+    await reader.close();
+    await f.close();
   }
 });

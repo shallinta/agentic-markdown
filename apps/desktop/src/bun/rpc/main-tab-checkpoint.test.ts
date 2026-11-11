@@ -223,3 +223,34 @@ test("clear uses strict protocol and current generation, and navigation cannot c
   expect(created).toBe(2);
   rpc.dispose();
 });
+
+test("new checkpoint admission and navigation invalidate an older recovery claim", async () => {
+  let calls = 0;
+  const rpc = createMainTabCheckpointRPC(
+    true,
+    () => true,
+    () => ({
+      write: () => Promise.resolve({ status: "rejected", reason: "stale" }),
+      clear: () => Promise.resolve({ status: "rejected", reason: "not-owned" }),
+      close: () => Promise.resolve(),
+      claim: (_receipt, current) => {
+        calls++;
+        return Promise.resolve(current());
+      },
+    })
+  );
+  rpc.ready(ready);
+  const claim = rpc.prepareClaim();
+  await rpc.request(request());
+  expect(await claim({ status: "missing" })).toBe(false);
+  expect(calls).toBe(0);
+  const next = rpc.prepareClaim();
+  expect(await next({ status: "missing" })).toBe(true);
+  expect(calls).toBe(1);
+  const retired = rpc.prepareClaim();
+  rpc.navigate();
+  rpc.ready(ready);
+  expect(await retired({ status: "missing" })).toBe(false);
+  expect(calls).toBe(1);
+  rpc.dispose();
+});

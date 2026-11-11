@@ -179,9 +179,10 @@ export function createSettingsStore<T>(
     return atomicWrite(statePath, contents, current);
   };
 
-  const readPersisted = async (): Promise<PersistedSettings<T>> => {
+  const readPersisted = async (capture?: (original: string | undefined) => void): Promise<PersistedSettings<T>> => {
     try {
       const value = await inspect();
+      capture?.(value.original);
       if (value.original === undefined) return { status: "missing" };
       if (value.unsupported) return { status: "future" };
       if (!value.valid) return { status: "corrupt" };
@@ -194,6 +195,12 @@ export function createSettingsStore<T>(
   return {
     /** No migration, backup or write. Same-path ordering is retained. */
     readPersisted: () => enqueue(readPersisted),
+    /** Synchronous observation within the same path queue; never migrates or writes. */
+    observePersisted: <R>(observe: (value: PersistedSettings<T>, original: string | undefined) => R) => enqueue(async () => {
+      let original: string | undefined;
+      const value = await readPersisted(bytes => { original = bytes; });
+      return observe(value, original);
+    }),
     /** One bounded write and observation, including a write that threw after rename. */
     updateObserved: (update: (state: T, format: "missing" | "legacy" | "version1", original: string | undefined) => T, current?: () => boolean) => enqueue(async () => {
       let before: T, expected: T;

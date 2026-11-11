@@ -17,6 +17,7 @@ import type {
   DocumentResponse,
   DocumentSnapshot,
 } from "../shared/documents";
+import type { MainTabCheckpointRequest } from "../shared/main-tab-checkpoint";
 import type { MainTabRecoveryRequest } from "../shared/main-tab-recovery";
 import { READER_SNAPSHOT_MAX_BYTES } from "../shared/reader-snapshot";
 import { analyzeTextFidelity } from "../shared/text-fidelity";
@@ -49,6 +50,7 @@ import {
 } from "./heading-folding";
 import { headingStructureSteps } from "./heading-structure";
 import { summarizeImages } from "./image-summary";
+import { attachMainTabActivationCheckpoint } from "./main-tab-activation-checkpoint";
 import { createMainTabRecovery } from "./main-tab-recovery";
 import { rawText } from "./raw-buffer";
 import { createFolderWorkspace } from "./workspace";
@@ -265,7 +267,10 @@ function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
   };
 }
 
-function recoveryFixture(status: WorkspaceRoot["status"] = "complete") {
+function recoveryFixture(
+  status: WorkspaceRoot["status"] = "complete",
+  finish: () => Promise<unknown> = () => Promise.reject(new Error("finish reply unavailable")),
+) {
   const documents = setup();
   const saved = { ...snapshot("# 当前磁盘正文"), explicitStandalone: false };
   const expectedRootId = crypto.randomUUID();
@@ -287,14 +292,14 @@ function recoveryFixture(status: WorkspaceRoot["status"] = "complete") {
   const reply = deferred<unknown>();
   const finished = deferred<boolean>();
   const requests: MainTabRecoveryRequest[] = [];
-  const recovery = createMainTabRecovery(documents.controller, folders, async (request) => {
+  const recovery = createMainTabRecovery(documents.controller, folders, (request) => {
     requests.push(request);
     if (request.op === "open") {
       entered.resolve(request);
       return reply.promise;
     }
     finished.resolve(request.adopted);
-    throw new Error("finish reply unavailable");
+    return finish();
   }, () => true);
   return {
     ...documents, folders, recovery, expectedRootId, requests, entered, reply, finished, saved,
@@ -375,6 +380,157 @@ test("cancelled pickers and changed scan generations never issue a recovery read
     expect(changed.folders.getSnapshot().roots[0]?.generation).toBe(2);
     expect(changed.requests).toEqual([]);
   } finally { changed.dispose(); }
+});
+
+const checkpointTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+function closingRecoveryFixture(closeOnAdoption = true) {
+  const acknowledgement = deferred<unknown>();
+  const fixture = recoveryFixture("complete", () => acknowledgement.promise);
+  const { recovery, controller, saved } = fixture;
+  const requests: MainTabCheckpointRequest[] = [];
+  const scope = {};
+  const unsubscribe = attachMainTabActivationCheckpoint(controller, (request) => {
+    requests.push(request);
+    return Promise.resolve({ protocolVersion: 1, status: "committed" });
+  }, () => scope, { idleMs: 0, settlementForRecord: recovery.settlementForRecord, settlementForClose: recovery.settlementForClose });
+  let closeStarted = false;
+  controller.subscribe(() => {
+    if (!closeOnAdoption || closeStarted || controller.getSnapshot().snapshot?.documentId !== saved.documentId) return;
+    closeStarted = true;
+    void controller.closeActive();
+  });
+  async function adoptBeforeConfirmation() {
+    const restoring = recovery.reselect(fixture.expectedRootId);
+    const open = await fixture.entered.promise;
+    fixture.reply.resolve({ protocolVersion: 1, requestId: open.requestId, status: "ready", snapshot: saved, mode: "source", pinned: true });
+    expect(await fixture.finished.promise).toBe(true);
+    return { restoring, requestId: open.requestId };
+  }
+  return {
+    ...fixture, acknowledgement, checkpointRequests: requests, adoptBeforeConfirmation,
+    async closeBeforeConfirmation() {
+      const pending = await adoptBeforeConfirmation();
+      expect(closeStarted).toBe(true);
+      expect(controller.getSnapshot().tabs).toEqual([]);
+      await checkpointTurn();
+      expect(requests).toEqual([]);
+      return pending;
+    },
+    dispose: () => { unsubscribe(); fixture.dispose(); },
+  };
+}
+
+test("closing the recovered last tab before delivery acknowledgement clears only after matching finish", async () => {
+  const f = closingRecoveryFixture();
+  try {
+    const { restoring, requestId } = await f.closeBeforeConfirmation();
+    f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "finished" });
+    await restoring;
+    await checkpointTurn();
+    expect(f.checkpointRequests).toEqual([{ protocolVersion: 1, op: "clear" }]);
+  } finally { f.dispose(); }
+});
+
+test("reactivating the recovered tab does not send a byte-identical write before its claim settles", async () => {
+  const acknowledgement = deferred<unknown>();
+  const f = recoveryFixture("complete", () => acknowledgement.promise);
+  let claimed = false;
+  let invalidated = false;
+  let cleared = false;
+  const scope = {};
+  const unsubscribe = attachMainTabActivationCheckpoint(f.controller, (request) => {
+    if ("op" in request) cleared = claimed;
+    else if (!claimed) invalidated = true;
+    return Promise.resolve({ protocolVersion: 1, status: "committed" });
+  }, () => scope, { idleMs: 0, settlementForRecord: f.recovery.settlementForRecord, settlementForClose: f.recovery.settlementForClose });
+  try {
+    const restoring = f.recovery.reselect(f.expectedRootId);
+    const open = await f.entered.promise;
+    f.reply.resolve({ protocolVersion: 1, requestId: open.requestId, status: "ready", snapshot: f.saved, mode: "source", pinned: true });
+    expect(await f.finished.promise).toBe(true);
+    f.controller.activateTab(f.saved.documentId);
+    await checkpointTurn();
+    claimed = !invalidated;
+    acknowledgement.resolve({ protocolVersion: 1, requestId: open.requestId, status: "finished" });
+    await restoring;
+    await checkpointTurn();
+    await f.controller.closeActive();
+    await checkpointTurn();
+    expect(cleared).toBe(true);
+  } finally { unsubscribe(); f.dispose(); }
+});
+
+test("a later close or another active tab supersedes a waiting recovered layout record", async () => {
+  for (const close of [true, false]) {
+    const f = closingRecoveryFixture(false);
+    try {
+      const { restoring, requestId } = await f.adoptBeforeConfirmation();
+      f.controller.setActiveTabPinned(false);
+      await checkpointTurn();
+      expect(f.checkpointRequests).toEqual([]);
+      if (close) await f.controller.closeActive();
+      else await f.controller.select();
+      await checkpointTurn();
+      if (close) expect(f.checkpointRequests).toEqual([]);
+      else expect(f.checkpointRequests[0]).toMatchObject({ activeIndex: 1, tabs: [{ documentId: f.saved.documentId }, { documentId: f.value.documentId }] });
+      f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "finished" });
+      await restoring;
+      await checkpointTurn();
+      expect(f.checkpointRequests).toHaveLength(1);
+      if (close) expect(f.checkpointRequests[0]).toEqual({ protocolVersion: 1, op: "clear" });
+    } finally { f.dispose(); }
+  }
+});
+
+test("a user layout checkpoint still proceeds when the recovered grant handoff result is unknown", async () => {
+  const f = closingRecoveryFixture(false);
+  try {
+    const { restoring, requestId } = await f.adoptBeforeConfirmation();
+    f.controller.setActiveTabPinned(false);
+    await checkpointTurn();
+    expect(f.checkpointRequests).toEqual([]);
+    f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "unknown" });
+    await restoring;
+    await checkpointTurn();
+    expect(f.checkpointRequests).toHaveLength(1);
+    expect(f.checkpointRequests[0]).toMatchObject({ activeIndex: 0, tabs: [{ documentId: f.saved.documentId, pinned: false }] });
+  } finally { f.dispose(); }
+});
+
+test("late recovery acknowledgement does not delay ordinary recording and close or resurrect an old clear", async () => {
+  const f = closingRecoveryFixture();
+  try {
+    const { restoring, requestId } = await f.closeBeforeConfirmation();
+    await f.controller.select();
+    await checkpointTurn();
+    expect(f.checkpointRequests).toHaveLength(1);
+    expect(f.checkpointRequests[0]).toMatchObject({ activeIndex: 0, tabs: [{ documentId: f.value.documentId }] });
+    await f.controller.closeActive();
+    await checkpointTurn();
+    expect(f.checkpointRequests[1]).toEqual({ protocolVersion: 1, op: "clear" });
+    f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: "finished" });
+    await restoring;
+    await checkpointTurn();
+    expect(f.checkpointRequests).toHaveLength(2);
+  } finally { f.dispose(); }
+});
+
+test("unknown acknowledgement or subsequent window discard preserves a recovered checkpoint", async () => {
+  for (const exit of [false, true]) {
+    const f = closingRecoveryFixture();
+    try {
+      const { restoring, requestId } = await f.closeBeforeConfirmation();
+      if (exit) {
+        expect(f.controller.beginWindowDiscard()).toBe(true);
+        f.controller.endDiscard();
+      }
+      f.acknowledgement.resolve({ protocolVersion: 1, requestId, status: exit ? "finished" : "unknown" });
+      await restoring;
+      await checkpointTurn();
+      expect(f.checkpointRequests).toEqual([]);
+    } finally { f.dispose(); }
+  }
 });
 
 test("inactive controller slots release image widgets while retaining text history selection and folds", async () => {

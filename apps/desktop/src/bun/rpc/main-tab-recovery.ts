@@ -3,6 +3,7 @@ import {
   validMainTabRecoveryRequest,
   type MainTabRecoveryResponse,
 } from "../../shared/main-tab-recovery";
+import type { MainTabMetadataObservation } from "../session/main-tab-metadata";
 import type {
   createSingleMainTabRecoveryReader,
   SingleMainTabRecoveryResult,
@@ -16,6 +17,11 @@ interface Slot {
   cancelled: boolean;
   result?: Ready;
   quarantined?: boolean;
+  adopted?: boolean;
+  claim?: (
+    receipt: MainTabMetadataObservation,
+    current: () => boolean
+  ) => Promise<boolean>;
   opening: Promise<MainTabRecoveryResponse>;
   finishing?: Promise<MainTabRecoveryResponse>;
   releasing?: Promise<"released" | "unknown">;
@@ -24,7 +30,11 @@ interface Slot {
 export function createMainTabRecoveryRPC(
   enabled: boolean,
   isPackagedMain: () => boolean,
-  createReader: () => Reader
+  createReader: () => Reader,
+  prepareClaim?: () => (
+    receipt: MainTabMetadataObservation,
+    current: () => boolean
+  ) => Promise<boolean>
 ) {
   let reader: Reader | undefined, slot: Slot | undefined;
   // Never evict an ID within a page: late RPC dispatch must not revive it.
@@ -58,7 +68,7 @@ export function createMainTabRecoveryRPC(
     epoch++;
     const old = slot;
     slot = undefined;
-    if (old) {
+    if (old && !old.adopted) {
       old.cancelled = true;
       void old.opening.then(() => release(old)).catch(() => undefined);
     }
@@ -124,16 +134,36 @@ export function createMainTabRecoveryRPC(
           return response(requestId, "rejected");
         }
         if (target.finishing)
-          return input.adopted
-            ? response(requestId, "rejected")
-            : target.finishing;
+          return input.adopted === !!target.adopted
+            ? target.finishing
+            : response(requestId, "rejected");
         if (input.adopted) {
           if (!target.result || target.cancelled)
             return response(requestId, "rejected");
-          slot = undefined;
-          const result = response(requestId, "finished");
-          last = { id: requestId, adopted: true, response: result };
-          return result;
+          target.adopted = true;
+          target.finishing = (async () => {
+            try {
+              const receipt = target.result!;
+              if (receipt.ownership)
+                await target.claim?.(
+                  receipt.ownership,
+                  () =>
+                    slot === target &&
+                    target.epoch === epoch &&
+                    available() &&
+                    receipt.current()
+                );
+            } catch {
+              /* Grant ownership already transferred; metadata failure never releases it. */
+            }
+            const result = response(requestId, "finished");
+            if (slot === target) {
+              slot = undefined;
+              last = { id: requestId, adopted: true, response: result };
+            }
+            return result;
+          })();
+          return target.finishing;
         }
         target.cancelled = true;
         target.finishing = (async () => {
@@ -154,6 +184,7 @@ export function createMainTabRecoveryRPC(
         id: requestId,
         epoch,
         cancelled: false,
+        claim: prepareClaim?.(),
         opening: Promise.resolve(response(requestId, "rejected")),
       };
       slot = target;

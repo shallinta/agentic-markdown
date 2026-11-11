@@ -4,11 +4,13 @@ import {
   type MainTabCheckpointResponse,
 } from "../../shared/main-tab-checkpoint";
 import type { createGuardedMainTabCheckpoint } from "../session/main-tab-checkpoint";
+import type { MainTabMetadataObservation } from "../session/main-tab-metadata";
 
 type Writer = Pick<
   ReturnType<typeof createGuardedMainTabCheckpoint>,
   "write" | "clear" | "close"
->;
+> &
+  Partial<Pick<ReturnType<typeof createGuardedMainTabCheckpoint>, "claim">>;
 /** One ordinary packaged main-window lifecycle. No startup or exit writes. */
 export function createMainTabCheckpointRPC(
   enabled: boolean,
@@ -53,6 +55,23 @@ export function createMainTabCheckpointRPC(
         if (!released) {
           released = true;
           suspensions--;
+        }
+      };
+    },
+    prepareClaim() {
+      const ticket = generation;
+      return async (
+        receipt: MainTabMetadataObservation,
+        callerCurrent: () => boolean = () => true
+      ) => {
+        const current = () =>
+          ticket === generation && available() && callerCurrent() === true;
+        if (!current()) return false;
+        try {
+          writer ??= createWriter();
+          return (await writer.claim?.(receipt, current)) ?? false;
+        } catch {
+          return false;
         }
       };
     },

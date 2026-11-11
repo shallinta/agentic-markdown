@@ -11,18 +11,24 @@ type Documents = Pick<ReturnType<typeof createDocumentController>,
   "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "subscribePrimaryTabLastClose" | "captureCleanPrimaryTabs">;
 type CheckpointTarget = Pick<MainTabSourceInput, "documentId" | "handle">;
 type CheckpointIntent = { kind: "record"; target: CheckpointTarget } | { kind: "clear"; close: PrimaryTabLastClose };
+interface CheckpointOptions {
+  idleMs?: number;
+  settlementForRecord?: (target: CheckpointTarget) => Promise<boolean> | undefined;
+  settlementForClose?: (close: PrimaryTabLastClose) => Promise<boolean> | undefined;
+}
 
 /** Persist at most one eligible primary-tab checkpoint at a time. */
 export function attachMainTabActivationCheckpoint(
   documents: Documents,
   send: (request: MainTabCheckpointRequest) => Promise<unknown>,
   workspaceScope: () => object | undefined,
-  idleMs = 120,
+  { idleMs = 120, settlementForRecord, settlementForClose }: CheckpointOptions = {},
 ) {
   let pending: CheckpointIntent | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight = false;
   let disposed = false;
+  let intentSequence = 0;
   let confirmed: { scope: object; key: string } | undefined;
 
   function schedule() {
@@ -73,15 +79,34 @@ export function attachMainTabActivationCheckpoint(
     }
   }
 
-  const enqueue = (intent: CheckpointIntent) => {
+  const enqueue = (intent: CheckpointIntent, settlement?: Promise<boolean>) => {
     if (disposed) return;
-    pending = intent;
-    schedule();
+    const sequence = ++intentSequence;
+    if (!settlement) {
+      pending = intent;
+      schedule();
+      return;
+    }
+    pending = undefined;
+    clearTimeout(timer);
+    timer = undefined;
+    // Other targets can publish while this grant's handoff is in flight.
+    void settlement.then((settled) => {
+      if (disposed || sequence !== intentSequence) return;
+      if (intent.kind === "clear" && ((!settled && !confirmed) || !intent.close.current())) return;
+      pending = intent;
+      schedule();
+    }, () => undefined);
   };
-  const record = (target: CheckpointTarget) => enqueue({ kind: "record", target });
+  const record = (target: CheckpointTarget) => enqueue({ kind: "record", target }, settlementForRecord?.(target));
   const unsubscribeActivation = documents.subscribeActivation(record);
   const unsubscribeLayout = documents.subscribePrimaryTabLayoutChange(record);
-  const unsubscribeClose = documents.subscribePrimaryTabLastClose((close) => enqueue({ kind: "clear", close }));
+  const unsubscribeClose = documents.subscribePrimaryTabLastClose((close) => {
+    if (disposed) return;
+    const settlement = settlementForClose?.(close);
+    // A normal write already acknowledged by Bun has its own ownership proof.
+    enqueue({ kind: "clear", close }, confirmed ? undefined : settlement);
+  });
   return () => {
     disposed = true;
     pending = undefined;

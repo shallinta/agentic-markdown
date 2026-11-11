@@ -145,8 +145,11 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
           tokens.set(workspace, token);
         }
         return token;
+      }, {
+        settlementForRecord: mainTabRecovery.settlementForRecord,
+        settlementForClose: mainTabRecovery.settlementForClose,
       });
-  }, [controller, folders]);
+  }, [controller, folders, mainTabRecovery]);
   const [publishRaster] = useState(() => createRasterPasteTransport({
     getFloor: async () => electrobun.rpc?.request.getRasterPasteSequence({}, { maxRequestTime: 4000 }),
     publish: async request => {

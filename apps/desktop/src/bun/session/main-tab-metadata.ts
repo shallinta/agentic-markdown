@@ -108,6 +108,10 @@ interface CheckpointObservations {
   pendingWrites: number;
   stores: number;
 }
+const recoveryWitnesses = new WeakMap<
+  object,
+  { path: string; bytes: string; current(): boolean }
+>();
 const checkpointObservations = new Map<string, CheckpointObservations>();
 
 /** Isolated precursor only. No startup consumer, path lookup, or authority restoration. */
@@ -118,7 +122,11 @@ export function createMainTabMetadataStore(isolatedDir: string) {
 /** Internal checkpoint storage; callers must supply a live authority guard. */
 export function createMainTabCheckpointMetadataStore(directory: string) {
   const path = resolve(directory, "main-tab-session-checkpoint.json");
-  const observed = checkpointObservations.get(path) ?? { token: {}, pendingWrites: 0, stores: 0 };
+  const observed = checkpointObservations.get(path) ?? {
+    token: {},
+    pendingWrites: 0,
+    stores: 0,
+  };
   observed.stores++;
   checkpointObservations.set(path, observed);
   const store = createMetadataStore(path, observed);
@@ -127,11 +135,16 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
     ...store,
     async readObserved(): Promise<MainTabMetadataObservation> {
       const token = observed.token;
-      const current = () => !closed && !observed.pendingWrites && observed.token === token;
+      const current = () =>
+        !closed && !observed.pendingWrites && observed.token === token;
       if (!current()) return { status: "stale" };
-      const record = await store.read();
+      const { record, bytes } = await store.readExact();
       if (!current()) return { status: "stale" };
-      return record.status === "valid" ? { ...record, current } : record;
+      if (record.status !== "valid") return record;
+      if (bytes === undefined) return { status: "io" };
+      const receipt = { ...record, current };
+      recoveryWitnesses.set(receipt, { path, bytes, current });
+      return receipt;
     },
     write(
       value: unknown,
@@ -144,8 +157,9 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
     async close() {
       if (closed) return store.close();
       closed = true;
-      try { await store.close(); }
-      finally {
+      try {
+        await store.close();
+      } finally {
         if (--observed.stores === 0) checkpointObservations.delete(path);
       }
     },
@@ -201,6 +215,56 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
   return {
     read() {
       return enqueue(read, (status) => ({ status }));
+    },
+    readExact() {
+      return enqueue<{
+        record: MainTabMetadataRead;
+        bytes: string | undefined;
+      }>(
+        () =>
+          store.observePersisted((value, bytes) => ({
+            record:
+              value.status === "valid"
+                ? value.format === "version1"
+                  ? { status: "valid" as const, data: value.data }
+                  : { status: "legacy" as const }
+                : value,
+            bytes,
+          })),
+        (status) => ({ record: { status }, bytes: undefined })
+      );
+    },
+    claimObservation(
+      receipt: MainTabMetadataObservation,
+      current: () => boolean
+    ): Promise<boolean> {
+      const witness = recoveryWitnesses.get(receipt);
+      if (!ownedCheckpoint || witness?.path !== path)
+        return Promise.resolve(false);
+      const valid = () => {
+        try {
+          return !closed && current() === true && witness.current() === true;
+        } catch {
+          return false;
+        }
+      };
+      return enqueue(
+        () =>
+          store.observePersisted((value, bytes) => {
+            if (
+              !valid() ||
+              value.status !== "valid" ||
+              value.format !== "version1" ||
+              bytes !== witness.bytes ||
+              value.data.tabs.length !== 1 ||
+              value.data.activeIndex !== 0
+            )
+              return false;
+            owner = { encoded: JSON.stringify(value.data), bytes };
+            return true;
+          }),
+        () => false
+      );
     },
     write(
       value: unknown,

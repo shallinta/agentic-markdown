@@ -9,6 +9,7 @@ import {
   createMainTabCheckpointMetadataStore,
   validMainTabSessionMetadata,
   type MainTabMetadataRead,
+  type MainTabMetadataObservation,
 } from "./main-tab-metadata";
 
 interface Dependencies {
@@ -29,7 +30,7 @@ export interface SingleMainTabRecoveryInput {
 type RecoveryRelease = "released" | "unknown";
 export type SingleMainTabRecoveryResult =
   | { status: "ready"; snapshot: DocumentSnapshot; mode: "editing" | "source"; pinned: boolean;
-      current(): boolean; release(): Promise<RecoveryRelease> }
+      current(): boolean; release(): Promise<RecoveryRelease>; ownership?: MainTabMetadataObservation }
   | { status: "rejected"; reason: "invalid" | "stale" | "unavailable" | "busy" }
   | { status: "unknown"; reason: "io" | "release" };
 
@@ -119,7 +120,7 @@ export function createSingleMainTabRecoveryReader(directory: string, { workspace
         if (!current()) return await release() === "released"
           ? { status: "rejected", reason: "stale" }
           : { status: "unknown", reason: "release" };
-        return { status: "ready", snapshot, mode, pinned, current, release };
+        return { status: "ready", snapshot, mode, pinned, current, release, ownership: observed };
       } catch {
         return opening ? { status: "unknown", reason: "io" }
           : { status: "rejected", reason: current() ? "unavailable" : "stale" };

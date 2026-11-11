@@ -50,15 +50,15 @@ function fixture() {
   }, (request) => {
     requests.push(request);
     return state.send();
-  }, () => state.scope, 0);
+  }, () => state.scope, { idleMs: 0 });
   return { state, requests, stop, activate(index: number) {
     state.capture = clean(index);
     listener?.(tabs[index]);
   }, emit(index: number) { listener?.(tabs[index]); }, layout(index: number) { layoutListener?.(tabs[index]); },
   close(current = () => true) {
     state.capture = { ok: true, tabs: [], activeIndex: null, current: () => true };
-    closeListener?.({ current });
-  }, emitClose() { closeListener?.({ current: () => true }); },
+    closeListener?.({ documentId: tabs[0].documentId, handle: tabs[0].handle, current });
+  }, emitClose() { closeListener?.({ documentId: tabs[0].documentId, handle: tabs[0].handle, current: () => true }); },
     sent: () => requests.map(request => "op" in request ? request.op : request.activeIndex),
     subscribed: () => !!listener || !!layoutListener || !!closeListener };
 }

@@ -5,6 +5,7 @@ import {
 import {
   createMainTabCheckpointMetadataStore,
   type MainTabMetadataWrite,
+  type MainTabMetadataObservation,
 } from "./main-tab-metadata";
 
 export type MainTabCheckpointWrite =
@@ -85,6 +86,20 @@ export function createGuardedMainTabCheckpoint(
           status: "unknown",
           reason: "io",
         }));
+      tail = next.finally(() => {
+        queued--;
+      });
+      return next;
+    },
+    claim(
+      receipt: MainTabMetadataObservation,
+      current: () => boolean
+    ): Promise<boolean> {
+      if (closed || queued >= 64) return Promise.resolve(false);
+      queued++;
+      const next = tail
+        .then(() => store.claimObservation(receipt, current))
+        .catch(() => false);
       tail = next.finally(() => {
         queued--;
       });

@@ -98,7 +98,8 @@ function inversePatch(before: string, after: string): RawPatch {
 export function createRawEditorState(
   raw: string,
   extensions: Extension = [],
-  isolated = false
+  isolated = false,
+  { parserPaused = false } = {}
 ): EditorState {
   return EditorState.create({
     doc: editorText(raw),
@@ -135,7 +136,7 @@ export function createRawEditorState(
       isolated ? [] : inlineFormatKeys,
       longLineProtection,
       largeDocumentParsing,
-      createEditorModeExtensions(isolated),
+      createEditorModeExtensions(isolated, parserPaused),
       writePermission.of(EditorState.readOnly.of(false)),
       // Source cursor commands are routed through the unified registry by the view.
       keymap.of(

@@ -153,9 +153,19 @@ test("two real scoped snapshots retain order, modes and active item without rere
     ]);
     expect(result.activeIndex).toBe(1);
     expect(result.current()).toBe(true);
+
     expect(f.reads()).toBe(2);
     expect(f.documents.locations()).toHaveLength(2);
     expect(await readFile(f.path)).toEqual(f.bytes);
+    expect(await result.revalidate()).toBe(true);
+    const owner = createMainTabCheckpointMetadataStore(f.directory);
+    expect(
+      await owner.claimObservation(result.ownership, () => result.current())
+    ).toBe(true);
+    expect(await readFile(f.path)).toEqual(f.bytes);
+    expect(await owner.clearOwned(() => true)).toEqual({ status: "committed" });
+    expect(await readFile(`${f.path}.bak`)).toEqual(f.bytes);
+    await owner.close();
     expect(await result.release()).toBe("released");
     expect(await result.release()).toBe("released");
     expect(result.current()).toBe(false);
@@ -434,6 +444,25 @@ test("first file modified during final second-file verify is rejected before gro
     const result = await reader.read(f.input, () => true);
     expect(changed).toBe(true);
     expect(result).toEqual({ status: "rejected", reason: "unavailable" });
+    expect(f.documents.locations()).toHaveLength(0);
+    expect(await readFile(f.path)).toEqual(f.bytes);
+  } finally {
+    await reader.close();
+    await f.close();
+  }
+});
+
+test("delivery revalidation detects changes after the ready result without rereading bodies", async () => {
+  const f = await fixture();
+  const reader = createMainTabPairRecoveryReader(f.directory, f);
+  try {
+    const result = await reader.read(f.input, () => true);
+    if (result.status !== "ready") throw Error("No pair");
+    await writeFile(join(f.folder, "a.md"), "# Changed before item two\n");
+    expect(await result.revalidate()).toBe(false);
+    expect(result.current()).toBe(false);
+    expect(f.reads()).toBe(2);
+    expect(await result.release()).toBe("released");
     expect(f.documents.locations()).toHaveLength(0);
     expect(await readFile(f.path)).toEqual(f.bytes);
   } finally {

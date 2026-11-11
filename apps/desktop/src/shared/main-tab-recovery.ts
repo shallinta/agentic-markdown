@@ -8,6 +8,7 @@ export type MainTabRecoveryRequest = {
 } & (
   | { op: "open"; root: string; generation: number; expectedRootId: string }
   | { op: "finish"; adopted: boolean }
+  | { op: "pair-item"; index: 0 | 1 }
 );
 export type MainTabRecoveryResponse = {
   protocolVersion: 1;
@@ -15,6 +16,14 @@ export type MainTabRecoveryResponse = {
 } & (
   | {
       status: "ready";
+      snapshot: DocumentSnapshot;
+      mode: "editing" | "source";
+      pinned: boolean;
+    }
+  | { status: "pair"; activeIndex: 0 | 1 }
+  | {
+      status: "pair-item";
+      index: 0 | 1;
       snapshot: DocumentSnapshot;
       mode: "editing" | "source";
       pinned: boolean;
@@ -34,6 +43,11 @@ export function validMainTabRecoveryRequest(
     v.requestId.length > 80
   )
     return false;
+  if (v.op === "pair-item")
+    return (
+      Object.keys(v).sort().join() === "index,op,protocolVersion,requestId" &&
+      (v.index === 0 || v.index === 1)
+    );
   if (v.op === "finish")
     return (
       Object.keys(v).sort().join() === "adopted,op,protocolVersion,requestId" &&
@@ -55,10 +69,19 @@ export function validMainTabRecoveryResponse(
 ): v is MainTabRecoveryResponse {
   if (!object(v) || v.protocolVersion !== 1 || v.requestId !== requestId)
     return false;
-  if (v.status === "ready")
+  if (v.status === "pair")
     return (
       Object.keys(v).sort().join() ===
-        "mode,pinned,protocolVersion,requestId,snapshot,status" &&
+        "activeIndex,protocolVersion,requestId,status" &&
+      (v.activeIndex === 0 || v.activeIndex === 1)
+    );
+  if (v.status === "ready" || v.status === "pair-item")
+    return (
+      Object.keys(v).sort().join() ===
+        (v.status === "ready"
+          ? "mode,pinned,protocolVersion,requestId,snapshot,status"
+          : "index,mode,pinned,protocolVersion,requestId,snapshot,status") &&
+      (v.status === "ready" || v.index === 0 || v.index === 1) &&
       isDocumentSnapshot(v.snapshot) &&
       v.snapshot.explicitStandalone === false &&
       (v.mode === "editing" || v.mode === "source") &&

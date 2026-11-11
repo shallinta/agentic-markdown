@@ -46,7 +46,9 @@ alpha.334 启动后，从「待重新授权的目录」选择原目录。如果�
 
 alpha.335 显式关闭最后一篇恢复的标签时，会清空与本次恢复匹配的会话记录。清空提交后，下次重新授权仍能在文件树看到该文档，主区保持为空。取消关闭、直接退出或清空发出前开始退出，旧会话记录仍保留。见[F-037n 迭代](iterations/F-037n-invalidate-restored-tab-on-explicit-close.md)。
 
-F-037o 已验证同目录两篇历史标签的受保护读取，包括原顺序、模式、固定状态和活动项。普通窗口目前仍恢复单篇标签。见[F-037o 迭代](iterations/F-037o-authorized-two-tab-recovery-read.md)。
+F-037o 在 alpha.336 验证了同目录两篇历史标签的受保护读取，包括原顺序、模式、固定状态和活动项。见[F-037o 迭代](iterations/F-037o-authorized-two-tab-recovery-read.md)。
+
+alpha.337 从「待重新授权的目录」选回原目录后，尚未发起打开文档或加入其他目录的窗口也可恢复上次在同一目录中的两篇标签。两篇一起显示，保留顺序、编辑或源码模式、固定状态和上次活动项。任一文件失效时只加入目录。关闭其中一篇会记录剩余标签，关闭最后一篇会清空匹配记录。见[F-037p 迭代](iterations/F-037p-restore-two-tabs-after-folder-reauthorization.md)。
 
 ## 主窗原生全屏（F-038a）
 

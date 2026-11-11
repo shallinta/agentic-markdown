@@ -116,7 +116,7 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     (request) => {
       const rpc = electrobun.rpc;
       if (!rpc) return Promise.reject(new Error("RPC unavailable"));
-      return rpc.request.mainTabRecovery(request, { maxRequestTime: request.op === "open" ? 12000 : 4000 });
+      return rpc.request.mainTabRecovery(request, { maxRequestTime: request.op === "finish" ? 4000 : 12000 });
     },
     () => {
       const flags = globalThis as typeof globalThis & { __AGENTIC_MARKDOWN_EDITOR_FAULT_LAB__?: boolean };

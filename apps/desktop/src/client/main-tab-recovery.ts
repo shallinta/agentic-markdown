@@ -8,12 +8,11 @@ import type { createDocumentController, PrimaryTabLastClose } from "./documents"
 import type { createFolderWorkspace, WorkspaceSelectionReceipt } from "./workspace";
 
 type Documents = Pick<ReturnType<typeof createDocumentController>,
-  "canRestorePrimaryTab" | "adoptRecoveredPrimaryTab" | "runWorkspaceAction" | "subscribe">;
+  "canRestorePrimaryTab" | "adoptRecoveredPrimaryTab" | "adoptRecoveredPrimaryPair" | "runWorkspaceAction" | "subscribe">;
 type Folders = Pick<ReturnType<typeof createFolderWorkspace>, "getSnapshot" | "select" | "selectWithReceipt" | "subscribe">;
 interface Intent { cancel?: () => void }
 interface AdoptionSettlement {
-  documentId: string;
-  handle: string;
+  targets: readonly Target[];
   pending: boolean;
   result: Promise<boolean>;
 }
@@ -29,7 +28,7 @@ export function createMainTabRecovery(
   let active: Intent | undefined;
   let adoption: AdoptionSettlement | undefined;
   const matchingAdoption = ({ documentId, handle }: Target) =>
-    adoption?.documentId === documentId && adoption.handle === handle ? adoption : undefined;
+    adoption?.targets.some((target) => target.documentId === documentId && target.handle === handle) ? adoption : undefined;
 
   function cancel() {
     const previous = active;
@@ -77,20 +76,39 @@ export function createMainTabRecovery(
     const offDocuments = documents.subscribe(invalidate);
     const detach = () => { intent.cancel = undefined; offFolders(); offDocuments(); };
     intent.cancel = () => { void finish(false); };
+    const eligible = () => !finishing && current() && documents.canRestorePrimaryTab();
+    async function pairItem(index: 0 | 1) {
+      if (!eligible()) return;
+      const item = await send({ ...envelope, op: "pair-item", index });
+      if (eligible() && validMainTabRecoveryResponse(item, requestId) && item.status === "pair-item" && item.index === index)
+        return item;
+    }
+    const registerAdoption = (items: readonly Target[]) => {
+      const result = finish(true).then((acknowledgement) => {
+        ticket.pending = false;
+        return validMainTabRecoveryResponse(acknowledgement, requestId) && acknowledgement.status === "finished";
+      });
+      const targets = items.map(({ documentId, handle }) => ({ documentId, handle }));
+      const ticket = { targets, pending: true, result };
+      adoption = ticket;
+    };
     let adopted = false;
     try {
       const reply = await send(open);
-      detach();
-      if (finishing || !current() || !documents.canRestorePrimaryTab() ||
-          !validMainTabRecoveryResponse(reply, requestId) || reply.status !== "ready") return;
-      adopted = await documents.adoptRecoveredPrimaryTab(reply.snapshot, reply.mode, reply.pinned, current, () => {
-        const result = finish(true).then((acknowledgement) => {
-          ticket.pending = false;
-          return validMainTabRecoveryResponse(acknowledgement, requestId) && acknowledgement.status === "finished";
-        });
-        const ticket = { documentId: reply.snapshot.documentId, handle: reply.snapshot.handle, pending: true, result };
-        adoption = ticket;
-      });
+      if (!eligible() || !validMainTabRecoveryResponse(reply, requestId)) return;
+      if (reply.status === "ready") {
+        detach();
+        adopted = await documents.adoptRecoveredPrimaryTab(reply.snapshot, reply.mode, reply.pinned, current,
+          () => registerAdoption([reply.snapshot]));
+      } else if (reply.status === "pair") {
+        const first = await pairItem(0);
+        if (!first) return;
+        const second = await pairItem(1);
+        if (!second || !eligible()) return;
+        detach();
+        adopted = documents.adoptRecoveredPrimaryPair([first, second], reply.activeIndex, current,
+          () => registerAdoption([first.snapshot, second.snapshot]));
+      }
     } finally {
       detach();
       await finish(adopted);

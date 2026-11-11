@@ -5,17 +5,26 @@ import {
 } from "../../shared/main-tab-recovery";
 import type { MainTabMetadataObservation } from "../session/main-tab-metadata";
 import type {
+  createMainTabPairRecoveryReader,
+  MainTabPairRecoveryResult,
+} from "../session/main-tab-pair-recovery";
+import type {
   createSingleMainTabRecoveryReader,
   SingleMainTabRecoveryResult,
 } from "../session/main-tab-single-recovery";
 
+
+type PairReader = ReturnType<typeof createMainTabPairRecoveryReader>;
+type Pair = Extract<MainTabPairRecoveryResult, { status: "ready" }>;
 type Reader = ReturnType<typeof createSingleMainTabRecoveryReader>;
 type Ready = Extract<SingleMainTabRecoveryResult, { status: "ready" }>;
 interface Slot {
   id: string;
   epoch: number;
   cancelled: boolean;
-  result?: Ready;
+  result?: Ready | Pair;
+  delivered?: number;
+  itemPending?: boolean;
   quarantined?: boolean;
   adopted?: boolean;
   claim?: (
@@ -34,8 +43,10 @@ export function createMainTabRecoveryRPC(
   prepareClaim?: () => (
     receipt: MainTabMetadataObservation,
     current: () => boolean
-  ) => Promise<boolean>
+  ) => Promise<boolean>,
+  createPairReader?: () => PairReader
 ) {
+  let pairReader: PairReader | undefined;
   let reader: Reader | undefined, slot: Slot | undefined;
   // Never evict an ID within a page: late RPC dispatch must not revive it.
   const seen = new Set<string>();
@@ -75,6 +86,9 @@ export function createMainTabRecoveryRPC(
     const oldReader = reader;
     reader = undefined;
     void oldReader?.close().catch(() => undefined);
+    const oldPair = pairReader;
+    pairReader = undefined;
+    void oldPair?.close().catch(() => undefined);
     last = undefined;
     seen.clear();
   };
@@ -109,6 +123,73 @@ export function createMainTabRecoveryRPC(
     async request(input: unknown): Promise<MainTabRecoveryResponse> {
       if (!validMainTabRecoveryRequest(input)) return response("", "rejected");
       const { requestId } = input;
+      if (input.op === "pair-item") {
+        const target = slot;
+        if (
+          target?.id !== requestId ||
+          !target.result ||
+          !("tabs" in target.result) ||
+          target.quarantined ||
+          target.cancelled ||
+          target.finishing ||
+          target.itemPending ||
+          (target.delivered ?? 0) !== input.index ||
+          !available() ||
+          target.epoch !== epoch
+        )
+          return response(requestId, "rejected");
+        const result = target.result;
+        target.itemPending = true;
+        try {
+          const valid =
+            result.current() &&
+            (input.index === 0 || (await result.revalidate()));
+          if (
+            !valid ||
+            !result.current() ||
+            slot !== target ||
+            target.cancelled ||
+            target.finishing ||
+            !available() ||
+            target.epoch !== epoch
+          ) {
+            const freed = await release(target);
+            if (
+              freed.status === "finished" &&
+              slot === target &&
+              !target.finishing
+            )
+              slot = undefined;
+            return response(
+              requestId,
+              freed.status === "finished" ? "rejected" : "unknown"
+            );
+          }
+          const item = result.tabs[input.index];
+          target.delivered = input.index + 1;
+          return {
+            protocolVersion: 1,
+            requestId,
+            status: "pair-item",
+            index: input.index,
+            ...item,
+          };
+        } catch {
+          const freed = await release(target);
+          if (
+            freed.status === "finished" &&
+            slot === target &&
+            !target.finishing
+          )
+            slot = undefined;
+          return response(
+            requestId,
+            freed.status === "finished" ? "rejected" : "unknown"
+          );
+        } finally {
+          target.itemPending = false;
+        }
+      }
       if (input.op === "finish") {
         if (slot?.id === requestId && slot.quarantined)
           return response(requestId, "unknown");
@@ -138,7 +219,12 @@ export function createMainTabRecoveryRPC(
             ? target.finishing
             : response(requestId, "rejected");
         if (input.adopted) {
-          if (!target.result || target.cancelled)
+          if (
+            !target.result ||
+            target.cancelled ||
+            ("tabs" in target.result &&
+              (target.delivered !== 2 || target.itemPending))
+          )
             return response(requestId, "rejected");
           target.adopted = true;
           target.finishing = (async () => {
@@ -196,7 +282,17 @@ export function createMainTabRecoveryRPC(
             !target.cancelled &&
             target.epoch === epoch &&
             available();
-          const result = await reader.read(input, current);
+          let result: SingleMainTabRecoveryResult | MainTabPairRecoveryResult =
+            await reader.read(input, current);
+          if (
+            result.status === "rejected" &&
+            result.reason === "unavailable" &&
+            current() &&
+            createPairReader
+          ) {
+            pairReader ??= createPairReader();
+            result = await pairReader.read(input, current);
+          }
           if (result.status !== "ready") {
             target.quarantined = result.status === "unknown";
             return response(
@@ -218,6 +314,13 @@ export function createMainTabRecoveryRPC(
               freed.status === "finished" ? "rejected" : "unknown"
             );
           }
+          if ("tabs" in result)
+            return {
+              protocolVersion: 1,
+              requestId,
+              status: "pair",
+              activeIndex: result.activeIndex,
+            };
           return {
             protocolVersion: 1,
             requestId,

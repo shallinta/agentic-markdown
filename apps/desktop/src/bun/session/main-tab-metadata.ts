@@ -256,8 +256,8 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
               value.status !== "valid" ||
               value.format !== "version1" ||
               bytes !== witness.bytes ||
-              value.data.tabs.length !== 1 ||
-              value.data.activeIndex !== 0
+              (value.data.tabs.length !== 1 && value.data.tabs.length !== 2) ||
+              value.data.activeIndex === null
             )
               return false;
             owner = { encoded: JSON.stringify(value.data), bytes };

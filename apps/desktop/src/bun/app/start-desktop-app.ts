@@ -34,6 +34,7 @@ import { createContentSearchRPC } from "../rpc/content-search";
 import { createMainTabCheckpointRPC } from "../rpc/main-tab-checkpoint";
 import { createMainTabRecoveryRPC } from "../rpc/main-tab-recovery";
 import { createGuardedMainTabCheckpoint } from "../session/main-tab-checkpoint";
+import { createMainTabPairRecoveryReader } from "../session/main-tab-pair-recovery";
 import { createSingleMainTabRecoveryReader } from "../session/main-tab-single-recovery";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
@@ -130,7 +131,8 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB !== "1",
     () => browserWindow?.url === PACKAGED_VIEW_URL && browserWindow.webview.url === PACKAGED_VIEW_URL && !browserWindow.webview.isRemoved,
     () => createSingleMainTabRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents}),
-    () => mainTabCheckpoint.prepareClaim()
+    () => mainTabCheckpoint.prepareClaim(),
+    () => createMainTabPairRecoveryReader(getSettingsDir(), {workspace,roster:rootRoster,documents})
   );
   const expansion = createExpansionService({
     workspace,

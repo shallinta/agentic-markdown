@@ -113,7 +113,7 @@ const sourcePresentation = [
     },
   }),
 ];
-export const createEditorModeExtensions = (isolated = false) => [
+export const createEditorModeExtensions = (isolated = false, parserPaused = false) => [
   wrapping.of(wrapExtension("editing", true)),
   editorFaultSession,
   headingFolding,
@@ -123,7 +123,7 @@ export const createEditorModeExtensions = (isolated = false) => [
     const session = state.field(editorFaultSession);
     return () => reportEditorFault(session, "presentation");
   }),
-  parserLanguage.of(isolated ? [] : editingMarkdown),
+  parserLanguage.of(isolated || parserPaused ? [] : editingMarkdown),
   presentation.of(
     isolated
       ? [mode.of("source"), safe.of(true), frontmatterEditing.of(false)]

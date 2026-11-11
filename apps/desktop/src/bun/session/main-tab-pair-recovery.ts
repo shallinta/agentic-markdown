@@ -5,7 +5,10 @@ import { validRootRosterId } from "../../shared/root-roster";
 import type { TrustedDocumentService } from "../documents";
 import type { TrustedWorkspaceService } from "../workspace";
 
-import { createMainTabCheckpointMetadataStore } from "./main-tab-metadata";
+import {
+  type MainTabMetadataObservation,
+  createMainTabCheckpointMetadataStore,
+} from "./main-tab-metadata";
 import type { SingleMainTabRecoveryInput } from "./main-tab-single-recovery";
 
 type Release = "released" | "unknown";
@@ -34,7 +37,9 @@ export type MainTabPairRecoveryResult =
         mode: "editing" | "source";
         pinned: boolean;
       }[];
-      activeIndex: number;
+      activeIndex: 0 | 1;
+      ownership: MainTabMetadataObservation;
+      revalidate(): Promise<boolean>;
       current(): boolean;
       release(): Promise<Release>;
     }
@@ -267,6 +272,21 @@ export function createMainTabPairRecoveryReader(
           })),
           activeIndex: observed.data.activeIndex,
           current: resultCurrent,
+          ownership: observed,
+          async revalidate() {
+            try {
+              if (!resultCurrent()) return false;
+              await verifyRecord();
+              if (!(await documents.verifyRecoverySnapshots(owned, check))) {
+                valid = false;
+                return false;
+              }
+              return resultCurrent();
+            } catch {
+              valid = false;
+              return false;
+            }
+          },
           release,
         };
       } catch {

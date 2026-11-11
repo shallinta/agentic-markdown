@@ -117,6 +117,14 @@ export type DocumentEntry = Pick<
   | "explicitStandalone"
   | "writeCapability"
 >;
+interface RecoveredPrimaryTab {
+  snapshot: DocumentSnapshot;
+  mode: "editing" | "source";
+  pinned: boolean;
+}
+function documentEntry({ handle, documentId, fileName, locationId, displayPath, explicitStandalone, writeCapability }: DocumentSnapshot): DocumentEntry {
+  return { handle, documentId, fileName, locationId, displayPath, explicitStandalone, writeCapability };
+}
 export interface SaveViewStatus {
   status: "saved" | "dirty" | "saving" | "failed" | "uncertain";
   message?: string;
@@ -932,8 +940,8 @@ export function createDocumentController(
       }
     }
     state = next;
-    if (adoptRecovery) adoptRecovery();
-    else syncRecentTabOrder(previousTabs, previousId);
+    adoptRecovery?.();
+    syncRecentTabOrder(previousTabs, previousId);
     if (previousTabs !== next.tabs) {
       prunePinnedTabs(next.tabs);
       observation.sync(next.tabs);
@@ -962,6 +970,13 @@ export function createDocumentController(
   const pristinePrimaryTabRecovery = () => generation === 0 && !metadataDisposed &&
     !state.snapshot && !state.tabs.length && !state.entries.length && !state.busy && !state.frozen &&
     !state.removalPending && !state.folderRemovalPending && !saving.size && !editorInputBlocked && canLeaveEditor();
+
+  function prepareRecoveredEditor(snapshot: DocumentSnapshot, mode: RecoveredPrimaryTab["mode"], parserPaused = false) {
+    const initial = createRawEditorState(snapshot.text, [], false, { parserPaused });
+    return initial.update({ effects: mode === "source"
+      ? switchEditorMode("source", sourceWrapping)
+      : sourceWrappingEffect(initial, sourceWrapping) }).state;
+  }
 
   async function load(
     select: boolean,
@@ -1202,29 +1217,10 @@ export function createDocumentController(
         )
           ? state.entries.map((value) =>
               locationKey(value) === locationKey(snapshot)
-                ? {
-                    handle: snapshot.handle,
-                    documentId: snapshot.documentId,
-                    fileName: snapshot.fileName,
-                    locationId: snapshot.locationId,
-                    displayPath: snapshot.displayPath,
-                    explicitStandalone: snapshot.explicitStandalone,
-                    writeCapability: snapshot.writeCapability,
-                  }
+                ? documentEntry(snapshot)
                 : value
             )
-          : [
-              ...state.entries,
-              {
-                handle: snapshot.handle,
-                documentId: snapshot.documentId,
-                fileName: snapshot.fileName,
-                locationId: snapshot.locationId,
-                displayPath: snapshot.displayPath,
-                explicitStandalone: snapshot.explicitStandalone,
-                writeCapability: snapshot.writeCapability,
-              },
-            ],
+          : [...state.entries, documentEntry(snapshot)],
         snapshot: active,
         busy: false,
         error: null,
@@ -2344,10 +2340,7 @@ export function createDocumentController(
       if (!current() || !pristinePrimaryTabRecovery() || !isDocumentSnapshot(snapshot) || snapshot.explicitStandalone !== false)
         return false;
       const started = performance.now();
-      const initial = createRawEditorState(snapshot.text, []);
-      const editor = initial.update({ effects: mode === "source"
-        ? switchEditorMode("source", sourceWrapping)
-        : sourceWrappingEffect(initial, sourceWrapping) }).state;
+      const editor = prepareRecoveredEditor(snapshot, mode);
       onTiming?.("stateCreateMs", performance.now() - started);
       if (!current() || !pristinePrimaryTabRecovery()) return false;
       let adopted = false;
@@ -2359,6 +2352,42 @@ export function createDocumentController(
           } });
       } catch {
         // A subscriber failure after publication cannot return the adopted grant to Bun.
+      }
+      return adopted;
+    },
+    adoptRecoveredPrimaryPair(
+      pair: readonly [RecoveredPrimaryTab, RecoveredPrimaryTab],
+      activeIndex: 0 | 1,
+      current: () => boolean,
+      onAdopt: () => void
+    ) {
+      if (!current() || !pristinePrimaryTabRecovery()) return false;
+      const tabs = pair.map(({ snapshot }) => snapshot);
+      if (tabs.some(tab => !isDocumentSnapshot(tab) || tab.explicitStandalone !== false || !tab.locationId || !tab.displayPath) ||
+          sharesDocumentLocation(tabs[0], tabs[1]) || (!pair[0].pinned && pair[1].pinned)) return false;
+      const started = performance.now();
+      const prepared = pair.map(({ snapshot, mode }, index) => prepareRecoveredEditor(snapshot, mode, index !== activeIndex));
+      onTiming?.("stateCreateMs", performance.now() - started);
+      if (!current() || !pristinePrimaryTabRecovery()) return false;
+      const snapshot = tabs[activeIndex];
+      const other = tabs[activeIndex === 0 ? 1 : 0];
+      const entries = tabs.map(documentEntry);
+      ++generation;
+      let adopted = false;
+      try {
+        publish({ ...state, tabs, entries, snapshot, error: null, stale: false, elapsedMs: performance.now() - started }, () => {
+          for (const [index, tab] of tabs.entries()) {
+            capabilityLifetimes.set(tab.handle, {});
+            editors.set(tab.documentId, { state: prepared[index], revision: 0 });
+            if (pair[index].pinned) pinnedTabs.add(tab.documentId);
+            bindFaultOwner(tab.documentId);
+          }
+          recentTabIds = [snapshot.documentId, other.documentId];
+          adopted = true;
+          onAdopt();
+        });
+      } catch {
+        // A subscriber failure after publication cannot return the adopted grants to Bun.
       }
       return adopted;
     },

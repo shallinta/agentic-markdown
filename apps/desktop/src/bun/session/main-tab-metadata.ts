@@ -15,6 +15,11 @@ import { validRootRosterId } from "../../shared/root-roster";
 import { WORKSPACE_MAX_ROOTS } from "../../shared/workspace";
 import { validExpansionPath } from "../workspace/expansion-store";
 
+import {
+  copyStoredMainTabPosition,
+  type StoredMainTabPosition,
+} from "./main-tab-position-codec";
+
 export { MAIN_TAB_METADATA_MAX_TABS } from "../../shared/main-tab-checkpoint";
 export const MAIN_TAB_METADATA_MAX_BYTES = 256 * 1024;
 export interface MainTabMetadata {
@@ -28,6 +33,15 @@ export interface MainTabSessionMetadata {
   tabs: MainTabMetadata[];
   activeIndex: number | null;
 }
+export interface PositionedMainTabSessionMetadata {
+  schemaVersion: 2;
+  tabs: (MainTabMetadata & { position?: StoredMainTabPosition })[];
+  activeIndex: number | null;
+}
+type StoredSession = MainTabSessionMetadata | PositionedMainTabSessionMetadata;
+const isPositioned = (
+  data: StoredSession
+): data is PositionedMainTabSessionMetadata => "schemaVersion" in data;
 export type MainTabMetadataFailure =
   | "legacy"
   | "future"
@@ -41,10 +55,19 @@ export type MainTabMetadataFailure =
   | "stale"
   | "not-owned";
 export type MainTabMetadataRead =
-  | { status: "valid"; data: MainTabSessionMetadata }
+  | {
+      status: "valid";
+      data: MainTabSessionMetadata;
+      positioned?: PositionedMainTabSessionMetadata;
+    }
   | { status: "missing" | MainTabMetadataFailure };
 export type MainTabMetadataObservation =
-  | { status: "valid"; data: MainTabSessionMetadata; current(): boolean }
+  | {
+      status: "valid";
+      data: MainTabSessionMetadata;
+      positioned?: PositionedMainTabSessionMetadata;
+      current(): boolean;
+    }
   | { status: "missing" | MainTabMetadataFailure };
 export type MainTabMetadataWrite =
   | { status: "committed" }
@@ -107,6 +130,89 @@ export function validMainTabSessionMetadata(
     if (roots.size > WORKSPACE_MAX_ROOTS) return false;
   }
   return true;
+}
+/** Strict v2 copy: only approved primitive fields reach serialization. */
+export function copyPositionedMainTabSessionMetadata(
+  value: unknown
+): PositionedMainTabSessionMetadata | undefined {
+  try {
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      !exact(value, ["schemaVersion", "tabs", "activeIndex"])
+    )
+      return;
+    const source = value as PositionedMainTabSessionMetadata;
+    if (source.schemaVersion !== 2) return;
+    const tabs = source.tabs,
+      activeIndex = source.activeIndex;
+    if (!Array.isArray(tabs)) return;
+    const length = tabs.length;
+    if (
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > MAIN_TAB_METADATA_MAX_TABS
+    )
+      return;
+    const captured: PositionedMainTabSessionMetadata = {
+      schemaVersion: 2,
+      tabs: [],
+      activeIndex,
+    };
+    for (let index = 0; index < length; index++) {
+      const row = tabs[index];
+      if (!row || typeof row !== "object" || Array.isArray(row)) return;
+      const hasPosition = Object.prototype.hasOwnProperty.call(row, "position");
+      if (
+        !exact(row, [
+          "rootId",
+          "relativePath",
+          "fingerprint",
+          "pinned",
+          "mode",
+          ...(hasPosition ? ["position"] : []),
+        ])
+      )
+        return;
+      const base: MainTabMetadata = {
+        rootId: row.rootId,
+        relativePath: row.relativePath,
+        fingerprint: row.fingerprint,
+        pinned: row.pinned,
+        mode: row.mode,
+      };
+      const position = hasPosition
+        ? copyStoredMainTabPosition(row.position)
+        : undefined;
+      if (hasPosition && !position) return;
+      captured.tabs.push(position ? { ...base, position } : base);
+    }
+    if (!validMainTabSessionMetadata(baseSession(captured))) return;
+    return captured;
+  } catch {
+    return;
+  }
+}
+function baseSession(data: StoredSession): MainTabSessionMetadata {
+  if (!isPositioned(data)) return data;
+  return {
+    tabs: data.tabs.map(
+      ({ rootId, relativePath, fingerprint, pinned, mode }) => ({
+        rootId,
+        relativePath,
+        fingerprint,
+        pinned,
+        mode,
+      })
+    ),
+    activeIndex: data.activeIndex,
+  };
+}
+function readableSession(data: StoredSession): MainTabMetadataRead {
+  return isPositioned(data)
+    ? { status: "valid", data: baseSession(data), positioned: data }
+    : { status: "valid", data };
 }
 export const mainTabMetadataSerializedBytes = (data: MainTabSessionMetadata) =>
   Buffer.byteLength(`${JSON.stringify({ version: 1, data }, null, 2)}\n`);
@@ -199,6 +305,21 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
   let closed = false;
   return {
     ...store,
+    sameObservation(
+      first: MainTabMetadataObservation,
+      second: MainTabMetadataObservation
+    ): boolean {
+      const before = recoveryWitnesses.get(first),
+        after = recoveryWitnesses.get(second);
+      return (
+        !closed &&
+        before?.path === path &&
+        after?.path === path &&
+        before.bytes === after.bytes &&
+        before.current() &&
+        after.current()
+      );
+    },
     exactCurrent(receipt: MainTabMetadataObservation): boolean {
       return !closed && exactRecoveryObservation(receipt, path);
     },
@@ -223,6 +344,14 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
         return Promise.resolve({ status: "rejected", reason: "stale" });
       return store.write(value, current);
     },
+    writePositions(
+      value: unknown,
+      current: () => boolean
+    ): Promise<MainTabMetadataWrite> {
+      if (typeof current !== "function")
+        return Promise.resolve({ status: "rejected", reason: "stale" });
+      return store.write(value, current, true);
+    },
     async close() {
       if (closed) return store.close();
       closed = true;
@@ -238,15 +367,16 @@ export function createMainTabCheckpointMetadataStore(directory: string) {
 function createMetadataStore(path: string, observed?: CheckpointObservations) {
   const ownedCheckpoint = !!observed;
   let owner: { encoded: string; bytes: string } | undefined;
-  const store = createSettingsStore<MainTabSessionMetadata>(
+  const validStored = (value: unknown): value is StoredSession =>
+    validMainTabSessionMetadata(value) ||
+    (ownedCheckpoint &&
+      copyPositionedMainTabSessionMetadata(value) !== undefined);
+  const store = createSettingsStore<StoredSession>(
     path,
-    (value) =>
-      validMainTabSessionMetadata(value)
-        ? value
-        : { tabs: [], activeIndex: null },
+    (value) => (validStored(value) ? value : { tabs: [], activeIndex: null }),
     {
       maxBytes: MAIN_TAB_METADATA_MAX_BYTES,
-      validateData: validMainTabSessionMetadata,
+      validateData: validStored,
     }
   );
   let closed = false,
@@ -277,7 +407,7 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
     const result = await store.readPersisted();
     return result.status === "valid"
       ? result.format === "version1"
-        ? { status: "valid", data: result.data }
+        ? readableSession(result.data)
         : { status: "legacy" }
       : result;
   }
@@ -295,7 +425,7 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
             record:
               value.status === "valid"
                 ? value.format === "version1"
-                  ? { status: "valid" as const, data: value.data }
+                  ? readableSession(value.data)
                   : { status: "legacy" as const }
                 : value,
             bytes,
@@ -338,23 +468,41 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
     },
     write(
       value: unknown,
-      current?: () => boolean
+      current?: () => boolean,
+      withPositions = false
     ): Promise<MainTabMetadataWrite> {
-      if (!validMainTabSessionMetadata(value))
-        return Promise.resolve({ status: "rejected", reason: "invalid" });
-      if (mainTabMetadataSerializedBytes(value) > MAIN_TAB_METADATA_MAX_BYTES)
+      let captured: StoredSession;
+      if (withPositions) {
+        const copy = ownedCheckpoint
+          ? copyPositionedMainTabSessionMetadata(value)
+          : undefined;
+        if (!copy)
+          return Promise.resolve({ status: "rejected", reason: "invalid" });
+        captured = copy;
+      } else {
+        if (!validMainTabSessionMetadata(value))
+          return Promise.resolve({ status: "rejected", reason: "invalid" });
+        captured = {
+          tabs: value.tabs.map((tab) => ({ ...tab })),
+          activeIndex: value.activeIndex,
+        };
+      }
+      if (
+        mainTabMetadataSerializedBytes(captured) > MAIN_TAB_METADATA_MAX_BYTES
+      )
         return Promise.resolve({ status: "rejected", reason: "capacity" });
-      const captured: MainTabSessionMetadata = {
-        tabs: value.tabs.map((tab) => ({ ...tab })),
-        activeIndex: value.activeIndex,
-      };
       return enqueue(
         async () => {
           let legacy = false;
+          let protectedPositions = false;
           let changedBytes = false;
           const bytes = `${JSON.stringify({ version: 1, data: captured }, null, 2)}\n`;
           const result = await store.updateObserved(
-            (_previous, format, original) => {
+            (previous, format, original) => {
+              if (!withPositions && isPositioned(previous)) {
+                protectedPositions = true;
+                throw Error("Position metadata requires versioned writer");
+              }
               changedBytes = original !== bytes;
               if (format === "legacy") {
                 legacy = true;
@@ -384,6 +532,8 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
             }
             return { status: "committed" as const };
           }
+          if (protectedPositions)
+            return { status: "rejected" as const, reason: "future" as const };
           if (ownedCheckpoint) owner = undefined;
           // A guarded publication may already have started. Its queue-owned
           // observation is final; a later read cannot prove it was rejected.
@@ -422,7 +572,7 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
           if (!admitted()) return { status: "rejected", reason: "stale" };
           let matched = false;
           let stale = false;
-          const empty: MainTabSessionMetadata = { tabs: [], activeIndex: null };
+          let empty: StoredSession = { tabs: [], activeIndex: null };
           const result = await store.updateObserved(
             (previous, format, original) => {
               stale = !admitted();
@@ -434,6 +584,8 @@ function createMetadataStore(path: string, observed?: CheckpointObservations) {
               )
                 throw Error("Checkpoint ownership changed");
               matched = true;
+              if (isPositioned(previous))
+                empty = { schemaVersion: 2, tabs: [], activeIndex: null };
               return empty;
             },
             admitted

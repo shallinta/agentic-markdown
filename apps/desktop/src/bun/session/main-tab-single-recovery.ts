@@ -96,7 +96,8 @@ export function createSingleMainTabRecoveryReader(directory: string, { workspace
             const verified = await store.readObserved();
             const latest = singleTab(verified);
             if (verified.status !== "valid" || latest?.rootId !== expectedRootId || latest.relativePath !== relativePath ||
-                latest.fingerprint !== fingerprint || latest.mode !== mode || latest.pinned !== pinned) valid = false;
+                latest.fingerprint !== fingerprint || latest.mode !== mode || latest.pinned !== pinned ||
+                ((observed.positioned || verified.positioned) && !store.sameObservation(observed, verified))) valid = false;
             else recordCurrent = () => observed.current() && verified.current();
             openCurrent();
           },
@@ -117,6 +118,7 @@ export function createSingleMainTabRecoveryReader(directory: string, { workspace
           releasing ??= releaseGrant(documents, handle);
           return releasing;
         };
+        if (observed.positioned && !store.exactCurrent(observed)) valid = false;
         if (!current()) return await release() === "released"
           ? { status: "rejected", reason: "stale" }
           : { status: "unknown", reason: "release" };

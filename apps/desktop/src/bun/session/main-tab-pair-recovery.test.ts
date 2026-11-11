@@ -20,6 +20,7 @@ import { createMainTabMetadataBinder } from "./main-tab-binder";
 import { createMainTabGroupRecoveryReader } from "./main-tab-group-recovery";
 import { createMainTabCheckpointMetadataStore } from "./main-tab-metadata";
 import { createMainTabPairRecoveryReader } from "./main-tab-pair-recovery";
+import { createSingleMainTabRecoveryReader } from "./main-tab-single-recovery";
 
 async function fixture(count = 2) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), "pair-recovery-")));
@@ -714,6 +715,78 @@ test("group rejects history changed after asynchronous file terminal verificatio
     } finally {
       await reader.close();
       await f.close();
+    }
+  }
+});
+
+test("v2 single, pair and group reject position-only changes before verification or delivery", async () => {
+  for (const kind of ["single", "pair", "group"] as const) {
+    for (const terminal of [false, true]) {
+      const f = await fixture(kind === "group" ? 5 : 2);
+      const initial = await f.store.read();
+      if (initial.status !== "valid") throw Error("Missing fixture");
+      const tabs =
+        kind === "single" ? initial.data.tabs.slice(0, 1) : initial.data.tabs;
+      const data = {
+        schemaVersion: 2 as const,
+        tabs: tabs.map((tab) => ({
+          ...tab,
+          position: { from: 0, offset: 0, ratio: 0.5 },
+        })),
+        activeIndex: kind === "single" ? 0 : 1,
+      };
+      expect(await f.store.writePositions(data, () => true)).toEqual({
+        status: "committed",
+      });
+      let changed = false;
+      const mutate = async () => {
+        if (changed) return;
+        changed = true;
+        data.tabs[0].position.offset = 1;
+        await writeFile(f.path, JSON.stringify({ version: 1, data }));
+      };
+      const dependencies = {
+        ...f,
+        workspace: {
+          ...f.workspace,
+          async openMainTabCandidate(
+            ...args: Parameters<typeof f.workspace.openMainTabCandidate>
+          ) {
+            if (!terminal) await mutate();
+            const result = await f.workspace.openMainTabCandidate(...args);
+            if (terminal && kind === "single") await mutate();
+            return result;
+          },
+        },
+        documents: {
+          ...f.documents,
+          async verifyRecoverySnapshots(
+            ...args: Parameters<typeof f.documents.verifyRecoverySnapshots>
+          ) {
+            const result = await f.documents.verifyRecoverySnapshots(...args);
+            if (terminal) await mutate();
+            return result;
+          },
+        },
+      };
+      const reader =
+        kind === "single"
+          ? createSingleMainTabRecoveryReader(f.directory, dependencies)
+          : kind === "pair"
+            ? createMainTabPairRecoveryReader(f.directory, dependencies)
+            : createMainTabGroupRecoveryReader(f.directory, dependencies);
+      try {
+        const result = await reader.read(f.input, () => true);
+        expect(changed).toBe(true);
+        expect(result.status).toBe("rejected");
+        expect(f.documents.locations()).toHaveLength(0);
+        expect(await readFile(f.path, "utf8")).toBe(
+          JSON.stringify({ version: 1, data })
+        );
+      } finally {
+        await reader.close();
+        await f.close();
+      }
     }
   }
 });

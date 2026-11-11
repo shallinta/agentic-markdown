@@ -268,7 +268,9 @@ function createRecoveryGroupCore(
           check();
           if (
             latest.status !== "valid" ||
-            JSON.stringify(latest.data) !== encoded
+            JSON.stringify(latest.data) !== encoded ||
+            ((observed.positioned || latest.positioned) &&
+              !store.sameObservation(observed, latest))
           )
             throw Error("PAIR_RECORD_CHANGED");
           verifiedObservation = latest;
@@ -365,7 +367,10 @@ function createRecoveryGroupCore(
             status: "rejected",
             reason: current() ? "unavailable" : "stale",
           });
-        if (!exactPair && !store.exactCurrent(verifiedObservation))
+        if (
+          (!exactPair || observed.positioned !== undefined) &&
+          !store.exactCurrent(verifiedObservation)
+        )
           return await fail({ status: "rejected", reason: "stale" });
         check();
         if (!sources.current())
@@ -392,7 +397,10 @@ function createRecoveryGroupCore(
                 valid = false;
                 return false;
               }
-              if (!exactPair && !store.exactCurrent(verifiedObservation)) {
+              if (
+                (!exactPair || observed.positioned !== undefined) &&
+                !store.exactCurrent(verifiedObservation)
+              ) {
                 valid = false;
                 return false;
               }

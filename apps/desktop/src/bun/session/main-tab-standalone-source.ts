@@ -18,7 +18,7 @@ export type MainTabStandaloneProof =
   | { status: "ready"; source: MainTabStandaloneSource; current(): boolean }
   | { status: "invalid" | "unavailable" | "stale" };
 
-function copyStandaloneSource(value: unknown): MainTabStandaloneSource | undefined {
+export function copyMainTabStandaloneSource(value: unknown): MainTabStandaloneSource | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
       Object.keys(value).sort().join() !== "fingerprint,path" ||
       !("path" in value) || !("fingerprint" in value)) return;
@@ -66,7 +66,7 @@ export async function captureMainTabStandaloneSource(
     )
       return { status: "invalid" };
     const identity = { ...source };
-    const history = expected === undefined ? undefined : copyStandaloneSource(expected);
+    const history = expected === undefined ? undefined : copyMainTabStandaloneSource(expected);
     if (expected !== undefined && !history) return { status: "invalid" };
     if (!admitted()) return { status: "stale" };
     captured = documents.captureContentSearchBindings([identity.handle]);
@@ -86,7 +86,7 @@ export async function captureMainTabStandaloneSource(
           history.fingerprint !== binding.fingerprint))
     )
       return { status: "unavailable" };
-    const metadata = copyStandaloneSource({ path: binding.path, fingerprint: binding.fingerprint });
+    const metadata = copyMainTabStandaloneSource({ path: binding.path, fingerprint: binding.fingerprint });
     if (!metadata) return { status: "unavailable" };
     await binding.verifyStandalone(() => {
       if (!admitted()) throw Error("Stale standalone source");

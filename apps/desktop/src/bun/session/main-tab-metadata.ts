@@ -297,7 +297,8 @@ function exactCheckpointBytes(
 export function checkpointPublicationGuard(
   original: string | undefined,
   path: string,
-  current?: () => boolean
+  current?: () => boolean,
+  onDiskMismatch?: () => void
 ) {
   let live = true;
   return () => {
@@ -318,6 +319,7 @@ export function checkpointPublicationGuard(
             error.code === "ENOENT";
         }
       }
+      if (!live) onDiskMismatch?.();
     } catch {
       live = false;
     }

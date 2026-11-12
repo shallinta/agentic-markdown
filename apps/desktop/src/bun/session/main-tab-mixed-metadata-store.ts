@@ -25,6 +25,12 @@ type MixedMainTabMetadataRead =
   | { status: "valid"; data: MixedMainTabMetadata }
   | { status: "missing" | ReadFailure };
 
+// Same-process writes to one fixed slot retire older ownership, including ABA.
+const slotObservations = new Map<
+  string,
+  { token: object; stores: number; tail: Promise<unknown> }
+>();
+
 /** Isolated probe only. The ordinary checkpoint file is not a source for this store. */
 export function createMixedMainTabMetadataStore(isolatedDir: string) {
   const store = createMixedStore(
@@ -46,6 +52,14 @@ export function createMixedMainTabCheckpointMetadataStore(dataDir: string) {
 }
 
 function createMixedStore(path: string) {
+  const observation = slotObservations.get(path) ?? {
+    token: {},
+    stores: 0,
+    tail: Promise.resolve(),
+  };
+  observation.stores++;
+  slotObservations.set(path, observation);
+  let owner: { bytes: string; token: object } | undefined;
   const store = createSettingsStore<unknown>(path, (value) => value, {
     maxBytes: MAIN_TAB_METADATA_MAX_BYTES,
     // Classify future bodies separately while still refusing them in the update.
@@ -62,14 +76,19 @@ function createMixedStore(path: string) {
     if (closed || queued >= 64)
       return Promise.resolve(reject(closed ? "closed" : "queue-full"));
     queued++;
-    const next = tail.then(operation).catch(() => reject("io"));
+    const next = observation.tail.then(operation).catch(() => reject("io"));
+    observation.tail = next;
     tail = next.finally(() => {
       queued--;
     });
     return next;
   }
   async function read(): Promise<MixedMainTabMetadataRead> {
-    const persisted = await store.readPersisted();
+    const persisted = await store.observePersisted((value, bytes) => {
+      if (owner && (owner.token !== observation.token || owner.bytes !== bytes))
+        owner = undefined;
+      return value;
+    });
     if (persisted.status !== "valid") return persisted;
     if (persisted.format !== "version1") return { status: "legacy" };
     const decoded = decodeMixedMainTabMetadata(persisted.data);
@@ -85,8 +104,9 @@ function createMixedStore(path: string) {
       value: unknown,
       current: () => boolean,
       merge?: (
-        previous: MixedMainTabMetadata | undefined
-      ) => MixedMainTabMetadata
+        previous: MixedMainTabMetadata | undefined,
+        owned: boolean
+      ) => MixedMainTabMetadata | undefined
     ): Promise<MainTabMetadataWrite> {
       let live = true;
       const admitted = () => {
@@ -119,15 +139,25 @@ function createMixedStore(path: string) {
         async () => {
           if (!admitted()) return { status: "rejected", reason: "stale" };
           let protectedFormat: "legacy" | "future" | undefined;
-          let mergeFailure: "invalid" | "capacity" | undefined;
+          let mergeFailure: "invalid" | "capacity" | "not-owned" | undefined;
+          let publishedBytes: string | undefined;
           let publicationCurrent: (() => boolean) | undefined;
           const result = await store.updateObserved(
             (previous, format, original) => {
               publicationCurrent = checkpointPublicationGuard(
                 original,
                 path,
-                admitted
+                admitted,
+                () => {
+                  owner = undefined;
+                  observation.token = {};
+                }
               );
+              const owned =
+                !!owner &&
+                owner.token === observation.token &&
+                owner.bytes === original;
+              if (!owned) owner = undefined;
               if (format === "legacy") protectedFormat = "legacy";
               else if (
                 format === "version1" &&
@@ -136,27 +166,34 @@ function createMixedStore(path: string) {
                 protectedFormat = "future";
               if (protectedFormat)
                 throw Error("Protected mixed session format");
-              if (!merge) return candidate;
               const decoded =
                 format === "missing"
                   ? undefined
                   : decodeMixedMainTabMetadata(previous);
-              const merged = copyMixedMainTabMetadata(
-                merge(decoded?.status === "valid" ? decoded.data : undefined)
-              );
+              const proposed = merge
+                ? merge(
+                    decoded?.status === "valid" ? decoded.data : undefined,
+                    owned
+                  )
+                : candidate;
+              if (proposed === undefined) {
+                mergeFailure = "not-owned";
+                throw Error("Checkpoint is not owned");
+              }
+              const merged = copyMixedMainTabMetadata(proposed);
               if (!merged) {
                 mergeFailure = "invalid";
                 throw Error("Invalid merged checkpoint");
               }
-              if (
-                Buffer.byteLength(
-                  `${JSON.stringify({ version: 1, data: merged }, null, 2)}\n`
-                ) > MAIN_TAB_METADATA_MAX_BYTES
-              ) {
+              const bytes = `${JSON.stringify({ version: 1, data: merged }, null, 2)}\n`;
+              if (Buffer.byteLength(bytes) > MAIN_TAB_METADATA_MAX_BYTES) {
                 mergeFailure = "capacity";
                 throw Error("Merged checkpoint capacity");
               }
               encoded = JSON.stringify(merged);
+              if (bytes !== original) {
+                publishedBytes = bytes;
+              }
               return merged;
             },
             () => publicationCurrent?.() === true
@@ -164,12 +201,20 @@ function createMixedStore(path: string) {
           if ("stale" in result && result.stale)
             return { status: "rejected", reason: "stale" };
           if (result.attempted) {
+            if (publishedBytes !== undefined) observation.token = {};
             const persisted = result.persisted;
-            return persisted.status === "valid" &&
+            if (
+              persisted.status === "valid" &&
               persisted.format === "version1" &&
               JSON.stringify(persisted.data) === encoded
-              ? { status: "committed" }
-              : { status: "unknown", reason: "io" };
+            ) {
+              if (result.confirmed && publishedBytes !== undefined && !closed)
+                owner = { bytes: publishedBytes, token: observation.token };
+              else if (!result.confirmed) owner = undefined;
+              return { status: "committed" };
+            }
+            owner = undefined;
+            return { status: "unknown", reason: "io" };
           }
           if (mergeFailure) return { status: "rejected", reason: mergeFailure };
           if (protectedFormat)
@@ -183,8 +228,15 @@ function createMixedStore(path: string) {
       );
     },
     async close() {
+      if (closed) {
+        await tail;
+        return;
+      }
       closed = true;
+      owner = undefined;
       await tail;
+      owner = undefined;
+      if (--observation.stores === 0) slotObservations.delete(path);
     },
   };
 }

@@ -73,6 +73,7 @@ export function createGuardedMixedMainTabCheckpoint(
         });
       let input: ReturnType<typeof captureMainTabMetadataInput>;
       const measured: (MainTabCheckpointViewport | undefined)[] = [];
+      const resets: boolean[] = [];
       try {
         if (
           !value ||
@@ -85,7 +86,7 @@ export function createGuardedMixedMainTabCheckpoint(
         )
           return Promise.resolve({ status: "rejected", reason: "invalid" });
         const tabs = value.tabs.map((tab) => {
-          if (tab.resetViewport) throw Error("Reset requires ownership");
+          resets.push(tab.resetViewport === true);
           measured.push(
             tab.viewport
               ? {
@@ -207,6 +208,7 @@ export function createGuardedMixedMainTabCheckpoint(
                 if (!viewport) return false;
                 const old = previous.get(key(bound.data.tabs[index]));
                 return (
+                  resets[index] ||
                   !old ||
                   !sameGeometry(viewport, old) ||
                   (!!old.block &&
@@ -254,18 +256,27 @@ export function createGuardedMixedMainTabCheckpoint(
           return mixed.write(
             bound.data,
             () => sourceCurrent() && (!requiresDirectory || directoryCurrent()),
-            (previous) => {
+            (previous, owned) => {
               requiresDirectory = previous === undefined;
               const old = previous ?? legacyCandidate;
               const positions = new Map(
                 old?.tabs.map((row) => [key(row), row.position])
               );
+              if (
+                !owned &&
+                bound.data.tabs.some(
+                  (row, index) =>
+                    resets[index] && positions.get(key(row)) !== undefined
+                )
+              )
+                return undefined;
               const result = {
                 ...bound.data,
                 tabs: bound.data.tabs.map((row, index) => {
                   const saved = positions.get(key(row)),
                     viewport = measured[index];
                   const reuse =
+                    !resets[index] &&
                     saved &&
                     (!viewport ||
                       (saved.from === viewport.from &&

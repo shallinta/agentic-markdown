@@ -434,9 +434,10 @@ test("mixed positions follow the authorized file through inheritance, reordering
   }
 });
 
-test("reset intents are rejected and a new file at the same standalone path does not inherit its predecessor's position", async () => {
+test("an owned reset follows the reordered target, preserves the peer, and cannot inherit to a replacement file", async () => {
   const f = await fixture();
   const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  const other = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
   try {
     const path = join(dirname(f.settingsDir), "outside.md");
     await writeFile(path, text);
@@ -447,7 +448,7 @@ test("reset intents are rejected and a new file at the same standalone path does
     );
     const input = {
       tabs: [
-        inputTab(root),
+        { ...inputTab(root), viewport: directoryGeometry },
         { ...inputTab(former), viewport: standaloneGeometry },
       ],
       activeIndex: 1,
@@ -456,22 +457,66 @@ test("reset intents are rejected and a new file at the same standalone path does
       status: "committed",
     });
     const officialPath = join(f.settingsDir, officialName);
-    const before = await readFile(officialPath);
-    expect(await writer.read()).toMatchObject({
-      status: "valid",
-      source: "mixed",
-      data: { tabs: [{}, { position: standaloneGeometry }] },
+    const reordered = {
+      tabs: [inputTab(former, "source", true), inputTab(root)],
+      activeIndex: 0,
+    };
+    expect(await writer.write(reordered, () => true)).toEqual({
+      status: "committed",
     });
+    const beforeReset = await readFile(officialPath);
+    const saved = await writer.read();
+    if (saved.status !== "valid")
+      throw Error("Missing positioned mixed checkpoint");
+    expect(saved.data.tabs.map((tab) => tab.position)).toEqual([
+      standaloneGeometry,
+      directoryGeometry,
+    ]);
     expect(
       await writer.write(
         {
-          tabs: [input.tabs[0], { ...input.tabs[1], resetViewport: true }],
+          tabs: [
+            { ...reordered.tabs[0], resetViewport: true },
+            reordered.tabs[1],
+          ],
           activeIndex: 1,
         },
         () => true
       )
-    ).toEqual({ status: "rejected", reason: "invalid" });
-    expect(await readFile(officialPath)).toEqual(before);
+    ).toEqual({ status: "committed" });
+    const cleared = await writer.read();
+    if (cleared.status !== "valid")
+      throw Error("Missing cleared mixed checkpoint");
+    expect(cleared.data.activeIndex).toBe(1);
+    expect(cleared.data.tabs[0]).toEqual({
+      kind: "standalone",
+      path,
+      fingerprint: priorFingerprint,
+      pinned: true,
+      mode: "source",
+    });
+    expect(cleared.data.tabs[1]).toEqual(saved.data.tabs[1]);
+    expect(await readFile(`${officialPath}.bak`)).toEqual(beforeReset);
+    const expectedPath = join(f.settingsDir, "expected-reset-fixture.json");
+    await writeFile(expectedPath, JSON.stringify(cleared.data));
+    expect(await childRead(f.settingsDir, expectedPath)).toEqual({
+      status: "valid",
+      matches: true,
+    });
+
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            { ...reordered.tabs[0], viewport: standaloneGeometry },
+            reordered.tabs[1],
+          ],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const beforeReplacement = await readFile(officialPath);
 
     await rename(path, `${path}.prior`);
     await writeFile(path, text);
@@ -483,8 +528,14 @@ test("reset intents are rejected and a new file at the same standalone path does
     expect(replacement.displayPath).toBe(former.displayPath);
     expect(currentFingerprint).not.toBe(priorFingerprint);
     expect(
-      await writer.write(
-        { tabs: [inputTab(root), inputTab(replacement)], activeIndex: 1 },
+      await other.write(
+        {
+          tabs: [
+            inputTab(root),
+            { ...inputTab(replacement), resetViewport: true },
+          ],
+          activeIndex: 1,
+        },
         () => true
       )
     ).toEqual({ status: "committed" });
@@ -498,7 +549,177 @@ test("reset intents are rejected and a new file at the same standalone path does
       pinned: false,
       mode: "editing",
     });
-    expect(await readFile(`${officialPath}.bak`)).toEqual(before);
+    expect(current.data.tabs[0]).toEqual(saved.data.tabs[1]);
+    expect(await readFile(`${officialPath}.bak`)).toEqual(beforeReplacement);
+  } finally {
+    await other.close();
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("no-op writes do not claim ownership, exact external changes and a late competitor protect old mixed positions", async () => {
+  const f = await fixture();
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  const other = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  try {
+    const [root, standalone] = await openMixed(f);
+    const input = {
+      tabs: [
+        { ...inputTab(root), viewport: directoryGeometry },
+        { ...inputTab(standalone), viewport: standaloneGeometry },
+      ],
+      activeIndex: 1,
+    };
+    const reset = {
+      tabs: [{ ...inputTab(root), resetViewport: true }, inputTab(standalone)],
+      activeIndex: 0,
+    };
+    const path = join(f.settingsDir, officialName);
+    const backup = `${path}.bak`;
+    expect(await writer.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    const before = await readFile(path);
+    const saved = await other.read();
+    if (saved.status !== "valid") throw Error("Missing saved mixed positions");
+    const backupSentinel = Buffer.from("earlier backup\n");
+    await writeFile(backup, backupSentinel);
+    expect(await other.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await other.write(reset, () => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(path)).toEqual(before);
+    expect(await readFile(backup)).toEqual(backupSentinel);
+
+    const reformatted = envelope(saved.data);
+    expect(reformatted).not.toEqual(before);
+    await writeFile(path, reformatted);
+    expect(await writer.write(reset, () => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(path)).toEqual(reformatted);
+    expect(await readFile(backup)).toEqual(backupSentinel);
+
+    expect(await writer.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await readFile(path)).toEqual(before);
+    expect(await readFile(backup)).toEqual(reformatted);
+    const newer = envelope({ ...saved.data, activeIndex: 0 });
+    let observed: Buffer | undefined;
+    const result = await writer.write(reset, () => {
+      if (observed) return true;
+      const staged = readdirSync(f.settingsDir).find(
+        (file) =>
+          file.startsWith(`${officialName}.`) &&
+          !file.startsWith(`${officialName}.bak.`) &&
+          file.endsWith(".tmp")
+      );
+      if (!staged) return true;
+      const prepared = readFileSync(join(f.settingsDir, staged));
+      writeFileSync(path, newer);
+      observed = prepared;
+      return true;
+    });
+    if (!observed) throw Error("No late competitor before publishing reset");
+    const { position, ...resetRow } = saved.data.tabs[0];
+    expect(position).toEqual(directoryGeometry);
+    expect(JSON.parse(observed.toString("utf8"))).toEqual({
+      version: 1,
+      data: {
+        ...saved.data,
+        activeIndex: 0,
+        tabs: [resetRow, saved.data.tabs[1]],
+      },
+    });
+    expect(result).toEqual({ status: "rejected", reason: "stale" });
+    expect(await readFile(path)).toEqual(newer);
+    expect(await readFile(backup)).toEqual(before);
+    await writeFile(path, before);
+    expect(await writer.write(reset, () => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(path)).toEqual(before);
+    expect(await readFile(backup)).toEqual(before);
+  } finally {
+    await other.close();
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("the first mixed write cannot clear a directory position, and an owned new measurement does not reuse its old block", async () => {
+  const f = await fixture();
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  try {
+    const [root, standalone] = await openMixed(f);
+    const old = await seedPositionedDirectory(f, root);
+    const input = {
+      tabs: [inputTab(root), inputTab(standalone)],
+      activeIndex: 0,
+    };
+    for (const viewport of [undefined, directoryGeometry]) {
+      expect(
+        await writer.write(
+          {
+            tabs: [
+              {
+                ...input.tabs[0],
+                resetViewport: true,
+                ...(viewport ? { viewport } : {}),
+              },
+              input.tabs[1],
+            ],
+            activeIndex: 0,
+          },
+          () => true
+        )
+      ).toEqual({ status: "rejected", reason: "not-owned" });
+    }
+    expect(await readFile(old.path)).toEqual(old.bytes);
+    expect(
+      (await readdir(f.settingsDir)).filter((file) =>
+        file.startsWith(officialName)
+      )
+    ).toEqual([]);
+    expect(await writer.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    const path = join(f.settingsDir, officialName);
+    const inherited = await readFile(path);
+    expect(await writer.read()).toMatchObject({
+      status: "valid",
+      source: "mixed",
+      data: { tabs: [{ position: old.row.position }, {}] },
+    });
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            {
+              ...input.tabs[0],
+              resetViewport: true,
+              viewport: directoryGeometry,
+            },
+            input.tabs[1],
+          ],
+          activeIndex: 0,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    const replaced = await writer.read();
+    if (replaced.status !== "valid")
+      throw Error("Missing newly measured position");
+    expect(replaced.data.tabs[0].position).toEqual(directoryGeometry);
+    expect(await readFile(`${path}.bak`)).toEqual(inherited);
+    expect(await readFile(old.path)).toEqual(old.bytes);
   } finally {
     await writer.close();
     await f.close();

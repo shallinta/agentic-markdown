@@ -46,9 +46,46 @@ export function createMixedMainTabMetadataStore(isolatedDir: string) {
 
 /** Dedicated production candidate slot; not connected to window events. */
 export function createMixedMainTabCheckpointMetadataStore(dataDir: string) {
-  return createMixedStore(
+  const store = createMixedStore(
     resolve(dataDir, "main-tab-session-mixed-checkpoint.json")
   );
+  const empty: MixedMainTabMetadata = {
+    schemaVersion: 3,
+    tabs: [],
+    activeIndex: null,
+  };
+  return {
+    ...store,
+    pruneOwned(index: number, current: () => boolean) {
+      return store.write(empty, current, (previous, owned) => {
+        if (
+          !owned ||
+          !previous ||
+          !Number.isSafeInteger(index) ||
+          index < 0 ||
+          index >= previous.tabs.length
+        )
+          return;
+        const tabs = previous.tabs.filter((_row, at) => at !== index);
+        const active = previous.activeIndex;
+        const activeIndex = !tabs.length
+          ? null
+          : active === null
+            ? 0
+            : active > index
+              ? active - 1
+              : active === index
+                ? Math.min(index, tabs.length - 1)
+                : active;
+        return { schemaVersion: 3, tabs, activeIndex };
+      });
+    },
+    clearOwned(current: () => boolean) {
+      return store.write(empty, current, (_previous, owned) =>
+        owned ? empty : undefined
+      );
+    },
+  };
 }
 
 function createMixedStore(path: string) {
@@ -97,6 +134,9 @@ function createMixedStore(path: string) {
       : { status: decoded.status === "future" ? "future" : "corrupt" };
   }
   return {
+    hasOwnership() {
+      return !closed && !!owner && owner.token === observation.token;
+    },
     read() {
       return enqueue(read, (status) => ({ status }));
     },

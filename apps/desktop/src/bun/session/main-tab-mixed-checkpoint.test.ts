@@ -42,6 +42,11 @@ async function openMixed(f: Awaited<ReturnType<typeof fixture>>) {
   return [root, standalone] as const;
 }
 
+const closedTab = ({ documentId, handle }: DocumentSnapshot) => ({
+  documentId,
+  handle,
+});
+
 async function childRead(directory: string, expectedPath: string) {
   const child = Bun.spawn(
     [
@@ -1008,6 +1013,226 @@ test("replacing a trusted standalone source while its actual worker result is he
     expect(await readFile(path)).toEqual(Buffer.from(replacement));
   } finally {
     resume.resolve();
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("owned mixed prune uses released handles, preserves positioned peers, and ends with an authoritative empty record", async () => {
+  const f = await fixture();
+  let binds = 0;
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, {
+    ...f,
+    documents: {
+      captureContentSearchBindings(handles) {
+        binds++;
+        return f.documents.captureContentSearchBindings(handles);
+      },
+    },
+    workspace: {
+      captureMainTabSources(...args) {
+        binds++;
+        return f.workspace.captureMainTabSources(...args);
+      },
+    },
+  });
+  try {
+    const [first, standalone] = await openMixed(f);
+    const last = await f.openFolderTab(1);
+    const oldDirectory = await seedPositionedDirectory(f, first);
+    const lastGeometry = { from: 2, offset: 4.5, ratio: 0.75 };
+    expect(
+      await writer.write(
+        {
+          tabs: [
+            inputTab(first, "source", true),
+            { ...inputTab(standalone, "source"), viewport: standaloneGeometry },
+            { ...inputTab(last), viewport: lastGeometry },
+          ],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(binds).toBeGreaterThan(0);
+    const previousBinds = binds;
+    const original = await writer.read();
+    if (original.status !== "valid") throw Error("Missing three mixed rows");
+    expect(original.data.tabs.map((row) => row.position)).toEqual([
+      oldDirectory.row.position,
+      standaloneGeometry,
+      lastGeometry,
+    ]);
+    const path = join(f.settingsDir, officialName);
+    const backup = `${path}.bak`;
+    const threeBytes = await readFile(path);
+
+    expect(
+      (await f.documents.release({ ...request(), handle: standalone.handle }))
+        .ok
+    ).toBe(true);
+    expect(
+      f.documents.locations().some(({ handle }) => handle === standalone.handle)
+    ).toBe(false);
+    expect(await writer.prune(closedTab(standalone), () => true)).toEqual({
+      status: "committed",
+    });
+    const successor: MixedMainTabMetadata = {
+      schemaVersion: 3,
+      tabs: [original.data.tabs[0], original.data.tabs[2]],
+      activeIndex: 1,
+    };
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      source: "mixed",
+      data: successor,
+    });
+    expect(await readFile(backup)).toEqual(threeBytes);
+    const expectedPath = join(f.settingsDir, "expected-pruned-fixture.json");
+    await writeFile(expectedPath, JSON.stringify(successor));
+    expect(await childRead(f.settingsDir, expectedPath)).toEqual({
+      status: "valid",
+      matches: true,
+    });
+    const twoBytes = await readFile(path);
+
+    expect(
+      (await f.documents.release({ ...request(), handle: last.handle })).ok
+    ).toBe(true);
+    expect(await writer.prune(closedTab(last), () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      source: "mixed",
+      data: { schemaVersion: 3, tabs: [original.data.tabs[0]], activeIndex: 0 },
+    });
+    expect(await readFile(backup)).toEqual(twoBytes);
+    const oneBytes = await readFile(path);
+
+    expect(
+      (await f.documents.release({ ...request(), handle: first.handle })).ok
+    ).toBe(true);
+    expect(await writer.prune(closedTab(first), () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      source: "mixed",
+      data: empty,
+    });
+    expect(await readFile(backup)).toEqual(oneBytes);
+    expect(await readFile(oldDirectory.path)).toEqual(oldDirectory.bytes);
+    expect(binds).toBe(previousBinds);
+    expect(f.documents.locations()).toEqual([]);
+    for (const source of [...f.files, f.explicitPath])
+      expect(await readFile(source)).toEqual(Buffer.from(text));
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("mixed close rejects a wrong handle, a no-op peer, cancellation and a late external writer", async () => {
+  const f = await fixture();
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  const other = createGuardedMixedMainTabCheckpoint(f.settingsDir, f);
+  try {
+    const [root, standalone] = await openMixed(f);
+    const input = {
+      tabs: [
+        { ...inputTab(root), viewport: directoryGeometry },
+        { ...inputTab(standalone), viewport: standaloneGeometry },
+      ],
+      activeIndex: 1,
+    };
+    expect(await writer.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    const path = join(f.settingsDir, officialName);
+    const backup = `${path}.bak`;
+    const before = await readFile(path);
+    const backupSentinel = Buffer.from("kept backup\n");
+    await writeFile(backup, backupSentinel);
+    expect(await other.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(await other.prune(closedTab(root), () => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await other.clear(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(
+      await writer.prune(
+        { documentId: root.documentId, handle: standalone.handle },
+        () => true
+      )
+    ).toEqual({ status: "rejected", reason: "not-owned" });
+    expect(await writer.prune(closedTab(root), () => false)).toEqual({
+      status: "rejected",
+      reason: "stale",
+    });
+    expect(await writer.clear(() => false)).toEqual({
+      status: "rejected",
+      reason: "stale",
+    });
+    expect(await readFile(path)).toEqual(before);
+    expect(await readFile(backup)).toEqual(backupSentinel);
+
+    const saved = await writer.read();
+    if (saved.status !== "valid") throw Error("Missing positioned mixed rows");
+    const competing = envelope({ ...saved.data, activeIndex: 0 });
+    let proposed: Buffer | undefined;
+    const late = await writer.prune(closedTab(root), () => {
+      if (proposed) return true;
+      const staged = readdirSync(f.settingsDir).find(
+        (file) =>
+          file.startsWith(`${officialName}.`) &&
+          !file.startsWith(`${officialName}.bak.`) &&
+          file.endsWith(".tmp")
+      );
+      if (!staged) return true;
+      const candidate = readFileSync(join(f.settingsDir, staged));
+      writeFileSync(path, competing);
+      proposed = candidate;
+      return true;
+    });
+    if (!proposed)
+      throw Error("Missing late competitor before prune publication");
+    expect(JSON.parse(proposed.toString("utf8"))).toEqual({
+      version: 1,
+      data: { schemaVersion: 3, tabs: [saved.data.tabs[1]], activeIndex: 0 },
+    });
+    expect(late).toEqual({ status: "rejected", reason: "stale" });
+    expect(await readFile(path)).toEqual(competing);
+    expect(await readFile(backup)).toEqual(before);
+    await writeFile(path, before);
+    expect(await writer.clear(() => true)).toEqual({
+      status: "rejected",
+      reason: "not-owned",
+    });
+    expect(await readFile(path)).toEqual(before);
+
+    expect(
+      await writer.write({ ...input, activeIndex: 0 }, () => true)
+    ).toEqual({ status: "committed" });
+    const owned = await readFile(path);
+    for (const file of [root, standalone])
+      expect(
+        (await f.documents.release({ ...request(), handle: file.handle })).ok
+      ).toBe(true);
+    expect(await writer.clear(() => true)).toEqual({ status: "committed" });
+    expect(await writer.read()).toEqual({
+      status: "valid",
+      source: "mixed",
+      data: empty,
+    });
+    expect(await readFile(backup)).toEqual(owned);
+  } finally {
+    await other.close();
     await writer.close();
     await f.close();
   }

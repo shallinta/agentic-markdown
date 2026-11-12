@@ -5,6 +5,7 @@ import {
   type MainTabCheckpointViewport,
   type MainTabSourceInput,
 } from "../../shared/main-tab-checkpoint";
+import { validRootRosterId } from "../../shared/root-roster";
 
 import { captureMainTabBlockAnchor } from "./main-tab-anchor-worker-client";
 import { captureMainTabMetadataInput } from "./main-tab-binder";
@@ -48,9 +49,63 @@ export function createGuardedMixedMainTabCheckpoint(
   const binder = createMainTabMixedMetadataBinder(dependencies);
   const mixed = createMixedMainTabCheckpointMetadataStore(dataDir);
   const directory = createMainTabCheckpointMetadataStore(dataDir);
+  let ownedSources: readonly MainTabSourceInput[] = [];
   let closed = false;
   let queued = 0;
   let tail: Promise<unknown> = Promise.resolve();
+  function mutateOwned(
+    current: () => boolean,
+    plan: (
+      sources: readonly MainTabSourceInput[]
+    ) =>
+      { index?: number; remaining: readonly MainTabSourceInput[] } | undefined
+  ): Promise<MixedCheckpointWrite> {
+    if (closed || queued >= 64)
+      return Promise.resolve({
+        status: "rejected",
+        reason: closed ? "closed" : "queue-full",
+      });
+    let live = true;
+    const admitted = () => {
+      try {
+        live = live && !closed && current() === true && !closed;
+      } catch {
+        live = false;
+      }
+      return live;
+    };
+    if (!admitted())
+      return Promise.resolve({ status: "rejected", reason: "stale" });
+    if (queued >= 64)
+      return Promise.resolve({ status: "rejected", reason: "queue-full" });
+    queued++;
+    const next = tail
+      .then(async (): Promise<MixedCheckpointWrite> => {
+        if (!admitted()) return { status: "rejected", reason: "stale" };
+        const sources = ownedSources;
+        const change = plan(sources);
+        if (!change || !mixed.hasOwnership())
+          return { status: "rejected", reason: "not-owned" };
+        const currentSource = () => admitted() && ownedSources === sources;
+        const result =
+          change.index === undefined
+            ? await mixed.clearOwned(currentSource)
+            : await mixed.pruneOwned(change.index, currentSource);
+        if (result.status === "committed")
+          ownedSources = mixed.hasOwnership() ? change.remaining : [];
+        else if (result.status === "unknown" || !mixed.hasOwnership())
+          ownedSources = [];
+        return result;
+      })
+      .catch((): MixedCheckpointWrite => {
+        ownedSources = [];
+        return { status: "unknown", reason: "io" };
+      });
+    tail = next.finally(() => {
+      queued--;
+    });
+    return next;
+  }
   return {
     async read(): Promise<MainTabCheckpointCoexistenceRead> {
       await tail;
@@ -253,7 +308,7 @@ export function createGuardedMixedMainTabCheckpoint(
                 enriched = { index: selected.index, position: anchor };
             }
           }
-          return mixed.write(
+          const result = await mixed.write(
             bound.data,
             () => sourceCurrent() && (!requiresDirectory || directoryCurrent()),
             (previous, owned) => {
@@ -308,15 +363,52 @@ export function createGuardedMixedMainTabCheckpoint(
               return result;
             }
           );
+          if (result.status === "committed")
+            ownedSources = mixed.hasOwnership() ? captured.tabs : [];
+          else if (result.status === "unknown" || !mixed.hasOwnership())
+            ownedSources = [];
+          return result;
         })
-        .catch((): MixedCheckpointWrite => ({
-          status: "unknown",
-          reason: "io",
-        }));
+        .catch((): MixedCheckpointWrite => {
+          ownedSources = [];
+          return { status: "unknown", reason: "io" };
+        });
       tail = next.finally(() => {
         queued--;
       });
       return next;
+    },
+    prune(
+      source: { documentId: string; handle: string },
+      current: () => boolean
+    ): Promise<MixedCheckpointWrite> {
+      let target: { documentId: string; handle: string };
+      try {
+        if (
+          !source ||
+          typeof source !== "object" ||
+          Array.isArray(source) ||
+          Object.keys(source).sort().join() !== "documentId,handle" ||
+          !validRootRosterId(source.documentId) ||
+          !validRootRosterId(source.handle)
+        )
+          return Promise.resolve({ status: "rejected", reason: "invalid" });
+        target = { documentId: source.documentId, handle: source.handle };
+      } catch {
+        return Promise.resolve({ status: "rejected", reason: "invalid" });
+      }
+      return mutateOwned(current, (sources) => {
+        const index = sources.findIndex(
+          (row) =>
+            row.documentId === target.documentId && row.handle === target.handle
+        );
+        return index < 0
+          ? undefined
+          : { index, remaining: sources.filter((_row, at) => at !== index) };
+      });
+    },
+    clear(current: () => boolean): Promise<MixedCheckpointWrite> {
+      return mutateOwned(current, () => ({ remaining: [] }));
     },
     async drain() {
       await tail;

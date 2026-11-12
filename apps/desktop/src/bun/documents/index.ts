@@ -146,7 +146,7 @@ export interface TrustedDocumentService extends DocumentService {
   /** Verifies the saved source for a draft image without returning disk body bytes. */
   captureReadingImageProof(source: ReadingSnapshotSource, current: () => boolean): Promise<ReadingSnapshotImageRead | undefined>;
   /** Exact observed saved text and its physical proof for internal anchor calculation. */
-  captureViewportSource(tab: MainTabSourceInput, current: () => boolean): Promise<{ raw: string; current(): boolean } | undefined>;
+  captureViewportSource(tab: MainTabSourceInput, current: () => boolean, kind?: "mixed"): Promise<{ raw: string; current(): boolean } | undefined>;
   /** Bun-only ticket for an idle grant registry. It does not freeze editing or prove renderer state. */
   beginSearchAdmission(): { current(): boolean } | undefined;
   /** Captures only grants owned by this service. Missing or uncertain grants remain unresolved. */
@@ -892,7 +892,7 @@ export function createDocumentService({
   async function captureReadingSource(
     source: ReadingSnapshotSource,
     callerCurrent: () => boolean,
-    mode?: "saved" | "proof" | "viewport"
+    mode?: "saved" | "proof" | "viewport" | "mixed-viewport"
   ) {
     const { handle, documentId, expectedRevision, expectedHash } = source;
     const reject = (error: DocumentErrorCode) => ({ ok: false as const, error });
@@ -905,6 +905,9 @@ export function createDocumentService({
     const grant = grants.get(handle);
     if (!grant || (mode === "viewport" && (!grant.scope || grant.explicitStandalone !== false)))
       return reject("INVALID_HANDLE");
+    if (mode === "mixed-viewport" && !((grant.scope && grant.explicitStandalone === false) || (!grant.scope && grant.explicitStandalone === true)))
+      return reject("INVALID_HANDLE");
+    const explicitStandalone = grant.explicitStandalone;
     const { identityKey, path, fingerprint, directories, scope, assetScope, assetEpoch } = grant;
     const identity = identities.get(identityKey);
     const observation = observations.get(handle);
@@ -938,7 +941,8 @@ export function createDocumentService({
       ) throw new DocumentFailure("CONFLICT");
       if (mode === "proof" && (grant.assetScope !== assetScope || grant.assetEpoch !== assetEpoch))
         throw new DocumentFailure("CONFLICT");
-      if (mode === "viewport" && grant.explicitStandalone !== false)
+      if ((mode === "viewport" && grant.explicitStandalone !== false) ||
+          (mode === "mixed-viewport" && grant.explicitStandalone !== explicitStandalone))
         throw new DocumentFailure("CONFLICT");
       if (trashGuard(path, fingerprint, directories)) throw new DocumentFailure("BUSY");
     };
@@ -1047,7 +1051,7 @@ export function createDocumentService({
           if (retired) return false;
           try {
             check();
-            if (mode !== "viewport" ||
+            if ((mode !== "viewport" && mode !== "mixed-viewport") ||
               (savedStamp && sameReadingStamp(savedStamp, lstatSync(path, { bigint: true })))) return true;
           } catch {
             // A changed grant or physical source retires the receipt.
@@ -1126,11 +1130,11 @@ export function createDocumentService({
       const captured = await captureReadingSource(source, current, "proof");
       return captured.ok ? captured.readImage : undefined;
     },
-    async captureViewportSource({ handle, documentId, revision, hash }, current) {
+    async captureViewportSource({ handle, documentId, revision, hash }, current, kind) {
       const captured = await captureReadingSource(
         { handle, documentId, expectedRevision: revision, expectedHash: hash },
         () => current() === true,
-        "viewport"
+        kind === "mixed" ? "mixed-viewport" : "viewport"
       );
       if (!captured.ok || !captured.current()) return;
       const { bytes, current: revalidate } = captured;

@@ -3,8 +3,10 @@ import { resolve } from "node:path";
 import {
   validMainTabCheckpointTabs,
   type MainTabCheckpointViewport,
+  type MainTabSourceInput,
 } from "../../shared/main-tab-checkpoint";
 
+import { captureMainTabBlockAnchor } from "./main-tab-anchor-worker-client";
 import { captureMainTabMetadataInput } from "./main-tab-binder";
 import {
   readMainTabCheckpointCoexistence,
@@ -14,6 +16,7 @@ import {
   createMainTabCheckpointMetadataStore,
   checkpointPublicationGuard,
   type MainTabMetadataWrite,
+  MAIN_TAB_METADATA_MAX_BYTES,
 } from "./main-tab-metadata";
 import { createMainTabMixedMetadataBinder } from "./main-tab-mixed-binder";
 import {
@@ -21,15 +24,25 @@ import {
   type MixedMainTabRow,
 } from "./main-tab-mixed-metadata";
 import { createMixedMainTabCheckpointMetadataStore } from "./main-tab-mixed-metadata-store";
+import {
+  copyStoredMainTabPosition,
+  type StoredMainTabPosition,
+} from "./main-tab-position-codec";
 
 type MixedCheckpointWrite =
   | MainTabMetadataWrite
   | { status: "rejected"; reason: "unavailable" | "empty" };
 
-/** Trusted backend candidate: no automatic triggers, restoration, or document reads. */
+/** Trusted backend candidate: no automatic triggers or restoration; optional saved-source enrichment. */
 export function createGuardedMixedMainTabCheckpoint(
   dataDir: string,
-  dependencies: Parameters<typeof createMainTabMixedMetadataBinder>[0]
+  dependencies: Parameters<typeof createMainTabMixedMetadataBinder>[0] & {
+    captureViewportSource?(
+      tab: MainTabSourceInput,
+      current: () => boolean
+    ): Promise<{ raw: string; current(): boolean } | undefined>;
+    captureViewportAnchor?: typeof captureMainTabBlockAnchor;
+  }
 ) {
   const directoryPath = resolve(dataDir, "main-tab-session-checkpoint.json");
   const binder = createMainTabMixedMetadataBinder(dependencies);
@@ -133,6 +146,12 @@ export function createGuardedMixedMainTabCheckpoint(
           const legacy = await directory.readObserved();
           if (!admitted() || !bound.current())
             return { status: "rejected", reason: "stale" };
+          const decodedLegacy =
+            legacy.status === "valid" && legacy.positioned
+              ? decodeMixedMainTabMetadata(legacy.positioned)
+              : undefined;
+          const legacyCandidate =
+            decodedLegacy?.status === "valid" ? decodedLegacy.data : undefined;
           let requiresDirectory = false;
           const directoryCurrent =
             legacy.status === "valid"
@@ -150,25 +169,98 @@ export function createGuardedMixedMainTabCheckpoint(
                 ? [row.kind, row.rootId, row.relativePath, row.fingerprint]
                 : [row.kind, row.path, row.fingerprint]
             );
+          let enriched:
+            { index: number; position: StoredMainTabPosition } | undefined;
+          let proof: (() => boolean) | undefined;
+          let sourceLive = true;
+          const sourceCurrent = () => {
+            try {
+              sourceLive =
+                sourceLive &&
+                admitted() &&
+                bound.current() &&
+                (!proof || proof() === true);
+            } catch {
+              sourceLive = false;
+            }
+            return sourceLive;
+          };
+          const sameGeometry = (
+            a: MainTabCheckpointViewport,
+            b: MainTabCheckpointViewport
+          ) =>
+            a.from === b.from && a.offset === b.offset && a.ratio === b.ratio;
+          if (dependencies.captureViewportSource && measured.some(Boolean)) {
+            const existing = await mixed.read();
+            if (!sourceCurrent())
+              return { status: "rejected", reason: "stale" };
+            if (existing.status !== "valid" && existing.status !== "missing")
+              return { status: "rejected", reason: existing.status };
+            const candidate =
+              existing.status === "valid" ? existing.data : legacyCandidate;
+            const previous = new Map(
+              candidate?.tabs.map((row) => [key(row), row.position])
+            );
+            const candidates = measured
+              .map((viewport, index) => ({ viewport, index }))
+              .filter(({ viewport, index }) => {
+                if (!viewport) return false;
+                const old = previous.get(key(bound.data.tabs[index]));
+                return (
+                  !old ||
+                  !sameGeometry(viewport, old) ||
+                  (!!old.block &&
+                    old.block.contentHash !== captured.tabs[index].hash)
+                );
+              });
+            const selected =
+              candidates.find((item) => item.index === captured.activeIndex) ??
+              candidates[0];
+            if (selected) {
+              let source: { raw: string; current(): boolean } | undefined;
+              try {
+                source = await dependencies.captureViewportSource(
+                  captured.tabs[selected.index],
+                  () => admitted() && bound.current()
+                );
+              } catch {
+                /* Unavailable source is not a parser fallback. */
+              }
+              if (source) proof = () => source.current();
+              if (!sourceCurrent())
+                return { status: "rejected", reason: "stale" };
+              if (!source) return { status: "rejected", reason: "unavailable" };
+              let anchor: StoredMainTabPosition | undefined;
+              try {
+                anchor = copyStoredMainTabPosition(
+                  await (
+                    dependencies.captureViewportAnchor ??
+                    captureMainTabBlockAnchor
+                  )(source.raw, selected.viewport!, signal)
+                );
+              } catch {
+                /* Parser failure preserves the measured coordinates. */
+              }
+              if (!sourceCurrent())
+                return { status: "rejected", reason: "stale" };
+              if (
+                anchor?.block?.contentHash ===
+                  captured.tabs[selected.index].hash &&
+                sameGeometry(anchor, selected.viewport!)
+              )
+                enriched = { index: selected.index, position: anchor };
+            }
+          }
           return mixed.write(
             bound.data,
-            () =>
-              admitted() &&
-              bound.current() &&
-              (!requiresDirectory || directoryCurrent()),
+            () => sourceCurrent() && (!requiresDirectory || directoryCurrent()),
             (previous) => {
               requiresDirectory = previous === undefined;
-              const fallback =
-                !previous && legacy.status === "valid" && legacy.positioned
-                  ? decodeMixedMainTabMetadata(legacy.positioned)
-                  : undefined;
-              const old =
-                previous ??
-                (fallback?.status === "valid" ? fallback.data : undefined);
+              const old = previous ?? legacyCandidate;
               const positions = new Map(
                 old?.tabs.map((row) => [key(row), row.position])
               );
-              return {
+              const result = {
                 ...bound.data,
                 tabs: bound.data.tabs.map((row, index) => {
                   const saved = positions.get(key(row)),
@@ -181,10 +273,28 @@ export function createGuardedMixedMainTabCheckpoint(
                         saved.ratio === viewport.ratio &&
                         saved.block?.contentHash ===
                           captured.tabs[index].hash));
-                  const position = reuse ? saved : viewport;
+                  const position = reuse
+                    ? saved
+                    : enriched?.index === index
+                      ? enriched.position
+                      : viewport;
                   return position ? { ...row, position } : row;
                 }),
               };
+              if (
+                enriched &&
+                Buffer.byteLength(
+                  `${JSON.stringify({ version: 1, data: result }, null, 2)}\n`
+                ) > MAIN_TAB_METADATA_MAX_BYTES
+              ) {
+                const row = result.tabs[enriched.index];
+                if (row.position === enriched.position)
+                  result.tabs[enriched.index] = {
+                    ...row,
+                    position: measured[enriched.index]!,
+                  };
+              }
+              return result;
             }
           );
         })

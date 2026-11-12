@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   lstat,
   readFile,
@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import type { DocumentSnapshot } from "../../shared/documents";
 import { fileFingerprint } from "../documents/path-authorization";
 
+import { captureMainTabBlockAnchor } from "./main-tab-anchor-worker-client";
 import { createGuardedMixedMainTabCheckpoint } from "./main-tab-mixed-checkpoint";
 import type { MixedMainTabMetadata } from "./main-tab-mixed-metadata";
 import {
@@ -549,6 +550,243 @@ test("changing the directory checkpoint during first mixed publication preserves
       )
     ).toEqual([]);
   } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+async function observeSources(
+  f: Awaited<ReturnType<typeof fixture>>,
+  snapshots: readonly DocumentSnapshot[]
+) {
+  for (const { handle, documentId, revision, hash } of snapshots)
+    expect(
+      (
+        await f.documents.observe({
+          ...request(),
+          handle,
+          documentId,
+          revision,
+          hash,
+          active: true,
+          watchToken: crypto.randomUUID(),
+          watchEpoch: 1,
+        })
+      ).ok
+    ).toBe(true);
+}
+
+test("the actual worker anchors one measured mixed source at a time, preferring the active source", async () => {
+  const f = await fixture();
+  const sources: string[] = [];
+  const workerResults: boolean[] = [];
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, {
+    ...f,
+    captureViewportSource(tab, current) {
+      sources.push(tab.handle);
+      return f.documents.captureViewportSource(tab, current, "mixed");
+    },
+    async captureViewportAnchor(raw, viewport, signal) {
+      const result = await captureMainTabBlockAnchor(raw, viewport, signal);
+      workerResults.push(!!result?.block);
+      return result;
+    },
+  });
+  try {
+    const standaloneText = "\uFEFF前段 😀\r\n\r\n## 独立目标\r\n\r\n后段\r\n";
+    await writeFile(f.explicitPath, standaloneText);
+    const [root, standalone] = await openMixed(f);
+    await observeSources(f, [root, standalone]);
+    expect(
+      await f.documents.captureViewportSource(inputTab(standalone), () => true)
+    ).toBeUndefined();
+    const mixedProof = await f.documents.captureViewportSource(
+      inputTab(standalone),
+      () => true,
+      "mixed"
+    );
+    expect(mixedProof?.raw).toBe(standaloneText);
+    expect(mixedProof?.current()).toBe(true);
+    const explicitGeometry = {
+      from: standaloneText.indexOf("##"),
+      offset: -6.25,
+      ratio: 0.55,
+    };
+    const first = {
+      tabs: [
+        { ...inputTab(root, "source", true), viewport: directoryGeometry },
+        { ...inputTab(standalone), viewport: explicitGeometry },
+      ],
+      activeIndex: 1,
+    };
+    expect(await writer.write(first, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(sources).toEqual([standalone.handle]);
+    expect(workerResults).toEqual([true]);
+    let state = await writer.read();
+    if (state.status !== "valid")
+      throw Error("Missing first mixed anchor record");
+    expect(state.data.tabs[0].position).toEqual(directoryGeometry);
+    expect(state.data.tabs[1].position).toMatchObject({
+      ...explicitGeometry,
+      block: {
+        contentHash: standalone.hash,
+        uniqueAtCapture: true,
+        offset: explicitGeometry.offset,
+      },
+    });
+    const standalonePosition = state.data.tabs[1].position;
+
+    const newRootGeometry = { ...directoryGeometry, offset: -5.5, ratio: 0.7 };
+    const second = {
+      tabs: [{ ...first.tabs[0], viewport: newRootGeometry }, first.tabs[1]],
+      activeIndex: 0,
+    };
+    expect(await writer.write(second, () => true)).toEqual({
+      status: "committed",
+    });
+    expect(sources).toEqual([standalone.handle, root.handle]);
+    expect(workerResults).toEqual([true, true]);
+    expect(
+      await writer.write({ ...second, activeIndex: 1 }, () => true)
+    ).toEqual({ status: "committed" });
+    expect(sources).toEqual([standalone.handle, root.handle]);
+    expect(workerResults).toEqual([true, true]);
+    state = await writer.read();
+    if (state.status !== "valid") throw Error("Missing both mixed anchors");
+    expect(state.data.tabs[0].position).toMatchObject({
+      ...newRootGeometry,
+      block: {
+        contentHash: root.hash,
+        uniqueAtCapture: true,
+        offset: newRootGeometry.offset,
+      },
+    });
+    expect(state.data.tabs[1].position).toEqual(standalonePosition);
+    const expected = join(f.settingsDir, "expected-anchor-fixture.json");
+    await writeFile(expected, JSON.stringify(state.data));
+    expect(await childRead(f.settingsDir, expected)).toEqual({
+      status: "valid",
+      matches: true,
+    });
+
+    const endGeometry = { from: standaloneText.length, offset: 1.5, ratio: 1 };
+    expect(
+      await writer.write(
+        {
+          tabs: [second.tabs[0], { ...second.tabs[1], viewport: endGeometry }],
+          activeIndex: 1,
+        },
+        () => true
+      )
+    ).toEqual({ status: "committed" });
+    expect(sources).toEqual([
+      standalone.handle,
+      root.handle,
+      standalone.handle,
+    ]);
+    expect(workerResults).toEqual([true, true, false]);
+    const fallback = await writer.read();
+    if (fallback.status !== "valid") throw Error("Missing EOF geometry");
+    expect(fallback.data.tabs[1].position).toEqual(endGeometry);
+    expect(fallback.data.tabs[0].position).toEqual(state.data.tabs[0].position);
+    expect(await readFile(f.explicitPath)).toEqual(Buffer.from(standaloneText));
+    expect(await readFile(f.files[0])).toEqual(Buffer.from(text));
+  } finally {
+    await writer.close();
+    await f.close();
+  }
+});
+
+test("replacing a trusted standalone source while its actual worker result is held preserves mixed authority and backup", async () => {
+  const f = await fixture();
+  const entered = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  let replaced = false;
+  let sourceCurrentAfterReplacement: boolean | undefined;
+  let computedContentHash: string | undefined;
+  const writer = createGuardedMixedMainTabCheckpoint(f.settingsDir, {
+    ...f,
+    async captureViewportSource(tab, current) {
+      const proof = await f.documents.captureViewportSource(
+        tab,
+        current,
+        "mixed"
+      );
+      if (!proof) return;
+      return {
+        raw: proof.raw,
+        current() {
+          const valid = proof.current();
+          if (replaced) sourceCurrentAfterReplacement = valid;
+          return valid;
+        },
+      };
+    },
+    async captureViewportAnchor(raw, viewport, signal) {
+      const actual = captureMainTabBlockAnchor(raw, viewport, signal);
+      entered.resolve();
+      await resume.promise;
+      const result = await actual;
+      computedContentHash = result?.block?.contentHash;
+      return result;
+    },
+  });
+  try {
+    const root = await f.openFolderTab(0);
+    const path = join(dirname(f.settingsDir), "outside-anchor.md");
+    await writeFile(path, text);
+    const standalone = await f.openExplicit(path);
+    await observeSources(f, [root, standalone]);
+    const input = {
+      tabs: [inputTab(root), inputTab(standalone)],
+      activeIndex: 1,
+    };
+    expect(await writer.write(input, () => true)).toEqual({
+      status: "committed",
+    });
+    const authority = join(f.settingsDir, officialName);
+    const backup = `${authority}.bak`;
+    const before = await readFile(authority);
+    const backupBytes = Buffer.from("retained mixed backup\n");
+    await writeFile(backup, backupBytes);
+    const pending = writer.write(
+      {
+        tabs: [
+          input.tabs[0],
+          { ...input.tabs[1], viewport: directoryGeometry },
+        ],
+        activeIndex: 1,
+      },
+      () => true
+    );
+    await Promise.race([
+      entered.promise,
+      pending.then((result) => {
+        throw Error(`Write settled before worker pause: ${result.status}`);
+      }),
+    ]);
+    const registry = f.documents.captureContentSearchBindings([
+      root.handle,
+      standalone.handle,
+    ]);
+    const displaced = `${path}.prior`;
+    const replacement = "# 另一篇文档\n";
+    renameSync(path, displaced);
+    writeFileSync(path, replacement);
+    replaced = true;
+    expect(registry?.current()).toBe(true);
+    resume.resolve();
+    expect(await pending).toEqual({ status: "rejected", reason: "stale" });
+    expect(computedContentHash).toBe(standalone.hash);
+    expect(sourceCurrentAfterReplacement).toBe(false);
+    expect(await readFile(authority)).toEqual(before);
+    expect(await readFile(backup)).toEqual(backupBytes);
+    expect(await readFile(displaced)).toEqual(Buffer.from(text));
+    expect(await readFile(path)).toEqual(Buffer.from(replacement));
+  } finally {
+    resume.resolve();
     await writer.close();
     await f.close();
   }

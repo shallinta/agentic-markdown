@@ -72,6 +72,8 @@ alpha.362 已验证混合会话的后台写入和跨进程读回。普通窗口�
 
 alpha.363 已验证混合会话后台保留对应文档的滚动位置及已有块锚点。普通窗口已回归重新授权后打开目录文档时回到原位置。混合会话仍待接入普通窗口。见[F-037am 迭代](iterations/F-037am-preserve-mixed-session-positions.md)。
 
+alpha.364 已验证混合会话后台能为目录和独立文档的新位置计算块锚点。普通窗口已回归目录文档恢复到上次位置，混合会话保存和恢复仍在开发。见[F-037an 迭代](iterations/F-037an-capture-mixed-session-block-anchors.md)。
+
 alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。重新授权并恢复主区文档时，即使在原位置前插入了内容，也能回到仍可辨认的原段落。原段落已删除时，优先定位到可辨认的邻近块，再按源码坐标和滚动比例回退。alpha.352 支持单篇恢复，alpha.353 扩展到成组标签。若组内有多篇正文变化，优先处理原活动标签，共用计算时限用完后，其余标签按源码坐标或比例恢复。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)、[F-037ab 迭代](iterations/F-037ab-restore-single-tab-by-markdown-block.md)、[F-037ac 迭代](iterations/F-037ac-restore-group-tabs-by-markdown-block.md)。
 
 ## 主窗原生全屏（F-038a）

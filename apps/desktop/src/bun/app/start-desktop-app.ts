@@ -33,8 +33,8 @@ import { createMainWindowRPC, type MainWindowRPC } from "../rpc";
 import { createContentSearchRPC } from "../rpc/content-search";
 import { createMainTabCheckpointRPC } from "../rpc/main-tab-checkpoint";
 import { createMainTabRecoveryRPC } from "../rpc/main-tab-recovery";
-import { createGuardedMainTabCheckpoint } from "../session/main-tab-checkpoint";
 import { createMainTabGroupRecoveryReader, createMainTabMultiRootRecoveryReader } from "../session/main-tab-group-recovery";
+import { createRoutedMainTabCheckpoint } from "../session/main-tab-routed-checkpoint";
 import { createSingleMainTabRecoveryReader } from "../session/main-tab-single-recovery";
 import { UpdaterService } from "../updates";
 import { createWorkspaceService } from "../workspace";
@@ -123,10 +123,10 @@ export async function startDesktopApp(): Promise<DesktopAppRuntime> {
       process.env.AGENTIC_MARKDOWN_EDITOR_FAULT_LAB !== "1",
     () => browserWindow?.url === PACKAGED_VIEW_URL &&
       browserWindow.webview.url === PACKAGED_VIEW_URL && !browserWindow.webview.isRemoved,
-    () => createGuardedMainTabCheckpoint(getSettingsDir(), {
+    () => createRoutedMainTabCheckpoint(getSettingsDir(), {
+      documents,
       workspace,
       roster: rootRoster,
-      captureViewportSource: (tab, current) => documents.captureViewportSource(tab, current),
     })
   );
   const mainTabRecovery = createMainTabRecoveryRPC(

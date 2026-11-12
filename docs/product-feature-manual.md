@@ -78,6 +78,8 @@ alpha.366 已验证混合会话后台在确认检查点归属后，能清除单�
 
 alpha.367 已验证关闭标签后的混合会话后台更新，末篇关闭时保存空记录。普通窗口已回归逐篇关闭目录标签，混合会话保存和恢复仍在开发。见[F-037ap 迭代](iterations/F-037ap-update-mixed-session-after-tab-close.md)。
 
+alpha.369 起，主窗口打开独立文件后可记录已保存的标签，包括同窗的目录文件。关闭标签会更新本窗口持有的会话记录。目录会话仍可在重启后重新授权并恢复，混合会话的重启恢复待接入。见[F-037aq 迭代](iterations/F-037aq-save-mixed-session-from-main-window.md)。
+
 alpha.351 开始随滚动位置保存可确认的 Markdown 内容块摘要，无需额外操作。重新授权并恢复主区文档时，即使在原位置前插入了内容，也能回到仍可辨认的原段落。原段落已删除时，优先定位到可辨认的邻近块，再按源码坐标和滚动比例回退。alpha.352 支持单篇恢复，alpha.353 扩展到成组标签。若组内有多篇正文变化，优先处理原活动标签，共用计算时限用完后，其余标签按源码坐标或比例恢复。见[F-037aa 迭代](iterations/F-037aa-checkpoint-markdown-block-anchors.md)、[F-037ab 迭代](iterations/F-037ab-restore-single-tab-by-markdown-block.md)、[F-037ac 迭代](iterations/F-037ac-restore-group-tabs-by-markdown-block.md)。
 
 ## 主窗原生全屏（F-038a）

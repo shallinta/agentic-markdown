@@ -135,11 +135,17 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
     const rpc = electrobun.rpc;
     if (!rpc) return;
     const tokens = new WeakMap<ReturnType<typeof folders.getSnapshot>, object>();
-    return attachMainTabActivationCheckpoint(controller,
-      (request) => rpc.request.mainTabCheckpoint(request, { maxRequestTime: 4000 }),
+    let emptyScope = {};
+    const unsubscribeScope = folders.subscribe(() => {
+      const workspace = folders.getSnapshot();
+      if (workspace.roots.length || workspace.busy || workspace.error) emptyScope = {};
+    });
+    const detach = attachMainTabActivationCheckpoint(controller,
+      (request) => rpc.request.mainTabCheckpoint(request, { maxRequestTime: "op" in request ? 4000 : 12000 }),
       () => {
         const workspace = folders.getSnapshot();
-        if (!workspace.roots.length || workspace.busy || workspace.error) return undefined;
+        if (workspace.busy || workspace.error) return undefined;
+        if (!workspace.roots.length) return emptyScope;
         let token = tokens.get(workspace);
         if (!token) {
           token = {};
@@ -151,6 +157,10 @@ export function useDocumentWorkspace(beforeDiscard?: () => Promise<void>) {
         settlementForRecord: mainTabRecovery.settlementForRecord,
         settlementForClose: mainTabRecovery.settlementForClose,
       });
+    return () => {
+      detach();
+      unsubscribeScope();
+    };
   }, [controller, folders, mainTabRecovery]);
   const [publishRaster] = useState(() => createRasterPasteTransport({
     getFloor: async () => electrobun.rpc?.request.getRasterPasteSequence({}, { maxRequestTime: 4000 }),

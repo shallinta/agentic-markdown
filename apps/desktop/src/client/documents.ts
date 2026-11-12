@@ -364,7 +364,7 @@ export function createDocumentController(
   >();
   const capabilityChecks = new Map<
     string,
-    { invalidated: boolean; expired: boolean }
+    { invalidated: boolean; expired: boolean; settled: Promise<boolean> }
   >();
   const capabilityLifetimes = new Map<string, object>();
   const canWrite = (documentId: string) =>
@@ -411,7 +411,10 @@ export function createDocumentController(
       running.invalidated ||= invalidate;
       return;
     }
-    const token = { invalidated: false, expired: false };
+    let finish!: (compatible: boolean) => void;
+    const settled = new Promise<boolean>(resolve => { finish = resolve; });
+    let compatible = false;
+    const token = { invalidated: false, expired: false, settled };
     const lifetime = capabilityLifetimes.get(handle);
     primaryCaptureTokens.delete(state);
     capabilityChecks.set(handle, token);
@@ -419,6 +422,7 @@ export function createDocumentController(
     const deadline = setTimeout(() => {
       token.invalidated = true;
       token.expired = true;
+      finish(false);
       if (capabilityChecks.get(handle) === token)
         capabilityChecks.delete(handle);
       if (capabilityLifetimes.get(handle) === lifetime)
@@ -438,6 +442,7 @@ export function createDocumentController(
       )
         throw Error("invalid capability response");
       applyCapability(handle, response.capability);
+      compatible = response.capability.reason === "writable" || response.capability.reason === "readonly";
     } catch {
       if (!token.expired && capabilityLifetimes.get(handle) === lifetime)
         applyCapability(handle, { writable: false, reason: "unavailable" });
@@ -448,6 +453,8 @@ export function createDocumentController(
         if (token.invalidated && !token.expired)
           void refreshWriteCapability(handle);
       }
+      finish(compatible && !token.invalidated && !token.expired &&
+        capabilityLifetimes.get(handle) === lifetime);
     }
   }
   const saving = new Map<string, Promise<void>>();
@@ -1678,6 +1685,29 @@ export function createDocumentController(
     cancelRecentTabSwitch,
     getVisualTabs,
     captureCleanPrimaryTabs,
+    waitForPrimaryTabCapabilities(): Promise<boolean> | undefined {
+      if (metadataDisposed || state.tabs.length > CLEAN_PRIMARY_TAB_CAPTURE_LIMIT) return;
+      const expected = state, activation = generation;
+      const sessions = state.tabs.map(tab => {
+        const editor = editors.get(tab.documentId);
+        return { id: tab.documentId, revision: editor?.revision,
+          incarnation: editor?.state.field(editorFaultSession) };
+      });
+      const pending = state.tabs.flatMap(tab => {
+        const check = capabilityChecks.get(tab.handle);
+        return check ? [check.settled] : [];
+      });
+      if (!pending.length) return;
+      return Promise.all(pending).then(results =>
+        results.every(Boolean) && !metadataDisposed && state.tabs === expected.tabs && generation === activation &&
+        state.snapshot?.documentId === expected.snapshot?.documentId &&
+        state.snapshot?.handle === expected.snapshot?.handle &&
+        sessions.every(saved => {
+          const editor = editors.get(saved.id);
+          return !!editor && editor.revision === saved.revision &&
+            editor.state.field(editorFaultSession) === saved.incarnation && !saved.incarnation?.fault;
+        }) && state.tabs.every(tab => !capabilityChecks.has(tab.handle)));
+    },
     canReorderTabs(): boolean {
       return !metadataDisposed && !state.busy && !state.frozen && !editorInputBlocked &&
         !recentTabSwitch && canLeaveEditor();

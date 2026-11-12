@@ -15,10 +15,12 @@ import { EditorView } from "@codemirror/view";
 
 import { createMainTabRecoveryRPC } from "../bun/rpc/main-tab-recovery";
 import { PACKAGED_VIEW_URL } from "../security/shell-policy";
+import type { ObservationRequest } from "../shared/document-observation";
 import type {
   DocumentRequest,
   DocumentResponse,
   DocumentSnapshot,
+  WriteCapability,
 } from "../shared/documents";
 import { validMainTabCheckpointRequest, type MainTabCheckpointRequest } from "../shared/main-tab-checkpoint";
 import type { MainTabRecoveryRequest, MainTabRecoveryResponse } from "../shared/main-tab-recovery";
@@ -247,11 +249,12 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-function setup(confirmDiscard?: (message: string) => Promise<boolean>) {
+function setup(confirmDiscard?: (message: string) => Promise<boolean>, observeDocument?: DocumentTransport["observeDocument"]) {
   const value = snapshot();
   const released: string[] = [];
   const cancelled: string[] = [];
   const transport: DocumentTransport = {
+    observeDocument,
     cancelDocument: (request) => {
       cancelled.push(request.requestId);
       return Promise.resolve(result(request, null));
@@ -447,6 +450,154 @@ test("cancelled pickers and changed scan generations never issue a recovery read
 });
 
 const checkpointTurn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+test("the same activation records once after its real capability check settles past the idle turn", async () => {
+  const observed = deferred<ObservationRequest>();
+  const { controller, transport, value } = setup(undefined, request => {
+    if (request.active) observed.resolve(request);
+    return Promise.resolve({ ok: true, requestId: request.requestId });
+  });
+  const reply = deferred<WriteCapability>();
+  transport.checkDocumentWriteCapability = request => reply.promise.then(capability => ({ ...request, capability }));
+  const requests: MainTabCheckpointRequest[] = [];
+  const captures: boolean[] = [];
+  let activations = 0;
+  const scope = {};
+  const stop = attachMainTabActivationCheckpoint({
+    ...controller,
+    captureCleanPrimaryTabs(includeViewport) {
+      const captured = controller.captureCleanPrimaryTabs(includeViewport);
+      captures.push(captured.ok);
+      return captured;
+    },
+  }, request => {
+    requests.push(request);
+    return Promise.resolve({ protocolVersion: 1, status: "committed" });
+  }, () => scope, { idleMs: 0 });
+  const stopActivation = controller.subscribeActivation(() => { activations++; });
+  try {
+    await controller.select();
+    const refresh = controller.refreshWriteCapability();
+    await checkpointTurn();
+    expect(captures).toEqual([false]);
+    expect(requests).toEqual([]);
+
+    const { active, requestId, ...binding } = await observed.promise;
+    expect(active).toBe(true);
+    expect(requestId).toBeTruthy();
+    const beforeObservation = controller.getSnapshot();
+    controller.applyExternalObservation({ ...binding, generation: 1, status: "unchanged" });
+    expect(controller.getSnapshot()).not.toBe(beforeObservation);
+    expect(controller.getSnapshot().tabs).toBe(beforeObservation.tabs);
+    reply.resolve({ writable: true, reason: "writable" });
+    await refresh;
+    for (let i = 0; i < 3; i++) await checkpointTurn();
+    expect(activations).toBe(1);
+    expect(captures).toEqual([false, true]);
+    expect(requests).toEqual([{
+      protocolVersion: 1, activeIndex: 0,
+      tabs: [{ handle: value.handle, documentId: value.documentId, revision: value.revision, hash: value.hash, mode: "editing", pinned: false }],
+    }]);
+  } finally {
+    reply.resolve({ writable: false, reason: "invalid" });
+    stopActivation();
+    stop();
+    controller.dispose();
+  }
+});
+
+test("a delayed capability cannot revive a superseded or otherwise stale checkpoint intent", async () => {
+  for (const disposition of ["superseded", "disposed", "invalid", "scope", "edited-and-undone"] as const) {
+    const { controller, transport, value } = setup();
+    const next = snapshot("# newer checkpoint target");
+    const reply = deferred<WriteCapability>();
+    const requests: MainTabCheckpointRequest[] = [];
+    const captures: boolean[] = [];
+    let scope = {};
+    await controller.select();
+    transport.selectDocument = request => Promise.resolve(result(request, next));
+    await controller.select();
+    transport.checkDocumentWriteCapability = request => reply.promise.then(capability => ({ ...request, capability }));
+    const stop = attachMainTabActivationCheckpoint({
+      ...controller,
+      captureCleanPrimaryTabs(includeViewport) {
+        const captured = controller.captureCleanPrimaryTabs(includeViewport);
+        captures.push(captured.ok);
+        return captured;
+      },
+    }, request => {
+      requests.push(request);
+      return Promise.resolve({ protocolVersion: 1, status: "committed" });
+    }, () => scope, { idleMs: 0 });
+    try {
+      controller.activateTab(value.documentId);
+      const refresh = controller.refreshWriteCapability();
+      await checkpointTurn();
+      expect(captures).toEqual([false]);
+      expect(requests).toEqual([]);
+      if (disposition === "superseded") {
+        controller.activateTab(next.documentId);
+        await checkpointTurn();
+        expect(captures).toEqual([false, false]);
+      }
+      if (disposition === "disposed") stop();
+      if (disposition === "scope") scope = {};
+      if (disposition === "edited-and-undone") {
+        const editor = controller.getEditor(value.documentId)!;
+        controller.updateEditor(value.documentId, editor.state.update({ changes: { from: 0, insert: "draft" } }));
+        expect(controller.isDirty(value.documentId)).toBe(true);
+        expect(controller.runHistory("undo", value.documentId)).toBe(true);
+        expect(controller.isDirty(value.documentId)).toBe(false);
+      }
+      reply.resolve(disposition === "invalid" ? { writable: false, reason: "invalid" } : { writable: true, reason: "writable" });
+      await refresh;
+      for (let i = 0; i < 3; i++) await checkpointTurn();
+      if (disposition === "superseded") {
+        expect(captures).toEqual([false, false, true]);
+        expect(requests).toHaveLength(1);
+        const sent = requests[0];
+        expect("tabs" in sent && sent.tabs[sent.activeIndex].documentId).toBe(next.documentId);
+      } else {
+        expect(captures).toEqual([false]);
+        expect(requests).toEqual([]);
+      }
+    } finally {
+      reply.resolve({ writable: false, reason: "invalid" });
+      stop();
+      controller.dispose();
+    }
+  }
+});
+
+test("closing the last tab clears its checkpoint before a delayed capability settles", async () => {
+  const { controller, transport, value } = setup();
+  const reply = deferred<WriteCapability>();
+  const requests: MainTabCheckpointRequest[] = [];
+  const scope = {};
+  transport.checkDocumentWriteCapability = request => reply.promise.then(capability => ({ ...request, capability }));
+  const stop = attachMainTabActivationCheckpoint(controller, request => {
+    requests.push(request);
+    return Promise.resolve({ protocolVersion: 1, status: "committed" });
+  }, () => scope, { idleMs: 0 });
+  try {
+    await controller.select();
+    const refresh = controller.refreshWriteCapability();
+    await checkpointTurn();
+    expect(requests).toEqual([]);
+    await controller.closeTab(value.documentId);
+    expect(controller.getSnapshot().tabs).toEqual([]);
+    await checkpointTurn();
+    expect(requests).toEqual([{ protocolVersion: 1, op: "clear" }]);
+    reply.resolve({ writable: true, reason: "writable" });
+    await refresh;
+    for (let i = 0; i < 3; i++) await checkpointTurn();
+    expect(requests).toEqual([{ protocolVersion: 1, op: "clear" }]);
+  } finally {
+    reply.resolve({ writable: false, reason: "invalid" });
+    stop();
+    controller.dispose();
+  }
+});
 
 test("quiet user viewport checkpoints coalesce without activation and reject stale or dirty owners", async () => {
   const { controller, value } = setup();

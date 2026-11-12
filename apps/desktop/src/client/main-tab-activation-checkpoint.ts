@@ -9,9 +9,9 @@ import {
 import type { createDocumentController, PrimaryTabLastClose } from "./documents";
 
 type Documents = Pick<ReturnType<typeof createDocumentController>,
-  "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "subscribePrimaryTabLastClose" | "captureCleanPrimaryTabs"> & Partial<Pick<ReturnType<typeof createDocumentController>, "subscribePrimaryTabViewportChange" | "subscribePrimaryTabNonLastClose">>;
+  "subscribeActivation" | "subscribePrimaryTabLayoutChange" | "subscribePrimaryTabLastClose" | "captureCleanPrimaryTabs"> & Partial<Pick<ReturnType<typeof createDocumentController>, "subscribePrimaryTabViewportChange" | "subscribePrimaryTabNonLastClose" | "waitForPrimaryTabCapabilities">>;
 type CheckpointTarget = Pick<MainTabSourceInput, "documentId" | "handle">;
-type CheckpointIntent = { kind: "record"; target: CheckpointTarget } | { kind: "clear"; close: PrimaryTabLastClose };
+type CheckpointIntent = { kind: "record"; target: CheckpointTarget; capabilityRetried?: boolean } | { kind: "clear"; close: PrimaryTabLastClose };
 interface PruneIntent { close: PrimaryTabLastClose; scope: object }
 interface CheckpointOptions {
   idleMs?: number;
@@ -75,7 +75,17 @@ export function attachMainTabActivationCheckpoint(
       const scope = workspaceScope();
       if (!scope) return;
       const capture = documents.captureCleanPrimaryTabs(includeViewport);
-      if (!capture.ok || capture.activeIndex === null) return;
+      if (!capture.ok) {
+        const sequence = intentSequence;
+        const settlement = !intent.capabilityRetried ? documents.waitForPrimaryTabCapabilities?.() : undefined;
+        if (settlement) void settlement.then(settled => {
+          if (!settled || disposed || pending || sequence !== intentSequence || workspaceScope() !== scope) return;
+          pending = { ...intent, capabilityRetried: true };
+          schedule();
+        }, () => undefined);
+        return;
+      }
+      if (capture.activeIndex === null) return;
       const request = { protocolVersion: 1, tabs: capture.tabs, activeIndex: capture.activeIndex } as const;
       if (!validMainTabCheckpointRequest(request)) return;
       const active = request.tabs[request.activeIndex];

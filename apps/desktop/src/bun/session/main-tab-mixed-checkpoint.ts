@@ -107,6 +107,7 @@ export function createGuardedMixedMainTabCheckpoint(
     return next;
   }
   return {
+    hasOwnership: () => !closed && mixed.hasOwnership(),
     async read(): Promise<MainTabCheckpointCoexistenceRead> {
       await tail;
       if (closed) return { status: "closed" };
@@ -119,13 +120,15 @@ export function createGuardedMixedMainTabCheckpoint(
     write(
       value: unknown,
       current: () => boolean,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      options?: { requireOwned: boolean }
     ): Promise<MixedCheckpointWrite> {
       if (closed || queued >= 64)
         return Promise.resolve({
           status: "rejected",
           reason: closed ? "closed" : "queue-full",
         });
+      const requireOwned = options?.requireOwned === true;
       let input: ReturnType<typeof captureMainTabMetadataInput>;
       const measured: (MainTabCheckpointViewport | undefined)[] = [];
       const resets: boolean[] = [];
@@ -312,6 +315,7 @@ export function createGuardedMixedMainTabCheckpoint(
             bound.data,
             () => sourceCurrent() && (!requiresDirectory || directoryCurrent()),
             (previous, owned) => {
+              if (requireOwned && !owned) return undefined;
               requiresDirectory = previous === undefined;
               const old = previous ?? legacyCandidate;
               const positions = new Map(
